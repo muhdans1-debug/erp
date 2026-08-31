@@ -1,0 +1,19 @@
+﻿{
+  "name": "sme-erp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "pnpm --filter @starline/api dev",
+    "dev:pos": "pnpm --filter @starline/pos-desktop dev",
+    "dev:mobile": "pnpm --filter @starline/client-mobile dev",
+    "build": "turbo run build",
+    "test": "pnpm --filter @starline/api test",
+    "test:stress": "pnpm --filter @starline/api test:stress",
+    "db:migrate": "pnpm --filter @starline/database migrate",
+    "db:generate": "pnpm --filter @starline/database generate"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0"
+  }
+}

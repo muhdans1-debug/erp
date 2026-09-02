@@ -83,6 +83,7 @@ model Purchase {
 
 model User {
   id        String   @id @default(uuid())
+  tenantId  String?
   email     String   @unique
   name      String
   password  String
@@ -93,11 +94,13 @@ model User {
 
 model Product {
   id          String   @id @default(uuid())
+  tenantId    String?
   name        String
   sku         String?  @unique
   price       Decimal  @db.Decimal(12, 3)
   costPrice   Decimal? @db.Decimal(12, 3)
   stock       Int      @default(0)
+  stockQty    Int      @default(0)
   category    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -106,16 +109,29 @@ model Product {
   @@index([sku])
 }
 
+model OrderItem {
+  id      String  @id @default(uuid())
+  orderId String
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  name    String
+  qty     Int
+  price   Decimal @db.Decimal(12, 3)
+  total   Decimal @db.Decimal(12, 3)
+}
+
 model Order {
-  id          String    @id @default(uuid())
-  orderNo     String    @unique
-  customerId  String?
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  totalAmount Decimal   @db.Decimal(12, 3)
-  status      String    @default("PENDING")
-  itemsJson   String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String      @id @default(uuid())
+  orderNo       String      @unique
+  tenantId      String?
+  customerId    String?
+  customer      Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  totalAmount   Decimal     @db.Decimal(12, 3)
+  status        String      @default("PENDING")
+  paymentMethod PaymentType @default(CASH)
+  itemsJson     String?
+  items         OrderItem[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@index([orderNo])
   @@index([createdAt])

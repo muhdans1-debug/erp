@@ -129,6 +129,7 @@ app.post(
 
         const order = await tx.order.create({
           data: {
+            orderNo: `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             tenantId: data.tenantId,
             customerId: (data as any).customerId || (data as any).clientId,
             paymentMethod: data.paymentMethod as any,

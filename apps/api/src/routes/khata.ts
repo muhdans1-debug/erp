@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import { PrismaClient, PaymentType, TransactionType } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { PaymentType, TransactionType } from '@prisma/client';
+import { prisma } from '@starline/database';
 
 export default async function khataRoutes(fastify: FastifyInstance) {
   // ==========================================

@@ -1,23 +1,31 @@
-const axios = require('axios');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
-// List your parties here or read them from a JSON/CSV file
 const partiesToImport = [
   { name: 'Ahmed Al-Mahmoud', phone: '39111222', address: 'Manama' },
   { name: 'Fatima Trading', phone: '39333444', address: 'Muharraq' },
-  // Add as many as you need...
 ];
 
 async function bulkImport() {
-  const API_URL = 'https://layali-git-8010.up.railway.app/api/customers';
+  console.log('Connecting to Railway database...');
 
   for (const party of partiesToImport) {
     try {
-      const res = await axios.post(API_URL, party);
-      console.log(`Successfully added: ${res.data.customer?.name || party.name}`);
+      const customer = await prisma.customer.create({
+        data: {
+          name: party.name,
+          phone: party.phone,
+          address: party.address,
+          currentDue: 0.0,
+        },
+      });
+      console.log(`Successfully inserted: ${customer.name}`);
     } catch (err) {
-      console.error(`Failed to add ${party.name}:`, err.response?.data || err.message);
+      console.error(`Failed to add ${party.name}:`, err.message);
     }
   }
+
+  await prisma.$disconnect();
   console.log('Bulk import complete!');
 }
 

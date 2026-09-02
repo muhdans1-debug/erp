@@ -14,10 +14,12 @@ enum TransactionType {
 
 enum PaymentType {
   CASH
+  CARD
   BENEFIT_PAY
   BANK_TRANSFER
   CHEQUE
   CREDIT
+  CREDIT_LEDGER
   UPI
 }
 
@@ -110,13 +112,16 @@ model Product {
 }
 
 model OrderItem {
-  id      String  @id @default(uuid())
-  orderId String
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  name    String
-  qty     Int
-  price   Decimal @db.Decimal(12, 3)
-  total   Decimal @db.Decimal(12, 3)
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String?
+  name      String?  @default("")
+  quantity  Int      @default(1)
+  qty       Int?     @default(1)
+  unitPrice Decimal  @default(0.000) @db.Decimal(12, 3)
+  price     Decimal  @default(0.000) @db.Decimal(12, 3)
+  total     Decimal  @default(0.000) @db.Decimal(12, 3)
 }
 
 model Order {

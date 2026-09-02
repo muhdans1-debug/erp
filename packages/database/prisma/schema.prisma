@@ -8,8 +8,8 @@ generator client {
 }
 
 enum TransactionType {
-  YOU_GAVE // You gave credit/goods (Customer owes you - Debit)
-  YOU_GOT  // Customer paid cash/BenefitPay (Payment received - Credit)
+  YOU_GAVE
+  YOU_GOT
 }
 
 enum PaymentType {
@@ -26,11 +26,12 @@ model Customer {
   name         String
   phone        String
   address      String?
-  currentDue   Decimal       @default(0.000) @db.Decimal(12, 3) // 3 decimal places for Bahraini Dinar (Fils)
+  currentDue   Decimal       @default(0.000) @db.Decimal(12, 3)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   transactions Transaction[]
   invoices     Invoice[]
+  orders       Order[]
 
   @@index([phone])
   @@index([name])
@@ -56,7 +57,7 @@ model Invoice {
   customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
   partyName   String
   partyPhone  String?
-  itemsJson   String      // Stores line items: [{ name, qty, price, total }]
+  itemsJson   String
   subtotal    Decimal     @db.Decimal(12, 3)
   tax         Decimal     @default(0.000) @db.Decimal(12, 3)
   grandTotal  Decimal     @db.Decimal(12, 3)
@@ -77,6 +78,46 @@ model Purchase {
   createdAt   DateTime    @default(now())
 
   @@index([vendorName])
+  @@index([createdAt])
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  sku         String?  @unique
+  price       Decimal  @db.Decimal(12, 3)
+  costPrice   Decimal? @db.Decimal(12, 3)
+  stock       Int      @default(0)
+  category    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([name])
+  @@index([sku])
+}
+
+model Order {
+  id          String    @id @default(uuid())
+  orderNo     String    @unique
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  totalAmount Decimal   @db.Decimal(12, 3)
+  status      String    @default("PENDING")
+  itemsJson   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([orderNo])
   @@index([createdAt])
 }
 

@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+# Install OpenSSL required by Prisma on Alpine
+RUN apk add --no-cache openssl
+
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable

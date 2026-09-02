@@ -1,0 +1,91 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum TransactionType {
+  YOU_GAVE // You gave credit/goods (Customer owes you - Debit)
+  YOU_GOT  // Customer paid cash/BenefitPay (Payment received - Credit)
+}
+
+enum PaymentType {
+  CASH
+  BENEFIT_PAY
+  BANK_TRANSFER
+  CHEQUE
+  CREDIT
+  UPI
+}
+
+model Customer {
+  id           String        @id @default(uuid())
+  name         String
+  phone        String
+  address      String?
+  currentDue   Decimal       @default(0.000) @db.Decimal(12, 3) // 3 decimal places for Bahraini Dinar (Fils)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+  invoices     Invoice[]
+
+  @@index([phone])
+  @@index([name])
+}
+
+model Transaction {
+  id         String          @id @default(uuid())
+  customerId String
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       TransactionType
+  amount     Decimal         @db.Decimal(12, 3)
+  note       String?
+  createdAt  DateTime        @default(now())
+
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model Invoice {
+  id          String      @id @default(uuid())
+  invoiceNo   String      @unique
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  partyName   String
+  partyPhone  String?
+  itemsJson   String      // Stores line items: [{ name, qty, price, total }]
+  subtotal    Decimal     @db.Decimal(12, 3)
+  tax         Decimal     @default(0.000) @db.Decimal(12, 3)
+  grandTotal  Decimal     @db.Decimal(12, 3)
+  paymentType PaymentType @default(CASH)
+  createdAt   DateTime    @default(now())
+
+  @@index([invoiceNo])
+  @@index([createdAt])
+}
+
+model Purchase {
+  id          String      @id @default(uuid())
+  billNo      String
+  vendorName  String
+  amount      Decimal     @db.Decimal(12, 3)
+  note        String?
+  paymentMode PaymentType @default(CASH)
+  createdAt   DateTime    @default(now())
+
+  @@index([vendorName])
+  @@index([createdAt])
+}
+
+model StoreProfile {
+  id        String   @id @default("default-store")
+  name      String   @default("LAYALI COLD STORE")
+  phone     String   @default("+973 3912 3456")
+  address   String   @default("Seef Mall, Ground Floor, Manama, Kingdom of Bahrain")
+  gstin     String?  @default("CR-104928-1")
+  upiId     String?  @default("+973 3912 3456")
+  updatedAt DateTime @updatedAt
+}

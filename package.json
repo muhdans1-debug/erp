@@ -2,18 +2,52 @@
   "name": "sme-erp-monorepo",
   "version": "1.0.0",
   "private": true,
+  "description": "Layali Cold Store Retail POS and Ledger Suite",
+  "author": "Layali Cold Store",
+  "packageManager": "pnpm@9.12.0",
+  "main": "electron/main.js",
   "scripts": {
     "dev:api": "pnpm --filter @starline/api dev",
-    "dev:pos": "pnpm --filter @starline/pos-desktop dev",
+    "dev:pos": "pnpm --filter @starline/pos dev",
     "dev:mobile": "pnpm --filter @starline/client-mobile dev",
     "build": "turbo run build",
+    "build:pos": "pnpm --filter @starline/pos build",
+    "build:exe": "pnpm build:pos && electron-builder --win",
     "test": "pnpm --filter @starline/api test",
     "test:stress": "pnpm --filter @starline/api test:stress",
     "db:migrate": "pnpm --filter @starline/database migrate",
     "db:generate": "pnpm --filter @starline/database generate"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "electron": "^44.1.0",
+    "electron-builder": "^26.15.3",
     "turbo": "^2.0.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
+  },
+  "build": {
+    "appId": "com.layali.pos",
+    "productName": "Layali POS Suite",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "apps/pos/dist/**/*",
+      "apps/api/**/*",
+      "electron/**/*",
+      "packages/database/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }

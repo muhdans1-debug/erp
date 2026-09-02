@@ -1,0 +1,9 @@
+{
+  "appId": "com.starline.pos",
+  "appName": "Starline POS",
+  "webDir": "dist",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  }
+}

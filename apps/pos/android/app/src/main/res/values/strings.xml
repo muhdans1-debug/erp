@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Starline POS</string>
+    <string name="title_activity_main">Starline POS</string>
+    <string name="package_name">com.starline.pos</string>
+    <string name="custom_url_scheme">com.starline.pos</string>
+</resources>

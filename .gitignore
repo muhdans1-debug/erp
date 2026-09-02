@@ -1,4 +1,14 @@
-
+# Dependencies
 node_modules/
 **/node_modules/
 .pnpm-workspace-state-v1.json
+
+# Build outputs & releases (CRITICAL)
+release/
+dist/
+build/
+*.exe
+*.asarrelease/
+apps/pos/release/
+release/
+apps/api/.env

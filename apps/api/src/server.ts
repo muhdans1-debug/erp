@@ -221,35 +221,6 @@ app.patch('/api/products/:id/stock', { preHandler: [requireManager] }, async (re
   }
 });
 
-// --- ADDITIONAL ERP MODULE ENDPOINTS ---
-app.get('/api/customers', { preHandler: [authenticate] }, async (request, reply) => {
-  const customers = await prisma.customer.findMany({
-    orderBy: { name: 'asc' },
-  });
-  return reply.send({ success: true, customers });
-});
-
-app.get('/api/invoices', { preHandler: [authenticate] }, async (request, reply) => {
-  const invoices = await prisma.invoice.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-  return reply.send({ success: true, invoices });
-});
-
-app.get('/api/purchases', { preHandler: [authenticate] }, async (request, reply) => {
-  const purchases = await prisma.purchase.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-  return reply.send({ success: true, purchases });
-});
-
-app.get('/api/store-profile', { preHandler: [authenticate] }, async (request, reply) => {
-  const profile = await prisma.storeProfile.findUnique({
-    where: { id: 'default-store' },
-  });
-  return reply.send({ success: true, profile });
-});
-
 // --- EOD SALES RECONCILIATION ---
 app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, reply) => {
   const query = request.query as { date?: string };

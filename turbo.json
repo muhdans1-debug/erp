@@ -1,1 +1,12 @@
-﻿{"$schema":"https://turbo.build/schema.json","tasks":{"build":{"dependsOn":["^build"],"outputs":["dist/**",".next/**","build/**"]},"dev":{"cache":false,"persistent":true},"lint":{"dependsOn":["^lint"]},"test":{"cache":false}}}
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "generate": {
+      "cache": false
+    }
+  }
+}

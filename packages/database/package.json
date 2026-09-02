@@ -7,18 +7,18 @@
     "seed": "tsx prisma/seed.ts"
   },
   "scripts": {
-    "build": "prisma generate",
+    "build": "prisma generate && tsc --noEmit",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "seed": "prisma db seed"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0"
+    "@prisma/client": "^5.22.0"
   },
   "devDependencies": {
     "@starline/tsconfig": "workspace:*",
-    "prisma": "^5.14.0",
+    "prisma": "^5.22.0",
     "tsx": "^4.16.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.9.3"
   }
 }

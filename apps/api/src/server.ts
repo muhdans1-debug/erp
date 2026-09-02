@@ -158,6 +158,7 @@ app.post(
   }
 );
 
+// --- PRODUCT & INVENTORY MANAGEMENT ---
 app.get('/api/products', { preHandler: [authenticate] }, async (request, reply) => {
   const products = await prisma.product.findMany({
     where: { tenantId: request.user.tenantId },
@@ -193,12 +194,7 @@ app.post('/api/products', { preHandler: [requireManager] }, async (request, repl
         stockQty,
       },
     });
-
-    return reply.status(201).send({
-      success: true,
-      message: 'Product created successfully',
-      product,
-    });
+    return reply.status(201).send({ success: true, message: 'Product created successfully', product });
   } catch (error: any) {
     request.log.error(error);
     return reply.status(400).send({ success: false, error: 'Product SKU already exists or creation failed' });
@@ -216,22 +212,45 @@ app.patch('/api/products/:id/stock', { preHandler: [requireManager] }, async (re
   try {
     const updated = await prisma.product.update({
       where: { id },
-      data: {
-        stockQty: { increment: adjustmentQty },
-      },
+      data: { stockQty: { increment: adjustmentQty } },
     });
-
-    return reply.send({
-      success: true,
-      message: 'Stock updated successfully',
-      product: updated,
-    });
+    return reply.send({ success: true, message: 'Stock updated successfully', product: updated });
   } catch (error: any) {
     request.log.error(error);
     return reply.status(400).send({ success: false, error: 'Product not found or stock update failed' });
   }
 });
 
+// --- ADDITIONAL ERP MODULE ENDPOINTS ---
+app.get('/api/customers', { preHandler: [authenticate] }, async (request, reply) => {
+  const customers = await prisma.customer.findMany({
+    orderBy: { name: 'asc' },
+  });
+  return reply.send({ success: true, customers });
+});
+
+app.get('/api/invoices', { preHandler: [authenticate] }, async (request, reply) => {
+  const invoices = await prisma.invoice.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
+  return reply.send({ success: true, invoices });
+});
+
+app.get('/api/purchases', { preHandler: [authenticate] }, async (request, reply) => {
+  const purchases = await prisma.purchase.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
+  return reply.send({ success: true, purchases });
+});
+
+app.get('/api/store-profile', { preHandler: [authenticate] }, async (request, reply) => {
+  const profile = await prisma.storeProfile.findUnique({
+    where: { id: 'default-store' },
+  });
+  return reply.send({ success: true, profile });
+});
+
+// --- EOD SALES RECONCILIATION ---
 app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, reply) => {
   const query = request.query as { date?: string };
   const targetDate = query.date ? new Date(query.date) : new Date();
@@ -246,10 +265,7 @@ app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, re
     const orders = await prisma.order.findMany({
       where: {
         tenantId: request.user.tenantId,
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay,
-        },
+        createdAt: { gte: startOfDay, lte: endOfDay },
       },
       include: { items: true },
     });

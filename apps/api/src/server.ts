@@ -17,7 +17,6 @@ declare module '@fastify/jwt' {
   }
 }
 
-// Tell Fastify to ignore trailing slashes to prevent silly 404s
 const app = Fastify({ logger: true, ignoreTrailingSlash: true });
 
 app.register(cors, { origin: true, credentials: true });
@@ -123,31 +122,6 @@ app.patch('/api/products/:id/stock', { preHandler: [requireManager] }, async (re
   }
 });
 
-// RESTORED: The endpoints accidentally removed during the duplicate route fix
-app.get('/api/overview', { preHandler: [authenticate] }, async (request, reply) => {
-  const totalProducts = await prisma.product.count({ where: { tenantId: request.user.tenantId } });
-  const totalOrders = await prisma.order.count({ where: { tenantId: request.user.tenantId } });
-  return reply.send({ success: true, data: { totalProducts, totalOrders } });
-});
-
-app.get('/api/invoices', { preHandler: [authenticate] }, async (request, reply) => {
-  const invoices = await prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } });
-  return reply.send({ success: true, invoices });
-});
-
-app.get('/api/purchases', { preHandler: [authenticate] }, async (request, reply) => {
-  const purchases = await prisma.purchase.findMany({ orderBy: { createdAt: 'desc' } });
-  return reply.send({ success: true, purchases });
-});
-
-app.get('/api/store-profile', { preHandler: [authenticate] }, async (request, reply) => {
-  let profile = await prisma.storeProfile.findUnique({ where: { id: 'default-store' } });
-  if (!profile) {
-    profile = await prisma.storeProfile.create({ data: { id: 'default-store' } });
-  }
-  return reply.send({ success: true, profile });
-});
-
 app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, reply) => {
   const query = request.query as { date?: string };
   const targetDate = query.date ? new Date(query.date) : new Date();
@@ -175,11 +149,8 @@ const start = async () => {
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8010;
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`Fastify API Server running on http://0.0.0.0:${port}`);
-    
-    // Print the active route tree to debug what endpoints actually exist
     console.log("=== REGISTERED ROUTES ===");
     console.log(app.printRoutes());
-    
   } catch (err) {
     app.log.error(err);
     process.exit(1);

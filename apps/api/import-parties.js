@@ -8,7 +8,7 @@ const partiesToImport = [
 ];
 
 async function bulkImport() {
-  const API_URL = 'https://layali-git.up.railway.app/api/customers';
+  const API_URL = 'https://layali-git-8010.up.railway.app/api/customers';
 
   for (const party of partiesToImport) {
     try {

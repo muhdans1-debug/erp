@@ -1,6 +1,5 @@
 FROM node:20-alpine
 
-# Install OpenSSL required by Prisma on Alpine
 RUN apk add --no-cache openssl
 
 ENV PNPM_HOME="/pnpm"
@@ -12,8 +11,7 @@ COPY . .
 
 RUN pnpm install
 RUN pnpm --filter @starline/database generate
-RUN pnpm --filter @starline/database build
-RUN pnpm --filter @starline/api build
+RUN pnpm build
 
 EXPOSE 8010
 ENV PORT=8010

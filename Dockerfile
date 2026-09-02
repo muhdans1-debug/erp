@@ -9,7 +9,8 @@ COPY . .
 
 RUN pnpm install
 RUN pnpm --filter @starline/database generate
-RUN pnpm --filter @starline/api exec tsc -b
+RUN pnpm --filter @starline/database build
+RUN pnpm --filter @starline/api build
 
 EXPOSE 8010
 ENV PORT=8010

@@ -7,7 +7,6 @@ import { prisma } from '@starline/database';
 import { ProcessSaleInputSchema } from '@starline/contracts';
 import khataRoutes from './routes/khata';
 
-// Extend Fastify types for JWT payload
 declare module '@fastify/jwt' {
   interface FastifyJWT {
     user: {
@@ -20,13 +19,11 @@ declare module '@fastify/jwt' {
 
 const app = Fastify({ logger: true });
 
-// 1. Core Plugins
 app.register(cors, { origin: true, credentials: true });
 app.register(fastifyJwt, {
   secret: process.env.JWT_SECRET || 'super-secret-secure-erp-token-key-32chars',
 });
 
-// 2. Auth Middleware Helpers
 const authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
   try {
     await request.jwtVerify();
@@ -42,15 +39,12 @@ const requireManager = async (request: FastifyRequest, reply: FastifyReply) => {
   }
 };
 
-// 3. Register Modular Khata / Ledger Plugin
 app.register(khataRoutes, { prefix: '/api' });
 
-// Health Check
 app.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
-// --- AUTHENTICATION ---
 app.post('/api/auth/login', async (request, reply) => {
   const { email, password } = request.body as { email?: string; password?: string };
 
@@ -77,7 +71,6 @@ app.post('/api/auth/login', async (request, reply) => {
   });
 });
 
-// --- POS CHECKOUT ENGINE ---
 app.post(
   '/api/pos/checkout',
   { preHandler: [authenticate] },
@@ -122,8 +115,12 @@ app.post(
 
           orderItemsData.push({
             productId: product.id,
+            name: product.name,
+            qty: item.quantity,
             quantity: item.quantity,
             unitPrice: product.price,
+            price: product.price,
+            total: lineTotal,
           });
         }
 
@@ -133,8 +130,8 @@ app.post(
         const order = await tx.order.create({
           data: {
             tenantId: data.tenantId,
-            clientId: data.clientId,
-            paymentMethod: data.paymentMethod,
+            customerId: (data as any).customerId || (data as any).clientId,
+            paymentMethod: data.paymentMethod as any,
             totalAmount: grandTotal,
             status: data.paymentMethod === 'CREDIT_LEDGER' ? 'PENDING' : 'COMPLETED',
             items: { create: orderItemsData },
@@ -160,9 +157,6 @@ app.post(
   }
 );
 
-// --- PRODUCT & INVENTORY MANAGEMENT ---
-
-// List Products
 app.get('/api/products', { preHandler: [authenticate] }, async (request, reply) => {
   const products = await prisma.product.findMany({
     where: { tenantId: request.user.tenantId },
@@ -176,7 +170,6 @@ app.get('/api/products', { preHandler: [authenticate] }, async (request, reply) 
   });
 });
 
-// Create Product (Manager only)
 app.post('/api/products', { preHandler: [requireManager] }, async (request, reply) => {
   const { sku, name, price, stockQty } = request.body as {
     sku: string;
@@ -211,7 +204,6 @@ app.post('/api/products', { preHandler: [requireManager] }, async (request, repl
   }
 });
 
-// Restock Inventory (Manager only)
 app.patch('/api/products/:id/stock', { preHandler: [requireManager] }, async (request, reply) => {
   const { id } = request.params as { id: string };
   const { adjustmentQty } = request.body as { adjustmentQty?: number };
@@ -239,7 +231,6 @@ app.patch('/api/products/:id/stock', { preHandler: [requireManager] }, async (re
   }
 });
 
-// --- EOD SALES RECONCILIATION ---
 app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, reply) => {
   const query = request.query as { date?: string };
   const targetDate = query.date ? new Date(query.date) : new Date();
@@ -300,7 +291,6 @@ app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, re
   }
 });
 
-// Server Initialization (Updated fallback port to 8010 to match deployment proxy)
 const start = async () => {
   try {
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8010;

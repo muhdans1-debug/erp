@@ -300,10 +300,10 @@ app.get('/api/reports/eod', { preHandler: [requireManager] }, async (request, re
   }
 });
 
-// Server Initialization
+// Server Initialization (Updated fallback port to 8010 to match deployment proxy)
 const start = async () => {
   try {
-    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8010;
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`Fastify API Server running on http://0.0.0.0:${port}`);
   } catch (err) {

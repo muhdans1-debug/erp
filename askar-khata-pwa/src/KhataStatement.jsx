@@ -7,8 +7,8 @@ export function KhataStatement() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    // Call live Cloudflare Worker Edge API
-    fetch(`https://askar-khata-api.knowledgeable-rowboat.workers.dev/api/khata/${uuid}`)
+    // Call live Unified Fastify Vercel Serverless API
+    fetch(`/api/khata/${uuid}`)
       .then(res => {
         if (!res.ok) throw new Error("Not Found");
         return res.json();

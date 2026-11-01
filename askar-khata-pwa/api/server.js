@@ -83,6 +83,52 @@ fastify.post('/api/auth/verify', async (request, reply) => {
   }
 });
 
+// ROUTE: Customer Self-Service Change PIN
+fastify.post('/api/auth/change-pin', async (request, reply) => {
+  try {
+    const { uuid, customerUuid, oldPin, newPin } = request.body || {};
+    const targetId = uuid || customerUuid;
+
+    if (!targetId || !oldPin || !newPin) {
+      return reply.status(400).send({ error: 'Customer ID, current PIN, and new PIN are required' });
+    }
+
+    const cleanOldPin = String(oldPin).trim();
+    const cleanNewPin = String(newPin).trim();
+
+    if (cleanNewPin.length !== 4 || !/^\d{4}$/.test(cleanNewPin)) {
+      return reply.status(400).send({ error: 'New PIN must be exactly 4 numeric digits' });
+    }
+
+    // 1. Verify current PIN against KhataCustomer
+    const verify = await db.execute({
+      sql: 'SELECT id, pin FROM KhataCustomer WHERE id = ? OR access_token = ? LIMIT 1',
+      args: [targetId, targetId]
+    });
+
+    if (!verify.rows || verify.rows.length === 0) {
+      return reply.status(404).send({ error: 'Account Not Found' });
+    }
+
+    const currentCustomerPin = verify.rows[0].pin ? String(verify.rows[0].pin).trim() : '1234';
+
+    if (currentCustomerPin !== cleanOldPin) {
+      return reply.status(401).send({ error: 'Current PIN is incorrect' });
+    }
+
+    // 2. Update to the new PIN
+    await db.execute({
+      sql: 'UPDATE KhataCustomer SET pin = ? WHERE id = ? OR access_token = ?',
+      args: [cleanNewPin, targetId, targetId]
+    });
+
+    return reply.send({ success: true, message: 'PIN updated successfully' });
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.status(500).send({ error: error.message || 'Failed to update PIN' });
+  }
+});
+
 // Khata Customer Statement Endpoint
 fastify.get('/api/khata/:uuid', async (request, reply) => {
   const { uuid } = request.params;

@@ -16,6 +16,12 @@ export function KhataStatement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
+  // Self-service PIN change states
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [pinMessage, setPinMessage] = useState('');
+  const [isChangingPin, setIsChangingPin] = useState(false);
+
   // Fetch statement data once authenticated
   const fetchStatement = useCallback(() => {
     setLoading(true);
@@ -84,6 +90,42 @@ export function KhataStatement() {
     setPin('');
     setPinError('');
     setAccount(null);
+  };
+
+  const handleChangePin = async (e) => {
+    if (e) e.preventDefault();
+    if (!oldPin || oldPin.length !== 4) {
+      setPinMessage('❌ Please enter your current 4-digit PIN');
+      return;
+    }
+    if (!newPin || newPin.length !== 4) {
+      setPinMessage('❌ New PIN must be exactly 4 digits');
+      return;
+    }
+
+    setIsChangingPin(true);
+    setPinMessage('');
+
+    try {
+      const response = await fetch('/api/auth/change-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid, oldPin, newPin })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setPinMessage('✅ PIN successfully changed!');
+        setOldPin('');
+        setNewPin('');
+      } else {
+        setPinMessage('❌ ' + (data.error || 'Failed to update PIN'));
+      }
+    } catch {
+      setPinMessage('❌ Connection error. Please try again.');
+    } finally {
+      setIsChangingPin(false);
+    }
   };
 
   // ----------------------------------------------------
@@ -323,6 +365,63 @@ export function KhataStatement() {
       >
         Pay via BenefitPay
       </button>
+
+      {/* Customer Self-Service Change PIN */}
+      <div className="mt-8 p-6 bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-800 w-full max-w-md">
+        <div className="flex items-center gap-2 mb-2">
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+          <h3 className="text-lg font-bold text-white tracking-tight">Change Security PIN</h3>
+        </div>
+        <p className="text-xs text-slate-400 mb-4">
+          Replace your current 4-digit PIN with a confidential code of your choice.
+        </p>
+
+        <form onSubmit={handleChangePin} className="flex flex-col space-y-3">
+          <div>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Current PIN</label>
+            <input 
+              type="password" 
+              placeholder="Current PIN (e.g., 1234)" 
+              maxLength={4}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="p-3 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none w-full font-mono text-center tracking-widest text-lg"
+              value={oldPin}
+              onChange={(e) => setOldPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          </div>
+
+          <div>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">New 4-Digit PIN</label>
+            <input 
+              type="password" 
+              placeholder="New 4-Digit PIN" 
+              maxLength={4}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="p-3 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none w-full font-mono text-center tracking-widest text-lg"
+              value={newPin}
+              onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+          </div>
+
+          <button 
+            type="submit"
+            disabled={isChangingPin || oldPin.length !== 4 || newPin.length !== 4}
+            className="mt-2 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all text-white font-bold py-3.5 rounded-xl border border-slate-700 shadow cursor-pointer text-sm"
+          >
+            {isChangingPin ? 'Updating PIN...' : 'Update PIN'}
+          </button>
+
+          {pinMessage && (
+            <div className={`mt-2 p-2.5 rounded-xl text-center text-xs font-semibold ${pinMessage.startsWith('✅') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'}`}>
+              {pinMessage}
+            </div>
+          )}
+        </form>
+      </div>
 
       <p className="mt-6 text-gray-400 text-sm">Official Digital Statement • Askar Supermarket</p>
     </div>

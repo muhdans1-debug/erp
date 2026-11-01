@@ -5624,3 +5624,44 @@ Implemented in [`askar-khata-pwa/src/KhataStatement.jsx`](file:///c:/Users/ACER/
   Response: 401 Unauthorized -> { "success": false, "error": "Incorrect PIN" }
   ```
 
+---
+
+### 6. Customer Self-Service PIN Change Lifecycle
+To transition customers from the initial factory default PIN (`1234`) to private credentials, a self-service PIN change workflow was deployed to the Vercel monorepo:
+
+1. **Backend Route (`POST /api/auth/change-pin`):**
+   - Implemented in [`askar-khata-pwa/api/server.js`](file:///c:/Users/ACER/Desktop/erp/askar-khata-pwa/api/server.js).
+   - Validates that the submitted current PIN matches `KhataCustomer.pin` in Turso.
+   - Requires the new PIN to be exactly 4 numeric digits.
+   - Executes `UPDATE KhataCustomer SET pin = ? WHERE id = ? OR access_token = ?`.
+   - Returns `{ success: true, message: 'PIN updated successfully' }`.
+
+2. **Customer Statement UI Integration:**
+   - Implemented in [`askar-khata-pwa/src/KhataStatement.jsx`](file:///c:/Users/ACER/Desktop/erp/askar-khata-pwa/src/KhataStatement.jsx).
+   - Rendered directly inside the authenticated dashboard below the BenefitPay payment trigger.
+   - Provides masked 4-digit numeric inputs for both current and new PINs with immediate validation and status alerts.
+
+3. **Live Cloud Lifecycle Verification:**
+   ```bash
+   # 1. Invalid Old PIN rejection
+   POST https://askar-khata-pwa.vercel.app/api/auth/change-pin
+   Body: { "uuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "oldPin": "0000", "newPin": "9999" }
+   Response: 401 Unauthorized -> { "error": "Current PIN is incorrect" }
+
+   # 2. Successful PIN update to 9999
+   POST https://askar-khata-pwa.vercel.app/api/auth/change-pin
+   Body: { "uuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "oldPin": "1234", "newPin": "9999" }
+   Response: 200 OK -> { "success": true, "message": "PIN updated successfully" }
+
+   # 3. Old PIN (1234) immediately invalidated
+   POST https://askar-khata-pwa.vercel.app/api/auth/verify
+   Body: { "customerUuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "pin": "1234" }
+   Response: 401 Unauthorized -> { "success": false, "error": "Incorrect PIN" }
+
+   # 4. New PIN (9999) issues fresh 90-day JWT
+   POST https://askar-khata-pwa.vercel.app/api/auth/verify
+   Body: { "customerUuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "pin": "9999" }
+   Response: 200 OK -> { "success": true, "token": "...", "customerName": "Thhnj" }
+   ```
+
+

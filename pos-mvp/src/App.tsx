@@ -11,6 +11,7 @@ import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
 import { useSunmiBridge } from './hooks/useSunmiBridge';
 import { printFullReceipt } from './utils/printer';
+import { Printer } from 'capacitor-sunmi-printer';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
@@ -103,11 +104,16 @@ export default function App() {
   // Eagerly launch the Customer Display on Sunmi's secondary 800x480 HDMI Screen
   useEffect(() => {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-    if (isNative && !isCustomerDisplayRoute) {
-      try {
-        CustomerDisplay.openUrl({ url: 'http://localhost/?view=customer-display' }).catch(() => {});
-      } catch (e) {
-        console.warn('CustomerDisplay openUrl error', e);
+    if (isNative) {
+      if (typeof Printer !== 'undefined') {
+        Printer.initPrinter?.().catch(() => {});
+      }
+      if (!isCustomerDisplayRoute) {
+        try {
+          CustomerDisplay.openUrl({ url: 'http://localhost/?view=customer-display' }).catch(() => {});
+        } catch (e) {
+          console.warn('CustomerDisplay openUrl error', e);
+        }
       }
     }
   }, []);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Search, 
   RefreshCw, 
@@ -22,6 +22,26 @@ export default function KhataLedger({ apiBase = 'http://localhost:3000' }: Khata
   const [statementCustomer, setStatementCustomer] = useState<any | null>(null);
   const [statementSales, setStatementSales] = useState<any[]>([]);
   const [loadingStatement, setLoadingStatement] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // Client-side date range filtering for dispute resolution & targeted monthly thermal printing
+  const filteredStatement = useMemo(() => {
+    if (!statementSales) return [];
+
+    return statementSales.filter((tx) => {
+      if (!startDate && !endDate) return true;
+
+      const dateStr = tx.created_at || tx.timestamp || tx.createdAt;
+      const txDate = new Date(dateStr);
+      const start = startDate ? new Date(startDate) : new Date('2000-01-01');
+      const end = endDate ? new Date(endDate) : new Date('2100-01-01');
+
+      if (endDate) end.setHours(23, 59, 59, 999);
+
+      return txDate >= start && txDate <= end;
+    });
+  }, [statementSales, startDate, endDate]);
 
   const loadCustomers = () => {
     fetch(`${apiBase}/khata/ledger?sort=highest`)
@@ -282,7 +302,7 @@ export default function KhataLedger({ apiBase = 'http://localhost:3000' }: Khata
                   type="button"
                   onClick={async () => {
                     if (!statementCustomer) return;
-                    const formattedStatement = statementSales.map((s) => ({
+                    const formattedStatement = filteredStatement.map((s) => ({
                       id: s.id,
                       amount: Number(s.amount ?? s.total ?? 0),
                       type: s.type || s.paymentType || 'CHARGE',
@@ -305,7 +325,11 @@ export default function KhataLedger({ apiBase = 'http://localhost:3000' }: Khata
                   <Printer size={14} /> Print Statement Slip
                 </button>
                 <button
-                  onClick={() => setStatementCustomer(null)}
+                  onClick={() => {
+                    setStatementCustomer(null);
+                    setStartDate('');
+                    setEndDate('');
+                  }}
                   className="p-2 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors cursor-pointer"
                 >
                   <X size={20} />
@@ -313,47 +337,131 @@ export default function KhataLedger({ apiBase = 'http://localhost:3000' }: Khata
               </div>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto flex-1">
+            {/* Modal Body with Date Filter Control Bar & Data Table */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              {/* Admin Control Bar */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap justify-between items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-slate-800">Ledger History</h4>
+                  <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">
+                    {filteredStatement.length} Entries
+                  </span>
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase">FROM</label>
+                    <input 
+                      type="date" 
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white font-medium"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase">TO</label>
+                    <input 
+                      type="date" 
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white font-medium"
+                    />
+                  </div>
+
+                  {(startDate || endDate) && (
+                    <button 
+                      type="button"
+                      onClick={() => { setStartDate(''); setEndDate(''); }}
+                      className="text-red-600 hover:text-red-800 text-xs font-bold px-1.5 py-1 cursor-pointer transition-colors"
+                    >
+                      Clear Filters
+                    </button>
+                  )}
+
+                  {/* Pass the FILTERED statement to thermal printer function */}
+                  <button 
+                    type="button"
+                    onClick={async () => {
+                      if (!statementCustomer) return;
+                      const formattedStatement = filteredStatement.map((s) => ({
+                        id: s.id,
+                        amount: Number(s.amount ?? s.total ?? 0),
+                        type: s.type || s.paymentType || 'CHARGE',
+                        reference: s.reference || s.invoiceNo || 'Store Purchase',
+                        formattedDate: s.formattedDate || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleDateString(),
+                        formattedTime: s.formattedTime || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        runningBalance: Number(s.running_balance ?? s.runningBalance ?? s.total ?? 0)
+                      }));
+                      await printKhataStatement({
+                        customerName: statementCustomer.name,
+                        customerPhone: statementCustomer.phone,
+                        customerCpr: statementCustomer.cpr,
+                        statement: formattedStatement,
+                        currentBalance: statementCustomer.currentBalance
+                      });
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                  >
+                    <Printer size={13} />
+                    <span>Print Filtered Statement</span>
+                  </button>
+                </div>
+              </div>
+
               {loadingStatement ? (
                 <div className="py-12 text-center text-slate-400">Loading customer transactions...</div>
-              ) : statementSales.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 font-medium">No transactions recorded for this customer yet.</div>
               ) : (
-                <div className="bg-slate-900 rounded-xl overflow-hidden border border-gray-800 shadow-md divide-y divide-gray-700">
-                  {/* Inside your Khata Statement Modal */}
-                  {statementSales.map((row) => {
-                    const isPayment = row.type === 'PAYMENT';
-                    const isWriteOff = row.type === 'WRITE_OFF';
-                    const dateStr = row.created_at || row.timestamp || row.createdAt;
-                    const dateObj = dateStr ? new Date(dateStr) : new Date();
-                    const refText = row.reference || (row.type === 'CHARGE' ? (row.invoiceNo || `INV-${String(row.id).slice(0, 6)}`) : (isWriteOff ? 'Bad Debt Write-Off' : 'Cash Payment'));
-                    const amtVal = Number(row.amount ?? row.total ?? 0);
-                    const balVal = Number(row.running_balance ?? row.runningBalance ?? 0);
+                /* Admin Data Table */
+                <div className="bg-white rounded-xl shadow-xs overflow-hidden border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Ref / Invoice</th>
+                        <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Charge/Credit</th>
+                        <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Running Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-slate-200">
+                      {filteredStatement.map((tx: any) => {
+                        const isPayment = tx.type === 'PAYMENT';
+                        const isWriteOff = tx.type === 'WRITE_OFF';
+                        const dateStr = tx.created_at || tx.timestamp || tx.createdAt;
+                        const refText = tx.reference || (tx.type === 'CHARGE' ? (tx.invoiceNo || `INV-${String(tx.id).slice(0, 6)}`) : (isWriteOff ? 'Bad Debt Write-Off' : 'Cash Payment'));
+                        const amtVal = Number(tx.amount ?? tx.total ?? 0);
+                        const balVal = Number(tx.running_balance ?? tx.runningBalance ?? 0);
 
-                    return (
-                      <div key={row.id} className="flex justify-between items-center p-3.5 hover:bg-slate-800/60 transition-colors">
-                        <div>
-                          <p className="text-gray-400 text-xs font-mono">{dateObj.toLocaleDateString()}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <p className="text-white text-sm font-semibold">{refText}</p>
-                            {isWriteOff && (
-                              <span className="text-[10px] bg-purple-900 text-purple-200 border border-purple-600 px-1.5 py-0.5 rounded font-black">
-                                WRITE-OFF
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          {/* Show charges in red (+), payments in green (-) */}
-                          <p className={`font-mono font-bold text-sm ${isPayment || isWriteOff ? 'text-emerald-500' : 'text-red-400'}`}>
-                            {isPayment || isWriteOff ? '-' : '+'} BHD {amtVal.toFixed(3)}
-                          </p>
-                          <p className="text-gray-500 text-sm font-mono">Bal: BHD {balVal.toFixed(3)}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                        return (
+                          <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-mono">
+                              {dateStr ? new Date(dateStr).toLocaleString('en-GB') : '-'}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-xs font-medium text-slate-900">
+                              <span>{refText}</span>
+                              {isWriteOff && (
+                                <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">
+                                  WRITE-OFF
+                                </span>
+                              )}
+                            </td>
+                            <td className={`px-4 py-3 whitespace-nowrap text-xs font-bold text-right font-mono ${isPayment || isWriteOff ? 'text-green-600' : 'text-red-600'}`}>
+                              {isPayment || isWriteOff ? '-' : '+'}{amtVal.toFixed(3)}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-900 font-bold text-right font-mono">
+                              {balVal.toFixed(3)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  
+                  {filteredStatement.length === 0 && (
+                    <div className="p-8 text-center text-slate-500 font-medium text-sm">
+                      No records found for the selected date range.
+                    </div>
+                  )}
                 </div>
               )}
             </div>

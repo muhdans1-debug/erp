@@ -2102,6 +2102,21 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
           </button>
           <button 
             type="button"
+            onClick={async () => {
+              const ok = await kickCashDrawer();
+              if (ok) {
+                showToast('⚡ Cash Drawer kicked successfully', 'success');
+              } else {
+                showToast('⚠️ Cash Drawer kick failed', 'error');
+              }
+            }}
+            className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            title="Manual Cash Drawer Kick [No Sale]"
+          >
+            Drawer
+          </button>
+          <button 
+            type="button"
             onClick={() => setShowBlindCloseModal(true)}
             className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
             title="Perform Blind End-of-Shift Cash Reconciliation"

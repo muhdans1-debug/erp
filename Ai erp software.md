@@ -5100,3 +5100,181 @@ export const processRefund = async (scannedInvoiceNumber: string, currentShiftId
 
 
 
+
+
+---
+
+## 29. Back-Office Ledger Date Filtering & Targeted Thermal Printing
+
+### 1. Architectural Overview & Reconciliation Workflow
+In high-volume retail environments where camp mess groups and workers run revolving monthly credit tabs (Khata), ledger histories quickly exceed dozens or hundreds of line items per account. 
+
+Printing an entire lifetime ledger or displaying unsorted multi-month records causes two major friction points:
+1. **Dispute Resolution Delays:** When a customer questions an item from "two weeks ago" or demands to see only "October 2026", scanning through a 200-row table on a POS terminal is error-prone.
+2. **Thermal Paper Waste:** Printing 6 months of historical transactions on a 58mm Sunmi roll wastes meters of receipt paper and takes 30+ seconds of print head runtime.
+
+By adding a client-side date filter bar to both the standalone Khata Ledger view (`KhataLedger.tsx`) and the Manager Dashboard customer profile modal (`ManagerDashboard.tsx`), store managers can isolate transactions by month or custom date bracket with zero network latency, while sending only the filtered subset directly to the thermal printer.
+
+```
++-------------------------------------------------------------------------------+
+|                       Back-Office Turso SQLite Ledger                         |
+|                         (Full Customer Tx History)                            |
++---------------------------------------+---------------------------------------+
+                                        |
+                                        v
+                 [ useMemo Client-Side Date Range Filter ]
+                   Start: 2026-10-01  |  End: 2026-10-31
+                                        |
+                   +--------------------+--------------------+
+                   |                                         |
+                   v                                         v
+   +-------------------------------+       +-------------------------------+
+   |      Admin Control Table      |       |  Sunmi 58mm Thermal Printer   |
+   | - Filtered Rows (Charges/Cr)  |       | - Header: Filter Date Range   |
+   | - Running Balance Track       |       | - Targeted Month Ledger Items |
+   | - Instant Clear / Reset       |       | - Period Net & Closing Bal    |
+   +-------------------------------+       +-------------------------------+
+```
+
+---
+
+### 2. React Client-Side Filtering Implementation (`useMemo`)
+Because the back-office terminal pulls customer ledgers directly from local Turso SQLite (or the Fastify API cache), client-side memoization delivers instant UI responsiveness without round-trip SQL queries:
+
+```typescript
+import { useState, useMemo } from 'react';
+
+// Inside Admin Customer Profile / Statement Modal Component:
+const [startDate, setStartDate] = useState('');
+const [endDate, setEndDate] = useState('');
+
+// Assumes 'customerStatement' is the full array of ledger records fetched from Turso SQLite
+const filteredStatement = useMemo(() => {
+  if (!customerStatement || !Array.isArray(customerStatement)) return [];
+  
+  return customerStatement.filter(tx => {
+    if (!startDate && !endDate) return true;
+    
+    // Safely parse timestamp across schema variations (created_at, timestamp, createdAt)
+    const rawDate = tx.created_at || tx.timestamp || tx.createdAt;
+    const txDate = rawDate ? new Date(rawDate) : new Date(0);
+    
+    const start = startDate ? new Date(startDate) : new Date('2000-01-01');
+    const end = endDate ? new Date(endDate) : new Date('2100-01-01');
+    
+    // Crucial: Set end date boundary to 23:59:59.999 so all transactions on that calendar day are captured
+    if (endDate) {
+      end.setHours(23, 59, 59, 999);
+    }
+
+    return txDate >= start && txDate <= end;
+  });
+}, [customerStatement, startDate, endDate]);
+```
+
+---
+
+### 3. Back-Office UI Integration: Admin Control Bar & Table
+The admin layout takes full advantage of the screen real estate with professional controls, badge count indicators, clear filter shortcuts, and direct thermal print triggers:
+
+```tsx
+{/* Admin Control Bar */}
+<div className="bg-gray-50 p-4 rounded-t-xl border-b border-gray-200 flex flex-wrap justify-between items-center gap-4">
+  <div>
+    <h2 className="text-xl font-bold text-gray-800">Ledger History</h2>
+    <p className="text-xs text-gray-500">
+      Showing {filteredStatement.length} of {customerStatement.length} total entries
+      {(startDate || endDate) && <span className="ml-1 text-blue-600 font-semibold">(Filtered)</span>}
+    </p>
+  </div>
+  
+  <div className="flex flex-wrap items-center gap-3">
+    <div className="flex items-center gap-2">
+      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">From</label>
+      <input 
+        type="date" 
+        value={startDate}
+        onChange={(e) => setStartDate(e.target.value)}
+        className="border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+      />
+    </div>
+    
+    <div className="flex items-center gap-2">
+      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">To</label>
+      <input 
+        type="date" 
+        value={endDate}
+        onChange={(e) => setEndDate(e.target.value)}
+        className="border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+      />
+    </div>
+
+    {(startDate || endDate) && (
+      <button 
+        onClick={() => { setStartDate(''); setEndDate(''); }}
+        className="text-red-600 hover:text-red-800 text-sm font-semibold px-2 py-1 transition"
+      >
+        Clear Filters
+      </button>
+    )}
+
+    {/* Pass the FILTERED statement array into the thermal printer function */}
+    <button 
+      onClick={() => printKhataStatement(filteredStatement, activeCustomer, { startDate, endDate })}
+      className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-2 px-4 rounded shadow transition flex items-center gap-2"
+    >
+      <span>🖨️</span> Print Filtered Statement
+    </button>
+  </div>
+</div>
+
+{/* Admin Data Table */}
+<div className="bg-white rounded-b-xl shadow overflow-x-auto">
+  <table className="min-w-full divide-y divide-gray-200 text-sm">
+    <thead className="bg-gray-100">
+      <tr>
+        <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase tracking-wider">Date</th>
+        <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase tracking-wider">Ref / Invoice</th>
+        <th className="px-6 py-3 text-right font-bold text-gray-500 uppercase tracking-wider">Charge / Credit</th>
+        <th className="px-6 py-3 text-right font-bold text-gray-500 uppercase tracking-wider">Running Balance</th>
+      </tr>
+    </thead>
+    <tbody className="divide-y divide-gray-200">
+      {filteredStatement.length === 0 ? (
+        <tr>
+          <td colSpan={4} className="px-6 py-8 text-center text-gray-400">
+            No transactions found within the selected date range.
+          </td>
+        </tr>
+      ) : (
+        filteredStatement.map((tx) => (
+          <tr key={tx.id} className="hover:bg-gray-50 transition">
+            <td className="px-6 py-3 whitespace-nowrap text-gray-700">
+              {new Date(tx.created_at || tx.timestamp).toLocaleDateString('en-GB')}
+            </td>
+            <td className="px-6 py-3 font-mono font-bold text-gray-900">
+              {tx.invoice_ref || tx.reference || tx.id}
+            </td>
+            <td className={`px-6 py-3 text-right font-bold ${tx.type === 'PAYMENT' || tx.amount < 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {tx.type === 'PAYMENT' || tx.amount < 0 ? '-' : '+'}
+              {Math.abs(tx.amount).toFixed(3)} BHD
+            </td>
+            <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
+              {Number(tx.running_balance || tx.balanceAfter || 0).toFixed(3)} BHD
+            </td>
+          </tr>
+        ))
+      )}
+    </tbody>
+  </table>
+</div>
+```
+
+---
+
+### 4. Targeted Thermal Statement Printing
+Instead of spooling the entire database history through the Sunmi 58mm printer, passing `filteredStatement` prints a concise, NBR-compliant reconciliation receipt:
+
+1. **Header Statement Range:** Prints `PERIOD: [START] TO [END]` or `STATEMENT: ALL TIME` at the top of the ESC/POS receipt.
+2. **Subtotal by Filter Period:** Automatically tallies `Total Purchases (+)` and `Total Payments (-)` within the selected dates.
+3. **Closing Tab Balance:** Prints the customer's current total unsettled Khata balance at the bottom alongside the BenefitPay QR code for immediate clearing.

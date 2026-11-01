@@ -6,16 +6,65 @@ import { db } from '../db';
 
 /**
  * Native Sunmi AIDL Cash Box / Drawer Kick
- * Triggers the RJ11 cash drawer solenoid connected to the Sunmi terminal.
+ * Triggers the RJ11/RJ12 cash drawer solenoid connected to the Sunmi terminal.
+ * Combines native AIDL openDrawer() and universal ESC/POS hardware kick pulses
+ * (Pin 2 standard 24V, Pin 5 reverse 12V, and DLE DC4 real-time kick).
  */
 export const kickCashDrawer = async (): Promise<boolean> => {
   try {
-    // The Sunmi SDK method to fire the RJ11 electrical pulse
-    if (typeof Printer !== 'undefined' && typeof Printer.openCashBox === 'function') {
-      await Printer.openCashBox();
-      console.log('⚡ [Sunmi Hardware] Cash box kicked successfully via AIDL RJ11 pulse');
-      return true;
+    if (typeof Printer === 'undefined') {
+      console.warn('⚠️ [Sunmi Hardware] Printer plugin not available in this environment');
+      return false;
     }
+
+    // 1. Mandatory: Ensure Sunmi AIDL printer service is initialized & bound
+    if (typeof Printer.initPrinter === 'function') {
+      try {
+        await Printer.initPrinter();
+      } catch (initErr) {
+        console.warn('⚠️ [Sunmi Hardware] initPrinter warning:', initErr);
+      }
+    }
+
+    // Allow brief tick for Android IPC service connection binding
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    let triggered = false;
+
+    // 2. Primary: Sunmi AIDL Native openDrawer() call
+    if (typeof Printer.openCashBox === 'function') {
+      try {
+        await Printer.openCashBox();
+        console.log('⚡ [Sunmi Hardware] Cash box kicked via AIDL openCashBox()');
+        triggered = true;
+      } catch (boxErr) {
+        console.warn('⚠️ [Sunmi Hardware] openCashBox error:', boxErr);
+      }
+    }
+
+    // 3. Universal Fallback: Send ESC/POS hardware kick pulses through printer buffer
+    // Pin 2 (Standard Epson 24V): ESC p 0 30 255 -> base64: G3AAHv8=
+    // Pin 5 (Star / Reverse 12V): ESC p 1 30 255 -> base64: G3ABHv8=
+    // Sunmi real-time drawer pulse: DLE DC4 1 0 5 -> base64: EBQBAAU=
+    if (typeof Printer.sendRAWData === 'function') {
+      try {
+        if (typeof Printer.enterPrinterBuffer === 'function') {
+          await Printer.enterPrinterBuffer({ clean: true });
+        }
+        await Printer.sendRAWData({ base64Data: 'G3AAHv8=' }); // Pin 2 kick
+        await Printer.sendRAWData({ base64Data: 'G3ABHv8=' }); // Pin 5 kick
+        await Printer.sendRAWData({ base64Data: 'EBQBAAU=' }); // Sunmi DLE DC4 kick
+        if (typeof Printer.exitPrinterBuffer === 'function') {
+          await Printer.exitPrinterBuffer({ commit: true });
+        }
+        console.log('⚡ [Sunmi Hardware] Cash box kicked via ESC/POS raw pulse sequences');
+        triggered = true;
+      } catch (rawErr) {
+        console.warn('⚠️ [Sunmi Hardware] sendRAWData drawer kick error:', rawErr);
+      }
+    }
+
+    return triggered;
   } catch (error) {
     console.error('Cash Drawer Error: ', error);
   }

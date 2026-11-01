@@ -680,8 +680,13 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${apiBase}/api/reports/financials?period=${period}`)
-      .then((res) => res.json())
+    fetch(`${apiBase}/api/reports/financials?period=${period}`, {
+      headers: { 'x-manager-pin': '9999' }
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        return res.json();
+      })
       .then((data) => {
         if (data.metrics) {
           setMetrics(data.metrics);
@@ -690,7 +695,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
           setChartData(data.chartData);
         }
       })
-      .catch(console.error)
+      .catch((err) => console.warn('Financials report notice:', err))
       .finally(() => setLoading(false));
   }, [period, apiBase]);
 

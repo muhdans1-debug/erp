@@ -27,8 +27,14 @@ export default function SyncTrafficLight({
 
   const handleManualSync = async () => {
     setSyncing(true);
-    await onSyncNow();
-    setSyncing(false);
+    try {
+      await onSyncNow();
+      console.log("Sync successful!");
+    } catch (error) {
+      console.error("TURSO SYNC FAILED:", error);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const handleManualBackup = async () => {

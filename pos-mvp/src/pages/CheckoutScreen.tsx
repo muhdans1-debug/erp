@@ -203,7 +203,7 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
   // Master Back-Office Server Configuration State
   const [showServerConfigModal, setShowServerConfigModal] = useState(false);
   const [customServerIp, setCustomServerIp] = useState(() => {
-    return localStorage.getItem('master_server_url') || 'http://192.168.8.7:3000';
+    return localStorage.getItem('master_server_url') || import.meta.env.VITE_API_URL || 'http://192.168.8.7:3000';
   });
 
   // Active Linked Customer for Checkout

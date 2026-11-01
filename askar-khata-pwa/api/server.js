@@ -4,7 +4,7 @@ import { createClient } from '@libsql/client';
 const fastify = Fastify({ logger: true });
 
 const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || "libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io";
-const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTMyMjgwODAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.wBeE8WLExcIW_k8NU4RB4RgFYNpE1a73T8e8JemANcvk4kocFOdZe54CJe3azLsG9h-5MtCMx7ArY0kUSYyMBw";
+const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM1NDIzMTksImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.W6Hc7fVPLuJJ3capRMHZNm5-yJYHnYSulJ8h9sUxd7BPLchZbMh3LxTa86S8K_Nt9RpsqPgpudDOzfNJkCeJCg";
 
 const db = createClient({
   url: tursoUrl,

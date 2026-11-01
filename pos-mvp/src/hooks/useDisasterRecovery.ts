@@ -51,15 +51,20 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
       setSyncStatus('SYNCING');
 
       // 1. Primary: Sync embedded replica with Turso Cloud
-      const syncRes = await db.sync(apiBase);
-      if (syncRes && syncRes.success !== false && !syncRes.offline) {
-        const now = new Date();
-        setSyncStatus('ONLINE');
-        setLastSyncTime(now);
-        setOfflineHours(0);
-        localStorage.setItem('last_online_timestamp', String(now.getTime()));
-        console.log('🟢 [Disaster Recovery] Database successfully synced to Turso Cloud.');
-        return { success: true, message: 'Cloud sync complete' };
+      let syncRes: any = null;
+      try {
+        syncRes = await db.sync(apiBase);
+        if (syncRes && syncRes.success !== false && !syncRes.offline) {
+          const now = new Date();
+          setSyncStatus('ONLINE');
+          setLastSyncTime(now);
+          setOfflineHours(0);
+          localStorage.setItem('last_online_timestamp', String(now.getTime()));
+          console.log("Sync successful!", syncRes);
+          return { success: true, message: 'Cloud sync complete' };
+        }
+      } catch (tursoErr) {
+        console.error("TURSO SYNC FAILED:", tursoErr);
       }
 
       // 2. Secondary: If cloud handshake timed out or failed, verify if Local Wi-Fi / Master Server is reachable

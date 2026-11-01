@@ -74,7 +74,7 @@ interface CustomerStatementPageProps {
 
 export default function CustomerStatementPage({
   customerId: initialCustomerId,
-  apiBase = 'http://192.168.8.7:3000'
+  apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://192.168.8.7:3000'
 }: CustomerStatementPageProps) {
   // Resolve customer ID from prop, URL search param (?id=...), path (/tab/:id), or persistent localStorage
   const [customerId] = useState<string>(() => {

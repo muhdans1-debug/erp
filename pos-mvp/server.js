@@ -5932,12 +5932,39 @@ fastify.post('/api/db/execute', async (request, reply) => {
   }
 });
 
+export const syncKhataBalancesToTurso = async () => {
+  try {
+    const customers = await getAllCustomersWithBalances(true);
+    for (const c of customers) {
+      await tursoDb.execute({
+        sql: `INSERT INTO KhataCustomer (id, access_token, name, phone, balance, updatedAt) 
+              VALUES (?, ?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(id) DO UPDATE SET 
+              name = excluded.name,
+              phone = excluded.phone,
+              balance = excluded.balance,
+              updatedAt = excluded.updatedAt`,
+        args: [
+          c.id,
+          c.access_token || c.id,
+          c.name,
+          c.phone || null,
+          Number(c.currentBalance || 0)
+        ]
+      });
+    }
+  } catch (err) {
+    console.warn('Sync Khata balances to Turso warning:', err?.message);
+  }
+};
+
 fastify.route({
   method: ['GET', 'POST'],
   url: '/api/db/sync',
   handler: async (request, reply) => {
     try {
       const syncRes = await tursoDb.sync();
+      await syncKhataBalancesToTurso();
       return {
         success: true,
         message: 'Local embedded replica synced to Turso cloud successfully.',

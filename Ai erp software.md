@@ -5415,3 +5415,70 @@ All thermal receipt printers and on-screen dual displays generate QR codes linki
 - **Receipt Thermal QR:** `https://askar-khata-pwa.vercel.app/tab/${targetCustId}`
 - **Dual Display QR Mirror:** `https://askar-khata-pwa.vercel.app/tab/${customerId}`
 - **Test Customer Demo Account:** `https://askar-khata-pwa.vercel.app/tab/cust_nfc_demo_01`
+
+
+---
+
+## 31. Sync Schema Adjustments: KhataCustomer Real-Time Balance Propagation
+
+### 1. The Discrepancy & Root Cause Analysis
+During initial cloud migration, local POS retail transactions were recording debt correctly within the internal append-only `KhataLedger` table, but the public customer-facing `KhataCustomer` cloud table in Turso received initial record inserts with `balance` defaulting to `0.000`.
+
+Consequently, while the local POS terminal accurately computed Thhnj's running balance as **188.334 BHD** from ledger events:
+```
+computedBalance = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+```
+The Vercel Serverless API querying `KhataCustomer.balance` returned `0.000`, causing the mobile customer portal to display a zero-due gauge.
+
+---
+
+### 2. Dual-Write & Auto-Upsert Pipeline
+The dual-write pipeline in [`pos-mvp/server.js`](file:///c:/Users/ACER/Desktop/erp/pos-mvp/server.js) was upgraded to calculate the dynamic ledger balance and push it to Turso using SQLite `ON CONFLICT` semantics:
+
+```javascript
+export const syncKhataBalancesToTurso = async () => {
+  try {
+    const customers = await getAllCustomersWithBalances(true);
+    for (const c of customers) {
+      await tursoDb.execute({
+        sql: `INSERT INTO KhataCustomer (id, access_token, name, phone, balance, updatedAt) 
+              VALUES (?, ?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(id) DO UPDATE SET 
+              name = excluded.name,
+              phone = excluded.phone,
+              balance = excluded.balance,
+              updatedAt = excluded.updatedAt`,
+        args: [
+          c.id,
+          c.access_token || c.id,
+          c.name,
+          c.phone || null,
+          Number(c.currentBalance || 0)
+        ]
+      });
+    }
+  } catch (err) {
+    console.warn('Sync Khata balances to Turso warning:', err?.message);
+  }
+};
+```
+
+---
+
+### 3. Automatic Trigger Points
+1. **Sync Now Button / Disaster Recovery:** Hooked into `/api/db/sync`, triggering `syncKhataBalancesToTurso()` alongside LibSQL replica frame syncs.
+2. **Customer Enrollment:** Dual-writes newly created customers directly to `KhataCustomer` on `POST /api/customers`.
+3. **Point of Sale Checkout:** Credit tabs and invoice reconciliations update `KhataCustomer.balance` dynamically upon transaction commit.
+
+---
+
+### 4. Verification in Cloud & PWA
+* **Turso Cloud DB:** Queried `KhataCustomer` for `fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1`:
+  ```json
+  [{"id":"fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1","name":"Thhnj","balance":188.334}]
+  ```
+* **Vercel Edge Endpoint:** `GET /api/khata/fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1` returns:
+  ```json
+  {"id":"fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1","name":"Thhnj","balance":188.334,"access_token":"fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1"}
+  ```
+* **Customer PWA:** Renders **BHD 188.334** on the live customer portal.

@@ -1,0 +1,542 @@
+{
+  "stats": {
+    "totalBackendEndpoints": 108,
+    "totalFrontendApiCalls": 88,
+    "connectedFrontendCallsCount": 66,
+    "disconnectedFrontendCallsCount": 22,
+    "uncalledBackendEndpointsCount": 64,
+    "incompleteFrontendFeaturesCount": 0
+  },
+  "disconnectedFrontendCalls": [
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 180,
+      "method": "GET",
+      "rawUrl": "${apiBase}/api/customers/${customerId}/statement",
+      "cleanEndpoint": "/api/customers/statement",
+      "availableMethodsInBackend": [
+        "PUT (L1528)",
+        "DELETE (L1623)"
+      ]
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 270,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/customers/${selectedCustomer.id}/settle",
+      "cleanEndpoint": "/api/customers/settle",
+      "availableMethodsInBackend": [
+        "PUT (L1528)",
+        "DELETE (L1623)"
+      ]
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1043,
+      "method": "PUT",
+      "rawUrl": "${apiBase}/khata/${customer.id}",
+      "cleanEndpoint": "/khata/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1103,
+      "method": "DELETE",
+      "rawUrl": "${apiBase}/khata/${customer.id}",
+      "cleanEndpoint": "/khata/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/components/OrderHistoryDrawer.tsx",
+      "line": 146,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/sales/${sale.id}/void",
+      "cleanEndpoint": "/api/sales/void",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/components/POReviewModal.tsx",
+      "line": 114,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${po.id}/approve",
+      "cleanEndpoint": "/api/purchase-orders/approve",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/components/ReceivingDrawer.tsx",
+      "line": 309,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${selectedPO.id}/receive",
+      "cleanEndpoint": "/api/purchase-orders/receive",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/components/ZReportModal.tsx",
+      "line": 96,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/shifts/${targetShiftId}/close",
+      "cleanEndpoint": "/api/shifts/close",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/CheckoutScreen.tsx",
+      "line": 536,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/customers/${customerId}/bind-card",
+      "cleanEndpoint": "/api/customers/bind-card",
+      "availableMethodsInBackend": [
+        "PUT (L1528)",
+        "DELETE (L1623)"
+      ]
+    },
+    {
+      "file": "src/pages/KhataLedger.tsx",
+      "line": 92,
+      "method": "GET",
+      "rawUrl": "${apiBase}/khata/${customer.id}/statement",
+      "cleanEndpoint": "/khata/statement",
+      "availableMethodsInBackend": [
+        "PUT (L1529)",
+        "DELETE (L1624)"
+      ]
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 608,
+      "method": "GET",
+      "rawUrl": "${apiBase}/khata/${customer.id}/statement",
+      "cleanEndpoint": "/khata/statement",
+      "availableMethodsInBackend": [
+        "PUT (L1529)",
+        "DELETE (L1624)"
+      ]
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 1442,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${id}/approve",
+      "cleanEndpoint": "/api/purchase-orders/approve",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 1847,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${id}/receive",
+      "cleanEndpoint": "/api/purchase-orders/receive",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/pages/ProductManagement.tsx",
+      "line": 375,
+      "method": "PUT",
+      "rawUrl": "${apiBase}/api/products/${id}",
+      "cleanEndpoint": "/api/products/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/ProductManagement.tsx",
+      "line": 382,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/products/${id}",
+      "cleanEndpoint": "/api/products/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/ProductManagement.tsx",
+      "line": 471,
+      "method": "PUT",
+      "rawUrl": "${apiBase}/api/products/${editModalProduct.id}",
+      "cleanEndpoint": "/api/products/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/ProductManagement.tsx",
+      "line": 478,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/products/${editModalProduct.id}",
+      "cleanEndpoint": "/api/products/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/ProductManagement.tsx",
+      "line": 531,
+      "method": "GET",
+      "rawUrl": "${apiBase}/api/products/${product.id}/price-history",
+      "cleanEndpoint": "/api/products/price-history",
+      "availableMethodsInBackend": [
+        "PUT (L949)",
+        "PATCH (L950)",
+        "POST (L951)"
+      ]
+    },
+    {
+      "file": "src/pages/StockManagement.tsx",
+      "line": 215,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${poId}/approve",
+      "cleanEndpoint": "/api/purchase-orders/approve",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/pages/StockManagement.tsx",
+      "line": 244,
+      "method": "DELETE",
+      "rawUrl": "${apiBase}/api/purchase-orders/${poId}",
+      "cleanEndpoint": "/api/purchase-orders/",
+      "availableMethodsInBackend": []
+    },
+    {
+      "file": "src/pages/StockManagement.tsx",
+      "line": 299,
+      "method": "POST",
+      "rawUrl": "${apiBase}/api/purchase-orders/${id}/receive",
+      "cleanEndpoint": "/api/purchase-orders/receive",
+      "availableMethodsInBackend": [
+        "DELETE (L3548)"
+      ]
+    },
+    {
+      "file": "src/pages/StockManagement.tsx",
+      "line": 426,
+      "method": "DELETE",
+      "rawUrl": "${apiBase}/api/distributors/${dist.id}",
+      "cleanEndpoint": "/api/distributors/",
+      "availableMethodsInBackend": []
+    }
+  ],
+  "incompleteFrontendFeatures": [],
+  "uncalledBackendEndpoints": [
+    {
+      "method": "POST",
+      "path": "/api/distributors",
+      "line": 504
+    },
+    {
+      "method": "PUT",
+      "path": "/api/distributors/:id",
+      "line": 532
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/distributors/:id",
+      "line": 554
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/:id/thresholds",
+      "line": 629
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/:id/bind-barcode",
+      "line": 796
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/:id",
+      "line": 950
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/:id/update",
+      "line": 952
+    },
+    {
+      "method": "PUT",
+      "path": "/products/:id",
+      "line": 953
+    },
+    {
+      "method": "POST",
+      "path": "/products/:id",
+      "line": 954
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/:id/price-history",
+      "line": 1055
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/shelf-tags",
+      "line": 1073
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/ledger",
+      "line": 1305
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "line": 1339
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers/:id/statement",
+      "line": 1450
+    },
+    {
+      "method": "GET",
+      "path": "/khata/:id/statement",
+      "line": 1451
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/:id/statement",
+      "line": 1452
+    },
+    {
+      "method": "PUT",
+      "path": "/api/customers/:id",
+      "line": 1528
+    },
+    {
+      "method": "PUT",
+      "path": "/khata/:id",
+      "line": 1529
+    },
+    {
+      "method": "PUT",
+      "path": "/api/khata/:id",
+      "line": 1530
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/customers/:id",
+      "line": 1623
+    },
+    {
+      "method": "DELETE",
+      "path": "/khata/:id",
+      "line": 1624
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/khata/:id",
+      "line": 1625
+    },
+    {
+      "method": "POST",
+      "path": "/api/customers/:id/bind-card",
+      "line": 1672
+    },
+    {
+      "method": "POST",
+      "path": "/api/customers/:id/settle",
+      "line": 1759
+    },
+    {
+      "method": "POST",
+      "path": "/khata/:id/pay",
+      "line": 1760
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/:id/pay",
+      "line": 1761
+    },
+    {
+      "method": "POST",
+      "path": "/khata/pay",
+      "line": 1764
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/pay",
+      "line": 1775
+    },
+    {
+      "method": "POST",
+      "path": "/api/sales",
+      "line": 1868
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/financial",
+      "line": 2063
+    },
+    {
+      "method": "GET",
+      "path": "/api/expenses",
+      "line": 2150
+    },
+    {
+      "method": "POST",
+      "path": "/api/shifts/:id/close",
+      "line": 2407
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts",
+      "line": 2430
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report/:shiftId",
+      "line": 2541
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report",
+      "line": 2553
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/unified",
+      "line": 2564
+    },
+    {
+      "method": "GET",
+      "path": "/api/sales/refunds",
+      "line": 2983
+    },
+    {
+      "method": "GET",
+      "path": "/sales/today",
+      "line": 3036
+    },
+    {
+      "method": "POST",
+      "path": "/sales/:id/void",
+      "line": 3166
+    },
+    {
+      "method": "POST",
+      "path": "/api/sales/:id/void",
+      "line": 3167
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/sales",
+      "line": 3172
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/trigger",
+      "line": 3211
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/master-url",
+      "line": 3219
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/products",
+      "line": 3232
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/khata-ledger",
+      "line": 3255
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/khata-ledger",
+      "line": 3286
+    },
+    {
+      "method": "GET",
+      "path": "/api/inventory/wastage",
+      "line": 3381
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/auto-restock",
+      "line": 3417
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/force-draft",
+      "line": 3418
+    },
+    {
+      "method": "GET",
+      "path": "/api/automation/trigger-reorder",
+      "line": 3422
+    },
+    {
+      "method": "GET",
+      "path": "/api/purchase-orders",
+      "line": 3453
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/approve",
+      "line": 3460
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/:id",
+      "line": 3548
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/discard",
+      "line": 3549
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/cancel",
+      "line": 3550
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts/clear-all",
+      "line": 3572
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts",
+      "line": 3574
+    },
+    {
+      "method": "GET",
+      "path": "/po/transit",
+      "line": 3584
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/receive",
+      "line": 3640
+    },
+    {
+      "method": "POST",
+      "path": "/po/:id/receive",
+      "line": 3641
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/backup",
+      "line": 3691
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/backups",
+      "line": 3706
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/invoice-sequence",
+      "line": 3733
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/invoice-sequence/seed",
+      "line": 3746
+    }
+  ]
+}

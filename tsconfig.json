@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "checkJs": false,
+    "allowJs": false,
+    "skipLibCheck": true
+  },
+  "files": [
+    "pos-mvp/src/vite-env.d.ts"
+  ]
+}

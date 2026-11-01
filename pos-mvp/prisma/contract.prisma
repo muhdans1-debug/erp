@@ -1,0 +1,277 @@
+// use prisma-8
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Distributor {
+  id                 String          @id
+  tenantId           String          @default("tenant_1")
+  name               String          @unique
+  whatsappNumber     String          @default("97339000000") // Must include country code, e.g., "973XXXXXXXX" for Bahrain
+  contactEmail       String?         @default("orders@supplier.bh")
+  minimumOrderValue  Float           @default(0.0) // E.g., Supplier requires at least 50 BD per order
+  deliveryDays       String?         // E.g., "MON,WED,THU"
+  createdAt          DateTime        @default(now())
+  
+  // Relations
+  products           Product[]
+  purchaseOrders     PurchaseOrder[]
+}
+
+model Product {
+  id            String       @id
+  tenantId      String       @default("tenant_1")
+  name          String
+  purchasePrice Float
+  unitCost      Float        @default(0.0)
+  sellingPrice  Float
+  stockQuantity Int          @default(0)
+  minThreshold  Int          @default(20)  // The Danger Zone
+  maxThreshold  Int          @default(100) // The Target Par Level
+  supplierName  String?      @default("Local Distributor")
+  supplierEmail String?      @default("supplier@askar.bh")
+  distributorId String?
+  distributor   Distributor? @relation(fields: [distributorId], references: [id])
+  vatRate       Float        @default(10.0) // 10.0 for standard, 0.0 for zero-rated basic foods
+  taxRate       Float        @default(0.10)
+  barcode       String?
+  is_weighed_item Boolean    @default(false) // Produce / weighed item flag
+  updatedAt     DateTime     @default(now())
+  SaleItem      SaleItem[]
+  wastageLogs   WastageLog[]
+}
+
+model Customer {
+  id          String        @id
+  tenantId    String        @default("tenant_1")
+  name        String
+  phone       String?
+  cpr         String?       // Bahrain National ID
+  batchNo     String?       // e.g., Employee Batch or Area Code
+  description String?       // Any notes about the customer
+  cardUid     String?       @unique
+  createdAt   DateTime?
+  is_active   Int           @default(1)
+  isActive    Int           @default(1)
+  Sale        Sale[]
+  ledger      KhataLedger[]
+  nfcCards    NfcCard[]
+  mess_id     String?
+  messGroup   MessGroup?    @relation(fields: [mess_id], references: [id])
+}
+
+model KhataLedger {
+  id              String    @id
+  tenantId        String    @default("tenant_1")
+  customerId      String
+  amount          Float     // Positive for sales (CHARGE), negative for payments (PAYMENT)
+  type            String    // 'CHARGE' (bought items) or 'PAYMENT' (paid debt) or 'WRITE_OFF'
+  running_balance Float?    @default(0.0)
+  reference       String?   // e.g., 'INV-0045' or 'Cash Payment' or 'BenefitPay Payment'
+  syncStatus      String    @default("PENDING")
+  timestamp       DateTime  @default(now())
+  created_at      DateTime? @default(now())
+  customer        Customer  @relation(fields: [customerId], references: [id])
+}
+
+model InvoiceSequence {
+  name        String   @id
+  current_seq Int      @default(4999)
+}
+
+model Sale {
+  id              String        @id
+  tenantId        String        @default("tenant_1")
+  invoiceNo       String        @unique
+  invoiceSeq      Int?          @default(0) // Strict sequential integer for NBR VAT compliance
+  customerId      String?
+  subtotal        Float         // Price before tax
+  vatTotal        Float         @default(0.0)
+  totalVat        Float         @default(0.0) // Total tax collected
+  total           Float
+  totalAmount     Float         @default(0.0) // Final amount paid by customer
+  paymentType     String
+  syncStatus      String        @default("PENDING")
+  createdAt       DateTime      @default(now())
+  
+  employeeId      String?
+  employee        Employee?     @relation(fields: [employeeId], references: [id])
+  shiftId         String?
+  shiftSession    ShiftSession? @relation(fields: [shiftId], references: [id])
+
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  items           SaleItem[]
+  refunds         Refund[]
+}
+
+model SaleItem {
+  id            String       @id
+  tenantId      String       @default("tenant_1")
+  saleId        String
+  productId     String
+  quantity      Float        // Float to support 1.250 kg
+  total_price   Float?       // Total line item amount (quantity * priceAtSale)
+  priceAtSale   Float
+  costAtSale    Float        @default(0.0)
+  vatRateAtSale Float        @default(10.0) // Freeze the rate in case Bahrain changes it later
+  vatAmount     Float        @default(0.0)  // Exact tax for this line item
+  sale          Sale         @relation(fields: [saleId], references: [id])
+  product       Product      @relation(fields: [productId], references: [id])
+  refundItems   RefundItem[]
+}
+
+model PurchaseOrder {
+  id             String       @id
+  distributorId  String?
+  distributor    Distributor? @relation(fields: [distributorId], references: [id])
+  supplierName   String
+  whatsappNumber String?      @default("97339000000")
+  supplierEmail  String?      @default("supplier@askar.bh")
+  status         String       @default("DRAFT")
+  estimatedCost  Float
+  vatPaid        Float        @default(0.0)
+  itemsJson      String
+  createdAt      DateTime     @default(now())
+}
+
+model Expense {
+  id          String   @id
+  type        String   // "BUSINESS" or "PERSONAL"
+  category    String   // e.g., "RENT", "ELECTRICITY", "SALARY", "OWNER_DRAW"
+  amount      Float
+  vatPaid     Float    @default(0.0) // Input VAT paid on business expenses
+  description String?  // e.g., "Home electricity bill for October"
+  recordedBy  String   @default("Admin")
+  createdAt   DateTime @default(now())
+}
+
+model Employee {
+  id          String         @id @default(uuid())
+  tenantId    String         @default("tenant_1")
+  name        String
+  pin_code    String         @unique // 4-digit PIN for fast Sunmi login
+  role        String         // "CASHIER" or "MANAGER"
+  is_active   Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  
+  shifts      ShiftSession[]
+  sales       Sale[]
+}
+
+model ShiftSession {
+  id             String    @id @default(uuid())
+  tenantId       String    @default("tenant_1")
+  employee_id    String
+  employee       Employee  @relation(fields: [employee_id], references: [id])
+  
+  opened_at      DateTime  @default(now())
+  closed_at      DateTime?
+  
+  starting_cash  Float     // Opening Float in BHD (e.g. 50.000)
+  expected_cash  Float?    // System-calculated: starting_cash + cash_sales - paid_outs
+  actual_cash    Float?    // Blind-counted cash declared by cashier at shift close
+  variance       Float?    // actual_cash - expected_cash (negative = SHORT, positive = OVER)
+  denominations  String?   // JSON breakdown of counted coins/notes
+  notes          String?   // Handover notes or variance explanation
+  status         String    @default("OPEN") // "OPEN" or "CLOSED"
+  
+  sales          Sale[]
+}
+
+model Shift {
+  id           String    @id
+  tenantId     String    @default("tenant_1")
+  cashierName  String
+  openingCash  Float     @default(50.0) // Opening Float (Petty Cash Till)
+  status       String    @default("OPEN") // "OPEN" or "CLOSED"
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+  closingCash  Float?
+  notes        String?
+}
+
+model WastageLog {
+  id          String   @id
+  tenantId    String   @default("tenant_1")
+  productId   String
+  productName String
+  quantity    Int
+  unitCost    Float    // The wholesale price lost
+  totalLoss   Float    // quantity * unitCost
+  reason      String   // "EXPIRED", "DAMAGED", "STOLEN"
+  loggedBy    String   @default("Admin")
+  createdAt   DateTime @default(now())
+
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+model Refund {
+  id             String       @id
+  tenantId       String       @default("tenant_1")
+  saleId         String
+  invoiceNo      String
+  refundedAmount Float
+  reason         String       // "DAMAGED", "MISTAKE", "DEFECTIVE", etc.
+  destination    String       // "CASH", "KHATA_CREDIT"
+  itemsJson      String?
+  processedBy    String       @default("Cashier")
+  createdAt      DateTime     @default(now())
+
+  sale           Sale         @relation(fields: [saleId], references: [id])
+  items          RefundItem[]
+}
+
+model RefundItem {
+  id          String    @id
+  tenantId    String    @default("tenant_1")
+  refundId    String
+  saleItemId  String?
+  productId   String
+  productName String
+  quantity    Int
+  unitPrice   Float
+  totalAmount Float
+  isDamaged   Int       @default(0) // 1 = damaged (routed to wastage), 0 = restock
+
+  refund      Refund    @relation(fields: [refundId], references: [id])
+  saleItem    SaleItem? @relation(fields: [saleItemId], references: [id])
+}
+
+model ProductPriceHistory {
+  id           String   @id
+  tenantId     String   @default("tenant_1")
+  productId    String
+  productName  String?
+  oldPrice     Float
+  newPrice     Float
+  oldCost      Float?
+  newCost      Float?
+  changeReason String?
+  changedBy    String   @default("Manager")
+  createdAt    DateTime @default(now())
+}
+
+model NfcCard {
+  tag_id      String     @id
+  card_type   String     // "PERSONAL" or "MESS"
+  customer_id String?
+  customer    Customer?  @relation(fields: [customer_id], references: [id])
+  mess_id     String?
+  mess        MessGroup? @relation(fields: [mess_id], references: [id])
+  createdAt   DateTime   @default(now())
+}
+
+model MessGroup {
+  id         String     @id @default(uuid())
+  tenantId   String     @default("tenant_1")
+  group_name String     // e.g., "Camp 4 Mess"
+  nfcCards   NfcCard[]
+  members    Customer[]
+  createdAt  DateTime   @default(now())
+}

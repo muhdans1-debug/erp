@@ -1,0 +1,33 @@
+{
+  "folders": [
+    {
+      "name": "🛒 POS & Fastify Backend (pos-mvp)",
+      "path": "pos-mvp"
+    },
+    {
+      "name": "📊 Admin Dashboard (askar-admin-dashboard)",
+      "path": "askar-admin-dashboard"
+    },
+    {
+      "name": "📒 Khata PWA (askar-khata-pwa)",
+      "path": "askar-khata-pwa"
+    },
+    {
+      "name": "☁️ Khata Cloud API (askar-khata-api)",
+      "path": "askar-khata-api"
+    },
+    {
+      "name": "📁 Monorepo Root",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "typescript.tsdk": "pos-mvp/node_modules/typescript/lib",
+    "typescript.enablePromptUseWorkspaceTsdk": true,
+    "css.lint.unknownAtRules": "ignore",
+    "files.associations": {
+      "*.css": "tailwindcss"
+    }
+  }
+}
+

@@ -1,0 +1,53 @@
+{
+  "overrides": {
+    "110": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "prod_onions_1kg": {
+      "isQuickProduct": true,
+      "category": "DAIRY"
+    },
+    "test_barcode_123": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
+    },
+    "6281058000943": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
+    }
+  },
+  "removedIds": [],
+  "categories": [
+    {
+      "id": "ALL",
+      "label": "All Items",
+      "color": "slate"
+    },
+    {
+      "id": "PRODUCE",
+      "label": "veg",
+      "color": "emerald"
+    },
+    {
+      "id": "BAKERY",
+      "label": "Bakery 🥖",
+      "color": "amber"
+    },
+    {
+      "id": "DAIRY",
+      "label": "Dairy 🥛",
+      "color": "sky"
+    },
+    {
+      "id": "MEAT",
+      "label": "Meat / Deli 🥩",
+      "color": "rose"
+    },
+    {
+      "id": "ESSENTIALS",
+      "label": "Essentials ⚡",
+      "color": "slate"
+    }
+  ]
+}

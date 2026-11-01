@@ -1,0 +1,228 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════
+   SUNMI D2 Mini — Global Touchscreen Safeguards
+   ══════════════════════════════════════════════════ */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;               /* Lock viewport — zero scroll bleed */
+  background-color: #f0f2f5;
+  color: #111827;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  /* Prevent accidental text highlighting during fast tapping */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Prevent double-tap to zoom on Android touchscreen */
+  touch-action: manipulation;
+}
+
+/* ══════════════════════════════════════════════════
+   Scrollable zones — only opt-in containers scroll
+   ══════════════════════════════════════════════════ */
+.scroll-zone {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;   /* Momentum scroll on iOS/Android */
+  overscroll-behavior: contain;        /* Prevent scroll chain to parent */
+  contain: content;                   /* Isolate layout calculations */
+  transform: translateZ(0);            /* Force GPU compositing layer */
+}
+
+/* ══════════════════════════════════════════════════
+   Scrollbar Hide Utility (Touch Scrolling Safe Zones)
+   ══════════════════════════════════════════════════ */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;     /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;             /* Chrome, Safari, Android WebView */
+}
+
+/* ══════════════════════════════════════════════════
+   Touch Feedback — instant visual response on tap
+   ══════════════════════════════════════════════════ */
+.btn-touch {
+  transition: transform 0.06s ease, background-color 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+  transform: translateZ(0);
+}
+.btn-touch:active {
+  transform: scale(0.96) translateZ(0);
+}
+
+/* ══════════════════════════════════════════════════
+   POS Speed Design System (SUNMI D2 Mini Playbook)
+   Traffic Light Color System & Fitts's Law Targets
+   ══════════════════════════════════════════════════ */
+.pos-touch-emerald {
+  min-height: 4rem; /* h-16 minimum target */
+  background-color: #059669;
+  color: #ffffff;
+  border-radius: 0.875rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.06s ease, background-color 0.1s ease;
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+  cursor: pointer;
+  transform: translateZ(0);
+}
+.pos-touch-emerald:hover {
+  background-color: #047857;
+}
+.pos-touch-emerald:active {
+  transform: scale(0.96) translateZ(0);
+  background-color: #065f46;
+}
+
+.pos-touch-red {
+  min-height: 4rem;
+  background-color: #dc2626;
+  color: #ffffff;
+  border-radius: 0.875rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.06s ease, background-color 0.1s ease;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.25);
+  cursor: pointer;
+  transform: translateZ(0);
+}
+.pos-touch-red:hover {
+  background-color: #b91c1c;
+}
+.pos-touch-red:active {
+  transform: scale(0.96) translateZ(0);
+  background-color: #991b1b;
+}
+
+.pos-touch-blue {
+  min-height: 4rem;
+  background-color: #2563eb;
+  color: #ffffff;
+  border-radius: 0.875rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.06s ease, background-color 0.1s ease;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+  cursor: pointer;
+  transform: translateZ(0);
+}
+.pos-touch-blue:hover {
+  background-color: #1d4ed8;
+}
+.pos-touch-blue:active {
+  transform: scale(0.96) translateZ(0);
+  background-color: #1e40af;
+}
+
+/* ══════════════════════════════════════════════════
+   Manager Dashboard Design System (Windows PC Playbook)
+   Strict Monospace Currency & Tabular Density
+   ══════════════════════════════════════════════════ */
+.col-currency {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table-row-zebra {
+  transition: background-color 0.12s ease;
+}
+.table-row-zebra:nth-child(even) {
+  background-color: #f8fafc;
+}
+.table-row-zebra:hover {
+  background-color: #eff6ff !important;
+}
+
+/* ══════════════════════════════════════════════════
+   Re-enable text selection inside form inputs
+   ══════════════════════════════════════════════════ */
+input, textarea, [contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: auto;
+}
+
+/* ══════════════════════════════════════════════════
+   @media print — 58mm Thermal Receipts & Reports
+   ══════════════════════════════════════════════════ */
+@media print {
+  /* Hide the main app UI */
+  #root > div:not(.print-receipt):not(:has(.print-receipt)) {
+    display: none !important;
+  }
+
+  nav, header, aside, .print\:hidden {
+    display: none !important;
+  }
+
+  html, body, #root {
+    background-color: white !important;
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+  
+  /* Force 58mm thermal roll width */
+  @page {
+    margin: 0;
+    size: 58mm auto;
+  }
+
+  .print-receipt {
+    display: block !important;
+    width: 58mm !important;
+    max-width: 58mm !important;
+    margin: 0 auto !important;
+    padding: 2mm !important;
+    font-family: monospace !important;
+    font-size: 12px !important;
+    color: black !important;
+    background: white !important;
+  }
+  
+  .print-receipt h1, .print-receipt h2, .print-receipt h3, .print-receipt p {
+    margin: 0 !important;
+    padding: 2px 0 !important;
+  }
+
+  /* Barcode sticker grid — 3 columns on A4 when printing labels */
+  .sticker-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 4mm !important;
+  }
+
+  .sticker-cell {
+    border: 1px dashed #ccc;
+    padding: 3mm;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+}
+

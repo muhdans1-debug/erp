@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Production and native build outputs
+dist/
+**/dist/
+dist-ssr/
+build/
+**/build/
+android/app/build/
+**/android/app/build/
+android/.gradle/
+**/.gradle/
+.vercel/
+**/.vercel/
+platform-tools/
+**/platform-tools/
+
+# Local databases, WAL journals & logs
+*.db
+*.db-wal
+*.db-shm
+*.db-info
+*.sqlite
+*.sqlite3
+*.log
+logs/
+**/logs/
+
+# Environment and sensitive keys
+.env
+.env.*
+!.env.example
+
+# Temporary test screenshots and image dumps
+*.png
+*.jpg
+*.jpeg
+*.apk
+
+# IDE & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

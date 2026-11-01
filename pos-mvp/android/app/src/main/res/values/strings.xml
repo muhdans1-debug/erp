@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">POS App</string>
+    <string name="title_activity_main">POS App</string>
+    <string name="package_name">com.retail.pos</string>
+    <string name="custom_url_scheme">com.retail.pos</string>
+</resources>

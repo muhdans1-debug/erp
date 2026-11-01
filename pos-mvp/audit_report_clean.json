@@ -1,0 +1,313 @@
+{
+  "summary": {
+    "totalBackendEndpoints": 108,
+    "totalFrontendApiCalls": 83,
+    "fullyConnectedCalls": 82,
+    "trulyDisconnectedCalls": 1,
+    "backendEndpointsUncalledByFrontend": 51,
+    "stubOrPlaceholderButtonsInUI": 43
+  },
+  "trulyDisconnectedCalls": [
+    {
+      "file": "src/pages/FinancialDashboard.tsx",
+      "line": 26,
+      "method": "GET",
+      "rawUrl": "${apiBase}/api/reports/vat-return${query}",
+      "norm": "/api/reports/vat-return:param",
+      "availableMethodsInBackend": []
+    }
+  ],
+  "stubOrPlaceholderButtonsInUI": [
+    {
+      "file": "src/components/AddProductModal.tsx",
+      "line": 64,
+      "code": "alert(\"Product added and linked to distributor!\");"
+    },
+    {
+      "file": "src/components/AddProductModal.tsx",
+      "line": 68,
+      "code": "alert(data.error || \"Failed to save product.\");"
+    },
+    {
+      "file": "src/components/AddProductModal.tsx",
+      "line": 72,
+      "code": "alert(\"Failed to save product.\");"
+    },
+    {
+      "file": "src/components/FinancialReportWidget.tsx",
+      "line": 148,
+      "code": "alert('No sales transactions recorded in this date range.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 186,
+      "code": "alert(\"Failed to load customer statement.\");"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 190,
+      "code": "alert(\"Error fetching customer statement.\");"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 229,
+      "code": "alert(errMsg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 259,
+      "code": "alert('Please select a customer to settle.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 264,
+      "code": "alert('Enter a valid amount in BD.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 285,
+      "code": "showToast ? showToast(msg, 'success') : alert(msg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 312,
+      "code": "alert(`Settlement failed: ${err.error || 'Server error'}`);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 321,
+      "code": "showToast ? showToast(msg, 'success') : alert(msg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 856,
+      "code": "showToast ? showToast('Customer Name is required.', 'error') : alert('Customer Name is required.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 871,
+      "code": "showToast ? showToast(msg, 'success') : alert(msg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 874,
+      "code": "alert(data.error || 'Failed to create customer.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 878,
+      "code": "alert('Failed to create customer.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1037,
+      "code": "alert('Please enter a valid customer name.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1066,
+      "code": "showToast ? showToast(msg, 'success') : alert(msg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1070,
+      "code": "alert(data.error || 'Failed to update customer details.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1074,
+      "code": "alert('Network error while saving customer details.');"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1084,
+      "code": "showToast ? showToast(err, 'error') : alert(err);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1110,
+      "code": "showToast ? showToast(msg, 'success') : alert(msg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1117,
+      "code": "showToast ? showToast(errMsg, 'error') : alert(errMsg);"
+    },
+    {
+      "file": "src/components/KhataHubModal.tsx",
+      "line": 1122,
+      "code": "alert('Network error while archiving customer account.');"
+    },
+    {
+      "file": "src/components/LogWastageModal.tsx",
+      "line": 35,
+      "code": "alert(\"Wastage recorded. Stock updated and P&L adjusted.\");"
+    },
+    {
+      "file": "src/components/LogWastageModal.tsx",
+      "line": 39,
+      "code": "alert(data.error || \"Failed to log wastage.\");"
+    },
+    {
+      "file": "src/components/LogWastageModal.tsx",
+      "line": 42,
+      "code": "alert(\"Failed to log wastage.\");"
+    },
+    {
+      "file": "src/components/PaymentModal.tsx",
+      "line": 184,
+      "code": "alert(`Checkout failed: ${data?.error || 'Unknown error'}`);"
+    },
+    {
+      "file": "src/components/PaymentModal.tsx",
+      "line": 188,
+      "code": "alert('Error connecting to POS server. Please try again.');"
+    },
+    {
+      "file": "src/components/POReviewModal.tsx",
+      "line": 108,
+      "code": "alert(\"Cannot send an empty Purchase Order.\");"
+    },
+    {
+      "file": "src/components/PosAddProductModal.tsx",
+      "line": 57,
+      "code": "alert(\"Please enter a product name.\");"
+    },
+    {
+      "file": "src/components/PosAddProductModal.tsx",
+      "line": 61,
+      "code": "alert(\"Please enter a valid selling price.\");"
+    },
+    {
+      "file": "src/components/PosAddProductModal.tsx",
+      "line": 65,
+      "code": "alert(\"Please assign a distributor to ensure automated restocking works.\");"
+    },
+    {
+      "file": "src/components/PosAddProductModal.tsx",
+      "line": 92,
+      "code": "alert(data.error || \"Failed to save product.\");"
+    },
+    {
+      "file": "src/components/PosAddProductModal.tsx",
+      "line": 96,
+      "code": "alert(\"Failed to save product.\");"
+    },
+    {
+      "file": "src/components/ZReportModal.tsx",
+      "line": 115,
+      "code": "alert('Shift Officially Closed & Reconciled. Till ready for next shift.');"
+    },
+    {
+      "file": "src/pages/CheckoutScreen.tsx",
+      "line": 558,
+      "code": "if (!newCustName.trim()) return alert(\"Enter customer name\");"
+    },
+    {
+      "file": "src/pages/KhataLedger.tsx",
+      "line": 64,
+      "code": "alert('No customer data to export.');"
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 577,
+      "code": "alert('No customer data to export.');"
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 622,
+      "code": "alert('Unauthorized: Invalid Manager PIN. Please enter PIN 9999.');"
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 648,
+      "code": "alert(data.error || 'Write-off failed');"
+    },
+    {
+      "file": "src/pages/ManagerDashboard.tsx",
+      "line": 651,
+      "code": "alert(`Network error: ${e.message}`);"
+    },
+    {
+      "file": "src/pages/MasterReport.tsx",
+      "line": 92,
+      "code": "alert(\"No transaction records to export for this date range.\");"
+    }
+  ],
+  "uncalledBackendEndpointsCountByDomain": {
+    "Other": 3,
+    "Products & Inventory": 17,
+    "Khata & Customers": 13,
+    "Sales & POS": 5,
+    "Reports & Audits": 7,
+    "Sync Engine": 1,
+    "System & Backups": 5
+  },
+  "uncalledBackendEndpointsGrouped": {
+    "Other": [
+      "GET / (L139)",
+      "POST /api/cron/auto-restock (L3417)",
+      "GET /api/automation/trigger-reorder (L3422)"
+    ],
+    "Products & Inventory": [
+      "POST /api/distributors (L504)",
+      "PUT /api/distributors/:id (L532)",
+      "PATCH /api/products/:id (L950)",
+      "POST /api/products/:id/update (L952)",
+      "PUT /products/:id (L953)",
+      "POST /products/:id (L954)",
+      "POST /api/products/shelf-tags (L1073)",
+      "GET /api/sync/products (L3232)",
+      "GET /api/inventory/wastage (L3381)",
+      "POST /api/purchase-orders/force-draft (L3418)",
+      "GET /api/purchase-orders (L3453)",
+      "POST /api/purchase-orders/:id/discard (L3549)",
+      "POST /api/purchase-orders/:id/cancel (L3550)",
+      "DELETE /api/purchase-orders/drafts/clear-all (L3572)",
+      "DELETE /api/purchase-orders/drafts (L3574)",
+      "GET /po/transit (L3584)",
+      "POST /po/:id/receive (L3641)"
+    ],
+    "Khata & Customers": [
+      "GET /api/khata/ledger (L1305)",
+      "GET /customers (L1339)",
+      "GET /api/khata/:id/statement (L1452)",
+      "PUT /api/customers/:id (L1528)",
+      "PUT /api/khata/:id (L1530)",
+      "DELETE /api/customers/:id (L1623)",
+      "DELETE /api/khata/:id (L1625)",
+      "POST /khata/:id/pay (L1760)",
+      "POST /api/khata/:id/pay (L1761)",
+      "POST /khata/pay (L1764)",
+      "POST /api/khata/pay (L1775)",
+      "POST /api/sync/khata-ledger (L3255)",
+      "GET /api/sync/khata-ledger (L3286)"
+    ],
+    "Sales & POS": [
+      "POST /api/sales (L1868)",
+      "GET /api/sales/refunds (L2983)",
+      "GET /sales/today (L3036)",
+      "POST /sales/:id/void (L3166)",
+      "POST /api/sync/sales (L3172)"
+    ],
+    "Reports & Audits": [
+      "GET /api/reports/financial (L2063)",
+      "GET /api/expenses (L2150)",
+      "GET /api/reports/vat-return (L2250)",
+      "GET /api/shifts (L2430)",
+      "GET /api/reports/z-report/:shiftId (L2541)",
+      "GET /api/reports/z-report (L2553)",
+      "GET /api/reports/unified (L2564)"
+    ],
+    "Sync Engine": [
+      "POST /api/sync/trigger (L3211)"
+    ],
+    "System & Backups": [
+      "GET /api/config/master-url (L3219)",
+      "POST /api/system/backup (L3691)",
+      "GET /api/system/backups (L3706)",
+      "GET /api/system/invoice-sequence (L3733)",
+      "POST /api/system/invoice-sequence/seed (L3746)"
+    ]
+  }
+}

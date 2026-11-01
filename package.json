@@ -1,0 +1,22 @@
+{
+  "name": "askar-erp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "pos-mvp",
+    "askar-admin-dashboard",
+    "askar-khata-pwa",
+    "askar-khata-api"
+  ],
+  "scripts": {
+    "dev": "npm --prefix pos-mvp run dev",
+    "dev:web": "npm --prefix pos-mvp run dev:web",
+    "server": "npm --prefix pos-mvp run server",
+    "dev:dashboard": "npm --prefix askar-admin-dashboard run dev:host",
+    "dev:khata": "npm --prefix askar-khata-pwa run dev:host",
+    "build": "npm --prefix pos-mvp run build",
+    "build:all": "npm --prefix pos-mvp run build && npm --prefix askar-admin-dashboard run build && npm --prefix askar-khata-pwa run build",
+    "preview": "npm --prefix pos-mvp run preview",
+    "tauri": "npm --prefix pos-mvp run tauri"
+  }
+}

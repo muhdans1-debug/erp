@@ -1,0 +1,337 @@
+{
+  "totalBackendRoutes": 108,
+  "totalFrontendFetchCalls": 83,
+  "uncalledBackendCount": 51,
+  "uncalledBackendWithoutAlias": 41,
+  "uncalledBackendList": [
+    {
+      "method": "GET",
+      "path": "/",
+      "line": 139,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/distributors",
+      "line": 504,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/distributors/:id",
+      "line": 532,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/:id",
+      "line": 950,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/:id/update",
+      "line": 952,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "PUT",
+      "path": "/products/:id",
+      "line": 953,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "POST",
+      "path": "/products/:id",
+      "line": 954,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/shelf-tags",
+      "line": 1073,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/ledger",
+      "line": 1305,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "line": 1339,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/:id/statement",
+      "line": 1452,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/customers/:id",
+      "line": 1528,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/khata/:id",
+      "line": 1530,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/customers/:id",
+      "line": 1623,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/khata/:id",
+      "line": 1625,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "POST",
+      "path": "/khata/:id/pay",
+      "line": 1760,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/:id/pay",
+      "line": 1761,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/khata/pay",
+      "line": 1764,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/pay",
+      "line": 1775,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/sales",
+      "line": 1868,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/financial",
+      "line": 2063,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/expenses",
+      "line": 2150,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/vat-return",
+      "line": 2250,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts",
+      "line": 2430,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report/:shiftId",
+      "line": 2541,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report",
+      "line": 2553,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/unified",
+      "line": 2564,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/sales/refunds",
+      "line": 2983,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/sales/today",
+      "line": 3036,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "POST",
+      "path": "/sales/:id/void",
+      "line": 3166,
+      "hasAliasCalled": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/sales",
+      "line": 3172,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/trigger",
+      "line": 3211,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/master-url",
+      "line": 3219,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/products",
+      "line": 3232,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/khata-ledger",
+      "line": 3255,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/khata-ledger",
+      "line": 3286,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/inventory/wastage",
+      "line": 3381,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/auto-restock",
+      "line": 3417,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/force-draft",
+      "line": 3418,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/automation/trigger-reorder",
+      "line": 3422,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/purchase-orders",
+      "line": 3453,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/discard",
+      "line": 3549,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/cancel",
+      "line": 3550,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts/clear-all",
+      "line": 3572,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts",
+      "line": 3574,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/po/transit",
+      "line": 3584,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/po/:id/receive",
+      "line": 3641,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/backup",
+      "line": 3691,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/backups",
+      "line": 3706,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/invoice-sequence",
+      "line": 3733,
+      "hasAliasCalled": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/invoice-sequence/seed",
+      "line": 3746,
+      "hasAliasCalled": false
+    }
+  ],
+  "mockFallbacksInFrontend": [
+    {
+      "file": "src/components/POReviewModal.tsx",
+      "line": 58,
+      "code": "// Mock demonstration fallback when no direct server search match is found"
+    }
+  ],
+  "prismaModels": [
+    "Distributor",
+    "Product",
+    "Customer",
+    "KhataLedger",
+    "InvoiceSequence",
+    "Sale",
+    "SaleItem",
+    "PurchaseOrder",
+    "Expense",
+    "Shift",
+    "WastageLog",
+    "Refund",
+    "RefundItem",
+    "ProductPriceHistory"
+  ]
+}

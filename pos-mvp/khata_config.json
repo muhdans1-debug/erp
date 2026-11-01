@@ -1,0 +1,6 @@
+{
+  "defaultCreditLimit": 30,
+  "customerLimits": {
+    "cust_nfc_demo_01": 25.5
+  }
+}

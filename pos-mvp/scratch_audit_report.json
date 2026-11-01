@@ -1,0 +1,369 @@
+{
+  "summary": {
+    "totalBackendRoutes": 108,
+    "totalFrontendFetchCalls": 83,
+    "frontendCallsMissingBackend": 8,
+    "backendRoutesUncalledByFrontend": 55,
+    "incompleteOrMockPatternsInFrontend": 3
+  },
+  "frontendCallsMissingBackend": [
+    {
+      "file": "src/components/AddQuickProductModal.tsx",
+      "line": 79,
+      "method": "POST",
+      "rawUrl": "${url}/api/quick-products/update",
+      "norm": ":param/api/quick-products/update",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/components/QuickProductEditModal.tsx",
+      "line": 91,
+      "method": "POST",
+      "rawUrl": "${url}/api/quick-products/update",
+      "norm": ":param/api/quick-products/update",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/components/QuickProductEditModal.tsx",
+      "line": 135,
+      "method": "POST",
+      "rawUrl": "${url}/api/quick-products/swap",
+      "norm": ":param/api/quick-products/swap",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/components/QuickProductEditModal.tsx",
+      "line": 178,
+      "method": "POST",
+      "rawUrl": "${url}/api/quick-products/remove",
+      "norm": ":param/api/quick-products/remove",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/pages/CheckoutScreen.tsx",
+      "line": 357,
+      "method": "POST",
+      "rawUrl": "${clean}/products",
+      "norm": ":param/products",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/pages/CheckoutScreen.tsx",
+      "line": 389,
+      "method": "GET",
+      "rawUrl": "${url}/products",
+      "norm": ":param/products",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/pages/CheckoutScreen.tsx",
+      "line": 414,
+      "method": "GET",
+      "rawUrl": "${url}/api/quick-products",
+      "norm": ":param/api/quick-products",
+      "methodInBackend": null
+    },
+    {
+      "file": "src/pages/FinancialDashboard.tsx",
+      "line": 26,
+      "method": "GET",
+      "rawUrl": "${apiBase}/api/reports/vat-return${query}",
+      "norm": "/api/reports/vat-return:param",
+      "methodInBackend": null
+    }
+  ],
+  "backendRoutesUncalledByFrontend": [
+    {
+      "method": "GET",
+      "path": "/",
+      "normPath": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/api/quick-products",
+      "normPath": "/api/quick-products"
+    },
+    {
+      "method": "POST",
+      "path": "/api/quick-products/update",
+      "normPath": "/api/quick-products/update"
+    },
+    {
+      "method": "POST",
+      "path": "/api/quick-products/swap",
+      "normPath": "/api/quick-products/swap"
+    },
+    {
+      "method": "POST",
+      "path": "/api/quick-products/remove",
+      "normPath": "/api/quick-products/remove"
+    },
+    {
+      "method": "POST",
+      "path": "/api/distributors",
+      "normPath": "/api/distributors"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/distributors/:id",
+      "normPath": "/api/distributors/:param"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/:id",
+      "normPath": "/api/products/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/:id/update",
+      "normPath": "/api/products/:param/update"
+    },
+    {
+      "method": "PUT",
+      "path": "/products/:id",
+      "normPath": "/products/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/products/:id",
+      "normPath": "/products/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/shelf-tags",
+      "normPath": "/api/products/shelf-tags"
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/ledger",
+      "normPath": "/api/khata/ledger"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "normPath": "/customers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/khata/:id/statement",
+      "normPath": "/api/khata/:param/statement"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/customers/:id",
+      "normPath": "/api/customers/:param"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/khata/:id",
+      "normPath": "/api/khata/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/customers/:id",
+      "normPath": "/api/customers/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/khata/:id",
+      "normPath": "/api/khata/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/khata/:id/pay",
+      "normPath": "/khata/:param/pay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/:id/pay",
+      "normPath": "/api/khata/:param/pay"
+    },
+    {
+      "method": "POST",
+      "path": "/khata/pay",
+      "normPath": "/khata/pay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/khata/pay",
+      "normPath": "/api/khata/pay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sales",
+      "normPath": "/api/sales"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/financial",
+      "normPath": "/api/reports/financial"
+    },
+    {
+      "method": "GET",
+      "path": "/api/expenses",
+      "normPath": "/api/expenses"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/vat-return",
+      "normPath": "/api/reports/vat-return"
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts",
+      "normPath": "/api/shifts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report/:shiftId",
+      "normPath": "/api/reports/z-report/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/z-report",
+      "normPath": "/api/reports/z-report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/unified",
+      "normPath": "/api/reports/unified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sales/refunds",
+      "normPath": "/api/sales/refunds"
+    },
+    {
+      "method": "GET",
+      "path": "/sales/today",
+      "normPath": "/sales/today"
+    },
+    {
+      "method": "POST",
+      "path": "/sales/:id/void",
+      "normPath": "/sales/:param/void"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/sales",
+      "normPath": "/api/sync/sales"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/trigger",
+      "normPath": "/api/sync/trigger"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/master-url",
+      "normPath": "/api/config/master-url"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/products",
+      "normPath": "/api/sync/products"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/khata-ledger",
+      "normPath": "/api/sync/khata-ledger"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/khata-ledger",
+      "normPath": "/api/sync/khata-ledger"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inventory/wastage",
+      "normPath": "/api/inventory/wastage"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/auto-restock",
+      "normPath": "/api/cron/auto-restock"
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/force-draft",
+      "normPath": "/api/purchase-orders/force-draft"
+    },
+    {
+      "method": "GET",
+      "path": "/api/automation/trigger-reorder",
+      "normPath": "/api/automation/trigger-reorder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/purchase-orders",
+      "normPath": "/api/purchase-orders"
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/discard",
+      "normPath": "/api/purchase-orders/:param/discard"
+    },
+    {
+      "method": "POST",
+      "path": "/api/purchase-orders/:id/cancel",
+      "normPath": "/api/purchase-orders/:param/cancel"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts/clear-all",
+      "normPath": "/api/purchase-orders/drafts/clear-all"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/purchase-orders/drafts",
+      "normPath": "/api/purchase-orders/drafts"
+    },
+    {
+      "method": "GET",
+      "path": "/po/transit",
+      "normPath": "/po/transit"
+    },
+    {
+      "method": "POST",
+      "path": "/po/:id/receive",
+      "normPath": "/po/:param/receive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/backup",
+      "normPath": "/api/system/backup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/backups",
+      "normPath": "/api/system/backups"
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/invoice-sequence",
+      "normPath": "/api/system/invoice-sequence"
+    },
+    {
+      "method": "POST",
+      "path": "/api/system/invoice-sequence/seed",
+      "normPath": "/api/system/invoice-sequence/seed"
+    }
+  ],
+  "incompleteOrMockPatternsInFrontend": [
+    {
+      "file": "src/components/POReviewModal.tsx",
+      "line": 54,
+      "code": "console.warn(\"Catalog search fetch fallback\", e);"
+    },
+    {
+      "file": "src/utils/printer.ts",
+      "line": 323,
+      "code": "console.warn(\"Thermal hardware print fallback to window.print():\", err);"
+    },
+    {
+      "file": "src/utils/printer.ts",
+      "line": 617,
+      "code": "console.warn(\"Credit Note printing failed (non-Android / dev environment fallback):\", err);"
+    }
+  ]
+}

@@ -5482,3 +5482,145 @@ export const syncKhataBalancesToTurso = async () => {
   {"id":"fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1","name":"Thhnj","balance":188.334,"access_token":"fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1"}
   ```
 * **Customer PWA:** Renders **BHD 188.334** on the live customer portal.
+
+---
+
+## 32. Security & PIN Authentication Phase
+
+### 1. Architectural Overview & Threat Model
+In an open-routing QR architecture, scanning a printed physical 58mm thermal receipt directly reveals the customer's outstanding balance, ledger history, and full name. If an uncollected receipt is picked up by a third party, it introduces a financial privacy leak.
+
+To solve this, Phase 2 of the master blueprint introduces **Device Trust & PIN Security Gate**:
+```
+[Physical Thermal Receipt QR]
+             │
+             ▼
+[Mobile Browser / PWA (/tab/:uuid)]
+             │
+             ├── If Local Device Trust Token exists (localStorage) ──► Instant Ledger Access (200 OK)
+             │
+             └── If Unauthenticated / New Device ────────────────────► [High-Contrast Dark Lock Screen]
+                                                                                │
+                                                                   Enter 4-Digit Security PIN
+                                                                                │
+                                                                                ▼
+                                                                  POST /api/auth/verify (Vercel Edge)
+                                                                                │
+                                                                                ▼
+                                                                  Match against Turso Cloud DB
+                                                                  (KhataCustomer.pin, default: 1234)
+                                                                                │
+                                                                                ├── MATCH ──► Sign 90-Day JWT Token
+                                                                                │             Save to localStorage
+                                                                                │             Unlock Statement View
+                                                                                │
+                                                                                └── FAIL  ──► 401 Unauthorized
+                                                                                              "Incorrect PIN"
+```
+
+---
+
+### 2. Database Schema Migration (Turso Cloud)
+A dedicated `pin` column was migrated onto `KhataCustomer` in the primary cloud cluster (`askar-pos-primary`), defaulting to `'1234'`:
+
+```sql
+ALTER TABLE KhataCustomer ADD COLUMN pin TEXT DEFAULT '1234';
+```
+
+Verification via Turso HTTP Pipeline v2:
+```json
+[
+  {
+    "id": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1",
+    "name": "Thhnj",
+    "balance": 176.334,
+    "pin": "1234"
+  }
+]
+```
+
+---
+
+### 3. Edge Authentication Route (`/api/auth/verify`)
+Integrated into [`askar-khata-pwa/api/server.js`](file:///c:/Users/ACER/Desktop/erp/askar-khata-pwa/api/server.js):
+
+```javascript
+import jwt from 'jsonwebtoken';
+const JWT_SECRET = process.env.JWT_SECRET || 'askar_khata_secure_jwt_secret_2026';
+
+fastify.post('/api/auth/verify', async (request, reply) => {
+  try {
+    const { customerUuid, uuid, pin } = request.body || {};
+    const targetId = customerUuid || uuid;
+
+    if (!targetId || !pin) {
+      return reply.status(400).send({ success: false, error: 'Customer ID and PIN are required' });
+    }
+
+    const cleanPin = String(pin).trim();
+
+    // Query customer record in Turso
+    const result = await db.execute({
+      sql: 'SELECT id, name, balance, pin, access_token FROM KhataCustomer WHERE access_token = ? OR id = ? OR phone = ? LIMIT 1',
+      args: [targetId, targetId, targetId]
+    });
+
+    if (result.rows && result.rows.length > 0) {
+      const customer = result.rows[0];
+      const customerPin = customer.pin ? String(customer.pin).trim() : '1234';
+
+      if (customerPin === cleanPin) {
+        const token = jwt.sign(
+          {
+            id: customer.id,
+            name: customer.name,
+            accessToken: customer.access_token || customer.id
+          },
+          JWT_SECRET,
+          { expiresIn: '90d' }
+        );
+
+        return reply.send({
+          success: true,
+          token,
+          customerName: customer.name,
+          customerId: customer.id
+        });
+      } else {
+        return reply.status(401).send({ success: false, error: 'Incorrect PIN' });
+      }
+    }
+
+    return reply.status(404).send({ success: false, error: 'Account Not Found' });
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.status(500).send({ success: false, error: error.message });
+  }
+});
+```
+
+---
+
+### 4. Client-Side Device Trust & Lock Screen UI
+Implemented in [`askar-khata-pwa/src/KhataStatement.jsx`](file:///c:/Users/ACER/Desktop/erp/askar-khata-pwa/src/KhataStatement.jsx):
+1. **Device Persistence:** Inspects `localStorage.getItem('khata_token_' + uuid)`.
+2. **High-Contrast Dark Lock Screen:** Displays a secure terminal-inspired UI with numeric keypad, 4-digit masked PIN input, error alerts, and animated verification states.
+3. **Statement Reveal & Re-Lock Control:** Once authenticated, displays the full customer balance, BenefitPay settlement button, "Device Trusted • 90-Day Token Active" badge, and a **"Lock Device"** action in the header to purge local tokens on shared devices.
+
+---
+
+### 5. Production Deployment & Live Verification
+* **Production Deployment:** Live on Vercel at `https://askar-khata-pwa.vercel.app`.
+* **PIN Verification Suite:**
+  ```bash
+  # Valid 4-digit PIN (1234)
+  POST https://askar-khata-pwa.vercel.app/api/auth/verify
+  Body: { "customerUuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "pin": "1234" }
+  Response: 200 OK -> { "success": true, "token": "...", "customerName": "Thhnj" }
+
+  # Invalid PIN (0000)
+  POST https://askar-khata-pwa.vercel.app/api/auth/verify
+  Body: { "customerUuid": "fe426b94-dbb4-4d48-9c96-0cc6e0fc8db1", "pin": "0000" }
+  Response: 401 Unauthorized -> { "success": false, "error": "Incorrect PIN" }
+  ```
+

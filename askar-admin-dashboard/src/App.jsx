@@ -344,6 +344,22 @@ export default function App() {
   }, [customers]);
 
   // -------------------------------------------------------------
+  // DEVELOPER COCKPIT (God Mode Multi-Tenant & Patch Control)
+  // -------------------------------------------------------------
+  if (showDevCockpit) {
+    return (
+      <DeveloperCockpit
+        isBridgeConnected={isBridgeConnected}
+        broadcastNfcAssigned={broadcastNfcAssigned}
+        activeStoreId="tenant_askar_01"
+        onClose={() => {
+          setShowDevCockpit(false);
+        }}
+      />
+    );
+  }
+
+  // -------------------------------------------------------------
   // SCREEN 1: Manager Authentication Gate (PIN Pad)
   // -------------------------------------------------------------
   if (!isAuthenticated) {
@@ -416,28 +432,20 @@ export default function App() {
               Unlock Command Center
             </button>
           </form>
+
+          {/* Direct Developer Switcher on Lock Screen */}
+          <div className="mt-6 pt-4 border-t border-slate-700 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setShowDevCockpit(true)}
+              className="text-xs font-mono text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/40"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>Launch Dev Cockpit (Ctrl+Shift+D)</span>
+            </button>
+          </div>
         </div>
       </div>
-    );
-  }
-
-  // -------------------------------------------------------------
-  // DEVELOPER COCKPIT (God Mode Multi-Tenant & Patch Control)
-  // -------------------------------------------------------------
-  if (showDevCockpit) {
-    return (
-      <DeveloperCockpit
-        isBridgeConnected={isBridgeConnected}
-        broadcastNfcAssigned={broadcastNfcAssigned}
-        activeStoreId="tenant_askar_01"
-        onClose={() => {
-          if (window.location.port === '5176') {
-            setShowDevCockpit(false);
-          } else {
-            setShowDevCockpit(false);
-          }
-        }}
-      />
     );
   }
 

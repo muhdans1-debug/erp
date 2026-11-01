@@ -62,6 +62,8 @@ export default function DeveloperCockpit({
     { id: 'tenant_salmabad_03', name: 'Salmabad Hub', location: 'Salmabad Central (Sandbox)', status: 'STANDBY', terminals: 1 }
   ];
 
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
   // Helper to add event log
   const pushLog = (type, msg) => {
     const now = new Date();
@@ -96,15 +98,15 @@ export default function DeveloperCockpit({
     try {
       if (actionType === 'SIMULATE_NFC_ALI') {
         // Send NFC simulation to Fastify / bridge
-        await fetch('http://localhost:3000/api/customers/by-card/08:F9:95:86');
+        await fetch(`http://${currentHost}:3000/api/customers/by-card/08:F9:95:86`);
         setActionOutput('✅ Card 08:F9:95:86 (Ali - Dual Wallet) dispatched to counter!');
         pushLog('NFC', 'Dispatched test NFC tag 08:F9:95:86 to counter terminal');
       } else if (actionType === 'SIMULATE_NFC_MESS') {
-        await fetch('http://localhost:3000/api/customers/by-card/04:6A:B2:91:2A');
+        await fetch(`http://${currentHost}:3000/api/customers/by-card/04:6A:B2:91:2A`);
         setActionOutput('✅ Card 04:6A:B2:91:2A (Camp 4 Mess) dispatched to counter!');
         pushLog('NFC', 'Dispatched test NFC tag 04:6A:B2:91:2A (Camp 4) to counter terminal');
       } else if (actionType === 'FORCE_TURSO_SYNC') {
-        const res = await fetch('http://localhost:3000/api/sync/now', { method: 'POST' });
+        const res = await fetch(`http://${currentHost}:3000/api/sync/now`, { method: 'POST' });
         const data = await res.json();
         setActionOutput(`✅ Turso Cloud Sync Complete: ${data.message || 'Synced'}`);
         pushLog('DB', 'Turso Cloud LibSQL embedded replica sync forced and verified');
@@ -355,7 +357,7 @@ export default function DeveloperCockpit({
             >
               <iframe
                 ref={iframeRef}
-                src="http://localhost:5173/?view=pos"
+                src={`http://${currentHost}:5173/?view=pos`}
                 title="Sunmi Counter POS"
                 className="w-full h-full border-0"
               />
@@ -378,7 +380,7 @@ export default function DeveloperCockpit({
                   </p>
                 </div>
                 <a
-                  href="http://localhost:5175/"
+                  href={`http://${currentHost}:5175/`}
                   target="_blank"
                   rel="noreferrer"
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5"
@@ -391,7 +393,7 @@ export default function DeveloperCockpit({
               {/* Fast Inline Iframe to Manager Hub */}
               <div className="w-full h-[750px] bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
                 <iframe
-                  src="http://localhost:5175/"
+                  src={`http://${currentHost}:5175/`}
                   title="Askar Store Manager"
                   className="w-full h-full border-0"
                 />

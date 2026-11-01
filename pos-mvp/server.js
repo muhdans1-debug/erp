@@ -2116,6 +2116,14 @@ fastify.post('/api/customers', async (request, reply) => {
     };
 
     await db.orm.Customer.create(customerRecord);
+    try {
+      await tursoDb.execute({
+        sql: 'INSERT OR REPLACE INTO KhataCustomer (id, access_token, name, balance, phone, updatedAt) VALUES (?, ?, ?, ?, ?, datetime("now"))',
+        args: [id, id, customerRecord.name, 0.0, customerRecord.phone || null]
+      });
+    } catch (e) {
+      console.warn('KhataCustomer mirror notice:', e?.message);
+    }
     const created = await db.orm.Customer.where({ id }).all().first();
     return {
       success: true,

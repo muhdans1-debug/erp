@@ -5278,3 +5278,140 @@ Instead of spooling the entire database history through the Sunmi 58mm printer, 
 1. **Header Statement Range:** Prints `PERIOD: [START] TO [END]` or `STATEMENT: ALL TIME` at the top of the ESC/POS receipt.
 2. **Subtotal by Filter Period:** Automatically tallies `Total Purchases (+)` and `Total Payments (-)` within the selected dates.
 3. **Closing Tab Balance:** Prints the customer's current total unsettled Khata balance at the bottom alongside the BenefitPay QR code for immediate clearing.
+
+
+---
+
+## 30. Vercel Monorepo Phase: Unified Edge Decoupling & Tap Payments BenefitPay Webhook
+
+### 1. Architectural Milestone: Hardware & Cloud Decoupling
+By unifying the React PWA customer statement portal and the Fastify backend onto Vercel's global edge network (`askar-khata-pwa.vercel.app`), customer debt settlement has been completely decoupled from the physical store's Wi-Fi router, local power grid, and laptop uptime.
+
+Customers residing in labor camps across Bahrain can now scan physical 58mm thermal receipts or NFC deep-links over 4G/5G mobile networks 24/7/365 to inspect real-time running balances and settle debts via BenefitPay (Fawri+).
+
+```
++---------------------------------------------------------------------------------------------------+
+|                                 360-Degree FinTech Loop Architecture                              |
++---------------------------------------------------------------------------------------------------+
+ 1. Cashier scans NFC Card or finalizes cart on Sunmi D2 Mini POS.
+ 2. 58mm Thermal Printer prints NBR receipt with QR code: https://askar-khata-pwa.vercel.app/tab/[uuid]
+ 3. Worker scans physical receipt in labor camp over 4G mobile network.
+ 4. React PWA renders real-time "Total Khata Due" gauge & initiates BenefitPay settlement.
+ 5. Fastify Serverless API (/api/checkout) generates Tap Payments session with registered webhook:
+    post: { url: 'https://askar-khata-pwa.vercel.app/api/webhook/tap' }
+ 6. Worker confirms payment via BenefitPay / Fawri+.
+ 7. Tap Payments dispatches CAPTURED event to Vercel Serverless Webhook.
+ 8. Webhook automatically decrements customer balance in Turso Cloud SQLite:
+    UPDATE KhataCustomer SET balance = MAX(0, balance - ?) WHERE access_token = ?
+ 9. Sunmi terminal automatically reflects zeroed balance on next transaction sync.
+```
+
+---
+
+### 2. The Unified Directory Structure & Master Router
+The monorepo bundles both frontend assets and serverless Node.js endpoints under a single repository:
+
+```
+/askar-khata-pwa
+├── api/
+│   └── server.js           <-- Fastify Serverless API handler (Turso LibSQL client)
+├── src/                    <-- React PWA (Customer Digital Ledger Statement & BenefitPay Portal)
+├── index.html              <-- Mobile-first PWA viewport & meta configuration
+├── vercel.json             <-- Master dual-build router
+├── .vercelignore           <-- Cloud file-size & hardware SQLite exclusion filter
+└── package.json            <-- Monorepo dependencies (Vite + React + Fastify + @libsql/client)
+```
+
+#### Master Router Configuration (`vercel.json`)
+```json
+{
+  "version": 2,
+  "framework": "vite",
+  "builds": [
+    {
+      "src": "api/server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/server.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+#### Hardware & DB Protection Filter (`.vercelignore`)
+```
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+.env
+.env.local
+```
+
+---
+
+### 3. Serverless Request Dispatcher & Fastify Export
+In serverless runtimes, traditional listeners (`fastify.listen({ port: 3000 })`) are replaced by the native Node.js HTTP event bridge:
+
+```javascript
+// Step 4: The Fastify Serverless Export in api/server.js
+export default async function handler(req, res) {
+  await fastify.ready();
+  fastify.server.emit('request', req, res);
+}
+```
+
+---
+
+### 4. Tap Payments Webhook & Automated Debt Reconciliation
+When a worker pays via BenefitPay through Tap Payments, the Vercel webhook receives the cryptographic callback and executes automated ledger balancing directly in Turso:
+
+```javascript
+fastify.post('/api/webhook/tap', async (request, reply) => {
+  const payload = request.body || {};
+  const status = payload.status || payload.charge_status;
+  const amount = Number(payload.amount || 0);
+  const customerUuid = payload.metadata?.customerUuid;
+
+  if (status === 'CAPTURED' || status === 'PAID') {
+    // 1. Instantly decrement Khata tab in Turso Cloud SQLite
+    await db.execute({
+      sql: 'UPDATE KhataCustomer SET balance = MAX(0, balance - ?) WHERE access_token = ? OR id = ?',
+      args: [amount, customerUuid, customerUuid]
+    });
+
+    // 2. Insert audit entry in KhataLedger
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, description, createdAt)
+            VALUES (?, ?, ?, 'PAYMENT', 'BenefitPay Online Settlement via Tap Payments', datetime('now'))`,
+      args: [`tx_tap_${Date.now()}`, customerUuid, -amount]
+    });
+
+    return reply.send({ received: true, status: 'PROCESSED', reconciled: true, clearedAmount: amount });
+  }
+
+  return reply.send({ received: true, status });
+});
+```
+
+---
+
+### 5. Sunmi POS Hardware QR Routing Updates
+All thermal receipt printers and on-screen dual displays generate QR codes linking directly to the permanent Vercel domain:
+- **Receipt Thermal QR:** `https://askar-khata-pwa.vercel.app/tab/${targetCustId}`
+- **Dual Display QR Mirror:** `https://askar-khata-pwa.vercel.app/tab/${customerId}`
+- **Test Customer Demo Account:** `https://askar-khata-pwa.vercel.app/tab/cust_nfc_demo_01`

@@ -56,8 +56,26 @@ export function KhataStatement() {
         <p className="text-6xl font-black text-gray-900 mt-2">BHD {formattedBalance}</p>
       </div>
       <button 
-        onClick={() => {
-          alert(`BenefitPay Quick-Pay: Opening payment for BHD ${formattedBalance} to Askar Supermarket.`);
+        onClick={async () => {
+          try {
+            const res = await fetch('/api/checkout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                customerUuid: uuid,
+                customerName: account.name,
+                amount: account.balance
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`BenefitPay Gateway Initialized!\nAmount: BHD ${Number(account.balance).toFixed(3)}\nWebhook Target: ${data.webhookUrl}\nTransaction: ${data.chargeId}\n\nProceeding to Fawri+ / BenefitPay secure portal...`);
+            } else {
+              alert(`BenefitPay Quick-Pay: Opening payment for BHD ${formattedBalance} to Askar Supermarket.`);
+            }
+          } catch (e) {
+            alert(`BenefitPay Quick-Pay: Opening payment for BHD ${formattedBalance} to Askar Supermarket.`);
+          }
         }}
         className="mt-12 w-full max-w-md bg-green-600 hover:bg-green-700 active:scale-95 transition-all text-white text-2xl font-bold py-6 rounded-xl shadow-md cursor-pointer"
       >

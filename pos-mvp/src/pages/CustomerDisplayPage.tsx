@@ -333,11 +333,11 @@ export default function CustomerDisplayPage() {
       const hostname = window.location.hostname;
       // In local testing or running on Sunmi terminal Android webview (where host is localhost / 127.0.0.1)
       if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return `https://askar-khata.pages.dev/tab/${customerId}`;
+        return `https://askar-khata-pwa.vercel.app/tab/${customerId}`;
       }
       return `${window.location.origin}/tab/${customerId}`;
     }
-    return `https://askar-khata.pages.dev/tab/${customerId}`;
+    return `https://askar-khata-pwa.vercel.app/tab/${customerId}`;
   };
 
   const khataStatementUrl = customer ? getStatementUrl(customer.id) : '';

@@ -4480,7 +4480,7 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
 
         <div className="flex flex-col items-center justify-center mt-4 pt-3 border-t border-dashed border-black">
           <QRCodeSVG
-            value={customer?.id ? `https://askar-khata.pages.dev/tab/${customer.id}` : `https://askar-khata.pages.dev`}
+            value={customer?.id ? `https://askar-khata-pwa.vercel.app/tab/${customer.id}` : `https://askar-khata-pwa.vercel.app`}
             size={110}
             level="M"
           />

@@ -515,10 +515,10 @@ export const printFullReceipt = async ({
       const isCreditSale = paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || isMess;
       const targetCustId = customerId || customerUuid || cardUid || customerCardUid;
 
-      // Configurable Portal Base: defaults to public Cloudflare Pages (or custom domain / local override)
+      // Configurable Portal Base: defaults to permanent Vercel Monorepo edge domain
       const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
         ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
-        : 'https://askar-khata.pages.dev';
+        : 'https://askar-khata-pwa.vercel.app';
 
       await Printer.setPrinterAlignment({ alignment: 'center' });
       await Printer.printText({ textToPrint: "\n================================\n" });

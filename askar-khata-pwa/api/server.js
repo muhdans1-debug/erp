@@ -20,32 +20,36 @@ fastify.get('/api/health', async (_req, _res) => {
 fastify.get('/api/khata/:uuid', async (request, reply) => {
   const { uuid } = request.params;
   try {
+    // 1. Primary lookup in KhataCustomer (columns: id, access_token, name, balance, phone, mess_id)
     const result = await db.execute({
-      sql: 'SELECT id, name, balance, phone, cpr, access_token FROM KhataCustomer WHERE access_token = ? OR id = ? OR cpr = ? LIMIT 1',
+      sql: 'SELECT id, name, balance, phone, access_token FROM KhataCustomer WHERE access_token = ? OR id = ? OR phone = ? LIMIT 1',
       args: [uuid, uuid, uuid]
     });
 
-    if (!result.rows || result.rows.length === 0) {
-      const fallback = await db.execute({
-        sql: 'SELECT id, name, 0.000 AS balance FROM Customer WHERE id = ? LIMIT 1',
-        args: [uuid]
-      }).catch(() => ({ rows: [] }));
+    if (result.rows && result.rows.length > 0) {
+      return result.rows[0];
+    }
 
-      if (!fallback.rows || fallback.rows.length === 0) {
-        if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {
-          return {
-            id: uuid,
-            name: 'Camp Mess Alpha (Test Account)',
-            balance: 14.500,
-            access_token: uuid
-          };
-        }
-        return reply.status(404).send({ error: "Account Not Found" });
-      }
+    // 2. Fallback lookup in Customer table (supports CPR and Card UID lookup)
+    const fallback = await db.execute({
+      sql: 'SELECT id, name, 0.000 AS balance, phone, id AS access_token FROM Customer WHERE id = ? OR phone = ? OR cpr = ? OR cardUid = ? LIMIT 1',
+      args: [uuid, uuid, uuid, uuid]
+    }).catch(() => ({ rows: [] }));
+
+    if (fallback.rows && fallback.rows.length > 0) {
       return fallback.rows[0];
     }
 
-    return result.rows[0];
+    if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {
+      return {
+        id: uuid,
+        name: 'Camp Mess Alpha (Test Account)',
+        balance: 14.500,
+        access_token: uuid
+      };
+    }
+
+    return reply.status(404).send({ error: "Account Not Found" });
   } catch (error) {
     fastify.log.error(error);
     if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {

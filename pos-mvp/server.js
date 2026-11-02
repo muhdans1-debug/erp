@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import sqlite from '@prisma/orm-sqlite/runtime';
 import contractJson from './prisma/contract.json' with { type: 'json' };
 import { SaleRepository } from './repositories/SaleRepository.js';
@@ -121,6 +122,23 @@ await fastify.register(cors, {
   methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-manager-pin', 'Accept', 'Origin', 'X-Requested-With', 'Cache-Control', 'Pragma', 'Expires'],
 });
+
+// Serve compiled React frontend if dist exists
+const distPath = path.resolve('./dist');
+if (fs.existsSync(distPath)) {
+  await fastify.register(fastifyStatic, {
+    root: distPath,
+    prefix: '/',
+    wildcard: false
+  });
+
+  fastify.setNotFoundHandler((request, reply) => {
+    if (request.raw.url && !request.raw.url.startsWith('/api')) {
+      return reply.sendFile('index.html');
+    }
+    reply.status(404).send({ message: `Route ${request.method}:${request.url} not found`, error: 'Not Found', statusCode: 404 });
+  });
+}
 
 // Helper: Seed sample distributors if missing
 const seedDistributors = async () => {

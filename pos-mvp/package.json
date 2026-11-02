@@ -3,11 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron-main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:web": "vite --port 5173 --host 0.0.0.0",
     "server": "node server.js",
     "build": "tsc && vite build",
+    "dist": "npm run build && electron-builder",
+    "electron:dev": "electron .",
     "preview": "vite preview",
     "tauri": "tauri",
     "postinstall": "prisma skills sync || exit 0",
@@ -23,6 +26,7 @@
     "@capgo/capacitor-nfc": "^8.3.2",
     "@capgo/capacitor-updater": "^8.54.0",
     "@fastify/cors": "^11.3.1",
+    "@fastify/static": "^10.1.8",
     "@libsql/client": "^0.18.0",
     "@prisma/client": "^7.10.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -50,11 +54,45 @@
     "@vitejs/plugin-legacy": "^8.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.6.1",
+    "electron": "45.2.1",
+    "electron-builder": "^26.18.0",
     "postcss": "^8.5.30",
     "prisma": "^8.0.0-rc.22",
     "tailwindcss": "^4.3.3",
     "terser": "^5.51.2",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
+  },
+  "build": {
+    "appId": "com.askarpos.app",
+    "productName": "Askar POS",
+    "electronVersion": "45.2.1",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "server.js",
+      "electron-main.js",
+      "package.json",
+      "repositories/**/*",
+      "services/**/*",
+      "syncEngine.js",
+      "src/automation/**/*",
+      "prisma/**/*",
+      "quick_products_config.json",
+      "khata_config.json",
+      "!android",
+      "!platform-tools",
+      "!archives",
+      "!scratch"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

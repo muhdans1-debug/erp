@@ -129,7 +129,8 @@ if (fs.existsSync(distPath)) {
   await fastify.register(fastifyStatic, {
     root: distPath,
     prefix: '/',
-    wildcard: false
+    wildcard: false,
+    index: false
   });
 
   fastify.setNotFoundHandler((request, reply) => {
@@ -251,6 +252,10 @@ const seedNfcCustomers = async () => {
 
 // Root health & landing route
 fastify.get('/', async (request, reply) => {
+  const indexFile = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexFile)) {
+    return reply.sendFile('index.html');
+  }
   const host = request.headers.host ? request.headers.host.split(':')[0] : 'localhost';
   if (request.headers.accept && request.headers.accept.includes('text/html')) {
     reply.type('text/html').send(`
@@ -6106,6 +6111,10 @@ const start = async () => {
     await fastify.listen({ port: 3000, host: '0.0.0.0' });
     console.log('POS Backend running on port 3000');
   } catch (err) {
+    if (err?.code === 'EADDRINUSE' || err?.message?.includes('EADDRINUSE')) {
+      console.log('⚠️ Port 3000 already running existing server. Connected to active instance.');
+      return;
+    }
     fastify.log.error(err);
     process.exit(1);
   }

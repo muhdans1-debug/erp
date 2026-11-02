@@ -1,9 +1,26 @@
-import { app, BrowserWindow } from 'electron';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { app, BrowserWindow } = require('electron');
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Writable Storage Safeguard: In production C:\Program Files, route all SQLite & file writes to AppData
+if (app.isPackaged) {
+  try {
+    const userDataDir = app.getPath('userData');
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+    }
+    process.chdir(userDataDir);
+    console.log('Production working directory shifted to writable userData:', userDataDir);
+  } catch (err) {
+    console.error('Failed to set userData working directory:', err);
+  }
+}
 
 // 1. Boot Fastify backend in background thread
 try {
@@ -36,6 +53,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.maximize();
     mainWindow.show();
+    mainWindow.webContents.openDevTools();
   };
 
   // 2. Wait 2 seconds for Fastify/SQLite to initialize, then load the UI
@@ -53,3 +71,4 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+

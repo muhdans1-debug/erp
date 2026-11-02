@@ -8,18 +8,20 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Writable Storage Safeguard: In production C:\Program Files, route all SQLite & file writes to AppData
+// Writable Storage Safeguard: In production, route all SQLite & file writes to AppData
+const userDataDir = app.getPath('userData');
 if (app.isPackaged) {
   try {
-    const userDataDir = app.getPath('userData');
     if (!fs.existsSync(userDataDir)) {
       fs.mkdirSync(userDataDir, { recursive: true });
     }
-    process.chdir(userDataDir);
-    console.log('Production working directory shifted to writable userData:', userDataDir);
+    process.env.ASKAR_DATA_PATH = userDataDir;
+    console.log('Production database directory set to AppData:', userDataDir);
   } catch (err) {
-    console.error('Failed to set userData working directory:', err);
+    console.error('Failed to set userData database directory:', err);
   }
+} else {
+  process.env.ASKAR_DATA_PATH = __dirname;
 }
 
 // 1. Boot Fastify backend in background thread
@@ -31,6 +33,13 @@ try {
     console.log('Fastify backend already active on port 3000');
   } else {
     console.error('Fastify startup error:', err);
+    try {
+      const { dialog } = require('electron');
+      dialog.showErrorBox(
+        'Fastify Backend Startup Error',
+        `Fastify backend failed to start:\n${err?.message || err}\n\nStack:\n${err?.stack || ''}`
+      );
+    } catch {}
   }
 }
 

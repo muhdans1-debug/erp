@@ -29,6 +29,7 @@
     "@fastify/static": "^10.1.8",
     "@libsql/client": "^0.18.0",
     "@prisma/client": "^7.10.0",
+    "@prisma/orm-sqlite": "^8.0.0-rc.17",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
@@ -46,7 +47,6 @@
     "recharts": "^3.10.1"
   },
   "devDependencies": {
-    "@prisma/orm-sqlite": "^8.0.0-rc.17",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.6.6",
     "@types/react": "^19.1.8",

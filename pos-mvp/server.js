@@ -9,8 +9,18 @@ import { startReorderCron, runReorderCheck, snoozedDistributors } from './src/au
 import { startBackupCron, createDatabaseBackup, getLatestBackup } from './src/automation/backupJob.js';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { getCurrentInvoiceSequence, setStartingInvoiceSequence, formatInvoiceNumber } from './services/invoiceSequence.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export const dataDir = process.env.ASKAR_DATA_PATH || __dirname;
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+export const devDbPath = path.join(dataDir, 'dev.db');
+export const localDbPath = path.join(dataDir, 'local.db');
 
 import nodemailer from 'nodemailer';
 import { createClient as createLibsqlClient } from '@libsql/client';
@@ -48,18 +58,18 @@ process.on('unhandledRejection', (reason) => {
 
 // Optimize local SQLite storage engine with WAL mode (sub-5ms transaction latency)
 try {
-  const initDb = new DatabaseSync('./dev.db');
+  const initDb = new DatabaseSync(devDbPath);
   initDb.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
   initDb.close();
 } catch (e) {
   console.warn('SQLite WAL init warning:', e?.message);
 }
 
-const db = sqlite({ contractJson, path: './dev.db' });
+const db = sqlite({ contractJson, path: devDbPath });
 
 // Initialize LibSQL Embedded Replica Client for 0ms Hardware Latency & Turso Cloud Sync
 const tursoDb = createLibsqlClient({
-  url: 'file:local.db',
+  url: 'file:' + path.resolve(localDbPath),
   syncUrl: process.env.TURSO_DATABASE_URL || 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io',
   authToken: process.env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM1NDIzMTksImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.W6Hc7fVPLuJJ3capRMHZNm5-yJYHnYSulJ8h9sUxd7BPLchZbMh3LxTa86S8K_Nt9RpsqPgpudDOzfNJkCeJCg',
 });
@@ -124,7 +134,7 @@ await fastify.register(cors, {
 });
 
 // Serve compiled React frontend if dist exists
-const distPath = path.resolve('./dist');
+const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   await fastify.register(fastifyStatic, {
     root: distPath,
@@ -306,7 +316,7 @@ fastify.get('/products', async () => {
 });
 
 // Persistent Quick Products Configuration
-const QUICK_CONFIG_FILE = path.join(process.cwd(), 'quick_products_config.json');
+const QUICK_CONFIG_FILE = path.join(dataDir, 'quick_products_config.json');
 
 const loadQuickConfig = () => {
   try {
@@ -1334,7 +1344,7 @@ fastify.post('/api/products/shelf-tags', async (request, reply) => {
   }
 });
 
-const KHATA_CONFIG_FILE = path.join(process.cwd(), 'khata_config.json');
+const KHATA_CONFIG_FILE = path.join(dataDir, 'khata_config.json');
 
 const loadKhataConfig = () => {
   try {
@@ -1614,7 +1624,7 @@ const fetchMessGroupDetails = async (messId) => {
   let memberRows = [];
 
   try {
-    const localDb = new DatabaseSync('./dev.db');
+    const localDb = new DatabaseSync(devDbPath);
     try {
       group = localDb.prepare(`SELECT id, group_name FROM MessGroup WHERE id = ? LIMIT 1`).get(messId);
       if (group) {
@@ -1717,7 +1727,7 @@ const handleGetCustomerStatement = async (request, reply) => {
     let messId = customer.mess_id;
     if (!messId) {
       try {
-        const localDb = new DatabaseSync('./dev.db');
+        const localDb = new DatabaseSync(devDbPath);
         try {
           const row = localDb.prepare('SELECT mess_id FROM Customer WHERE id = ?').get(id);
           if (row?.mess_id) messId = row.mess_id;
@@ -2014,7 +2024,7 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
 
     let customerRow = null;
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         customerRow = localDb.prepare('SELECT id, name, khata_pin FROM Customer WHERE id = ?').get(targetId);
       } finally {
@@ -2071,7 +2081,7 @@ fastify.post('/api/customers/:id/pin', async (request, reply) => {
     const cleanPin = String(pin).trim();
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         localDb.prepare('UPDATE Customer SET khata_pin = ? WHERE id = ?').run(cleanPin, id);
       } finally {
@@ -2390,7 +2400,7 @@ fastify.get('/api/nfc/cards', async (request, reply) => {
 
     let nfcCardRows = [];
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         nfcCardRows = localDb.prepare(`SELECT tag_id, card_type, customer_id, mess_id, createdAt FROM NfcCard`).all();
       } finally {
@@ -2526,7 +2536,7 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       let targetMessId = mess_id;
       if (!targetMessId && mess_name) {
         targetMessId = 'mess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        const localDb = new DatabaseSync('./dev.db');
+        const localDb = new DatabaseSync(devDbPath);
         try {
           localDb.prepare(`INSERT INTO MessGroup (id, tenantId, group_name, createdAt) VALUES (?, 'tenant_1', ?, datetime('now'))`).run(targetMessId, mess_name.trim());
         } finally {
@@ -2546,7 +2556,7 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       // If members provided, attach them to this mess group
       if (targetMessId && Array.isArray(member_ids)) {
         try {
-          const localDb = new DatabaseSync('./dev.db');
+          const localDb = new DatabaseSync(devDbPath);
           try {
             for (const mId of member_ids) {
               localDb.prepare(`UPDATE Customer SET mess_id = ? WHERE id = ?`).run(targetMessId, mId);
@@ -2570,7 +2580,7 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
 
       // Upsert into NfcCard
       try {
-        const localDb = new DatabaseSync('./dev.db');
+        const localDb = new DatabaseSync(devDbPath);
         try {
           localDb.prepare(`INSERT OR REPLACE INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) VALUES (?, 'MESS', NULL, ?, datetime('now'))`).run(cleanTag, targetMessId);
         } finally {
@@ -2609,7 +2619,7 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       // If mess_id is specified (or explicitly cleared), update customer's mess group
       if (mess_id !== undefined) {
         try {
-          const localDb = new DatabaseSync('./dev.db');
+          const localDb = new DatabaseSync(devDbPath);
           try {
             localDb.prepare(`UPDATE Customer SET mess_id = ? WHERE id = ?`).run(mess_id || null, customer_id);
           } finally {
@@ -2628,7 +2638,7 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       }
 
       try {
-        const localDb = new DatabaseSync('./dev.db');
+        const localDb = new DatabaseSync(devDbPath);
         try {
           localDb.prepare(`INSERT OR REPLACE INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) VALUES (?, 'PERSONAL', ?, ?, datetime('now'))`).run(cleanTag, customer_id, mess_id || null);
         } finally {
@@ -2670,7 +2680,7 @@ fastify.post('/api/nfc/unlink', async (request, reply) => {
     }
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         localDb.prepare(`UPDATE Customer SET cardUid = NULL WHERE UPPER(cardUid) = ? OR REPLACE(UPPER(cardUid), ':', '') = ?`).run(cleanTag, cleanTag.replace(/:/g, ''));
         localDb.prepare(`DELETE FROM NfcCard WHERE UPPER(tag_id) = ? OR REPLACE(UPPER(tag_id), ':', '') = ?`).run(cleanTag, cleanTag.replace(/:/g, ''));
@@ -2704,7 +2714,7 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
   try {
     let groups = [];
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         groups = localDb.prepare(`SELECT id, group_name, createdAt FROM MessGroup ORDER BY group_name ASC`).all();
       } finally {
@@ -2725,7 +2735,7 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
       const details = await fetchMessGroupDetails(group.id);
       let cardTag = null;
       try {
-        const localDb = new DatabaseSync('./dev.db');
+        const localDb = new DatabaseSync(devDbPath);
         try {
           const row = localDb.prepare(`SELECT tag_id FROM NfcCard WHERE mess_id = ? AND card_type = 'MESS' LIMIT 1`).get(group.id);
           if (row) cardTag = row.tag_id;
@@ -2774,7 +2784,7 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
     const cleanName = group_name.trim();
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         localDb.prepare(`INSERT INTO MessGroup (id, tenantId, group_name, createdAt) VALUES (?, 'tenant_1', ?, datetime('now'))`).run(messId, cleanName);
         if (Array.isArray(member_ids)) {
@@ -2836,7 +2846,7 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
     }
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         if (group_name && group_name.trim()) {
           localDb.prepare(`UPDATE MessGroup SET group_name = ? WHERE id = ?`).run(group_name.trim(), id);
@@ -2919,7 +2929,7 @@ fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
     }
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         localDb.prepare(`UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`).run(id);
         localDb.prepare(`DELETE FROM NfcCard WHERE mess_id = ?`).run(id);
@@ -2956,7 +2966,7 @@ const resolveNfcTagDetails = async (uid) => {
 
   // 1. Try local dev.db first
   try {
-    const localDb = new DatabaseSync('./dev.db');
+    const localDb = new DatabaseSync(devDbPath);
     try {
       const row = localDb.prepare(`
         SELECT tag_id, card_type, customer_id, mess_id 
@@ -3011,7 +3021,7 @@ const resolveNfcTagDetails = async (uid) => {
   let customerMessId = null;
   if (customer) {
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         const cRow = localDb.prepare('SELECT mess_id FROM Customer WHERE id = ?').get(customer.id);
         if (cRow && cRow.mess_id) customerMessId = cRow.mess_id;
@@ -3118,7 +3128,7 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
     let memberRows = [];
 
     try {
-      const localDb = new DatabaseSync('./dev.db');
+      const localDb = new DatabaseSync(devDbPath);
       try {
         group = localDb.prepare(`SELECT id, group_name FROM MessGroup WHERE id = ? LIMIT 1`).get(messId);
         if (group) {
@@ -4011,7 +4021,7 @@ fastify.get('/api/reports/vat-return', async (request, reply) => {
 // --- SHIFT MANAGEMENT & BLIND RECONCILIATION ENGINE ---
 
 const queryLocalDevDb = (sql, params = []) => {
-  const localDb = new DatabaseSync('./dev.db');
+  const localDb = new DatabaseSync(devDbPath);
   try {
     const stmt = localDb.prepare(sql);
     if (sql.trim().toUpperCase().startsWith('SELECT')) {

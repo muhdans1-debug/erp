@@ -24,24 +24,25 @@ if (app.isPackaged) {
   process.env.ASKAR_DATA_PATH = __dirname;
 }
 
-// 1. Boot Fastify backend in background thread
-try {
-  await import('./server.js');
-  console.log('Fastify backend started by Electron shell');
-} catch (err) {
-  if (err?.code === 'EADDRINUSE' || err?.message?.includes('EADDRINUSE')) {
-    console.log('Fastify backend already active on port 3000');
-  } else {
-    console.error('Fastify startup error:', err);
-    try {
-      const { dialog } = require('electron');
-      dialog.showErrorBox(
-        'Fastify Backend Startup Error',
-        `Fastify backend failed to start:\n${err?.message || err}\n\nStack:\n${err?.stack || ''}`
-      );
-    } catch {}
-  }
-}
+// 1. Boot Fastify backend in background without blocking window creation
+import('./server.js')
+  .then(() => {
+    console.log('Fastify backend booted successfully');
+  })
+  .catch((err) => {
+    if (err?.code === 'EADDRINUSE' || err?.message?.includes('EADDRINUSE')) {
+      console.log('Fastify backend already active on port 3000');
+    } else {
+      console.error('BACKEND CRASH REASON:', err);
+      try {
+        const { dialog } = require('electron');
+        dialog.showErrorBox(
+          'Fastify Backend Startup Error',
+          `Fastify backend failed to start:\n${err?.message || err}\n\nStack:\n${err?.stack || ''}`
+        );
+      } catch {}
+    }
+  });
 
 let mainWindow;
 
@@ -51,25 +52,36 @@ function createWindow() {
     height: 800,
     title: 'Askar POS',
     autoHideMenuBar: true,
-    show: false, // Hide until loaded
+    show: false, // Hide until ready
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
     }
   });
 
-  const loadApp = () => {
-    mainWindow.loadURL('http://localhost:3000');
-    mainWindow.maximize();
-    mainWindow.show();
-    mainWindow.webContents.openDevTools();
+  mainWindow.maximize();
+  mainWindow.show();
+  mainWindow.webContents.openDevTools();
+
+  // Retry loading Fastify on port 3000
+  let attempts = 0;
+  const maxAttempts = 15;
+  const pollServer = () => {
+    attempts++;
+    mainWindow.loadURL('http://localhost:3000').catch(() => {
+      if (attempts < maxAttempts) {
+        setTimeout(pollServer, 500);
+      } else {
+        console.warn('Fastify not responding on port 3000 after retries, falling back to local files');
+        const distIndex = path.join(__dirname, 'dist', 'index.html');
+        mainWindow.loadFile(distIndex).catch((e) => console.error('Fallback failed:', e));
+      }
+    });
   };
 
-  // 2. Wait 2 seconds for Fastify/SQLite to initialize, then load the UI
-  setTimeout(loadApp, 2000);
+  pollServer();
 
   mainWindow.webContents.on('did-fail-load', () => {
-    // Direct disk fallback
     const distIndex = path.join(__dirname, 'dist', 'index.html');
     mainWindow.loadFile(distIndex).catch(() => {});
   });

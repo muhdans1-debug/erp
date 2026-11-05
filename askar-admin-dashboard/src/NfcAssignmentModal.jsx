@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { adminDb } from './db';
-import { 
-  CreditCard, Users, User, Check, X, Search, Plus, 
+import {
+  CreditCard, Users, User, Check, X, Search, Plus,
   Copy, CheckCheck, RefreshCw, AlertCircle, Sparkles, Building2, ShieldCheck
 } from 'lucide-react';
 
@@ -46,29 +46,13 @@ export default function NfcAssignmentModal({
   // Load Customers & Mess Groups from Turso Cloud
   const loadData = async () => {
     try {
-      // 1. Fetch all customers from Customer table (with KhataCustomer balances if available)
+      // 1. Fetch all customers from unified Customer table
       const custRes = await adminDb.execute(`
-        SELECT id, name, phone, batchNo, cpr, cardUid, mess_id 
+        SELECT id, name, phone, batchNo, cpr, cardUid, mess_id, COALESCE(balance, 0) as balance, access_token 
         FROM Customer 
         ORDER BY name ASC
       `);
-
-      // 2. Fetch balances from KhataCustomer or calculate from ledger
-      let balanceMap = {};
-      try {
-        const balRes = await adminDb.execute(`SELECT id, balance FROM KhataCustomer`);
-        balRes.rows.forEach(r => {
-          balanceMap[r.id] = Number(r.balance || 0);
-        });
-      } catch (e) {
-        console.warn('Could not load KhataCustomer balances:', e.message);
-      }
-
-      const mergedCustomers = custRes.rows.map(c => ({
-        ...c,
-        balance: balanceMap[c.id] || 0
-      }));
-      setCustomers(mergedCustomers);
+      setCustomers(custRes.rows);
 
       // 3. Fetch existing Mess Groups
       const messRes = await adminDb.execute(`
@@ -99,7 +83,7 @@ export default function NfcAssignmentModal({
   const filteredCustomers = useMemo(() => {
     if (!customerSearch.trim()) return customers;
     const q = customerSearch.toLowerCase();
-    return customers.filter(c => 
+    return customers.filter(c =>
       (c.name || '').toLowerCase().includes(q) ||
       (c.phone || '').toLowerCase().includes(q) ||
       (c.batchNo || '').toLowerCase().includes(q) ||
@@ -111,7 +95,7 @@ export default function NfcAssignmentModal({
   const filteredMembers = useMemo(() => {
     if (!memberSearch.trim()) return customers;
     const q = memberSearch.toLowerCase();
-    return customers.filter(c => 
+    return customers.filter(c =>
       (c.name || '').toLowerCase().includes(q) ||
       (c.phone || '').toLowerCase().includes(q) ||
       (c.batchNo || '').toLowerCase().includes(q)
@@ -175,21 +159,10 @@ export default function NfcAssignmentModal({
         targetCustId = 'cust_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
         await adminDb.execute({
-          sql: `INSERT INTO Customer (id, tenantId, name, phone, batchNo, cardUid, createdAt, is_active, isActive)
-                VALUES (?, 'tenant_1', ?, ?, ?, ?, datetime('now'), 1, 1)`,
-          args: [targetCustId, newCustomerName.trim(), newCustomerPhone.trim() || null, newCustomerBatch.trim() || null, cleanTag]
+          sql: `INSERT INTO Customer (id, tenantId, name, phone, batchNo, cardUid, access_token, balance, createdAt, is_active, isActive)
+                VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 0.0, datetime('now'), 1, 1)`,
+          args: [targetCustId, newCustomerName.trim(), newCustomerPhone.trim() || null, newCustomerBatch.trim() || null, cleanTag, cleanTag]
         });
-
-        // Also add to KhataCustomer for PWA compatibility
-        try {
-          await adminDb.execute({
-            sql: `INSERT INTO KhataCustomer (id, access_token, name, balance, phone, updatedAt)
-                  VALUES (?, ?, ?, 0.0, ?, datetime('now'))`,
-            args: [targetCustId, cleanTag, newCustomerName.trim(), newCustomerPhone.trim() || null]
-          });
-        } catch (e) {
-          console.warn('KhataCustomer mirror note:', e.message);
-        }
       } else {
         if (!targetCustId) {
           setErrorMsg('Please select a customer to link this NFC card.');
@@ -289,12 +262,6 @@ export default function NfcAssignmentModal({
             sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
             args: [targetGroupId, mId]
           });
-          try {
-            await adminDb.execute({
-              sql: `UPDATE KhataCustomer SET mess_id = ? WHERE id = ?`,
-              args: [targetGroupId, mId]
-            });
-          } catch {}
         }
       } else {
         if (!targetGroupId) {
@@ -354,7 +321,7 @@ export default function NfcAssignmentModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div 
+      <div
         className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150"
       >
         {/* MODAL HEADER */}
@@ -393,15 +360,15 @@ export default function NfcAssignmentModal({
               Scanned UID:
             </span>
             <div className="flex items-center bg-white px-3 py-1 rounded-xl border border-slate-300 font-mono text-sm font-bold text-indigo-950 shadow-sm">
-              <input 
-                type="text" 
-                value={tagId} 
+              <input
+                type="text"
+                value={tagId}
                 onChange={(e) => setTagId(e.target.value.toUpperCase())}
                 placeholder="04:XX:XX:XX"
                 className="outline-none bg-transparent w-48 font-mono uppercase"
               />
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={handleCopyTag}
                 className="text-slate-400 hover:text-slate-700 ml-1.5 transition"
                 title="Copy UID"
@@ -416,11 +383,10 @@ export default function NfcAssignmentModal({
             <button
               type="button"
               onClick={() => setAssignmentMode('PERSONAL')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition ${
-                assignmentMode === 'PERSONAL'
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition ${assignmentMode === 'PERSONAL'
                   ? 'bg-white text-indigo-900 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <User className="w-4 h-4" />
               Personal Account
@@ -428,11 +394,10 @@ export default function NfcAssignmentModal({
             <button
               type="button"
               onClick={() => setAssignmentMode('MESS')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition ${
-                assignmentMode === 'MESS'
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition ${assignmentMode === 'MESS'
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <Users className="w-4 h-4" />
               Mess Group (Split-Bill)
@@ -545,16 +510,14 @@ export default function NfcAssignmentModal({
                           <div
                             key={cust.id}
                             onClick={() => setSelectedCustomerId(cust.id)}
-                            className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition ${
-                              isSelected
+                            className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition ${isSelected
                                 ? 'bg-indigo-50 border-indigo-400 text-indigo-950 font-bold shadow-sm'
                                 : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${
-                                isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
-                              }`}>
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                                }`}>
                                 {cust.name.slice(0, 2).toUpperCase()}
                               </div>
                               <div>
@@ -614,18 +577,16 @@ export default function NfcAssignmentModal({
                   <button
                     type="button"
                     onClick={() => setMessMode('NEW')}
-                    className={`px-3 py-1 rounded-lg transition ${
-                      messMode === 'NEW' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`px-3 py-1 rounded-lg transition ${messMode === 'NEW' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     + New Group
                   </button>
                   <button
                     type="button"
                     onClick={() => setMessMode('EXISTING')}
-                    className={`px-3 py-1 rounded-lg transition ${
-                      messMode === 'EXISTING' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`px-3 py-1 rounded-lg transition ${messMode === 'EXISTING' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     Existing ({messGroups.length})
                   </button>
@@ -684,17 +645,16 @@ export default function NfcAssignmentModal({
                           <div
                             key={member.id}
                             onClick={() => toggleMemberSelection(member.id)}
-                            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition ${
-                              isChecked
+                            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition ${isChecked
                                 ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold shadow-sm'
                                 : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center gap-3">
                               <input
                                 type="checkbox"
                                 checked={isChecked}
-                                onChange={() => {}} // handled by row click
+                                onChange={() => { }} // handled by row click
                                 className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
                               />
                               <div>
@@ -702,7 +662,7 @@ export default function NfcAssignmentModal({
                                 <div className="text-[10px] text-slate-500 flex items-center gap-1.5">
                                   <span>{member.phone || 'No Phone'}</span>
                                   {member.batchNo && (
-                                    <span 
+                                    <span
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         selectAllMembersInBatch(member.batchNo);
@@ -824,8 +784,8 @@ export default function NfcAssignmentModal({
               ) : (
                 <>
                   <Users className="w-4 h-4" />
-                  {messMode === 'NEW' 
-                    ? `Create Mess Group & Link Card (${selectedMemberIds.size} Members)` 
+                  {messMode === 'NEW'
+                    ? `Create Mess Group & Link Card (${selectedMemberIds.size} Members)`
                     : 'Link Card to Existing Mess Group'}
                 </>
               )}

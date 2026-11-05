@@ -20,12 +20,12 @@ export default {
         },
       });
     }
-    
+
     // Only respond to the specific Khata route
     if (url.pathname.startsWith('/api/khata/')) {
       // Extract the UUID from the URL (e.g., /api/khata/f8a9-4b2c)
       const uuid = url.pathname.split('/').pop() || '';
-      
+
       // Connect to Turso using Cloudflare's secure environment variables
       const client = createClient({
         url: env.TURSO_URL,
@@ -33,18 +33,18 @@ export default {
       });
 
       try {
-        // Query the database securely
+        // Query the unified Customer database securely
         const result = await client.execute({
-          sql: 'SELECT name, balance FROM KhataCustomer WHERE access_token = ?',
-          args: [uuid]
+          sql: 'SELECT name, balance, phone FROM Customer WHERE access_token = ? OR id = ?',
+          args: [uuid, uuid]
         });
 
         if (result.rows.length === 0) {
-          return new Response(JSON.stringify({ error: "Account Not Found" }), { 
+          return new Response(JSON.stringify({ error: "Account Not Found" }), {
             status: 404,
-            headers: { 
+            headers: {
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*' 
+              'Access-Control-Allow-Origin': '*'
             }
           });
         }
@@ -52,7 +52,7 @@ export default {
         // Return the customer's balance to the React PWA
         return new Response(JSON.stringify(result.rows[0]), {
           status: 200,
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*' // Allows your Vercel PWA to read it
           }

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt } from '../utils/printer';
+import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
 
 export interface PaymentItem {
   id: string;
@@ -146,46 +147,94 @@ export default function PaymentModal({
       })),
     };
 
+    let data: any = null;
     try {
       const res = await fetch(`${apiBase}/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(salePayload),
+        signal: AbortSignal.timeout(3500)
       });
-
-      const data = await res.json();
-
-      if (data && data.success) {
-        const finalReceiptData = {
-          invoiceNo: data.formattedInvoice || data.invoice || data.invoiceNo || invoiceNo,
-          paidAmount: totalAmount,
-          paymentMethod: selectedMethod,
-          transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
-          createdAt: new Date().toISOString(),
-        };
-
-        setCompletedSale(finalReceiptData);
-        onSuccess(finalReceiptData);
-
-        // Attempt Sunmi hardware printer if available
-        printFullReceipt({
-          invoiceNo: finalReceiptData.invoiceNo,
-          items: cart,
-          subtotal,
-          vat,
-          total: totalAmount,
-          paymentMode: selectedMethod,
-          customerName: customer?.name,
-          customerCardUid: customer?.cardUid || undefined,
-          cashierName: 'Register 01',
-          transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
-        }).catch(() => {});
+      if (res.ok) {
+        data = await res.json();
       } else {
-        alert(`Checkout failed: ${data?.error || 'Unknown error'}`);
+        try { data = await res.json(); } catch {}
       }
+    } catch (netErr) {
+      console.warn('Payment checkout network notice:', netErr);
+    }
+
+    // Try failover alternative server if primary failed or returned error
+    if (!data || !data.success) {
+      const altCandidates = ['http://192.168.8.7:3000', 'http://localhost:3000'].filter(u => !apiBase.startsWith(u));
+      for (const altBase of altCandidates) {
+        try {
+          const altRes = await fetch(`${altBase}/checkout`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(salePayload),
+            signal: AbortSignal.timeout(3000)
+          });
+          if (altRes.ok) {
+            const altData = await altRes.json();
+            if (altData && altData.success) {
+              data = altData;
+              localStorage.setItem('master_server_url', altBase);
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    try {
+      // Zero-block safeguard: Even if master server is unavailable, complete sale locally and print
+      const isOnlineSuccess = Boolean(data && data.success);
+      const verifiedInvoiceNo = isOnlineSuccess
+        ? (data.formattedInvoice || data.invoice || data.invoiceNo || invoiceNo)
+        : `INV-OFF-${Date.now().toString().slice(-6)}`;
+
+      if (!isOnlineSuccess) {
+        try {
+          const offlineQueue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
+          offlineQueue.push({
+            ...salePayload,
+            invoiceNo: verifiedInvoiceNo,
+            offlineTimestamp: new Date().toISOString()
+          });
+          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(offlineQueue));
+          if (offlineQueue.length > 100) {
+            console.warn("⚠️ Offline queue exceeds 100 items. Connect to Wi-Fi soon.");
+          }
+        } catch {}
+      }
+
+      const finalReceiptData = {
+        invoiceNo: verifiedInvoiceNo,
+        paidAmount: totalAmount,
+        paymentMethod: selectedMethod,
+        transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      setCompletedSale(finalReceiptData);
+      onSuccess(finalReceiptData);
+
+      // Attempt Sunmi hardware printer if available
+      printFullReceipt({
+        invoiceNo: finalReceiptData.invoiceNo,
+        items: cart,
+        subtotal,
+        vat,
+        total: totalAmount,
+        paymentMode: selectedMethod,
+        customerName: customer?.name,
+        customerCardUid: customer?.cardUid || undefined,
+        cashierName: 'Register 01',
+        transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
+      }).catch(() => {});
     } catch (err) {
       console.error('Payment checkout error:', err);
-      alert('Error connecting to POS server. Please try again.');
     } finally {
       setProcessing(false);
     }

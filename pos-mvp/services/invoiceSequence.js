@@ -1,46 +1,42 @@
-import { DatabaseSync } from 'node:sqlite';
-import path from 'path';
+// ====================================================================
+// ASKAR SUPERMARKET ERP - GAPLESS INVOICE SEQUENCE GENERATOR
+// Fully Native LibSQL Implementation (Zero DatabaseSync / No SQLite Locks)
+// Compliant with Bahrain NBR VAT Regulations (Article 53)
+// ====================================================================
 
-let dbInstance = null;
-
-function getDb() {
-  if (!dbInstance) {
-    const dbPath = path.resolve(process.cwd(), 'dev.db');
-    dbInstance = new DatabaseSync(dbPath);
-    dbInstance.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = NORMAL;
-      PRAGMA busy_timeout = 5000;
-      CREATE TABLE IF NOT EXISTS "InvoiceSequence" (
-        "name" TEXT PRIMARY KEY,
-        "current_seq" INTEGER NOT NULL
-      );
-    `);
-    const existing = dbInstance.prepare('SELECT current_seq FROM InvoiceSequence WHERE name = ?').get('Sale');
-    if (!existing) {
-      dbInstance.prepare('INSERT INTO InvoiceSequence (name, current_seq) VALUES (?, ?)').run('Sale', 4999);
-    }
-  }
-  return dbInstance;
-}
+import { db } from '../db.js';
 
 /**
  * Atomically generates the next strictly sequential, gapless integer invoice number.
  * Compliant with Bahrain NBR VAT Regulations (Article 53: Simplified Tax Invoices).
  *
  * @param {string} name - Sequence counter identifier (default: 'Sale')
- * @returns {number} The newly generated sequential integer
+ * @returns {Promise<number>} The newly generated sequential integer
  */
-export function getNextInvoiceSequence(name = 'Sale') {
-  const db = getDb();
-  const row = db.prepare(`
-    UPDATE "InvoiceSequence"
-    SET "current_seq" = "current_seq" + 1
-    WHERE "name" = ?
-    RETURNING "current_seq"
-  `).get(name);
+export async function getNextInvoiceSequence(name = 'Sale') {
+  try {
+    // 🟢 SAFE UPSERT: Creates at 5000 if missing, increments if existing
+    const result = await db.execute({
+      sql: `
+        INSERT INTO InvoiceSequence (name, current_seq) 
+        VALUES (?, 5000) 
+        ON CONFLICT(name) DO UPDATE SET current_seq = current_seq + 1 
+        RETURNING current_seq
+      `,
+      args: [name]
+    });
 
-  return row ? row.current_seq : 5000;
+    if (result.rows && result.rows.length > 0) {
+      return Number(result.rows[0].current_seq);
+    }
+    
+    throw new Error("Sequence query returned empty.");
+  } catch (err) {
+    console.error("🔴 Critical Invoice Sequence Error:", err);
+    // Never fail silently on tax documents. 
+    // Throwing an error forces the POS to halt the sale rather than issue a duplicate.
+    throw new Error("VAT Error: Failed to generate a unique sequential invoice number.");
+  }
 }
 
 /**
@@ -59,10 +55,17 @@ export function formatInvoiceNumber(seq, prefix = 'INV', padLength = 6) {
 /**
  * Retrieves the current counter value without incrementing.
  */
-export function getCurrentInvoiceSequence(name = 'Sale') {
-  const db = getDb();
-  const row = db.prepare('SELECT current_seq FROM InvoiceSequence WHERE name = ?').get(name);
-  return row ? row.current_seq : 0;
+export async function getCurrentInvoiceSequence(name = 'Sale') {
+  try {
+    const result = await db.execute({
+      sql: 'SELECT "current_seq" FROM "InvoiceSequence" WHERE "name" = ? LIMIT 1',
+      args: [name]
+    });
+    if (result.rows && result.rows.length > 0) {
+      return Number(result.rows[0].current_seq);
+    }
+  } catch { }
+  return 0;
 }
 
 /**
@@ -72,9 +75,11 @@ export function getCurrentInvoiceSequence(name = 'Sale') {
  * @param {number} startingNumber - The desired next invoice number (e.g. 5000)
  * @param {string} name - Sequence identifier
  */
-export function setStartingInvoiceSequence(startingNumber, name = 'Sale') {
-  const db = getDb();
+export async function setStartingInvoiceSequence(startingNumber, name = 'Sale') {
   const targetSeq = Math.max(0, startingNumber - 1);
-  db.prepare('INSERT OR REPLACE INTO InvoiceSequence (name, current_seq) VALUES (?, ?)').run(name, targetSeq);
+  await db.execute({
+    sql: 'INSERT OR REPLACE INTO "InvoiceSequence" ("name", "current_seq") VALUES (?, ?)',
+    args: [name, targetSeq]
+  });
   return targetSeq;
 }

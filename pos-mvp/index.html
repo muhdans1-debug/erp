@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
+    <script>
+      window.addEventListener('error', function(e) {
+        var errDiv = document.createElement('div');
+        errDiv.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#fee2e2;color:#991b1b;padding:24px;font-family:monospace;font-size:16px;z-index:999999;overflow:auto;';
+        errDiv.innerHTML = '<h2 style="font-weight:bold;margin-bottom:12px;">CRITICAL JS ERROR</h2>' +
+          '<p><strong>Message:</strong> ' + e.message + '</p>' +
+          '<p><strong>Source:</strong> ' + e.filename + ':' + e.lineno + ':' + e.colno + '</p>' +
+          '<pre style="white-space:pre-wrap;background:#fef2f2;padding:12px;border:1px solid #f87171;border-radius:8px;margin-top:12px;">' + (e.error ? e.error.stack : 'No stack') + '</pre>';
+        document.body.appendChild(errDiv);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var errDiv = document.createElement('div');
+        errDiv.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;background:#fef3c7;color:#92400e;padding:16px;font-family:monospace;font-size:14px;z-index:999999;border-top:2px solid #f59e0b;';
+        errDiv.innerHTML = '<strong>Unhandled Promise:</strong> ' + (e.reason ? (e.reason.stack || e.reason.message || e.reason) : 'Unknown');
+        document.body.appendChild(errDiv);
+      });
+    </script>
   </head>
 
   <body>

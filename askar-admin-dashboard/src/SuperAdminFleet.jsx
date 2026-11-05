@@ -179,7 +179,10 @@ export default function SuperAdminFleet() {
         // 2. Inform local backend fleet registry
         await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          },
           body: JSON.stringify({ terminalId: dbName, licensed: false })
         }).catch(() => {});
 
@@ -219,7 +222,10 @@ export default function SuperAdminFleet() {
         // 2. Inform backend fleet registry
         await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          },
           body: JSON.stringify({
             terminalId: terminalId || dbName,
             licensed: true,

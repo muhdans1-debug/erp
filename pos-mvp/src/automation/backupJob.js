@@ -22,10 +22,8 @@ export const ensureArchivesDir = () => {
 export const createDatabaseBackup = () => {
   ensureArchivesDir();
 
-  // Prefer local.db (the physical on-chip libSQL offline database) if present, else dev.db
-  const localDbPath = path.resolve(process.cwd(), 'local.db');
-  const devDbPath = path.resolve(process.cwd(), DB_FILENAME);
-  const sourceDbPath = fs.existsSync(localDbPath) ? localDbPath : devDbPath;
+  // Target local.db as the single source of truth
+  const sourceDbPath = path.resolve(process.cwd(), 'local.db');
 
   if (!fs.existsSync(sourceDbPath)) {
     console.warn(`⚠️ [Database Backup] Source database "${sourceDbPath}" not found.`);

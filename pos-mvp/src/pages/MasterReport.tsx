@@ -268,7 +268,7 @@ export default function MasterReport({ apiBase: propApiBase, onBackToPos }: Mast
             onClick={handleDownloadBackup}
             disabled={downloadingBackup}
             className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors active:scale-95 shadow-sm cursor-pointer disabled:opacity-60"
-            title="Download SQLite database snapshot (dev.db) from /archives"
+            title="Download SQLite database snapshot (local.db) from /archives"
           >
             <Database size={16} className={downloadingBackup ? 'animate-spin' : ''} />
             <span>{downloadingBackup ? 'Preparing...' : 'Download Database Snapshot'}</span>

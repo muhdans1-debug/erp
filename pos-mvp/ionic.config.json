@@ -1,0 +1,8 @@
+{
+  "name": "askar-pos",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "custom"
+}
+

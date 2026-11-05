@@ -16,6 +16,12 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Strip expensive software blur rasterization on embedded Android GPU */
+* {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 body {
   /* Prevent accidental text highlighting during fast tapping */
   user-select: none;

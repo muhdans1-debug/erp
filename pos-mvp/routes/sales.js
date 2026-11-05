@@ -1,0 +1,805 @@
+import { SaleRepository } from '../repositories/SaleRepository.js';
+import crypto from 'crypto';
+import { db } from '../db.js';
+import { managerAuth } from '../middleware/auth.js';
+
+export default async function salesRoutes(fastify, options) {
+
+  // 1. Sync Ingestion Route (Master Windows PC catches incoming sales & actively decrements inventory)
+  fastify.post('/api/sync/sales', async (request, reply) => {
+    const incoming = request.body;
+    const sales = Array.isArray(incoming) ? incoming : (incoming?.sales || []);
+    if (!sales || !Array.isArray(sales) || sales.length === 0) {
+      return { success: true, processed: 0 };
+    }
+
+    // Open a secure transaction so partial failures roll back completely
+    const transaction = await db.transaction();
+
+    try {
+      let processedCount = 0;
+      for (const sale of sales) {
+        if (!sale || !sale.id) continue;
+
+        // Check if sale was already synced to avoid duplicate inventory deductions
+        const existing = await transaction.execute({
+          sql: 'SELECT id FROM Sale WHERE id = ? LIMIT 1',
+          args: [sale.id]
+        });
+
+        if (existing.rows && existing.rows.length > 0) {
+          continue;
+        }
+
+        const invoiceNo = sale.invoiceNo || sale.invoice_number || `INV-${Date.now()}`;
+        const total = Number(sale.total || sale.totalAmount || 0);
+        const subtotal = Number(sale.subtotal || total);
+        const paymentType = sale.paymentType || sale.payment_type || 'CASH';
+        const status = sale.status || 'COMPLETED';
+        const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
+        const customerId = sale.customerId || sale.khata_id || null;
+        const employeeId = sale.employeeId || sale.employee_id || null;
+        const shiftId = sale.shiftId || sale.shift_id || null;
+
+        // Insert the main receipt header
+        await transaction.execute({
+          sql: `INSERT INTO Sale (id, invoiceNo, total, subtotal, paymentType, status, syncStatus, customerId, employeeId, shiftId, createdAt) 
+                VALUES (?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING`,
+          args: [sale.id, invoiceNo, total, subtotal, paymentType, status, customerId, employeeId, shiftId, createdAt]
+        });
+
+        // Process line items AND deduct master inventory
+        const items = Array.isArray(sale.items) ? sale.items : [];
+        for (const item of items) {
+          const itemId = item.id || crypto.randomUUID();
+          const prodId = item.productId || item.product_id;
+          const qty = Number(item.qty || item.quantity || 1);
+          const price = Number(item.price || item.priceAtSale || 0);
+          const totalPrice = Number(item.total_price || (qty * price));
+
+          // Insert the line item
+          await transaction.execute({
+            sql: `INSERT INTO SaleItem (id, saleId, productId, quantity, priceAtSale, total_price) 
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(id) DO NOTHING`,
+            args: [itemId, sale.id, prodId, qty, price, totalPrice]
+          });
+
+          // Actively deduct stock from the Master database
+          if (prodId) {
+            await transaction.execute({
+              sql: `UPDATE Product 
+                    SET stockQuantity = MAX(0, stockQuantity - ?) 
+                    WHERE id = ? OR barcode = ?`,
+              args: [qty, prodId, prodId]
+            });
+          }
+        }
+        processedCount++;
+      }
+
+      await transaction.commit();
+      console.log(`✅ Synced ${processedCount} sales and deducted Master inventory.`);
+      return { success: true, processed: processedCount };
+    } catch (error) {
+      await transaction.rollback();
+      fastify.log.error(error);
+      return reply.status(500).send({ error: 'Sync failed, rolled back changes', details: error.message });
+    }
+  });
+
+  // 2. Manager Secured Sales Reporting Endpoint
+  fastify.get('/api/reports/sales', { preHandler: managerAuth }, async (request, reply) => {
+    try {
+      const { limit = 100, offset = 0 } = request.query || {};
+      const salesResult = await db.execute({
+        sql: `SELECT s.*, c.name as customerName 
+              FROM Sale s 
+              LEFT JOIN Customer c ON s.customerId = c.id 
+              ORDER BY s.createdAt DESC 
+              LIMIT ? OFFSET ?`,
+        args: [Number(limit), Number(offset)]
+      });
+
+      return salesResult.rows || [];
+    } catch (err) {
+      fastify.log.error('Failed to query sales report:', err);
+      return reply.status(500).send({ error: 'Failed to retrieve sales report', message: err.message });
+    }
+  });
+
+  // 3. Invoice Lookup by Invoice Number or ID
+  fastify.get('/api/sales/invoice/:invoiceNo', async (request, reply) => {
+    const { invoiceNo } = request.params;
+    const cleanInv = String(invoiceNo || '').trim();
+
+    try {
+      let sale = await db.orm.Sale.where({ invoiceNo: cleanInv }).all().first();
+      if (!sale) {
+        const allSales = await db.orm.Sale.all();
+        sale = allSales.find(
+          (s) => (s.invoiceNo && s.invoiceNo.toLowerCase() === cleanInv.toLowerCase()) || s.id === cleanInv
+        );
+      }
+
+      if (!sale) {
+        return reply.status(404).send({ success: false, error: `Invoice #${cleanInv} not found.` });
+      }
+
+      // Fetch line items for this sale
+      const allSaleItems = await db.orm.SaleItem.where({ saleId: sale.id }).all();
+      const allProducts = await db.orm.Product.all();
+      const prodMap = new Map(allProducts.map((p) => [p.id, p]));
+
+      const items = allSaleItems.map((item) => {
+        const prod = prodMap.get(item.productId);
+        return {
+          ...item,
+          productName: prod?.name || `Item #${item.productId}`,
+          barcode: prod?.barcode || prod?.id,
+          unitCost: Number(prod?.purchasePrice || prod?.unitCost || 0),
+        };
+      });
+
+      // Customer details if Khata
+      let customer = null;
+      if (sale.customerId) {
+        customer = await db.orm.Customer.where({ id: sale.customerId }).all().first();
+      }
+
+      // Prior refunds on this sale
+      let priorRefunds = [];
+      try {
+        priorRefunds = await db.orm.Refund.where({ saleId: sale.id }).all();
+      } catch {
+        priorRefunds = [];
+      }
+
+      return {
+        success: true,
+        sale: {
+          ...sale,
+          items,
+          customer,
+          priorRefunds,
+        },
+      };
+    } catch (error) {
+      fastify.log.error('Failed to lookup invoice', error);
+      return reply.status(500).send({ success: false, error: 'Failed to lookup invoice' });
+    }
+  });
+
+  // --- Dedicated Mess Group Checkout ---
+// Dedicated Split-Billing Checkout for Mess Groups
+fastify.post('/api/sales/mess-checkout', async (request, reply) => {
+  const { cart, items, subtotal, vat, vatTotal, totalVat, total, totalAmount, messId, cardUid, invoiceNo, cashierName, shopperName, shopperId } = request.body || {};
+
+  try {
+    const rawItems = items || cart || [];
+    const finalTotal = Number((totalAmount !== undefined ? totalAmount : (total !== undefined ? total : 0)).toFixed(3));
+
+    if (!messId) {
+      return reply.status(400).send({ success: false, error: 'messId is required for Mess checkout' });
+    }
+
+    // 1. Fetch group & members
+    let group = null;
+    let memberRows = [];
+
+    try {
+      const gRes = await db.execute({ sql: `SELECT id, group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [messId] });
+      group = (gRes.rows && gRes.rows.length > 0) ? gRes.rows[0] : null;
+      if (group) {
+        const mRes = await db.execute({ sql: `SELECT id, name, phone, batchNo FROM Customer WHERE mess_id = ?`, args: [messId] });
+        memberRows = mRes.rows || [];
+      }
+    } catch { }
+
+    if (!group || memberRows.length === 0) {
+      return reply.status(400).send({ success: false, error: 'Mess group not found or has no active members' });
+    }
+
+    // 2. Mathematical equal split (formatted to 3 decimal places for Bahraini Dinars)
+    const splitAmount = parseFloat((finalTotal / memberRows.length).toFixed(3));
+    const remainder = parseFloat((finalTotal - (splitAmount * memberRows.length)).toFixed(3));
+
+    // 3. Create Master Sale Record
+    const saleId = crypto.randomUUID();
+    const finalInv = invoiceNo || `INV-${Date.now()}`;
+
+    let computedSubtotal = 0;
+    let computedTotalVat = 0;
+    const lineItems = rawItems.map((item) => {
+      const price = Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0);
+      const qty = Number(item.quantity || 1);
+      const lineTotal = price * qty;
+      const rate = item.vatRateAtSale !== undefined ? Number(item.vatRateAtSale) : 10.0;
+      let lineTax = 0;
+      if (rate === 10) {
+        lineTax = lineTotal - (lineTotal / 1.10);
+        computedTotalVat += lineTax;
+        computedSubtotal += (lineTotal - lineTax);
+      } else {
+        computedSubtotal += lineTotal;
+      }
+      return {
+        id: crypto.randomUUID(),
+        productId: item.productId || item.id,
+        quantity: qty,
+        priceAtSale: price,
+        costAtSale: Number(item.costAtSale ?? item.purchasePrice ?? 0),
+        vatRateAtSale: rate,
+        vatAmount: Number(lineTax.toFixed(3))
+      };
+    });
+
+    const finalSub = Number((subtotal !== undefined ? subtotal : computedSubtotal).toFixed(3));
+    const finalVat = Number((totalVat !== undefined ? totalVat : computedTotalVat).toFixed(3));
+
+    const saleResult = await SaleRepository.createSale({
+      id: saleId,
+      invoiceNo: finalInv,
+      customerId: null,
+      subtotal: finalSub,
+      vatTotal: finalVat,
+      totalVat: finalVat,
+      total: finalTotal,
+      totalAmount: finalTotal,
+      paymentType: 'MESS_KHATA',
+      createdAt: new Date()
+    }, lineItems);
+
+    const verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
+
+    // 4. Update product inventory quantities (non-blocking Turso mirror)
+    if (db) {
+      Promise.allSettled(
+        lineItems.map((item) => {
+          const pid = item.productId || item.id;
+          const q = Number(item.quantity ?? 1);
+          if (!pid) return Promise.resolve();
+          return db.execute({
+            sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?',
+            args: [q, new Date().toISOString(), pid]
+          });
+        })
+      ).catch(() => { });
+    }
+
+    // 5. Post Split Charges to each member's individual Khata ledger
+    const memberSplits = [];
+    const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
+    for (let i = 0; i < memberRows.length; i++) {
+      const member = memberRows[i];
+      const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
+      const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
+
+      // Local ledger entry
+      await db.orm.KhataLedger.create({
+        id: crypto.randomUUID(),
+        customerId: member.id,
+        amount: memberCharge,
+        type: 'CHARGE',
+        reference: ledgerRef,
+        syncStatus: 'SYNCED',
+        timestamp: new Date(),
+        tenantId: 'tenant_1'
+      });
+
+      // Turso cloud mirror
+      try {
+        await db.execute({
+          sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, syncStatus, timestamp)
+                VALUES (?, 'tenant_1', ?, ?, 'CHARGE', ?, 'SYNCED', datetime('now'))`,
+          args: [crypto.randomUUID(), member.id, memberCharge, ledgerRef]
+        });
+        await db.execute({
+          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
+          args: [memberCharge, member.id]
+        });
+      } catch (err) {
+        console.warn('Turso mirror split error:', err?.message);
+      }
+
+      memberSplits.push({
+        id: member.id,
+        name: member.name,
+        amount: memberCharge
+      });
+    }
+
+    return {
+      success: true,
+      invoiceNo: verifiedInvoiceNo,
+      formattedInvoice: verifiedInvoiceNo,
+      isMess: true,
+      messId,
+      groupName: group.group_name,
+      shopperName: shopperName || null,
+      totalAmount: finalTotal,
+      splitAmount,
+      memberCount: memberRows.length,
+      splits: memberSplits
+    };
+  } catch (err) {
+    fastify.log.error(err);
+    reply.status(500).send({ success: false, error: err.message || 'Mess checkout failed' });
+  }
+});
+
+// (Note: Customer card binding & Khata settlement are now served modularly via routes/khata.js)
+// 3. Updated Checkout & Sales Routes (Bahrain VAT Compliant Per-Item Calculation)
+const handleCheckout = async (request, reply) => {
+  const { cart, items, subtotal, vat, vatTotal, totalVat, total, totalAmount, customerId, paymentType, invoiceNo, id, employeeId, shiftId } = request.body || {};
+
+  try {
+    const saleId = id || crypto.randomUUID();
+    const rawItems = items || cart || [];
+
+    // Calculate line-item VAT and extract inclusive 10% VAT vs 0% zero-rated
+    let computedSubtotal = 0;
+    let computedTotalVat = 0;
+    let computedFinalTotal = 0;
+
+    const lineItems = rawItems.map((item) => {
+      const price = Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0);
+      const qty = Number(item.quantity || 1);
+      const lineTotal = price * qty;
+      computedFinalTotal += lineTotal;
+
+      // Determine VAT rate (0% for basic food items, 10% standard rate)
+      const rate = item.vatRateAtSale !== undefined
+        ? Number(item.vatRateAtSale)
+        : (item.vatRate !== undefined ? Number(item.vatRate) : (item.taxRate !== undefined && item.taxRate === 0 ? 0.0 : 10.0));
+
+      let lineTax = 0;
+      if (rate === 10) {
+        // Shelf prices in Bahrain retail are Tax-Inclusive.
+        // Extract 10% VAT: Price - (Price / 1.10)
+        lineTax = lineTotal - (lineTotal / 1.10);
+        computedTotalVat += lineTax;
+        computedSubtotal += (lineTotal - lineTax);
+      } else {
+        // Zero-Rated 0% (Basic food items: milk, bread, produce, meat)
+        computedSubtotal += lineTotal;
+      }
+
+      return {
+        id: crypto.randomUUID(),
+        productId: item.productId || item.id,
+        quantity: qty,
+        priceAtSale: price,
+        costAtSale: Number(item.costAtSale ?? item.purchasePrice ?? 0),
+        vatRateAtSale: rate,
+        vatAmount: Number(lineTax.toFixed(3)),
+      };
+    });
+
+    const finalSubtotal = Number((subtotal !== undefined ? subtotal : computedSubtotal).toFixed(3));
+    const finalTotalVat = Number((totalVat !== undefined ? totalVat : (vatTotal !== undefined ? vatTotal : (vat !== undefined ? vat : computedTotalVat))).toFixed(3));
+    const finalTotal = Number((totalAmount !== undefined ? totalAmount : (total !== undefined ? total : computedFinalTotal)).toFixed(3));
+
+    // Resolve effective shift ID: always bind to active OPEN shift
+    let effectiveShiftId = shiftId;
+    try {
+      const activeShift = await db.orm.Shift.where({ status: 'OPEN' }).all().first();
+      if (activeShift) {
+        effectiveShiftId = activeShift.id;
+      } else {
+        const openSession = await queryLocalDevDb(`SELECT id FROM ShiftSession WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`);
+        if (openSession && openSession.length > 0) {
+          effectiveShiftId = openSession[0].id;
+        }
+      }
+    } catch (err) { }
+
+    const saleData = {
+      id: saleId,
+      invoiceNo: invoiceNo || `INV-${Date.now()}`,
+      customerId: customerId || null,
+      subtotal: finalSubtotal,
+      vatTotal: finalTotalVat,
+      totalVat: finalTotalVat,
+      total: finalTotal,
+      totalAmount: finalTotal,
+      paymentType: paymentType || 'CASH',
+      employeeId: employeeId || null,
+      shiftId: effectiveShiftId || shiftId || null,
+      createdAt: new Date(),
+    };
+
+    const result = await SaleRepository.createSale(saleData, lineItems);
+
+    // Non-blocking background inventory mirror to Turso (0ms cashier delay)
+    if (db) {
+      Promise.allSettled(
+        lineItems.map((item) => {
+          const pid = item.productId || item.id;
+          const q = Number(item.quantity ?? 1);
+          if (!pid) return Promise.resolve();
+          return db.execute({
+            sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?',
+            args: [q, new Date().toISOString(), pid]
+          });
+        })
+      ).catch(() => { });
+    }
+
+    return {
+      success: true,
+      invoice: result.invoiceNo,
+      invoiceNo: result.invoiceNo,
+      invoiceNumber: result.invoiceSeq || 0,
+      formattedInvoice: result.invoiceNo,
+      subtotal: finalSubtotal,
+      totalVat: finalTotalVat,
+      totalAmount: finalTotal
+    };
+  } catch (error) {
+    fastify.log.error(error);
+    reply.status(500).send({ success: false, error: `Database write failed: ${error?.message || error}` });
+  }
+};
+
+fastify.post('/checkout', handleCheckout);
+fastify.post('/api/sales', handleCheckout);
+
+  // --- Refunds, Voiding & Today Sales ---
+// 2. Process Item Return & Refund Transaction (Protected by Manager Auth)
+const handleRefundSale = async (request, reply) => {
+  const { invoiceNo, items, reason, destination, processedBy } = request.body || {};
+
+  if (!invoiceNo) {
+    return reply.status(400).send({ success: false, error: 'Invoice number is required.' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return reply.status(400).send({ success: false, error: 'At least one item must be selected for return.' });
+  }
+
+  const cleanInv = String(invoiceNo).trim();
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // 1. Locate the original sale
+      let sale = await tx.orm.Sale.where({ invoiceNo: cleanInv }).all().first();
+      if (!sale) {
+        const allSales = await tx.orm.Sale.all();
+        sale = allSales.find(
+          (s) => (s.invoiceNo && s.invoiceNo.toLowerCase() === cleanInv.toLowerCase()) || s.id === cleanInv
+        );
+      }
+
+      if (!sale) {
+        throw new Error(`Invoice #${cleanInv} not found in database.`);
+      }
+
+      // 2. Calculate refund amount & validate items
+      let totalRefundAmount = 0;
+      const processedItems = [];
+
+      for (const item of items) {
+        const qty = Math.max(1, parseInt(item.quantity) || 1);
+        const unitPrice = Number(item.unitPrice || item.priceAtSale || 0);
+        const lineTotal = Number((qty * unitPrice).toFixed(3));
+        totalRefundAmount += lineTotal;
+
+        const isDamaged = Boolean(item.isDamaged || reason === 'DAMAGED' || reason === 'EXPIRED');
+
+        processedItems.push({
+          saleItemId: item.saleItemId || null,
+          productId: item.productId,
+          productName: item.productName || 'Returned Item',
+          quantity: qty,
+          unitPrice,
+          totalAmount: lineTotal,
+          isDamaged,
+        });
+
+        // 3. Stock routing: Restock OR route to WastageLog
+        const prod = await tx.orm.Product.where({ id: item.productId }).all().first();
+        const wholesaleCost = Number(prod?.purchasePrice || prod?.unitCost || 0);
+
+        if (isDamaged) {
+          // Routed to WastageLog (spoilage loss registered, not added to shelf stock)
+          await tx.orm.WastageLog.create({
+            id: crypto.randomUUID(),
+            tenantId: sale.tenantId || 'tenant_1',
+            productId: item.productId,
+            productName: item.productName || prod?.name || 'Damaged Return',
+            quantity: qty,
+            unitCost: wholesaleCost,
+            totalLoss: Number((wholesaleCost * qty).toFixed(3)),
+            reason: reason || 'DAMAGED',
+            loggedBy: processedBy || 'Cashier Return',
+            createdAt: new Date(),
+          });
+        } else {
+          // Routed back to physical stock
+          if (prod) {
+            const updatedStock = (prod.stockQuantity || 0) + qty;
+            await tx.orm.Product.where({ id: prod.id }).update({
+              stockQuantity: updatedStock,
+              updatedAt: new Date(),
+            });
+          }
+        }
+      }
+
+      totalRefundAmount = Number(totalRefundAmount.toFixed(3));
+      const refundId = crypto.randomUUID();
+      const creditNoteNo = `CN-${String(sale.invoiceNo).replace(/^INV-?/i, '')}-${Date.now().toString().slice(-4)}`;
+      const refundReason = reason || 'MISTAKE';
+      const refundDest = destination || (sale.paymentType === 'CREDIT' ? 'KHATA_CREDIT' : 'CASH');
+
+      // 4. Create master Refund record
+      const refundRecord = await tx.orm.Refund.create({
+        id: refundId,
+        tenantId: sale.tenantId || 'tenant_1',
+        saleId: sale.id,
+        invoiceNo: sale.invoiceNo,
+        refundedAmount: totalRefundAmount,
+        reason: refundReason,
+        destination: refundDest,
+        itemsJson: JSON.stringify(processedItems),
+        processedBy: processedBy || 'Cashier',
+        createdAt: new Date(),
+      });
+
+      // 5. Create granular RefundItem records
+      for (const pi of processedItems) {
+        await tx.orm.RefundItem.create({
+          id: crypto.randomUUID(),
+          tenantId: sale.tenantId || 'tenant_1',
+          refundId,
+          saleItemId: pi.saleItemId,
+          productId: pi.productId,
+          productName: pi.productName,
+          quantity: pi.quantity,
+          unitPrice: pi.unitPrice,
+          totalAmount: pi.totalAmount,
+          isDamaged: pi.isDamaged ? 1 : 0,
+        });
+      }
+
+      // 6. Handle financial destination: Deduct from Day's Cash OR credit Khata account
+      if (refundDest === 'KHATA_CREDIT' && sale.customerId) {
+        // Customer account credit: append negative ledger entry to reduce debt
+        await tx.orm.KhataLedger.create({
+          id: crypto.randomUUID(),
+          tenantId: sale.tenantId || 'tenant_1',
+          customerId: sale.customerId,
+          amount: -totalRefundAmount,
+          type: 'PAYMENT_IN',
+          syncStatus: 'PENDING',
+          timestamp: new Date(),
+        });
+      } else {
+        // Cash refund: deduct from drawer by logging cash payout expense
+        await tx.orm.Expense.create({
+          id: crypto.randomUUID(),
+          type: 'BUSINESS',
+          category: 'REFUND_PAYOUT',
+          amount: totalRefundAmount,
+          description: `Cash Refund for Invoice #${sale.invoiceNo} [${refundReason}] (Credit Note: ${creditNoteNo})`,
+          recordedBy: processedBy || 'Cashier',
+          createdAt: new Date(),
+        });
+      }
+
+      return {
+        refund: refundRecord,
+        creditNoteNo,
+        refundedAmount: totalRefundAmount,
+        items: processedItems,
+        sale,
+        destination: refundDest,
+        reason: refundReason,
+      };
+    });
+
+    console.log(
+      `↩️ Refund Processed: Invoice #${invoiceNo} -> Credit Note ${result.creditNoteNo} (BD ${result.refundedAmount}) via ${result.destination}`
+    );
+    return {
+      success: true,
+      message: 'Refund processed, stock adjusted, and financial ledger updated.',
+      ...result,
+    };
+  } catch (error) {
+    fastify.log.error('Refund transaction failed', error);
+    return reply.status(500).send({ success: false, error: error.message || 'Refund processing failed.' });
+  }
+};
+
+fastify.post('/api/sales/refund', { preHandler: managerAuth }, handleRefundSale);
+fastify.post('/api/refund', { preHandler: managerAuth }, handleRefundSale);
+
+// 3. Fetch all refund history
+fastify.get('/api/sales/refunds', async () => {
+  try {
+    const allRefunds = await db.orm.Refund.all();
+    allRefunds.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return { success: true, refunds: allRefunds };
+  } catch (error) {
+    return { success: false, refunds: [] };
+  }
+});
+
+// --- BAHRAIN NBR VAT COMPLIANT VOID & CREDIT NOTE ENGINE ---
+
+// 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer
+const handleGetTodaySales = async (req, reply) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const allSales = await db.orm.Sale.all();
+    const todaySales = allSales
+      .filter((s) => s.createdAt && new Date(s.createdAt) >= today)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const allSaleItems = await db.orm.SaleItem.all();
+    const allProducts = await db.orm.Product.all();
+    const prodMap = new Map(allProducts.map((p) => [p.id, p]));
+
+    const populated = todaySales.map((sale) => {
+      const items = allSaleItems
+        .filter((i) => i.saleId === sale.id)
+        .map((i) => {
+          const prod = prodMap.get(i.productId);
+          return {
+            ...i,
+            name: prod?.name || `Item #${i.productId}`,
+            barcode: prod?.barcode || prod?.id,
+          };
+        });
+
+      return {
+        ...sale,
+        status: sale.status || 'COMPLETED',
+        items,
+      };
+    });
+
+    return { success: true, sales: populated };
+  } catch (err) {
+    req.log.error(err, 'Failed to fetch today sales');
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+};
+
+fastify.get('/sales/today', handleGetTodaySales);
+fastify.get('/api/sales/today', handleGetTodaySales);
+
+// 2. Void & Re-ring / Credit Note Reversal Endpoint
+const handleVoidSale = async (req, reply) => {
+  const { id } = req.params;
+  const cleanId = String(id || '').trim();
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // 1. Find the original sale by id or invoice sequence or invoiceNo
+      let sale = await tx.orm.Sale.where({ id: cleanId }).all().first();
+      if (!sale) {
+        sale = await tx.orm.Sale.where({ invoiceNo: cleanId }).all().first();
+      }
+      if (!sale) {
+        const allSales = await tx.orm.Sale.all();
+        sale = allSales.find(
+          (s) =>
+            s.id === cleanId ||
+            s.invoiceNo?.toLowerCase() === cleanId.toLowerCase() ||
+            String(s.invoiceSeq) === cleanId
+        );
+      }
+
+      if (!sale) {
+        throw new Error(`Sale with ID/Invoice #${cleanId} not found`);
+      }
+
+      if (sale.status === 'VOIDED') {
+        throw new Error(`Invoice #${sale.invoiceNo} has already been voided.`);
+      }
+
+      // 2. Mark the sale as VOIDED (soft-update preserves gapless sequential audit trail for NBR)
+      const voidedSale = await tx.orm.Sale.where({ id: sale.id }).update({
+        status: 'VOIDED',
+      });
+
+      // 3. Fetch sale items and restore physical stock
+      const saleItems = await tx.orm.SaleItem.where({ saleId: sale.id }).all();
+      const allProducts = await tx.orm.Product.all();
+      const prodMap = new Map(allProducts.map((p) => [p.id, p]));
+
+      const restoredProducts = [];
+      for (const item of saleItems) {
+        const qty = Number(item.quantity) || 1;
+        // Match product by id or barcode
+        let prod = prodMap.get(item.productId);
+        if (!prod) {
+          prod = allProducts.find((p) => p.barcode === item.productId || p.barcode === item.barcode);
+        }
+
+        if (prod) {
+          const newStock = (prod.stockQuantity || 0) + qty;
+          await tx.orm.Product.where({ id: prod.id }).update({
+            stockQuantity: newStock,
+            updatedAt: new Date(),
+          });
+          restoredProducts.push({
+            id: prod.id,
+            name: prod.name,
+            barcode: prod.barcode,
+            restoredQty: qty,
+            newStock,
+          });
+        }
+      }
+
+      // 4. Reverse Customer Khata debt if charged to credit
+      if (sale.customerId && (sale.paymentType === 'CREDIT' || sale.paymentType === 'NFC_CREDIT')) {
+        await tx.orm.KhataLedger.create({
+          id: crypto.randomUUID(),
+          tenantId: sale.tenantId || 'tenant_1',
+          customerId: sale.customerId,
+          amount: -(Number(sale.total) || 0),
+          type: 'PAYMENT_IN',
+          syncStatus: 'PENDING',
+          timestamp: new Date(),
+        });
+      }
+
+      // 5. Generate and record official Bahrain NBR Credit Note
+      const creditNoteNo = `CN-${String(sale.invoiceNo).replace(/^INV-?/i, '')}-${Date.now().toString().slice(-4)}`;
+      const creditNote = await tx.orm.Refund.create({
+        id: crypto.randomUUID(),
+        tenantId: sale.tenantId || 'tenant_1',
+        saleId: sale.id,
+        invoiceNo: sale.invoiceNo,
+        refundedAmount: Number(sale.totalAmount || sale.total || 0),
+        reason: 'VOID_AND_RE_RING',
+        destination: sale.paymentType || 'CASH',
+        itemsJson: JSON.stringify(saleItems),
+        processedBy: 'Manager 9999 (Void & Re-ring)',
+        createdAt: new Date(),
+      });
+
+      return {
+        voidedSale: {
+          ...voidedSale,
+          status: 'VOIDED',
+          invoiceNo: sale.invoiceNo,
+          totalAmount: sale.totalAmount || sale.total,
+          vatAmount: sale.totalVat || sale.vatTotal || 0,
+          items: saleItems,
+        },
+        creditNote: {
+          id: creditNote.id,
+          creditNoteNo,
+          invoiceNo: sale.invoiceNo,
+          totalRefunded: Number(sale.totalAmount || sale.total || 0),
+          vatReversed: Number(sale.totalVat || sale.vatTotal || 0),
+          date: new Date().toISOString(),
+        },
+        restoredProducts,
+      };
+    });
+
+    return reply.send({
+      success: true,
+      message: `Sale #${result.voidedSale.invoiceNo} successfully voided and inventory restored.`,
+      result: result.voidedSale,
+      creditNote: result.creditNote,
+      restoredProducts: result.restoredProducts,
+    });
+  } catch (err) {
+    req.log.error(err, 'Failed to void sale');
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+};
+
+fastify.post('/sales/:id/void', { preHandler: managerAuth }, handleVoidSale);
+fastify.post('/api/sales/:id/void', { preHandler: managerAuth }, handleVoidSale);
+}

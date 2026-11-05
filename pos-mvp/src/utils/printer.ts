@@ -42,6 +42,10 @@ export const kickCashDrawer = async (): Promise<boolean> => {
       }
     }
 
+    if (triggered) {
+      return true;
+    }
+
     // 3. Universal Fallback: Send ESC/POS hardware kick pulses through printer buffer
     // Pin 2 (Standard Epson 24V): ESC p 0 30 255 -> base64: G3AAHv8=
     // Pin 5 (Star / Reverse 12V): ESC p 1 30 255 -> base64: G3ABHv8=
@@ -76,7 +80,7 @@ export const openCashDrawer = kickCashDrawer;
 
 /**
  * Render and print a high-density 1D Code128 barcode natively on the Sunmi 58mm printer.
- * Uses HTML5 Canvas + JsBarcode for pixel-perfect edge sharpness and scanner readability.
+ * Uses HTML5 Canvas + JsBarcode centered on a full 384-dot thermal canvas.
  */
 export const printBarCode128 = async (
   data: string,
@@ -87,8 +91,8 @@ export const printBarCode128 = async (
 
   try {
     if (typeof document !== 'undefined') {
-      const canvas = document.createElement('canvas');
-      JsBarcode(canvas, cleanData, {
+      const tempCanvas = document.createElement('canvas');
+      JsBarcode(tempCanvas, cleanData, {
         format: 'CODE128',
         width: options?.width ?? 2,
         height: options?.height ?? 80,
@@ -98,11 +102,22 @@ export const printBarCode128 = async (
         textMargin: 3,
       });
 
-      const dataUrl = canvas.toDataURL('image/png');
-      const base64Image = dataUrl.replace(/^data:image\/png;base64,/, '');
+      const PAPER_WIDTH = 384; // 58mm thermal printable dots
+      const fullCanvas = document.createElement('canvas');
+      fullCanvas.width = PAPER_WIDTH;
+      fullCanvas.height = tempCanvas.height;
+      const ctx = fullCanvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, PAPER_WIDTH, tempCanvas.height);
+        const offsetX = Math.max(0, Math.floor((PAPER_WIDTH - tempCanvas.width) / 2));
+        ctx.drawImage(tempCanvas, offsetX, 0);
 
-      await Printer.printBitmap({ base64Image });
-      return true;
+        const dataUrl = fullCanvas.toDataURL('image/png');
+        const base64Image = dataUrl.replace(/^data:image\/png;base64,/, '');
+        await Printer.printBitmap({ base64Image });
+        return true;
+      }
     }
   } catch (err) {
     console.warn('Canvas barcode rasterization notice:', err);
@@ -111,7 +126,6 @@ export const printBarCode128 = async (
   // Hardware ESC/POS fallback if canvas is unavailable
   try {
     const len = cleanData.length;
-    // ESC a 1 (center) + GS h 80 + GS w 2 + GS H 2 (text below) + GS k 73 len data
     const escCmd = `\x1B\x61\x01\x1D\x68\x50\x1D\x77\x02\x1D\x48\x02\x1D\x6B\x49${String.fromCharCode(len)}${cleanData}`;
     await printRawEscPos(escCmd);
     return true;
@@ -122,15 +136,43 @@ export const printBarCode128 = async (
 };
 
 /**
- * Render and print a high-density QR Code natively on the Sunmi 58mm thermal printer.
- * Renders via QRCode.toDataURL to a high-contrast bitmap and prints using Sunmi AIDL printBitmap.
+ * Render and print a high-density QR Code natively centered on Sunmi 58mm thermal printer.
+ * Renders via QRCode.toDataURL and centers it horizontally across a 384-dot canvas.
  */
 export const printQRCode = async (data: string, width = 180): Promise<boolean> => {
   const cleanData = String(data || '').trim();
   if (!cleanData) return false;
 
   try {
-    const dataUrl = await QRCode.toDataURL(cleanData, {
+    if (typeof document !== 'undefined') {
+      const tempCanvas = document.createElement('canvas');
+      await QRCode.toCanvas(tempCanvas, cleanData, {
+        width: width,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+        color: {
+          dark: '#000000',
+          light: '#ffffff'
+        }
+      });
+
+      const PAPER_WIDTH = 384; // Exact printable dot width of 58mm thermal printer
+      const fullCanvas = document.createElement('canvas');
+      fullCanvas.width = PAPER_WIDTH;
+      fullCanvas.height = tempCanvas.height;
+      const ctx = fullCanvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, PAPER_WIDTH, tempCanvas.height);
+        const offsetX = Math.max(0, Math.floor((PAPER_WIDTH - tempCanvas.width) / 2));
+        ctx.drawImage(tempCanvas, offsetX, 0);
+        const base64Image = fullCanvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+        await Printer.printBitmap({ base64Image });
+        return true;
+      }
+    }
+
+    const qrDataUrl = await QRCode.toDataURL(cleanData, {
       width: width,
       margin: 1,
       errorCorrectionLevel: 'M',
@@ -139,9 +181,7 @@ export const printQRCode = async (data: string, width = 180): Promise<boolean> =
         light: '#ffffff'
       }
     });
-
-    const base64Image = dataUrl.replace(/^data:image\/png;base64,/, '');
-    await Printer.setPrinterAlignment({ alignment: 'center' });
+    const base64Image = qrDataUrl.replace(/^data:image\/png;base64,/, '');
     await Printer.printBitmap({ base64Image });
     return true;
   } catch (err) {
@@ -163,6 +203,22 @@ export const SunmiPrinter = {
     }
   },
   openDrawer: async () => openCashDrawer(),
+  setFontSize: async ({ fontSize }: { fontSize: number }) => {
+    try {
+      await Printer.setFontSize({ fontSize });
+    } catch (e) {
+      console.warn('SunmiPrinter.setFontSize warning:', e);
+    }
+  },
+  setAlignment: async ({ alignment }: { alignment: number | 'left' | 'center' | 'right' }) => {
+    try {
+      if (alignment === 1 || alignment === 'center') await Printer.setPrinterAlignment({ alignment: 'center' });
+      else if (alignment === 2 || alignment === 'right') await Printer.setPrinterAlignment({ alignment: 'right' });
+      else await Printer.setPrinterAlignment({ alignment: 'left' });
+    } catch (e) {
+      console.warn('SunmiPrinter.setAlignment warning:', e);
+    }
+  },
   printText: async ({ text, alignment = 0 }: { text: string; alignment?: number }) => {
     try {
       if (alignment === 1) await Printer.setPrinterAlignment({ alignment: 'center' });
@@ -209,8 +265,83 @@ export const SunmiPrinter = {
   cutPaper: async () => {
     try {
       await Printer.cutPaper();
-    } catch {}
+    } catch { }
   },
+};
+
+/**
+ * Direct 58mm Thermal Shelf Tag Printing for Feitian F100 / Sunmi Terminals
+ * Formats a clean supermarket shelf label with Centered Title, Large Price, VAT notation, and Code128 Barcode.
+ */
+export const printF100ShelfTag = async (productData: {
+  name?: string;
+  sellingPrice?: number | string;
+  price?: number | string;
+  barcode?: string;
+  category?: string;
+  vatRate?: number;
+  is_weighed_item?: boolean;
+}): Promise<boolean> => {
+  const name = (productData.name || 'ITEM').trim();
+  const rawPrice = parseFloat(String(productData.sellingPrice ?? productData.price ?? 0)) || 0;
+  const barcode = (productData.barcode || '').trim();
+  const category = (productData.category || 'RETAIL').toUpperCase();
+  const isWeighed = Boolean(productData.is_weighed_item);
+  const vatRate = productData.vatRate !== undefined ? Number(productData.vatRate) : 10;
+
+  try {
+    await SunmiPrinter.printerInit();
+
+    // 1. Department / Store Header (Centered, Normal Font)
+    await SunmiPrinter.setAlignment({ alignment: 1 });
+    await SunmiPrinter.setFontSize({ fontSize: 20 });
+    await SunmiPrinter.printText({ text: `* ASKAR SUPERMARKET *\n` });
+    await SunmiPrinter.printText({ text: `[ ${category} ]\n` });
+    await SunmiPrinter.printText({ text: `--------------------------------\n` });
+
+    // 2. Product Name (Centered, Bold, Large Font)
+    await SunmiPrinter.setFontSize({ fontSize: 28 });
+    await SunmiPrinter.printText({ text: `${name}\n` });
+
+    // 3. Selling Price (Centered, Extra Large Font)
+    await SunmiPrinter.setFontSize({ fontSize: 44 });
+    const priceText = isWeighed
+      ? `BD ${rawPrice.toFixed(3)} /KG\n`
+      : `BD ${rawPrice.toFixed(3)}\n`;
+    await SunmiPrinter.printText({ text: priceText });
+
+    // 4. Tax / VAT Subtitle
+    await SunmiPrinter.setFontSize({ fontSize: 18 });
+    const vatText = vatRate > 0 ? `(PRICE INCL ${vatRate}% VAT)\n` : `(BASIC FOOD - 0% VAT)\n`;
+    await SunmiPrinter.printText({ text: vatText });
+    await SunmiPrinter.printText({ text: `--------------------------------\n` });
+
+    // 5. Code128 Barcode for Shelf Scanning (if barcode exists)
+    if (barcode && barcode.length >= 3) {
+      await SunmiPrinter.printBarCode({
+        data: barcode,
+        symbology: 8,
+        height: 80,
+        width: 2,
+        textPosition: 2
+      });
+    } else {
+      await SunmiPrinter.printText({ text: `* NO BARCODE REGISTERED *\n` });
+    }
+
+    // 6. Footer Audit Note
+    await SunmiPrinter.setFontSize({ fontSize: 16 });
+    const dateStr = new Date().toLocaleDateString('en-GB');
+    await SunmiPrinter.printText({ text: `${dateStr}  #F100-PIM\n` });
+
+    // 7. Feed 3 blank lines to clear the physical tear-off bar
+    await SunmiPrinter.lineWrap({ lines: 3 });
+
+    return true;
+  } catch (err) {
+    console.warn('F100 Thermal Printer Shelf Tag Error:', err);
+    return false;
+  }
 };
 
 export interface ReceiptItem {
@@ -310,6 +441,8 @@ export const printRawEscPos = async (rawString: string): Promise<boolean> => {
   }
 };
 
+let isPrinterInitialized = false;
+
 export const printFullReceipt = async ({
   shopName = "ASKAR SUPERMARKET",
   shopAddress = "Askar, Kingdom of Bahrain",
@@ -336,29 +469,26 @@ export const printFullReceipt = async ({
   customerUuid
 }: FullReceiptProps) => {
   try {
-    await Printer.initPrinter();
-
-    // Hardware Buffer Transaction: Batches all instructions into a single memory block
-    try {
-      await Printer.enterPrinterBuffer({ clean: true });
-    } catch {}
+    if (!isPrinterInitialized) {
+      try {
+        await Printer.initPrinter();
+        isPrinterInitialized = true;
+      } catch { }
+    }
 
     // 1. HEADER (Centered - NBR Simplified Tax Invoice Compliant)
     await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.setFontSize({ fontSize: 28 });
-    await Printer.printText({ textToPrint: `${shopName}\n` });
-
-    await Printer.setFontSize({ fontSize: 20 });
-    await Printer.printText({ textToPrint: "Simplified Tax Invoice\n" });
-    await Printer.setFontSize({ fontSize: 18 });
-    await Printer.printText({ textToPrint: "فاتورة ضريبية مبسطة\n" });
-    const headerLines = [
+    await Printer.setFontSize({ fontSize: 24 });
+    const headerBlock = [
+      `${shopName}\n`,
+      "Simplified Tax Invoice\n",
+      "فاتورة ضريبية مبسطة\n",
       `VAT No: ${vatNumber}\n`,
       `${shopAddress}\n`,
       `${shopPhone}\n`,
       "================================\n"
     ].join('');
-    await Printer.printText({ textToPrint: headerLines });
+    await Printer.printText({ textToPrint: headerBlock });
 
     // 2. TRANSACTION METADATA (Left-aligned - Strictly formatted to 32 chars)
     await Printer.setPrinterAlignment({ alignment: 'left' });
@@ -372,22 +502,11 @@ export const printFullReceipt = async ({
     if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
       cleanInvoice = 'INV-005000';
     }
-    const finalInvoiceDisplay = cleanInvoice.startsWith('INV-') 
-      ? cleanInvoice 
+    const finalInvoiceDisplay = cleanInvoice.startsWith('INV-')
+      ? cleanInvoice
       : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
 
-    // Place Invoice and Date on separate dedicated lines to prevent 32-column roll truncation
-    const metaBlock = [
-      formatTwoCols("Invoice:", finalInvoiceDisplay),
-      formatTwoCols("Date:", formattedDate),
-      formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`),
-      "--------------------------------\n",
-      formatTwoCols("Item", "Qty   Amt(BD)"),
-      "--------------------------------\n"
-    ].join('');
-    await Printer.printText({ textToPrint: metaBlock });
-
-    // 3. ITEMIZED CART (Aggregated into a single buffer payload to avoid 40+ bridge roundtrips)
+    // Group items
     const groupedMap = new Map<string, { item: ReceiptItem; count: number }>();
     for (const item of items) {
       const key = item.id || item.name;
@@ -399,97 +518,81 @@ export const printFullReceipt = async ({
     }
 
     let totalQuantity = 0;
-    const cartLines: string[] = [];
+    const bodyLines: string[] = [
+      formatTwoCols("Invoice:", finalInvoiceDisplay),
+      formatTwoCols("Date:", formattedDate),
+      formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`),
+      "--------------------------------\n",
+      formatTwoCols("Item", "Qty   Amt(BD)"),
+      "--------------------------------\n"
+    ];
+
     for (const { item, count } of groupedMap.values()) {
       totalQuantity += (item.is_weighed_item ? 1 : count);
       const unitPrice = item.price ?? item.sellingPrice ?? 0;
       const lineTotal = item.total_price ?? (unitPrice * count);
       const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
 
-      // Item Name with (*) notation for 10% standard VAT item
       const itemLabel = `${item.name}${isVat10 ? ' *' : ''}`;
-      cartLines.push(`${itemLabel}\n`);
+      bodyLines.push(`${itemLabel}\n`);
 
-      // Weighed Produce vs Standard Packaged Unit formatting
       const qtyLine = item.is_weighed_item
         ? `  ${count.toFixed(3)}kg x ${unitPrice.toFixed(3)}`
         : `  ${count} x BD ${unitPrice.toFixed(3)}`;
-      cartLines.push(formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`));
+      bodyLines.push(formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`));
     }
-    cartLines.push("--------------------------------\n");
-    // Single IPC dispatch for the entire cart!
-    await Printer.printText({ textToPrint: cartLines.join('') });
 
-    // 4. FINANCIAL SUMMARY
-    const summaryLines = [
-      formatTwoCols("Subtotal:", `BD ${subtotal.toFixed(3)}`),
-      formatTwoCols("VAT (10%):", `BD ${vat.toFixed(3)}`),
-      "--------------------------------\n"
-    ].join('');
-    await Printer.printText({ textToPrint: summaryLines });
+    bodyLines.push("--------------------------------\n");
+    bodyLines.push(formatTwoCols("Subtotal:", `BD ${subtotal.toFixed(3)}`));
+    bodyLines.push(formatTwoCols("VAT (10%):", `BD ${vat.toFixed(3)}`));
+    bodyLines.push("--------------------------------\n");
+    bodyLines.push(formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`));
+    bodyLines.push("--------------------------------\n");
 
-    // Total Amount Highlighted
-    await Printer.setFontSize({ fontSize: 24 });
-    await Printer.printText({
-      textToPrint: formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`)
-    });
-    await Printer.setFontSize({ fontSize: 20 });
-    await Printer.printText({ textToPrint: "--------------------------------\n" });
-
-    // 5. BENEFITPAY TRANSACTION DETAILS
+    // BenefitPay details
     if (paymentMode === 'BENEFIT_PAY') {
-      await Printer.setFontSize({ fontSize: 22 });
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await Printer.printText({ textToPrint: "*** Paid via BenefitPay ***\n" });
-      await Printer.setPrinterAlignment({ alignment: 'left' });
-      await Printer.setFontSize({ fontSize: 18 });
-      const benefitLines = [
-        transactionRef ? formatTwoCols("Ref No:", transactionRef) : '',
-        "Method: Fawri+ QR\n",
-        "--------------------------------\n"
-      ].filter(Boolean).join('');
-      await Printer.printText({ textToPrint: benefitLines });
+      bodyLines.push("*** Paid via BenefitPay ***\n");
+      if (transactionRef) bodyLines.push(formatTwoCols("Ref No:", transactionRef));
+      bodyLines.push("Method: Fawri+ QR\n");
+      bodyLines.push("--------------------------------\n");
     }
 
-    // 6. CREDIT / KHATA ACCOUNT DETAILS (If Credit payment)
+    // Khata / Credit details
     if (paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || isMess) {
       if (paymentMode === 'MESS_KHATA' || isMess) {
-        const messLines = [
-          "*** MESS SPLIT-BILL RECEIPT ***\n",
-          formatTwoCols("MESS GROUP:", groupName || customerName || "Shared Mess"),
-          shopperName ? formatTwoCols("Shopper:", shopperName) : '',
-          cardUid ? formatTwoCols("Card UID:", String(cardUid)) : '',
-          formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`),
-          formatTwoCols("Members in Pool:", String(members?.length || 0)),
-          "--------------------------------\n",
-          "EQUAL SPLIT CHARGE PER MEMBER:\n"
-        ];
+        bodyLines.push("*** MESS SPLIT-BILL RECEIPT ***\n");
+        bodyLines.push(formatTwoCols("MESS GROUP:", groupName || customerName || "Shared Mess"));
+        if (shopperName) bodyLines.push(formatTwoCols("Shopper:", shopperName));
+        if (cardUid) bodyLines.push(formatTwoCols("Card UID:", String(cardUid)));
+        bodyLines.push(formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`));
+        bodyLines.push(formatTwoCols("Members in Pool:", String(members?.length || 0)));
+        bodyLines.push("--------------------------------\n");
+        bodyLines.push("EQUAL SPLIT CHARGE PER MEMBER:\n");
         if (Array.isArray(members)) {
           members.forEach((m: any) => {
             const splitVal = Number(m.amount ?? m.splitAmount ?? (total / members.length)).toFixed(3);
-            messLines.push(formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`));
+            bodyLines.push(formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`));
           });
         }
-        messLines.push("--------------------------------\n");
-        messLines.push("Cashier / Auth: ________________\n");
-        messLines.push("Shares synced to Khata PWA\n");
-        messLines.push("--------------------------------\n");
-        await Printer.printText({ textToPrint: messLines.filter(Boolean).join('') });
+        bodyLines.push("--------------------------------\n");
+        bodyLines.push("Cashier / Auth: ________________\n");
+        bodyLines.push("Shares synced to Khata PWA\n");
+        bodyLines.push("--------------------------------\n");
       } else {
-        const creditLines = [
-          "*** KHATA CREDIT TAB ***\n",
-          customerName ? formatTwoCols("Customer:", customerName) : '',
-          customerCardUid ? formatTwoCols("Card UID:", customerCardUid) : '',
-          previousBalance !== undefined ? formatTwoCols("Previous Balance:", `BD ${previousBalance.toFixed(3)}`) : '',
-          formatTwoCols("Added to Tab:", `+BD ${total.toFixed(3)}`),
-          formatTwoCols("TOTAL BALANCE DUE:", `BD ${newBalance.toFixed(3)}`),
-          "--------------------------------\n"
-        ].filter(Boolean).join('');
-        await Printer.printText({ textToPrint: creditLines });
+        bodyLines.push("*** KHATA CREDIT TAB ***\n");
+        if (customerName) bodyLines.push(formatTwoCols("Customer:", customerName));
+        if (customerCardUid) bodyLines.push(formatTwoCols("Card UID:", customerCardUid));
+        if (previousBalance !== undefined) bodyLines.push(formatTwoCols("Previous Balance:", `BD ${previousBalance.toFixed(3)}`));
+        bodyLines.push(formatTwoCols("Added to Tab:", `+BD ${total.toFixed(3)}`));
+        bodyLines.push(formatTwoCols("TOTAL BALANCE DUE:", `BD ${newBalance.toFixed(3)}`));
+        bodyLines.push("--------------------------------\n");
       }
     }
 
-    // 7. CLOSING & FOOTER (VAT notice)
+    // Dispatch body payload in single continuous stream
+    await Printer.printText({ textToPrint: bodyLines.join('') });
+
+    // 3. CLOSING & FOOTER (VAT notice)
     await Printer.setPrinterAlignment({ alignment: 'center' });
     await Printer.setFontSize({ fontSize: 18 });
     const footerLines = [
@@ -498,24 +601,23 @@ export const printFullReceipt = async ({
       `Invoice: ${finalInvoiceDisplay}\n`,
       "THANK YOU FOR SHOPPING!\n",
       "Please retain invoice for returns.\n",
-      "================================\n"
+      "================================\n",
+      "SCAN TO RETURN ITEMS\n"
     ].join('');
     await Printer.printText({ textToPrint: footerLines });
 
-    // 8. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol)
+    // 4. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol - Centered)
     try {
-      await Printer.printText({ textToPrint: "SCAN TO RETURN ITEMS\n" });
-      await printBarCode128(finalInvoiceDisplay, { height: 80, width: 2, textPosition: 2 });
+      await printBarCode128(finalInvoiceDisplay, { height: 70, width: 2, textPosition: 2 });
     } catch (bcErr) {
       console.warn("Return barcode print warning:", bcErr);
     }
 
-    // 9. THE QR CODE INJECTOR (Physical-to-Digital Bridge for All Bills)
+    // 5. THE QR CODE INJECTOR (Physical-to-Digital Bridge - Perfectly Centered)
     try {
       const isCreditSale = paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || isMess;
       const targetCustId = customerId || customerUuid || cardUid || customerCardUid;
 
-      // Configurable Portal Base: defaults to permanent Vercel Monorepo edge domain
       const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
         ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
         : 'https://askar-khata-pwa.vercel.app';
@@ -524,16 +626,15 @@ export const printFullReceipt = async ({
       await Printer.printText({ textToPrint: "\n================================\n" });
 
       if (isCreditSale && targetCustId) {
-        // Credit sale: Live statement & BenefitPay settlement QR code (Public Cloudflare Edge URL)
         const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
-        await Printer.printText({ textToPrint: "LIVE KHATA STATEMENT & PAYMENT\n" });
-        if (newBalance !== undefined && newBalance > 0) {
-          await Printer.printText({ textToPrint: `Current Debt: BD ${newBalance.toFixed(3)}\n` });
-        }
-        await printQRCode(pwaUrl, 200);
+        const qrHeader = [
+          "LIVE KHATA STATEMENT & PAYMENT\n",
+          (newBalance !== undefined && newBalance > 0) ? `Current Debt: BD ${newBalance.toFixed(3)}\n` : ''
+        ].filter(Boolean).join('');
+        await Printer.printText({ textToPrint: qrHeader });
+        await printQRCode(pwaUrl, 190);
         await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
       } else {
-        // Standard cash/card/benefit sale: Digital Invoice & Receipt QR code
         const invoiceQrUrl = `${portalDomain}/tab/${targetCustId || 'guest'}`;
         await Printer.printText({ textToPrint: "OFFICIAL TAX INVOICE & RECEIPT\n" });
         await printQRCode(invoiceQrUrl, 180);
@@ -545,16 +646,14 @@ export const printFullReceipt = async ({
       console.warn("Receipt QR print warning:", qrErr);
     }
 
-    // Feed and cut paper
-    await Printer.lineWrap({ lines: 4 });
-    await Printer.cutPaper();
-
-    // Commit hardware buffer transaction
+    // Feed past manual tear bar and commit printer buffer
+    await Printer.lineWrap({ lines: 6 });
     try {
-      await Printer.exitPrinterBuffer({ commit: true });
-    } catch {}
-
-    console.log("Simplified Tax Invoice printed successfully (buffered)!");
+      await Printer.commitPrinterBuffer();
+    } catch { }
+    try {
+      await Printer.cutPaper();
+    } catch { }
   } catch (error) {
     console.warn("SUNMI printer print error:", error);
   }
@@ -655,10 +754,10 @@ export const processRefund = async (
 
     // 3. Reverse the Financials based on Payment Type
     if (pType === 'KHATA' || pType === 'CREDIT' || pType === 'MESS_KHATA') {
-      // Revert the customer's debt balance
+      // Revert the customer's debt balance on unified Customer table
       if (khataCustomerId) {
         await db.execute({
-          sql: 'UPDATE KhataCustomer SET balance = balance - ? WHERE id = ?',
+          sql: 'UPDATE Customer SET balance = MAX(0, balance - ?) WHERE id = ?',
           args: [saleTotal, khataCustomerId],
         });
       }
@@ -696,7 +795,10 @@ export const processRefund = async (
         (typeof window !== 'undefined' && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
       await fetch(`${masterBase}/api/sales/refund`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999'
+        },
         body: JSON.stringify({
           invoiceNo: cleanInvoice,
           items: [{ productId: 'REFUND_ALL', quantity: 1, unitPrice: saleTotal }],
@@ -704,8 +806,8 @@ export const processRefund = async (
           destination: pType === 'KHATA' || pType === 'CREDIT' ? 'KHATA_CREDIT' : 'CASH',
           processedBy: 'Sunmi POS Barcode Scanner',
         }),
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
 
     // Print Void / Credit Note on Sunmi Printer
     try {
@@ -1030,7 +1132,7 @@ export const printCreditNote = async (props: CreditNoteProps): Promise<boolean> 
     await Printer.initPrinter();
     try {
       await Printer.enterPrinterBuffer({ clean: true });
-    } catch {}
+    } catch { }
 
     // 1. Header (Centered)
     await Printer.setPrinterAlignment({ alignment: 'center' });
@@ -1205,7 +1307,7 @@ export const printZReport = async (props: ZReportPrintProps): Promise<boolean> =
     await Printer.initPrinter();
     try {
       await Printer.enterPrinterBuffer({ clean: true });
-    } catch {}
+    } catch { }
 
     // 1. Header (Centered)
     await Printer.setPrinterAlignment({ alignment: 'center' });
@@ -1299,7 +1401,7 @@ export const printZReport = async (props: ZReportPrintProps): Promise<boolean> =
 
     try {
       await Printer.exitPrinterBuffer({ commit: true });
-    } catch {}
+    } catch { }
 
     console.log("Z-Report printed successfully on Sunmi 58mm thermal printer!");
     return true;
@@ -1413,7 +1515,7 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
       await Printer.initPrinter();
       try {
         await Printer.enterPrinterBuffer({ clean: true });
-      } catch {}
+      } catch { }
 
       // 1. Header (Centered)
       await Printer.setPrinterAlignment({ alignment: 'center' });
@@ -1522,7 +1624,7 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
 
       try {
         await Printer.exitPrinterBuffer({ commit: true });
-      } catch {}
+      } catch { }
 
       console.log("Shift closeout slip printed successfully on Sunmi 58mm printer!");
       return true;
@@ -1543,6 +1645,7 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
 };
 
 if (typeof window !== 'undefined') {
+  (window as any).printFullReceipt = printFullReceipt;
   (window as any).printKhataPaymentReceipt = printKhataPaymentReceipt;
   (window as any).formatKhataReceipt = formatKhataReceipt;
   (window as any).printCreditNote = printCreditNote;

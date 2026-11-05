@@ -243,7 +243,10 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
     try {
       const res = await fetch(`${apiBase}/api/sales/refund`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': localStorage.getItem('manager_pin') || '9999'
+        },
         body: JSON.stringify({
           invoiceNo: sale.invoiceNo,
           reason: globalReason,

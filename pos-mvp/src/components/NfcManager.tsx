@@ -246,7 +246,16 @@ export default function NfcManager({
     const connectWebSocket = () => {
       if (unmounted) return;
       try {
-        ws = new WebSocket('ws://localhost:8080');
+        let bridgeHost = '127.0.0.1';
+        if (apiBase && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1')) {
+          try {
+            const u = new URL(apiBase.startsWith('http') ? apiBase : `http://${apiBase}`);
+            if (u.hostname) bridgeHost = u.hostname;
+          } catch {}
+        } else if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          bridgeHost = window.location.hostname;
+        }
+        ws = new WebSocket(`ws://${bridgeHost}:8080`);
         ws.onopen = () => {
           setIsBridgeConnected(true);
           wsRef.current = ws;
@@ -289,8 +298,11 @@ export default function NfcManager({
 
     connectWebSocket();
 
-    // Fallback Poller to Fastify /api/nfc/latest
+    // Fallback Poller to Fastify /api/nfc/latest (only when WebSocket bridge is disconnected)
     pollInterval = setInterval(async () => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        return; // WebSocket delivers real-time push events; bypass HTTP polling to conserve CPU & I/O
+      }
       try {
         const res = await fetch(`${apiBase}/api/nfc/latest`);
         if (res.ok) {
@@ -301,7 +313,7 @@ export default function NfcManager({
           }
         }
       } catch {}
-    }, 2000);
+    }, 4000);
 
     return () => {
       unmounted = true;

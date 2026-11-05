@@ -4,10 +4,10 @@ import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, LogOut, Wifi, H
 import { printFullReceipt, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
+import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 // --- LAZY-LOADED BACK-OFFICE PAGES (never parsed on Sunmi in cashier mode) ---
-const ManagerDashboard = lazy(() => import('./ManagerDashboard'));
 const StockManagement = lazy(() => import('./StockManagement'));
 const FinancialDashboard = lazy(() => import('./FinancialDashboard'));
 const MasterReport = lazy(() => import('./MasterReport'));
@@ -29,6 +29,8 @@ import { db } from '../db.ts';
 import POSGrid from '../components/POSGrid.tsx';
 import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
+import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
+import { useOfflineSync } from '../hooks/useOfflineSync';
 
 interface Product {
   id: string;
@@ -122,7 +124,7 @@ export interface CheckoutScreenProps {
   };
 }
 
-export default function CheckoutScreen({ isCashierTrapped = false, onLockTerminal, shiftId, disasterRecovery }: CheckoutScreenProps) {
+export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = false, onLockTerminal, shiftId, disasterRecovery }: CheckoutScreenProps) {
   const [viewMode, setViewMode] = useState<'pos' | 'dashboard' | 'stock' | 'pnl' | 'master'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -199,6 +201,13 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
     performSync,
     exportDatabaseBackup,
   } = disasterRecovery || innerDr;
+
+  const {
+    pendingCount: offlinePendingCount,
+    isDraining: isDrainingOfflineSales,
+    drainQueue: drainOfflineQueue,
+    updatePendingCount: updateOfflinePendingCount,
+  } = useOfflineSync(apiBase);
 
   // Master Back-Office Server Configuration State
   const [showServerConfigModal, setShowServerConfigModal] = useState(false);
@@ -488,6 +497,7 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
       const res = await fetch(`${clean}/products`);
       if (res.ok) {
         localStorage.setItem('master_server_url', clean);
+        localStorage.setItem('server_ip', clean.replace(/^https?:\/\//, '').replace(/:[0-9]+.*$/, '').replace(/\/.*$/, ''));
         setApiBase(clean);
         setCustomServerIp(clean);
         // Also inform the local sync engine if running
@@ -779,13 +789,20 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
       const res = await fetch(`${apiBase}/api/customers/by-card/${encodeURIComponent(uid)}`);
       if (res.ok) {
         const custData = await res.json();
-        setCustomer(custData);
-        if (custData.hasMessGroup && custData.isDual) {
-          showToast(`💳 ${custData.name} (Personal) & 👥 ${custData.group_name} (${custData.members?.length || 0} members) linked!`, 'success');
-        } else if (custData.isMess) {
-          showToast(`👥 Linked to Mess Group: ${custData.group_name} (${custData.members?.length || 0} members)`, 'success');
+        const activeCust = custData.customer || custData;
+        setCustomer(activeCust);
+
+        const bal = Number(activeCust.personalBalance ?? activeCust.currentBalance ?? activeCust.balance ?? 0);
+        const lim = Number(activeCust.creditLimit ?? activeCust.credit_limit ?? 30.0);
+
+        if (bal > lim) {
+          showToast(`⚠️ Warning: ${activeCust.name} has exceeded Khata limit (Owed: BD ${bal.toFixed(3)} / Limit: BD ${lim.toFixed(3)})`, 'error');
+        } else if (activeCust.hasMessGroup && activeCust.isDual) {
+          showToast(`💳 ${activeCust.name} (Personal) & 👥 ${activeCust.group_name} (${activeCust.members?.length || 0} members) linked!`, 'success');
+        } else if (activeCust.isMess) {
+          showToast(`👥 Linked to Mess Group: ${activeCust.group_name} (${activeCust.members?.length || 0} members)`, 'success');
         } else {
-          showToast(`💳 Linked to ${custData.name} (Khata Balance: BD ${(custData.personalBalance ?? custData.currentBalance).toFixed(3)})`, 'success');
+          showToast(`💳 Linked to ${activeCust.name} (Khata Balance: BD ${bal.toFixed(3)})`, 'success');
         }
       } else {
         showToast(`⚠️ Card [${uid}] is not linked to any customer.`, 'info');
@@ -1153,6 +1170,9 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
   const vat = cartTotals.totalVat;
   const total = cartTotals.finalTotal;
 
+  // 📡 Live WebSocket LAN Bridge: Stream active cart to Manager's Laptop (Register Spy)
+  useSunmiBridge(cart, total, customer);
+
   // Secondary Customer Display Initialization & Availability Check
   useEffect(() => {
     CustomerDisplay.isAvailable?.()
@@ -1246,9 +1266,9 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
       }).catch(() => {});
     }
 
-    // 1. If physical cash is handed over, pop the drawer immediately so cashier can make change
+    // 1. If physical cash is handed over, pop the drawer immediately in background (non-blocking)
     if (paymentMethod === 'CASH') {
-      await kickCashDrawer();
+      kickCashDrawer().catch(() => {});
     }
 
     try {
@@ -1311,85 +1331,142 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
         };
       }
 
-      const res = await fetch(checkoutEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(checkoutPayload)
-      });
-
-      const data = await res.json();
-
-      if (data && data.success) {
-        // Extract the REAL, strictly sequential NBR invoice number directly from backend response (e.g. INV-005001)
-        const verifiedInvoiceNo = data.formattedInvoice || data.invoice || data.invoiceNo || 'INV-000001';
-
-        // Update pole / customer display
-        if (isMessCheckout) {
-          CustomerDisplay.updateDisplay?.({
-            text: `${(customer?.group_name || 'MESS').toUpperCase()}\n\nTOTAL: BD ${total.toFixed(3)}\nSPLIT: BD ${(data.splitAmount || 0).toFixed(3)} / EA`
-          }).catch(() => {});
-        } else if (paymentMethod === 'CASH') {
-          CustomerDisplay.updateDisplay?.({
-            text: `THANK YOU!\nVISIT AGAIN\n\nCASH: BD ${total.toFixed(3)}`
-          }).catch(() => {});
-        } else if ((paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL') && customer) {
-          CustomerDisplay.updateDisplay?.({
-            text: `THANK YOU, ${customer.name.toUpperCase()}!\n\nPAID: BD ${total.toFixed(3)}\nNEW BALANCE: BD ${newBalance.toFixed(3)}`
-          }).catch(() => {});
+      let data: any = null;
+      try {
+        const res = await fetch(checkoutEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(checkoutPayload),
+          signal: AbortSignal.timeout(3500)
+        });
+        if (res.ok) {
+          data = await res.json();
         } else {
-          const displayLabel = paymentMethod === 'BENEFIT_PAY' ? 'BENEFIT PAY' : paymentMethod;
-          CustomerDisplay.updateDisplay?.({
-            text: `THANK YOU!\nVISIT AGAIN\n\n${displayLabel}: BD ${total.toFixed(3)}`
-          }).catch(() => {});
+          try { data = await res.json(); } catch {}
         }
-
-        // FIRE-AND-FORGET PRINTING:
-        // Pass verified sequential invoice number directly to physical printer formatting
-        printFullReceipt({
-          invoiceNo: verifiedInvoiceNo,
-          items: [...cart],
-          subtotal,
-          vat,
-          total,
-          paymentMode: isMessCheckout ? 'MESS_KHATA' : paymentMethod,
-          isMess: isMessCheckout,
-          groupName: customer?.group_name || customer?.messGroup?.group_name,
-          shopperName: isMessCheckout ? (customer?.shopper?.name || customer?.name) : undefined,
-          members: data.splits || customer?.members,
-          cardUid: customer?.tag_id || scannedUid || undefined,
-          customerId: customer?.id || (customer as any)?.customerId || undefined,
-          customerUuid: customer?.id || (customer as any)?.customerId || undefined,
-          customerName: isMessCheckout ? (customer?.group_name || customer?.messGroup?.group_name) : (customer?.name || customerName),
-          customerCardUid: customer?.cardUid || customer?.tag_id || undefined,
-          previousBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? previousBalance : undefined,
-          newBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? newBalance : undefined,
-          cashierName: "Register 01"
-        }).catch((printErr) => console.warn("Background receipt printing warning:", printErr));
-
-        if (isMessCheckout) {
-          const shopperInfo = customer?.name ? ` (Shopper: ${customer.name})` : '';
-          showToast(`👥 Mess Bill BD ${total.toFixed(3)} charged & split across ${data.memberCount || customer?.members?.length} members${shopperInfo}!`, 'success');
-        } else if (paymentMethod === 'CREDIT_PERSONAL' || paymentMethod === 'CREDIT') {
-          showToast(`📒 Sale BD ${total.toFixed(3)} charged to ${customer?.name}'s Personal Khata!`, 'success');
-        } else {
-          const formattedMethod = paymentMethod === 'BENEFIT_PAY' ? 'Benefit Pay' : paymentMethod;
-          showToast(`🧾 ${formattedMethod} Sale Recorded (#${verifiedInvoiceNo}). Cart cleared.`, 'success');
-        }
-        
-        // Instantly reset checkout UI (non-blocking)
-        clearActiveCart();
-
-        // Refresh catalog and quick products to reflect updated inventory stock levels
-        fetchCatalog();
-        fetchQuickProducts();
-
-        // 3. Fire-and-forget background sync (never blocks cashier speed)
-        setTimeout(() => {
-          db.sync().catch(() => {});
-        }, 500);
-      } else {
-        showToast(`❌ Checkout failed: ${data && data.error ? data.error : 'Unknown error'}`, 'error');
+      } catch (netErr) {
+        console.warn("Primary checkout request failed:", netErr);
       }
+
+      // Automatic high-availability failover: If primary failed or threw database error, try alternative candidate
+      if (!data || !data.success) {
+        const altCandidates = ['http://192.168.8.7:3000', 'http://localhost:3000'].filter(u => !checkoutEndpoint.startsWith(u));
+        for (const altBase of altCandidates) {
+          try {
+            const altUrl = isMessCheckout ? `${altBase}/api/sales/mess-checkout` : `${altBase}/checkout`;
+            const altRes = await fetch(altUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(checkoutPayload),
+              signal: AbortSignal.timeout(3000)
+            });
+            if (altRes.ok) {
+              const altData = await altRes.json();
+              if (altData && altData.success) {
+                data = altData;
+                setApiBase(altBase);
+                localStorage.setItem('master_server_url', altBase);
+                break;
+              }
+            }
+          } catch (altErr) {
+            console.warn("Alternative checkout host attempt failed:", altErr);
+          }
+        }
+      }
+
+      // ZERO-BLOCK RETAIL SAFEGUARD:
+      // Even if master server is unreachable or reports a database error, complete the sale immediately,
+      // record it for automatic synchronization, and GUARANTEE the physical receipt prints!
+      const isOnlineSuccess = Boolean(data && data.success);
+      const verifiedInvoiceNo = isOnlineSuccess
+        ? (data.formattedInvoice || data.invoice || data.invoiceNo || 'INV-000001')
+        : `INV-OFF-${Date.now().toString().slice(-6)}`;
+
+      if (!isOnlineSuccess) {
+        try {
+          const offlineQueue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
+          offlineQueue.push({
+            ...checkoutPayload,
+            invoiceNo: verifiedInvoiceNo,
+            offlineTimestamp: new Date().toISOString()
+          });
+          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(offlineQueue));
+          updateOfflinePendingCount();
+          if (offlineQueue.length > 100) {
+            console.warn("⚠️ Offline queue exceeds 100 items. Connect to Wi-Fi soon.");
+          }
+        } catch {}
+      }
+
+      // Update pole / customer display
+      if (isMessCheckout) {
+        CustomerDisplay.updateDisplay?.({
+          text: `${(customer?.group_name || 'MESS').toUpperCase()}\n\nTOTAL: BD ${total.toFixed(3)}\nSPLIT: BD ${(data?.splitAmount || 0).toFixed(3)} / EA`
+        }).catch(() => {});
+      } else if (paymentMethod === 'CASH') {
+        CustomerDisplay.updateDisplay?.({
+          text: `THANK YOU!\nVISIT AGAIN\n\nCASH: BD ${total.toFixed(3)}`
+        }).catch(() => {});
+      } else if ((paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL') && customer) {
+        CustomerDisplay.updateDisplay?.({
+          text: `THANK YOU, ${customer.name.toUpperCase()}!\n\nPAID: BD ${total.toFixed(3)}\nNEW BALANCE: BD ${newBalance.toFixed(3)}`
+        }).catch(() => {});
+      } else {
+        const displayLabel = paymentMethod === 'BENEFIT_PAY' ? 'BENEFIT PAY' : paymentMethod;
+        CustomerDisplay.updateDisplay?.({
+          text: `THANK YOU!\nVISIT AGAIN\n\n${displayLabel}: BD ${total.toFixed(3)}`
+        }).catch(() => {});
+      }
+
+      // FIRE-AND-FORGET PRINTING:
+      // Pass verified sequential invoice number directly to physical printer formatting
+      printFullReceipt({
+        invoiceNo: verifiedInvoiceNo,
+        items: [...cart],
+        subtotal,
+        vat,
+        total,
+        paymentMode: isMessCheckout ? 'MESS_KHATA' : paymentMethod,
+        isMess: isMessCheckout,
+        groupName: customer?.group_name || customer?.messGroup?.group_name,
+        shopperName: isMessCheckout ? (customer?.shopper?.name || customer?.name) : undefined,
+        members: data?.splits || customer?.members,
+        cardUid: customer?.tag_id || scannedUid || undefined,
+        customerId: customer?.id || (customer as any)?.customerId || undefined,
+        customerUuid: customer?.id || (customer as any)?.customerId || undefined,
+        customerName: isMessCheckout ? (customer?.group_name || customer?.messGroup?.group_name) : (customer?.name || customerName),
+        customerCardUid: customer?.cardUid || customer?.tag_id || undefined,
+        previousBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? previousBalance : undefined,
+        newBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? newBalance : undefined,
+        cashierName: "Register 01"
+      }).catch((printErr) => console.warn("Background receipt printing warning:", printErr));
+
+      if (isMessCheckout) {
+        const shopperInfo = customer?.name ? ` (Shopper: ${customer.name})` : '';
+        showToast(`👥 Mess Bill BD ${total.toFixed(3)} charged & split across ${data?.memberCount || customer?.members?.length} members${shopperInfo}!`, 'success');
+      } else if (paymentMethod === 'CREDIT_PERSONAL' || paymentMethod === 'CREDIT') {
+        showToast(`📒 Sale BD ${total.toFixed(3)} charged to ${customer?.name}'s Personal Khata!`, 'success');
+      } else {
+        const formattedMethod = paymentMethod === 'BENEFIT_PAY' ? 'Benefit Pay' : paymentMethod;
+        if (isOnlineSuccess) {
+          showToast(`🧾 ${formattedMethod} Sale Recorded (#${verifiedInvoiceNo}). Cart cleared.`, 'success');
+        } else {
+          showToast(`🧾 ${formattedMethod} Sale Saved Offline (#${verifiedInvoiceNo}) & Printed!`, 'success');
+        }
+      }
+      
+      // Instantly reset checkout UI (non-blocking)
+      clearActiveCart();
+
+      // Refresh catalog and quick products to reflect updated inventory stock levels
+      fetchCatalog();
+      fetchQuickProducts();
+
+      // Fire-and-forget background sync (never blocks cashier speed)
+      setTimeout(() => {
+        db.sync().catch(() => {});
+      }, 500);
     } catch (err) {
       console.error("Checkout error:", err);
       showToast("❌ Error saving sale. Please try again.", 'error');
@@ -1932,13 +2009,34 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
   }
 
   if (viewMode === 'dashboard') {
+    const dashboardUrl = `http://${typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'}:5177`;
     return (
-      <Suspense fallback={<div className="flex items-center justify-center h-screen w-screen bg-slate-900 text-white font-bold text-lg">Loading Manager Dashboard...</div>}>
-        <ManagerDashboard
-          apiBase={apiBase}
-          onBackToPos={() => setViewMode('pos')}
-        />
-      </Suspense>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-8 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center mb-4 text-2xl font-black">
+          👔
+        </div>
+        <h2 className="text-2xl font-bold mb-2">Manager Command Center</h2>
+        <p className="text-slate-400 max-w-sm mb-6 text-xs">
+          The back-office suite runs on the Master Laptop. Tap below to launch or return to the register.
+        </p>
+        <div className="flex gap-3">
+          <a
+            href={dashboardUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition shadow-md"
+          >
+            Open Laptop Suite ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => setViewMode('pos')}
+            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg text-xs cursor-pointer"
+          >
+            Back to Cart
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -2123,24 +2221,6 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
           >
             🔒 Close Shift
           </button>
-          {!isCashierTrapped && (
-            <>
-              <button 
-                type="button"
-                onClick={() => setViewMode('stock')}
-                className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap"
-              >
-                Stock
-              </button>
-              <button 
-                type="button"
-                onClick={() => setViewMode('dashboard')}
-                className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap"
-              >
-                Manager
-              </button>
-            </>
-          )}
 
           {/* Dev Tools Quick Icon */}
           <button
@@ -2151,6 +2231,20 @@ export default function CheckoutScreen({ isCashierTrapped = false, onLockTermina
           >
             ⚙️
           </button>
+
+          {/* OFFLINE SALES QUEUE DRAIN BADGE */}
+          {offlinePendingCount > 0 && (
+            <button
+              type="button"
+              onClick={() => drainOfflineQueue()}
+              disabled={isDrainingOfflineSales}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-full font-bold text-xs transition-all shadow-xs cursor-pointer animate-pulse select-none"
+              title="Offline sales queued in device memory. Tap to sync immediately."
+            >
+              <RefreshCw size={12} className={isDrainingOfflineSales ? "animate-spin" : ""} />
+              <span>{offlinePendingCount} Queued</span>
+            </button>
+          )}
 
           {/* THE OFFLINE SYNC TRAFFIC LIGHT (TOP-RIGHT CORNER) */}
           <SyncTrafficLight

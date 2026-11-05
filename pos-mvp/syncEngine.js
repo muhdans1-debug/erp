@@ -1,7 +1,4 @@
-import sqlite from '@prisma/orm-sqlite/runtime';
-import contractJson from './prisma/contract.json' with { type: 'json' };
-
-const db = sqlite({ contractJson, path: './dev.db' });
+import { db } from './db.js';
 
 // Base URL for Master Server (Windows back-office PC)
 let masterBaseUrl = process.env.MASTER_SERVER_URL || 'http://localhost:3000';
@@ -41,16 +38,36 @@ export const syncNow = async () => {
     // ==========================================
     // PART 1: PUSH SALES UP TO WINDOWS PC (OUTBOX)
     // ==========================================
-    const allSales = await db.orm.Sale.all();
-    const pendingSales = allSales.filter(sale => sale.syncStatus === 'PENDING');
+    // 🟢 SAFE LIB-SQL JSON AGGREGATION: Native SQLite query pulls ONLY pending sales
+    const pendingResult = await db.execute({
+      sql: `
+        SELECT 
+          s.*, 
+          json_group_array(
+            json_object(
+              'id', i.id, 
+              'productId', i.productId, 
+              'qty', i.quantity,
+              'quantity', i.quantity,
+              'price', i.priceAtSale,
+              'priceAtSale', i.priceAtSale,
+              'total_price', i.total_price
+            )
+          ) FILTER (WHERE i.id IS NOT NULL) AS items
+        FROM Sale s
+        LEFT JOIN SaleItem i ON s.id = i.saleId
+        WHERE s.syncStatus = 'PENDING'
+        GROUP BY s.id
+      `,
+      args: []
+    });
 
-    if (pendingSales.length > 0) {
-      const allItems = await db.orm.SaleItem.all();
-      const payload = pendingSales.map(sale => ({
-        ...sale,
-        items: allItems.filter(item => item.saleId === sale.id)
-      }));
+    const payload = (pendingResult.rows || []).map(row => ({
+      ...row,
+      items: JSON.parse(row.items || '[]')
+    }));
 
+    if (payload.length > 0) {
       const pushRes = await fetch(`${masterBaseUrl}/api/sync/sales`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -59,12 +76,12 @@ export const syncNow = async () => {
 
       if (pushRes.ok) {
         await db.transaction(async (tx) => {
-          for (const sale of pendingSales) {
+          for (const sale of payload) {
             await tx.orm.Sale.where({ id: sale.id }).update({ syncStatus: 'SYNCED' });
           }
         });
-        result.salesPushed = pendingSales.length;
-        console.log(`[SyncEngine] Successfully synced ${pendingSales.length} sales to master.`);
+        result.salesPushed = payload.length;
+        console.log(`[SyncEngine] Successfully synced ${payload.length} sales to master.`);
       }
     }
 
@@ -72,13 +89,12 @@ export const syncNow = async () => {
     // PART 2: PULL PRODUCT UPDATES DOWN TO SUNMI (DELTA SYNC)
     // ==========================================
     // 1. Find the most recently updated product in the local SQLite database
-    const localProducts = await db.orm.Product.all();
-    let latestUpdate = new Date(0); // Beginning of time
-
-    localProducts.forEach(p => {
-      const pDate = p.updatedAt ? new Date(p.updatedAt) : new Date(0);
-      if (pDate > latestUpdate) latestUpdate = pDate;
+    const maxResult = await db.execute({
+      sql: `SELECT MAX(updatedAt) as latestUpdate FROM Product`,
+      args: []
     });
+    const latestRaw = maxResult.rows?.[0]?.latestUpdate;
+    const latestUpdate = latestRaw ? new Date(latestRaw) : new Date(0);
 
     // 2. Ask Master PC for anything newer than that timestamp
     const pullUrl = `${masterBaseUrl}/api/sync/products?lastSyncDate=${encodeURIComponent(latestUpdate.toISOString())}`;
@@ -201,6 +217,11 @@ export const getSyncStatus = async () => {
 
 
 export const startSyncEngine = () => {
+  const isLocalhost = masterBaseUrl.includes('localhost') || masterBaseUrl.includes('127.0.0.1');
+  if (isLocalhost && process.env.IS_SPOKE !== 'true') {
+    console.log('⚡ [SyncEngine] Operating as Master POS Server. Self-sync loop bypassed for 0% CPU overhead.');
+    return;
+  }
   console.log('[SyncEngine] Bidirectional Sync Engine Started (Push Sales / Pull Products every 30s)...');
   setTimeout(() => {
     syncNow().catch(() => {});

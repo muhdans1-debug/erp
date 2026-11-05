@@ -1,152 +1,297 @@
-import sqlite from '@prisma/orm-sqlite/runtime';
-import contractJson from '../prisma/contract.json' with { type: 'json' };
+// ====================================================================
+// ASKAR SUPERMARKET ERP - NATIVE LIBSQL SALE REPOSITORY
+// High-performance, parameterized SQLite engine execution (No in-memory leaks)
+// ====================================================================
 
+import { db } from '../db.js';
 import { getNextInvoiceSequence, formatInvoiceNumber } from '../services/invoiceSequence.js';
 
-// Initialize SQLite runtime with your contract
-const db = sqlite({
-  contractJson,
-  path: './dev.db',
-});
-
-// Anchor tenant ID for multi-tenant isolation
 const CURRENT_TENANT = 'tenant_askar_01';
 
 export const SaleRepository = {
-  // Fetch sales filtered by start and end date for Range/Day/Month/Year reporting
+  /**
+   * Fetch sales filtered by start and end date for Range/Day/Month/Year reporting.
+   * Offloads filtering, aggregation, and line-item joining directly to the SQLite engine.
+   */
   getSalesByDateRange: async (startDate, endDate = null) => {
-    const allSales = await db.orm.Sale.all();
+    let sql = `
+      SELECT s.*,
+        COALESCE(
+          json_group_array(
+            CASE WHEN i.id IS NOT NULL THEN
+              json_object(
+                'id', i.id,
+                'saleId', i.saleId,
+                'productId', i.productId,
+                'quantity', i.quantity,
+                'priceAtSale', i.priceAtSale,
+                'costAtSale', i.costAtSale,
+                'total_price', i.total_price,
+                'vatRateAtSale', i.vatRateAtSale,
+                'vatAmount', i.vatAmount
+              )
+            ELSE NULL END
+          ), '[]'
+        ) as items_json
+      FROM Sale s
+      LEFT JOIN SaleItem i ON s.id = i.saleId
+      WHERE (s.status IS NULL OR (s.status != 'VOIDED' AND s.status != 'CANCELLED'))
+    `;
 
-    // Filter by tenant, active status, and timestamp (exclude VOIDED sales from revenue totals)
-    const filteredSales = allSales.filter((sale) => {
-      const saleDate = new Date(sale.createdAt);
-      const isNotVoided = sale.status !== 'VOIDED' && sale.status !== 'CANCELLED';
-      const matchesTenant = sale.tenantId === CURRENT_TENANT || sale.tenantId === 'tenant_1';
-      const afterStart = startDate ? saleDate >= startDate : true;
-      const beforeEnd = endDate ? saleDate <= endDate : true;
-      return isNotVoided && matchesTenant && afterStart && beforeEnd;
+    const args = [];
+
+    if (startDate) {
+      sql += ` AND s.createdAt >= ?`;
+      args.push(startDate instanceof Date ? startDate.toISOString() : String(startDate));
+    }
+    if (endDate) {
+      sql += ` AND s.createdAt <= ?`;
+      args.push(endDate instanceof Date ? endDate.toISOString() : String(endDate));
+    }
+
+    sql += ` GROUP BY s.id ORDER BY s.createdAt DESC`;
+
+    const result = await db.execute({ sql, args });
+
+    return (result.rows || []).map((row) => {
+      let items = [];
+      try {
+        if (row.items_json) {
+          const parsed = JSON.parse(row.items_json);
+          items = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        }
+      } catch (e) {
+        items = [];
+      }
+
+      return {
+        ...row,
+        items,
+      };
     });
-
-    // Populate line items for profit calculation
-    const allItems = await db.orm.SaleItem.all();
-    return filteredSales.map((sale) => ({
-      ...sale,
-      items: allItems.filter((item) => item.saleId === sale.id),
-    }));
   },
 
-  // Save sale, create line items, and adjust credit balance if needed
-  createSale: async (saleData, lineItems) => {
+  /**
+   * Atomically save sale, line items, and adjust credit balance inside a single transaction.
+   */
+  createSale: async (saleData, lineItems = []) => {
     return await db.transaction(async (tx) => {
-      const createdAt = saleData.createdAt ? new Date(saleData.createdAt) : new Date();
+      const createdAt = saleData.createdAt
+        ? (saleData.createdAt instanceof Date ? saleData.createdAt.toISOString() : String(saleData.createdAt))
+        : new Date().toISOString();
 
       const totalVal = Number(saleData.totalAmount ?? saleData.total ?? 0);
       const vatVal = Number(saleData.totalVat ?? saleData.vatTotal ?? 0);
       const subtotalVal = Number(saleData.subtotal ?? (totalVal - vatVal));
 
       // Strictly sequential, gapless invoice numbering for Bahrain NBR VAT compliance
-      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : getNextInvoiceSequence('Sale');
-      const invoiceNo = saleData.invoiceNo && !saleData.invoiceNo.includes('NaN') && !saleData.invoiceNo.startsWith('INV-17') && saleData.invoiceNo !== '0' && saleData.invoiceNo !== 'INV-0'
-        ? saleData.invoiceNo
-        : formatInvoiceNumber(seq);
+      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence('Sale');
+      const invoiceNo =
+        saleData.invoiceNo &&
+          !saleData.invoiceNo.includes('NaN') &&
+          !saleData.invoiceNo.startsWith('INV-17') &&
+          saleData.invoiceNo !== '0' &&
+          saleData.invoiceNo !== 'INV-0'
+          ? saleData.invoiceNo
+          : formatInvoiceNumber(seq);
 
-      const createdSale = await tx.orm.Sale.create({
-        ...saleData,
-        invoiceNo,
-        invoiceSeq: seq,
-        subtotal: subtotalVal,
-        vatTotal: vatVal,
-        totalVat: vatVal,
-        total: totalVal,
-        totalAmount: totalVal,
-        status: saleData.status || 'COMPLETED',
-        syncStatus: saleData.syncStatus || 'PENDING',
-        createdAt,
-        tenantId: CURRENT_TENANT,
-      });
-
-
-      for (const item of lineItems) {
-        const itemQty = Number(item.quantity ?? 1);
-        const itemPrice = Number(item.priceAtSale ?? item.price ?? 0);
-        await tx.orm.SaleItem.create({
-          ...item,
-          quantity: itemQty,
-          priceAtSale: itemPrice,
-          total_price: Number(item.total_price ?? (itemQty * itemPrice).toFixed(3)),
-          vatRateAtSale: Number(item.vatRateAtSale ?? 10.0),
-          vatAmount: Number(item.vatAmount ?? 0.0),
-          saleId: createdSale.id,
-          tenantId: CURRENT_TENANT,
+      // Validate customerId to prevent foreign key errors
+      let validCustomerId = null;
+      if (saleData.customerId) {
+        const custRes = await tx.execute({
+          sql: `SELECT id FROM Customer WHERE id = ? LIMIT 1`,
+          args: [saleData.customerId],
         });
-
-        // Deduct inventory stock quantity (or replenish if refund/return with negative quantity)
-        const targetProdId = item.productId || item.id;
-        if (targetProdId) {
-          try {
-            const product = await tx.orm.Product.where({ id: targetProdId }).all().first();
-            if (product) {
-              const currentStock = Number(product.stockQuantity ?? 0);
-              const updatedStock = Math.max(0, currentStock - itemQty);
-              await tx.orm.Product.where({ id: targetProdId }).update({
-                stockQuantity: updatedStock,
-                updatedAt: new Date()
-              });
-            }
-          } catch (stockErr) {
-            console.warn('Inventory deduction notice for product', targetProdId, stockErr?.message);
-          }
+        if (custRes.rows && custRes.rows.length > 0) {
+          validCustomerId = saleData.customerId;
         }
       }
 
-      // If charged to credit (Khata), record an append-only ledger transaction (+total, type: CHARGE)
-      if (saleData.customerId && (saleData.paymentType === 'CREDIT' || saleData.paymentType === 'NFC_CREDIT')) {
-        const customerLedger = await tx.orm.KhataLedger.where({ customerId: saleData.customerId }).all();
-        const prevBal = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-        const newBal = prevBal + (Number(saleData.total) || 0);
-
-        await tx.orm.KhataLedger.create({
-          id: crypto.randomUUID(),
-          customerId: saleData.customerId,
-          amount: Number(saleData.total) || 0, // Positive for debt charge
-          type: 'CHARGE',
-          reference: invoiceNo || `INV-${Date.now()}`,
-          running_balance: Number(newBal.toFixed(3)),
-          syncStatus: 'PENDING',
-          timestamp: createdAt,
-          created_at: createdAt,
-          tenantId: CURRENT_TENANT,
+      // Validate shiftId
+      let validShiftId = null;
+      if (saleData.shiftId) {
+        const shiftRes = await tx.execute({
+          sql: `SELECT id FROM ShiftSession WHERE id = ? LIMIT 1`,
+          args: [saleData.shiftId],
         });
+        if (shiftRes.rows && shiftRes.rows.length > 0) {
+          validShiftId = saleData.shiftId;
+        } else {
+          validShiftId = saleData.shiftId;
+        }
       }
 
-      return createdSale;
+      const saleId = saleData.id || `sale_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+      // Insert Sale
+      await tx.execute({
+        sql: `INSERT INTO Sale (
+          id, tenantId, invoiceNo, invoiceSeq, customerId, shiftId, employeeId,
+          subtotal, vatTotal, totalVat, total, totalAmount, paymentType,
+          status, syncStatus, createdAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          saleId,
+          saleData.tenantId || CURRENT_TENANT,
+          invoiceNo,
+          seq,
+          validCustomerId,
+          validShiftId,
+          saleData.employeeId || null,
+          subtotalVal,
+          vatVal,
+          vatVal,
+          totalVal,
+          totalVal,
+          saleData.paymentType || 'CASH',
+          saleData.status || 'COMPLETED',
+          saleData.syncStatus || 'PENDING',
+          createdAt,
+        ],
+      });
+
+      // Insert Line Items & deduct stock
+      for (const item of lineItems) {
+        const itemId = item.id || `si_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const itemQty = Number(item.quantity ?? 1);
+        const itemPrice = Number(item.priceAtSale ?? item.price ?? 0);
+        const itemCost = Number(item.costAtSale ?? item.unitCost ?? 0);
+        const targetProdId = item.productId || item.id || 'prod_quick';
+        const lineTotal = Number(item.total_price ?? (itemQty * itemPrice).toFixed(3));
+        const vatRate = Number(item.vatRateAtSale ?? item.vatRate ?? 10.0);
+        const vatAmount = Number(item.vatAmount ?? 0.0);
+
+        await tx.execute({
+          sql: `INSERT INTO SaleItem (
+            id, tenantId, saleId, productId, quantity, priceAtSale, costAtSale,
+            vatRateAtSale, vatAmount, total_price
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            itemId,
+            item.tenantId || CURRENT_TENANT,
+            saleId,
+            targetProdId,
+            itemQty,
+            itemPrice,
+            itemCost,
+            vatRate,
+            vatAmount,
+            lineTotal,
+          ],
+        });
+
+        // Decrement stock in database directly
+        if (targetProdId && targetProdId !== 'prod_quick') {
+          await tx.execute({
+            sql: `UPDATE Product 
+                  SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = datetime('now')
+                  WHERE id = ?`,
+            args: [itemQty, targetProdId],
+          });
+        }
+      }
+
+      // Record Khata ledger if credit transaction
+      if (
+        validCustomerId &&
+        (saleData.paymentType === 'CREDIT' ||
+          saleData.paymentType === 'NFC_CREDIT' ||
+          saleData.paymentType === 'MESS_KHATA')
+      ) {
+        const balRes = await tx.execute({
+          sql: `SELECT COALESCE(SUM(amount), 0) as balance FROM KhataLedger WHERE customerId = ?`,
+          args: [validCustomerId],
+        });
+        const currentBal = Number(balRes.rows[0]?.balance || 0);
+        const newBal = Number((currentBal + totalVal).toFixed(3));
+
+        const ledgerId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await tx.execute({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance,
+            syncStatus, timestamp, created_at
+          ) VALUES (?, ?, ?, ?, 'CHARGE', ?, ?, 'PENDING', ?, ?)`,
+          args: [
+            ledgerId,
+            CURRENT_TENANT,
+            validCustomerId,
+            totalVal,
+            invoiceNo,
+            newBal,
+            createdAt,
+            createdAt,
+          ],
+        });
+
+        // Update running balance in unified Customer table
+        await tx.execute({
+          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
+          args: [totalVal, validCustomerId],
+        }).catch(() => { });
+      }
+
+      return {
+        id: saleId,
+        invoiceNo,
+        invoiceSeq: seq,
+        subtotal: subtotalVal,
+        total: totalVal,
+        totalAmount: totalVal,
+        vatTotal: vatVal,
+        paymentType: saleData.paymentType || 'CASH',
+        status: saleData.status || 'COMPLETED',
+        createdAt,
+      };
     });
   },
 
-  // Fetch all transactions, items, and append-only ledger entries for customer statement
+  /**
+   * Fetch customer statement with sales, line items, and ledger entries using indexed queries.
+   */
   getCustomerStatement: async (customerId) => {
-    const allSales = await db.orm.Sale.all();
-    const customerSales = allSales
-      .filter((sale) => sale.customerId === customerId)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    const allItems = await db.orm.SaleItem.all();
-    const salesWithItems = customerSales.map((sale) => ({
+    // 1. Fetch customer sales
+    const salesResult = await db.execute({
+      sql: `SELECT * FROM Sale WHERE customerId = ? ORDER BY createdAt DESC LIMIT 100`,
+      args: [customerId],
+    });
+
+    const sales = salesResult.rows || [];
+    const saleIds = sales.map((s) => s.id);
+
+    // 2. Fetch items for these sales
+    let itemsBySaleId = {};
+    if (saleIds.length > 0) {
+      const placeholders = saleIds.map(() => '?').join(', ');
+      const itemsResult = await db.execute({
+        sql: `SELECT * FROM SaleItem WHERE saleId IN (${placeholders})`,
+        args: saleIds,
+      });
+      (itemsResult.rows || []).forEach((item) => {
+        if (!itemsBySaleId[item.saleId]) itemsBySaleId[item.saleId] = [];
+        itemsBySaleId[item.saleId].push(item);
+      });
+    }
+
+    const salesWithItems = sales.map((sale) => ({
       ...sale,
-      items: allItems.filter((item) => item.saleId === sale.id),
+      items: itemsBySaleId[sale.id] || [],
     }));
 
-    const allLedger = await db.orm.KhataLedger.all();
-    const customerLedger = allLedger
-      .filter((l) => l.customerId === customerId)
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    // 3. Fetch ledger entries
+    const ledgerResult = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE customerId = ? ORDER BY timestamp DESC LIMIT 200`,
+      args: [customerId],
+    });
 
-    const computedBalance = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const ledger = ledgerResult.rows || [];
+    const computedBalance = ledger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     return {
       sales: salesWithItems,
-      ledger: customerLedger,
+      ledger,
       computedBalance: Math.max(0, computedBalance),
     };
   },
 };
 
+export default SaleRepository;

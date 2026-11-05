@@ -2,16 +2,17 @@ import { useState, useEffect } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import LoginScreen from './pages/LoginScreen';
 import CheckoutScreen from './pages/CheckoutScreen';
-import ManagerDashboard from './pages/ManagerDashboard';
 import StartShiftModal from './components/StartShiftModal';
 import CustomerDisplayPage from './pages/CustomerDisplayPage';
 import CustomerStatementPage from './pages/CustomerStatementPage';
 import CorporateSponsorDashboard from './pages/CorporateSponsorDashboard';
+import F100Pim from './F100Pim';
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
 import { useSunmiBridge } from './hooks/useSunmiBridge';
 import { printFullReceipt } from './utils/printer';
 import { Printer } from 'capacitor-sunmi-printer';
+import { KeepAwake } from '@capacitor-community/keep-awake';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
@@ -48,6 +49,16 @@ export default function App() {
     window.location.pathname.startsWith('/sponsor') ||
     window.location.pathname.startsWith('/b2b') ||
     new URLSearchParams(window.location.search).get('view') === 'sponsor'
+  );
+
+  // Target Feitian F100 Bulk PIM Intake Node (/f100, /pim, ?view=f100, ?view=pim, or persisted terminal flag or Feitian F100 hardware)
+  const isF100PimRoute = typeof window !== 'undefined' && (
+    window.location.pathname.startsWith('/f100') ||
+    window.location.pathname.startsWith('/pim') ||
+    new URLSearchParams(window.location.search).get('view') === 'f100' ||
+    new URLSearchParams(window.location.search).get('view') === 'pim' ||
+    localStorage.getItem('f100_default_mode') === 'true' ||
+    (navigator.userAgent.includes('F100') && localStorage.getItem('f100_default_mode') !== 'false')
   );
 
   const statementCustomerId = typeof window !== 'undefined'
@@ -99,6 +110,26 @@ export default function App() {
   // Initialize Capgo Over-The-Air (OTA) updater for silent remote hot-swaps
   useEffect(() => {
     initOTA();
+  }, []);
+
+  // 🟢 PREVENTS DOZE MODE: Forces Android to keep screen and CPU active while POS is running
+  useEffect(() => {
+    const lockScreen = async () => {
+      try {
+        await KeepAwake.keepAwake();
+        console.log('✅ Native Wake-Lock Acquired: Sync timers will not suspend.');
+      } catch (err) {
+        console.warn('Native wake-lock notice (non-fatal on web):', err);
+      }
+    };
+
+    lockScreen();
+
+    return () => {
+      try {
+        KeepAwake.allowSleep().catch(() => {});
+      } catch {}
+    };
   }, []);
 
   // Eagerly launch the Customer Display on Sunmi's secondary 800x480 HDMI Screen
@@ -220,6 +251,11 @@ export default function App() {
     localStorage.setItem('active_shift_id', newShiftId);
   };
 
+  // --- VIEW 0C: FEITIAN F100 BULK PIM INVENTORY INTAKE NODE ---
+  if (isF100PimRoute) {
+    return <F100Pim />;
+  }
+
   if (isCustomerDisplayRoute) {
     return (
       <div className="w-full h-full min-h-screen bg-slate-900 overflow-hidden flex flex-col">
@@ -238,19 +274,36 @@ export default function App() {
     return <CorporateSponsorDashboard apiBase={apiBase} />;
   }
 
-  // --- VIEW 3: THE ORIGINAL ASKAR BACK-OFFICE MANAGER (:5175 / ?view=dashboard) ---
+  // --- VIEW 3: THE ASKAR BACK-OFFICE MANAGER SUITE (Migrated to Master Laptop) ---
   if (userRole === 'MANAGER' || isManagerPort) {
+    const dashboardUrl = `http://${typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'}:5177`;
     return (
-      <ManagerDashboard
-        apiBase={apiBase}
-        onBackToPos={() => {
-          if (window.location.port === '5175') {
-            window.location.href = 'http://' + window.location.hostname + ':5173/';
-          } else {
-            handleLogin('CASHIER');
-          }
-        }}
-      />
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-8 text-center select-none">
+        <div className="w-20 h-20 rounded-3xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center mb-6 text-3xl font-black">
+          👔
+        </div>
+        <h1 className="text-3xl font-extrabold tracking-tight mb-2">Manager Command Center</h1>
+        <p className="text-slate-400 max-w-md mb-8 text-sm leading-relaxed">
+          The back-office management suite has been migrated to the Master Laptop for maximum register performance and hardware security.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <a
+            href={dashboardUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 text-sm"
+          >
+            Open Laptop Back-Office (Port 5177) ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => handleLogin('CASHIER')}
+            className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all text-sm cursor-pointer"
+          >
+            ← Back to Cashier Register
+          </button>
+        </div>
+      </div>
     );
   }
 

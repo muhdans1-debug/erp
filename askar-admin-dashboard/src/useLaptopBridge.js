@@ -123,20 +123,11 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
                   }
                 }
 
-                // 2. Fallback check Customer.cardUid
+                // 2. Lookup Customer by cardUid, access_token, phone, or id
                 let result = await adminDb.execute({
-                  sql: `SELECT * FROM Customer WHERE cardUid = ? OR phone = ? OR id = ? LIMIT 1;`,
-                  args: [scannedId, scannedId, scannedId]
+                  sql: `SELECT * FROM Customer WHERE cardUid = ? OR access_token = ? OR phone = ? OR id = ? LIMIT 1;`,
+                  args: [scannedId, scannedId, scannedId, scannedId]
                 });
-
-                if (result.rows.length === 0) {
-                  try {
-                    result = await adminDb.execute({
-                      sql: `SELECT * FROM KhataCustomer WHERE access_token = ? OR phone = ? OR id = ? LIMIT 1;`,
-                      args: [scannedId, scannedId, scannedId]
-                    });
-                  } catch {}
-                }
 
                 if (result.rows.length > 0) {
                   const customer = result.rows[0];

@@ -1,24 +1,71 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const { app, BrowserWindow } = require('electron');
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// File logging for packaged startup diagnosis
+const logPath = path.join(process.env.TEMP || 'C:\\Windows\\Temp', 'askar-startup.log');
+const log = (msg) => {
+  try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+  console.log(msg);
+};
+log(`=== Askar POS Boot Init (pid: ${process.pid}) ===`);
+
+process.on('uncaughtException', (err) => {
+  log(`UNCAUGHT EXCEPTION: ${err?.stack || err}`);
+});
+process.on('unhandledRejection', (reason) => {
+  log(`UNHANDLED REJECTION: ${reason?.stack || reason}`);
+});
+
+const require = createRequire(import.meta.url);
+const { app, BrowserWindow, dialog } = require('electron');
+
+// Performance Optimizations for Retail Hardware (Intel Celeron / Core i3 / Low-spec Laptops)
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+
 // Writable Storage Safeguard: In production, route all SQLite & file writes to AppData
-const userDataDir = app.getPath('userData');
+const appDataRoot = process.env.APPDATA || (process.platform === 'darwin' ? path.join(process.env.HOME || '.', 'Library', 'Application Support') : '/var/local');
+const userDataDir = path.join(appDataRoot, 'Askar POS');
+
 if (app.isPackaged) {
   try {
     if (!fs.existsSync(userDataDir)) {
       fs.mkdirSync(userDataDir, { recursive: true });
     }
     process.env.ASKAR_DATA_PATH = userDataDir;
-    console.log('Production database directory set to AppData:', userDataDir);
+    log(`Production database directory set to: ${userDataDir}`);
+
+    // Seed production config files if missing
+    const dbFiles = ['quick_products_config.json', 'khata_config.json'];
+    for (const file of dbFiles) {
+      const unpackedSrc = path.join(process.resourcesPath || __dirname, 'app.asar.unpacked', file);
+      const standardSrc = path.join(__dirname, file);
+      const src = fs.existsSync(unpackedSrc) ? unpackedSrc : standardSrc;
+      const dest = path.join(userDataDir, file);
+      const isDb = file.endsWith('.db');
+      const needsCopy = !fs.existsSync(dest) || (isDb && fs.statSync(dest).size < 10000);
+      if (needsCopy && fs.existsSync(src)) {
+        try {
+          fs.copyFileSync(src, dest);
+          log(`Initialized ${file} into ${userDataDir} from ${src}`);
+        } catch (copyErr) {
+          log(`Failed to copy ${file}: ${copyErr?.message}`);
+        }
+      }
+    }
+
+    // Safe Initialization: Allow LibSQL native WAL recovery to handle replication state without deleting local.db
+    log('Safe initialization: local.db preserved for native LibSQL / SQLite WAL crash recovery');
   } catch (err) {
-    console.error('Failed to set userData database directory:', err);
+    log(`Warning setting database directory: ${err?.message}`);
   }
 } else {
   process.env.ASKAR_DATA_PATH = __dirname;
@@ -47,30 +94,49 @@ import('./server.js')
 let mainWindow;
 
 function createWindow() {
+  log('createWindow() invoked');
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     title: 'Askar POS',
     autoHideMenuBar: true,
-    show: false, // Hide until ready
+    show: true,
+    backgroundColor: '#0f172a',
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      spellcheck: false,
+      backgroundThrottling: false
+    }
+  });
+  log('BrowserWindow instance created');
+
+  try {
+    mainWindow.maximize();
+    // Only open DevTools in explicit debug mode or unpacked dev environment
+    if (process.env.ASKAR_DEV === 'true') {
+      mainWindow.webContents.openDevTools();
+    }
+  } catch (e) {
+    log(`Warning on window maximize: ${e?.message}`);
+  }
+
+  // Allow technicians to toggle DevTools on demand via F12 without bogging down daily POS operations
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
     }
   });
 
-  mainWindow.maximize();
-  mainWindow.show();
-  mainWindow.webContents.openDevTools();
-
-  // Retry loading Fastify on port 3000
+  // Fast retry loading Fastify on port 3000 (250ms polling for sub-second visual launch)
   let attempts = 0;
-  const maxAttempts = 15;
+  const maxAttempts = 30;
   const pollServer = () => {
     attempts++;
     mainWindow.loadURL('http://localhost:3000').catch(() => {
       if (attempts < maxAttempts) {
-        setTimeout(pollServer, 500);
+        setTimeout(pollServer, 250);
       } else {
         console.warn('Fastify not responding on port 3000 after retries, falling back to local files');
         const distIndex = path.join(__dirname, 'dist', 'index.html');
@@ -87,7 +153,15 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+log('Waiting for app.whenReady()...');
+app.whenReady()
+  .then(() => {
+    log('app.whenReady() resolved successfully');
+    createWindow();
+  })
+  .catch((err) => {
+    log(`FATAL: app.whenReady() rejected: ${err?.stack || err}`);
+  });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

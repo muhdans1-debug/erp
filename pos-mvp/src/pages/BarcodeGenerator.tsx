@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import Barcode from 'react-barcode';
+import RawBarcode from 'react-barcode';
+const Barcode = RawBarcode as any;
 import { Printer, Tag, Sparkles, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 interface Product {

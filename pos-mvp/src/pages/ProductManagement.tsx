@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import Barcode from 'react-barcode';
+import RawBarcode from 'react-barcode';
+const Barcode = RawBarcode as any;
 import {
   Search,
   ArrowUpDown,

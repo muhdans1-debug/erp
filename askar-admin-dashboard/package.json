@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5177 --host 0.0.0.0",
     "dev:manager": "vite --port 5175 --host 0.0.0.0",
     "dev:dev": "vite --port 5176 --host 0.0.0.0",
     "dev:host": "vite --port 5175 --host 0.0.0.0",
@@ -17,7 +17,9 @@
     "@tailwindcss/vite": "^4.3.3",
     "lucide-react": "^1.64.0",
     "react": "^19.3.1",
+    "react-barcode": "^1.6.1",
     "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
     "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3"
   },

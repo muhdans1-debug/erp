@@ -7,7 +7,6 @@ const host = process.env.TAURI_DEV_HOST
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: './',
   plugins: [
     react(),
     tailwindcss(),
@@ -20,10 +19,9 @@ export default defineConfig({
     minify: 'terser',
     terserOptions: {
       compress: {
-        // Strip all console.* from production — removes ~200+ debug logs shipped to Sunmi
-        drop_console: true,
-        drop_debugger: true,
-        passes: 2,
+        drop_console: false,
+        drop_debugger: false,
+        passes: 1,
       },
     },
     rollupOptions: {

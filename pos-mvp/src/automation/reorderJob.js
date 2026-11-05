@@ -1,8 +1,5 @@
 import cron from 'node-cron';
-import sqlite from '@prisma/orm-sqlite/runtime';
-import contractJson from '../../prisma/contract.json' with { type: 'json' };
-
-const db = sqlite({ contractJson, path: './dev.db' });
+import { db } from '../../db.js';
 
 // In-memory distributor snooze registry (distributorId -> expiration Date)
 export const snoozedDistributors = new Map();

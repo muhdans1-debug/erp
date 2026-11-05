@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { startHardwareScanning, stopHardwareScanning, getActiveSubscribers } from './useNfcScanner';
+import { getServerIp, getApiBaseUrl } from '../utils/apiConfig';
 
 export interface LockState {
   customerId: string;
@@ -8,8 +9,14 @@ export interface LockState {
   timestamp: number;
 }
 
-export function useSunmiBridge() {
+// Replace with the static LAN IP of your Master Windows PC
+export const MASTER_PC_WS_URL = (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost')
+  ? `ws://${window.location.hostname}:8080`
+  : (getServerIp() && getServerIp() !== '127.0.0.1' ? `ws://${getServerIp()}:8080` : 'ws://172.20.10.2:8080');
+
+export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?: any) {
   const ws = useRef<WebSocket | null>(null);
+  const wsRef = ws;
   const [isConnected, setIsConnected] = useState(false);
   const [activeLock, setActiveLock] = useState<LockState | null>(null);
   const [managerScanLocked, setManagerScanLocked] = useState(false);
@@ -17,22 +24,16 @@ export function useSunmiBridge() {
   const activeNfcListenerRef = useRef<any>(null);
 
   // Determine candidate bridge hosts for automatic rotation
-  // On native Sunmi Android: Connect to the laptop over Wi-Fi (192.168.8.7) or RJ45 (192.168.88.10)
+  // Dynamically uses configured server IP, falling back to local/LAN addresses
   const getCandidateBridgeUrls = useCallback((): string[] => {
     const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
     const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
-    const custom = typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : null;
-    let customWs: string | null = null;
-    if (custom) {
-      try {
-        const u = new URL(custom);
-        customWs = `ws://${u.hostname}:8080`;
-      } catch {}
-    }
+    const dynamicServerIp = getServerIp();
+    const dynamicWs = dynamicServerIp ? `ws://${dynamicServerIp}:8080` : null;
 
     if (isNative) {
       return [
-        customWs,
+        dynamicWs,
         'ws://192.168.8.7:8080',
         'ws://192.168.88.10:8080',
         'ws://10.0.2.2:8080'
@@ -40,7 +41,9 @@ export function useSunmiBridge() {
     }
 
     return [
+      'ws://127.0.0.1:8080',
       'ws://localhost:8080',
+      dynamicWs,
       `ws://${host}:8080`,
       'ws://192.168.8.7:8080',
       'ws://192.168.88.10:8080'
@@ -131,7 +134,7 @@ export function useSunmiBridge() {
                 }
 
                 // HTTP relay fallback
-                fetch('http://192.168.8.7:3000/api/nfc/relay', {
+                fetch(`${getApiBaseUrl()}/api/nfc/relay`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ tag_id: hexString, id: hexString })
@@ -198,6 +201,31 @@ export function useSunmiBridge() {
     };
   }, [getCandidateBridgeUrls]);
 
+  // Broadcast the cart payload whenever the cart contents change (User Specification)
+  useEffect(() => {
+    if (cartItems !== undefined) {
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        const payload = JSON.stringify({
+          type: 'CART_UPDATE',
+          items: (cartItems || []).map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            qty: item.qty || item.quantity || 1,
+            quantity: item.quantity || item.qty || 1,
+            price: Number(item.price ?? item.sellingPrice ?? 0),
+            sellingPrice: Number(item.price ?? item.sellingPrice ?? 0),
+            is_weighed_item: !!item.is_weighed_item
+          })),
+          total: Number(cartTotal || 0),
+          customerName: customer ? (customer.name || customer) : 'Walk-in',
+          timestamp: new Date().toISOString()
+        });
+
+        ws.current.send(payload);
+      }
+    }
+  }, [cartItems, cartTotal, customer]);
+
   // Broadcast NFC scan to laptop over WebSocket and HTTP relay
   const broadcastNfcScan = useCallback((nfcId: string, customerData?: any) => {
     const cleanId = (nfcId || '').trim().toUpperCase();
@@ -235,12 +263,17 @@ export function useSunmiBridge() {
     }
 
     // Dual-channel fallback: Always POST to laptop HTTP relay endpoints
+    const dynamicServerIp = getServerIp();
+    const dynamicApiBase = getApiBaseUrl();
     const candidateBases = [
+      dynamicApiBase,
+      `http://${dynamicServerIp}:3000`,
+      `http://${dynamicServerIp}:8080`,
       'http://192.168.8.7:3000',
       'http://192.168.88.10:3000',
       'http://192.168.8.7:8080',
       'http://192.168.88.10:8080'
-    ];
+    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
     for (const base of candidateBases) {
       fetch(`${base}/api/nfc/relay`, {
         method: 'POST',
@@ -304,6 +337,7 @@ export function useSunmiBridge() {
   return {
     isConnected,
     ws,
+    wsRef,
     broadcastNfcScan,
     broadcastCartState,
     broadcastShiftClosed,

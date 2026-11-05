@@ -13,11 +13,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CustomerDisplayPlugin.class);
         super.onCreate(savedInstanceState);
 
-        // Hardware-accelerated Sunmi POS performance tuning
+        // Hardware-accelerated Sunmi POS performance tuning & DevTools inspection
         try {
+            WebView.setWebContentsDebuggingEnabled(true);
             WebView webView = getBridge().getWebView();
             if (webView != null) {
-                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
                 webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
                 WebSettings settings = webView.getSettings();
@@ -39,5 +39,44 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             android.util.Log.w("MainActivity", "CustomerDisplay initialization notice: " + e.getMessage());
         }
+    }
+
+    /**
+     * Intercept physical hardware volume keys on Feitian F100 terminal
+     * Maps Volume Up / Down directly to WebView DOM events for hands-off quantity adjustment
+     * Suppresses native Android OS volume slider HUD
+     */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        int action = event.getAction();
+        int keyCode = event.getKeyCode();
+
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
+            if (action == android.view.KeyEvent.ACTION_DOWN) {
+                WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+                if (webView != null) {
+                    webView.post(() -> webView.evaluateJavascript(
+                        "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'VolumeUp', keyCode: 24, which: 24, bubbles: true }));",
+                        null
+                    ));
+                }
+            }
+            return true; // Suppress native volume popup
+        }
+
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (action == android.view.KeyEvent.ACTION_DOWN) {
+                WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+                if (webView != null) {
+                    webView.post(() -> webView.evaluateJavascript(
+                        "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'VolumeDown', keyCode: 25, which: 25, bubbles: true }));",
+                        null
+                    ));
+                }
+            }
+            return true; // Suppress native volume popup
+        }
+
+        return super.dispatchKeyEvent(event);
     }
 }

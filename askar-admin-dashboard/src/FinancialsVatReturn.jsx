@@ -26,7 +26,9 @@ export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' 
       }
 
       // 2. Fetch NBR VAT Return
-      const vatRes = await fetch(`${apiBase}/api/reports/vat-return`);
+      const vatRes = await fetch(`${apiBase}/api/reports/vat-return`, {
+        headers: { 'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999' }
+      });
       const vatJson = await vatRes.json();
       if (vatJson.success) {
         setVatData(vatJson);

@@ -466,4 +466,249 @@ fastify.post('/api/purchase-orders/seed-transit', async (request, reply) => {
   }
 });
 
+  // 6. Predictive Auto-Replenishment Engine (7-Day Sales Velocity + Lead Time + ROP)
+  fastify.get('/api/procurement/auto-reorder', async (request, reply) => {
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Fetch all products, distributors, and 7-day sales velocities
+      const [distributors, allProducts, salesVelocityRows] = await Promise.all([
+        db.orm.Distributor.all(),
+        db.orm.Product.all(),
+        db.execute({
+          sql: `
+            SELECT si.productId, SUM(si.quantity) as unitsSold7d
+            FROM SaleItem si
+            JOIN Sale s ON si.saleId = s.id
+            WHERE s.createdAt >= ?
+            GROUP BY si.productId
+          `,
+          args: [sevenDaysAgo]
+        })
+      ]);
+
+      const velocityMap = new Map();
+      for (const row of salesVelocityRows.rows || []) {
+        velocityMap.set(String(row.productId), Number(row.unitsSold7d || 0));
+      }
+
+      const distributorMap = new Map(distributors.map(d => [d.id, d]));
+
+      const reorderList = [];
+      const supplierDraftsMap = new Map();
+
+      for (const prod of allProducts) {
+        const unitsSold7d = velocityMap.get(String(prod.id)) || 0;
+        const dailyVelocity = parseFloat((unitsSold7d / 7.0).toFixed(2));
+
+        const dist = prod.distributorId ? distributorMap.get(prod.distributorId) : null;
+        // Lead Time Days: parse from distributor (e.g., Almarai is 1 day, default 2 days)
+        let leadTimeDays = 2;
+        if (dist && dist.id === 'dist_almarai') leadTimeDays = 1;
+        else if (dist && dist.id === 'dist_local') leadTimeDays = 3;
+        else if (dist && dist.deliveryDays) {
+          const daysList = dist.deliveryDays.split(',');
+          leadTimeDays = Math.max(1, Math.round(7 / Math.max(1, daysList.length)));
+        }
+
+        const safetyStock = Number(prod.minThreshold ?? 3);
+        const currentStock = Number(prod.stockQuantity ?? 0);
+
+        // Standard Supply Chain Reorder Point (ROP) = ceil((Daily Velocity * Lead Time Days) + Safety Stock)
+        const rop = Math.ceil((dailyVelocity * leadTimeDays) + safetyStock);
+
+        // If current stock is at or below ROP, auto-replenishment is triggered
+        if (currentStock <= rop) {
+          const suggestedOrderQty = Math.max(
+            1,
+            Math.ceil(rop - currentStock + (dailyVelocity * 7)),
+            (Number(prod.maxThreshold || 0) > currentStock ? Number(prod.maxThreshold) - currentStock : 1)
+          );
+
+          const unitCost = Number(prod.purchasePrice ?? prod.unitCost ?? 0.0);
+          const lineTotal = parseFloat((suggestedOrderQty * unitCost).toFixed(3));
+
+          const itemData = {
+            productId: prod.id,
+            id: prod.id,
+            name: prod.name,
+            barcode: prod.barcode || '',
+            category: prod.category || 'General',
+            currentStock,
+            stockQuantity: currentStock,
+            unitsSold7d,
+            dailyVelocity,
+            leadTimeDays,
+            safetyStock,
+            rop,
+            reorderPoint: rop,
+            suggestedOrder: suggestedOrderQty,
+            suggestedOrderQty,
+            unitCost,
+            unitPrice: unitCost,
+            lineTotal,
+            estimatedCost: lineTotal,
+            distributorId: prod.distributorId || 'UNASSIGNED',
+            distributorName: dist ? dist.name : 'Unassigned Distributor',
+            supplierName: dist ? dist.name : 'Unassigned Distributor',
+            distributorPhone: dist ? (dist.whatsappNumber || '') : '',
+            supplierPhone: dist ? (dist.whatsappNumber || '') : ''
+          };
+
+          reorderList.push(itemData);
+
+          const draftKey = prod.distributorId || 'UNASSIGNED';
+          if (!supplierDraftsMap.has(draftKey)) {
+            supplierDraftsMap.set(draftKey, {
+              distributorId: draftKey,
+              distributorName: dist ? dist.name : 'Unassigned Distributor',
+              whatsappNumber: dist ? (dist.whatsappNumber || '') : '',
+              contactEmail: dist ? (dist.contactEmail || '') : '',
+              minimumOrderValue: dist ? Number(dist.minimumOrderValue || 0) : 0,
+              items: [],
+              totalCost: 0
+            });
+          }
+
+          const draft = supplierDraftsMap.get(draftKey);
+          draft.items.push(itemData);
+          draft.totalCost = parseFloat((draft.totalCost + lineTotal).toFixed(3));
+        }
+      }
+
+      // Format WhatsApp messages and action links for each supplier draft
+      const supplierDrafts = Array.from(supplierDraftsMap.values()).map(draft => {
+        const meetsMov = draft.totalCost >= draft.minimumOrderValue;
+        const cleanPhone = draft.whatsappNumber ? draft.whatsappNumber.replace(/[^0-9]/g, '') : '';
+        const phoneWithCountry = cleanPhone.startsWith('973') ? cleanPhone : (cleanPhone ? `973${cleanPhone}` : '');
+
+        let message = `🛒 *PURCHASE ORDER - ASKAR SUPERMARKET*\n`;
+        message += `Distributor: ${draft.distributorName}\n`;
+        message += `Date: ${new Date().toLocaleDateString('en-GB')}\n\n`;
+        message += `*Items Required:*\n`;
+        draft.items.forEach((item, idx) => {
+          message += `${idx + 1}. ${item.name} (${item.barcode || 'N/A'})\n`;
+          message += `   Qty: *${item.suggestedOrderQty}* | Cost: BD ${item.unitCost.toFixed(3)}\n`;
+        });
+        message += `\n*Total Order Estimate:* BD ${draft.totalCost.toFixed(3)}\n`;
+        message += `Please confirm delivery date. Thank you!`;
+
+        const whatsappUrl = phoneWithCountry
+          ? `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(message)}`
+          : null;
+
+        return {
+          ...draft,
+          phone: draft.whatsappNumber || '',
+          meetsMov,
+          itemCount: draft.items.length,
+          whatsappUrl,
+          messagePreview: message
+        };
+      });
+
+      // Dictionary format keyed by supplierName for exact match with user specification: { [supplierName]: { phone, items } }
+      const supplierDraftsDict = {};
+      for (const draft of supplierDrafts) {
+        const sKey = draft.distributorName || draft.distributorId || 'Local Distributor';
+        supplierDraftsDict[sKey] = {
+          phone: draft.whatsappNumber || '',
+          supplierPhone: draft.whatsappNumber || '',
+          distributorId: draft.distributorId,
+          distributorName: draft.distributorName,
+          minimumOrderValue: draft.minimumOrderValue,
+          meetsMov: draft.meetsMov,
+          totalCost: draft.totalCost,
+          whatsappUrl: draft.whatsappUrl,
+          messagePreview: draft.messagePreview,
+          items: draft.items
+        };
+      }
+
+      return {
+        success: true,
+        calculatedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+        totalItemsNeedingReorder: reorderList.length,
+        totalSuppliersAffected: supplierDrafts.length,
+        supplierDrafts: supplierDraftsDict,
+        supplierDraftsList: supplierDrafts,
+        supplierDraftsMap: supplierDraftsDict,
+        reorderList
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: 'Failed to calculate predictive replenishment', details: error.message });
+    }
+  });
+
+  // Convert auto-reorder supplier draft into official PurchaseOrder in DB
+  fastify.post('/api/procurement/auto-reorder/create-po', async (request, reply) => {
+    const { distributorId } = request.body || {};
+    try {
+      const autoRes = await fastify.inject({
+        method: 'GET',
+        url: '/api/procurement/auto-reorder'
+      });
+      const data = JSON.parse(autoRes.body);
+      if (!data.success) {
+        return reply.status(500).send({ error: 'Failed to generate auto-reorder data' });
+      }
+
+      const allDrafts = data.supplierDraftsList || (Array.isArray(data.supplierDrafts) ? data.supplierDrafts : Object.values(data.supplierDrafts || {}));
+      const targetDraft = allDrafts.find(d => d.distributorId === distributorId || d.distributorName === distributorId);
+      if (!targetDraft || targetDraft.items.length === 0) {
+        return reply.status(404).send({ error: 'No replenishment items for this distributor' });
+      }
+
+      const existing = await db.orm.PurchaseOrder.where({
+        distributorId: targetDraft.distributorId,
+        status: 'DRAFT'
+      }).all().first();
+
+      const itemsJson = JSON.stringify(targetDraft.items.map(it => ({
+        id: it.productId,
+        name: it.name,
+        barcode: it.barcode,
+        reorderQuantity: it.suggestedOrderQty,
+        unitCost: it.unitCost,
+        totalLineCost: it.lineTotal
+      })));
+
+      let poId;
+      if (existing) {
+        await db.orm.PurchaseOrder.where({ id: existing.id }).update({
+          itemsJson,
+          estimatedCost: targetDraft.totalCost,
+          updatedAt: new Date()
+        });
+        poId = existing.id;
+      } else {
+        poId = `po_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        await db.orm.PurchaseOrder.create({
+          id: poId,
+          distributorId: targetDraft.distributorId,
+          supplierName: targetDraft.distributorName,
+          whatsappNumber: targetDraft.whatsappNumber,
+          supplierEmail: targetDraft.contactEmail,
+          status: 'DRAFT',
+          estimatedCost: targetDraft.totalCost,
+          vatPaid: 0.0,
+          itemsJson,
+          createdAt: new Date()
+        });
+      }
+
+      return {
+        success: true,
+        poId,
+        message: `Draft Purchase Order created for ${targetDraft.distributorName}`,
+        supplierDraft: targetDraft
+      };
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.status(500).send({ error: 'Failed to create PO from auto-reorder', details: err.message });
+    }
+  });
+
 }

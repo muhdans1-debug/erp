@@ -4,6 +4,13 @@ import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import { db } from '../db';
 
+// Initialize the printer Web Worker natively in Vite for off-main-thread receipt formatting
+const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefined'
+  ? new Worker(new URL('../workers/printer.worker.ts', import.meta.url), {
+      type: 'module',
+    })
+  : null;
+
 /**
  * Native Sunmi AIDL Cash Box / Drawer Kick
  * Triggers the RJ11/RJ12 cash drawer solenoid connected to the Sunmi terminal.
@@ -253,14 +260,17 @@ export const SunmiPrinter = {
   },
   printQRCode: async ({
     data,
+    size = 5,
     moduleSize = 8,
     errorLevel: _errorLevel = 3,
   }: {
     data: string;
+    size?: number;
     moduleSize?: number;
     errorLevel?: number;
   }) => {
-    return printQRCode(data, moduleSize);
+    const qrWidth = (size && size <= 10) ? size * 36 : (size || moduleSize || 180);
+    return printQRCode(data, qrWidth);
   },
   cutPaper: async () => {
     try {
@@ -628,7 +638,7 @@ export const printFullReceipt = async ({
       console.warn("Return barcode print warning:", bcErr);
     }
 
-    // 5. THE QR CODE INJECTOR (Physical-to-Digital Bridge - Perfectly Centered)
+    // 5. THE QR CODE INJECTOR (Physical-to-Digital Bridge - Strictly Khata Customers)
     try {
       const isCreditSale = paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || isMess;
       const targetCustId = customerId || customerUuid || cardUid || customerCardUid;
@@ -637,26 +647,28 @@ export const printFullReceipt = async ({
         ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
         : 'https://askar-khata-pwa.vercel.app';
 
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await Printer.printText({ textToPrint: "\n================================\n" });
+      // 🟢 UPDATED LOGIC: Only print Khata info if they owe money, have a credit limit, or paid via Khata
+      const isKhataCustomer = Boolean(
+        targetCustId && (
+          isCreditSale ||
+          (newBalance !== undefined && Number(newBalance) > 0) ||
+          (previousBalance !== undefined && Number(previousBalance) > 0)
+        )
+      );
 
-      if (isCreditSale && targetCustId) {
+      if (isKhataCustomer && targetCustId) {
+        await Printer.setPrinterAlignment({ alignment: 'center' });
+        await Printer.printText({ textToPrint: "\n================================\n" });
         const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
         const qrHeader = [
           "LIVE KHATA STATEMENT & PAYMENT\n",
-          (newBalance !== undefined && newBalance > 0) ? `Current Debt: BD ${newBalance.toFixed(3)}\n` : ''
+          (newBalance !== undefined && Number(newBalance) > 0) ? `Current Debt: BD ${Number(newBalance).toFixed(3)}\n` : ''
         ].filter(Boolean).join('');
         await Printer.printText({ textToPrint: qrHeader });
         await printQRCode(pwaUrl, 190);
         await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
-      } else {
-        const invoiceQrUrl = `${portalDomain}/tab/${targetCustId || 'guest'}`;
-        await Printer.printText({ textToPrint: "OFFICIAL TAX INVOICE & RECEIPT\n" });
-        await printQRCode(invoiceQrUrl, 180);
-        await Printer.printText({ textToPrint: "Scan to verify digital invoice\n" });
+        await Printer.printText({ textToPrint: "================================\n" });
       }
-
-      await Printer.printText({ textToPrint: "================================\n" });
     } catch (qrErr) {
       console.warn("Receipt QR print warning:", qrErr);
     }
@@ -677,26 +689,177 @@ export const printFullReceipt = async ({
 /**
  * Standard NBR receipt printer helper with Khata PWA injection support
  */
+export interface NBRReceiptPayload {
+  cart?: any[];
+  items?: any[];
+  invoiceNumber?: string;
+  invoiceNo?: string;
+  total?: number;
+  subtotal?: number;
+  vat?: number;
+  paymentType?: string;
+  paymentMode?: string;
+  cashTendered?: number;
+  changeDue?: number;
+  customer?: {
+    id: string;
+    name: string;
+    balance?: number;
+    credit_limit?: number;
+    creditLimit?: number;
+  } | null;
+  customerId?: string;
+  customerUuid?: string;
+  customerName?: string;
+  newBalance?: number;
+  totalBalance?: number;
+}
+
 export const printNBRReceipt = async (
-  cart: any[],
-  invoiceNumber: string,
-  paymentType: string = 'CASH',
-  customerUuid?: string,
-  totalBalance?: number
-) => {
-  const tot = cart.reduce((acc, itm) => acc + ((itm.price ?? itm.sellingPrice ?? 0) * (itm.quantity ?? 1)), 0);
-  return printFullReceipt({
-    invoiceNo: invoiceNumber,
-    items: cart,
-    subtotal: tot,
-    vat: 0,
-    total: tot,
-    paymentMode: paymentType,
-    customerId: customerUuid,
-    customerUuid: customerUuid,
-    customerName: customerUuid,
-    newBalance: totalBalance ?? 0,
-  });
+  invoiceNoOrPayload: string | any[] | NBRReceiptPayload,
+  payloadOrInvoiceNo?: any,
+  _paymentType: string = 'CASH',
+  _customerUuid?: string,
+  _totalBalance?: number
+): Promise<boolean> => {
+  let invoiceNo = '';
+  let payload: any = {};
+
+  if (typeof invoiceNoOrPayload === 'string') {
+    // Primary Web Worker signature: printNBRReceipt(invoiceNo, payload)
+    invoiceNo = invoiceNoOrPayload;
+    payload = payloadOrInvoiceNo || {};
+  } else if (typeof payloadOrInvoiceNo === 'string') {
+    // Backwards compatibility: printNBRReceipt(payload, invoiceNo)
+    invoiceNo = payloadOrInvoiceNo;
+    payload = Array.isArray(invoiceNoOrPayload) ? { items: invoiceNoOrPayload } : (invoiceNoOrPayload || {});
+  } else {
+    // Direct object payload: printNBRReceipt({ items, total, invoiceNo, ... })
+    const src: any = invoiceNoOrPayload || {};
+    invoiceNo = src.invoiceNo || src.invoiceNumber || `INV-${Date.now()}`;
+    payload = Array.isArray(src) ? { items: src } : src;
+  }
+
+  // Normalize items array
+  const rawItems = payload.items || payload.cart || [];
+  const normalizedItems = rawItems.map((itm: any) => ({
+    name: itm.name || 'Item',
+    nameAr: itm.nameAr || itm.arabicName,
+    price: Number(itm.price ?? itm.sellingPrice ?? 0),
+    qty: Number(itm.qty ?? itm.quantity ?? 1),
+    taxRate: itm.taxRate !== undefined ? Number(itm.taxRate) : (itm.vatRate !== undefined ? Number(itm.vatRate) : 10)
+  }));
+
+  const total = payload.total !== undefined
+    ? Number(payload.total)
+    : normalizedItems.reduce((acc: number, itm: any) => acc + (itm.price * itm.qty), 0);
+
+  const workerPayload = {
+    ...payload,
+    invoiceNo,
+    items: normalizedItems,
+    total,
+  };
+
+  // Rapid hardware printer execution pipeline
+  const executeCommands = async (commands: Array<{ action: string; data: any }>): Promise<boolean> => {
+    try {
+      const winPrinter = typeof window !== 'undefined' ? (window as any).Printer : undefined;
+      const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+
+      if (winPrinter) {
+        for (const cmd of commands) {
+          if (cmd.action === 'setAlignment') {
+            await winPrinter.setAlignment({ alignment: cmd.data });
+          } else if (cmd.action === 'printText') {
+            await winPrinter.printText({ text: cmd.data });
+          }
+        }
+        if (typeof winPrinter.cutPaper === 'function') {
+          try {
+            await winPrinter.cutPaper();
+          } catch { }
+        }
+      } else if (isNative && typeof Printer !== 'undefined') {
+        try {
+          if (typeof SunmiPrinter.printerInit === 'function') {
+            await SunmiPrinter.printerInit();
+          }
+          for (const cmd of commands) {
+            if (cmd.action === 'setAlignment') {
+              await SunmiPrinter.setAlignment({ alignment: cmd.data });
+            } else if (cmd.action === 'printText') {
+              await SunmiPrinter.printText({ text: cmd.data });
+            }
+          }
+          if (typeof Printer.cutPaper === 'function') {
+            await Printer.cutPaper();
+          }
+        } catch (e) {
+          console.warn('Native printer execution warning:', e);
+        }
+      } else {
+        console.log('⚡ [Printer Mock] Commands executed:', commands);
+      }
+      return true;
+    } catch (error) {
+      console.error('Hardware printing failed:', error);
+      return false;
+    }
+  };
+
+  // 1. Offload heavy formatting & Arabic calculation to background Web Worker
+  if (printerWorker) {
+    return new Promise((resolve) => {
+      const handleWorkerMessage = async (event: MessageEvent) => {
+        if (event.data?.type === 'RECEIPT_READY') {
+          printerWorker.removeEventListener('message', handleWorkerMessage);
+          const commands = event.data.commands || [];
+          const success = await executeCommands(commands);
+          resolve(success);
+        }
+      };
+
+      printerWorker.addEventListener('message', handleWorkerMessage);
+
+      // Send the raw cart data to the background thread to be processed
+      printerWorker.postMessage({
+        type: 'GENERATE_RECEIPT',
+        payload: workerPayload,
+      });
+    });
+  }
+
+  // 2. Non-blocking inline fallback (when Worker API is restricted or during headless testing)
+  const fallbackCommands: Array<{ action: string; data: any }> = [
+    { action: 'setAlignment', data: 1 },
+    { action: 'printText', data: 'ASKAR SUPERMARKET\n' },
+    { action: 'printText', data: `Invoice: ${invoiceNo}\n` },
+    { action: 'setAlignment', data: 0 },
+    { action: 'printText', data: '--------------------------------\n' }
+  ];
+
+  for (const item of normalizedItems) {
+    const isTaxable = item.taxRate === 10;
+    const vatIndicator = isTaxable ? '*' : ' ';
+    const name = (item.name + vatIndicator).substring(0, 15).padEnd(15, ' ');
+    const qty = item.qty.toString().padStart(3, ' ');
+    const price = (item.price * item.qty).toFixed(3).padStart(9, ' ');
+
+    fallbackCommands.push({ action: 'setAlignment', data: 0 });
+    fallbackCommands.push({ action: 'printText', data: `${name} ${qty}      ${price}\n` });
+
+    if (item.nameAr) {
+      fallbackCommands.push({ action: 'setAlignment', data: 2 });
+      fallbackCommands.push({ action: 'printText', data: `${item.nameAr} ${vatIndicator}\n` });
+    }
+  }
+
+  fallbackCommands.push({ action: 'setAlignment', data: 0 });
+  fallbackCommands.push({ action: 'printText', data: '--------------------------------\n' });
+  fallbackCommands.push({ action: 'printText', data: `Total: BHD ${total.toFixed(3)}\n` });
+
+  return executeCommands(fallbackCommands);
 };
 
 /**

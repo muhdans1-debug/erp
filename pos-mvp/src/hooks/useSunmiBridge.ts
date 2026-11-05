@@ -11,8 +11,8 @@ export interface LockState {
 
 // Replace with the static LAN IP of your Master Windows PC
 export const MASTER_PC_WS_URL = (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost')
-  ? `ws://${window.location.hostname}:8080`
-  : (getServerIp() && getServerIp() !== '127.0.0.1' ? `ws://${getServerIp()}:8080` : 'ws://172.20.10.2:8080');
+  ? `ws://${window.location.hostname}:3000/ws`
+  : (getServerIp() && getServerIp() !== '127.0.0.1' ? `ws://${getServerIp()}:3000/ws` : 'ws://172.20.10.2:3000/ws');
 
 export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?: any) {
   const ws = useRef<WebSocket | null>(null);
@@ -29,24 +29,26 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
     const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
     const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
     const dynamicServerIp = getServerIp();
-    const dynamicWs = dynamicServerIp ? `ws://${dynamicServerIp}:8080` : null;
+    const dynamicWs = dynamicServerIp ? `ws://${dynamicServerIp}:3000/ws` : null;
 
     if (isNative) {
       return [
         dynamicWs,
-        'ws://192.168.8.7:8080',
-        'ws://192.168.88.10:8080',
-        'ws://10.0.2.2:8080'
+        'ws://askar-master.local:3000/ws',
+        'ws://192.168.8.7:3000/ws',
+        'ws://192.168.88.10:3000/ws',
+        'ws://10.0.2.2:3000/ws'
       ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
     }
 
     return [
-      'ws://127.0.0.1:8080',
-      'ws://localhost:8080',
+      'ws://127.0.0.1:3000/ws',
+      'ws://localhost:3000/ws',
+      'ws://askar-master.local:3000/ws',
       dynamicWs,
-      `ws://${host}:8080`,
-      'ws://192.168.8.7:8080',
-      'ws://192.168.88.10:8080'
+      `ws://${host}:3000/ws`,
+      'ws://192.168.8.7:3000/ws',
+      'ws://192.168.88.10:3000/ws'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
   }, []);
 
@@ -267,12 +269,10 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
     const dynamicApiBase = getApiBaseUrl();
     const candidateBases = [
       dynamicApiBase,
+      'http://askar-master.local:3000',
       `http://${dynamicServerIp}:3000`,
-      `http://${dynamicServerIp}:8080`,
       'http://192.168.8.7:3000',
-      'http://192.168.88.10:3000',
-      'http://192.168.8.7:8080',
-      'http://192.168.88.10:8080'
+      'http://192.168.88.10:3000'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
     for (const base of candidateBases) {
       fetch(`${base}/api/nfc/relay`, {

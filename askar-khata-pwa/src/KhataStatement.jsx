@@ -4,15 +4,17 @@ import { useParams } from 'react-router-dom';
 export function KhataStatement() {
   const { uuid } = useParams();
   const tokenKey = `khata_token_${uuid}`;
+  const pinKey = `khata_pin_${uuid}`;
 
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return Boolean(localStorage.getItem(tokenKey));
+    return Boolean(localStorage.getItem(tokenKey) && localStorage.getItem(pinKey));
   });
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
 
   const [account, setAccount] = useState(null);
+  const [ledgerData, setLedgerData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -22,30 +24,60 @@ export function KhataStatement() {
   const [pinMessage, setPinMessage] = useState('');
   const [isChangingPin, setIsChangingPin] = useState(false);
 
-  // Fetch statement data once authenticated
-  const fetchStatement = useCallback(() => {
+  // Fetch statement & ledger data with cryptographic edge PIN authentication
+  const fetchLedger = useCallback(async (customerId, userEnteredPin) => {
     setLoading(true);
     setError(false);
-    fetch(`/api/khata/${uuid}`)
-      .then(res => {
-        if (!res.ok) throw new Error("Not Found");
-        return res.json();
-      })
-      .then(data => {
-        setAccount(data);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError(true);
-        setLoading(false);
+    try {
+      const response = await fetch(`/api/khata/${customerId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-khata-pin': userEnteredPin
+        }
       });
-  }, [uuid]);
+
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem(tokenKey);
+        localStorage.removeItem(pinKey);
+        setIsAuthenticated(false);
+        setPinError('Incorrect PIN. Please try again.');
+        setLoading(false);
+        return false;
+      }
+
+      if (!response.ok) {
+        throw new Error('Account Not Found');
+      }
+
+      const data = await response.json();
+      setAccount(data);
+      if (Array.isArray(data.ledger)) {
+        setLedgerData(data.ledger);
+      }
+      localStorage.setItem(tokenKey, 'paired_' + Date.now());
+      localStorage.setItem(pinKey, userEnteredPin);
+      setIsAuthenticated(true);
+      setLoading(false);
+      return true;
+    } catch (err) {
+      console.error('Failed to load Khata statement:', err);
+      setError(true);
+      setLoading(false);
+      return false;
+    }
+  }, [tokenKey, pinKey]);
 
   useEffect(() => {
     if (isAuthenticated) {
-      fetchStatement();
+      const savedPin = localStorage.getItem(pinKey);
+      if (savedPin) {
+        fetchLedger(uuid, savedPin);
+      } else {
+        setIsAuthenticated(false);
+      }
     }
-  }, [isAuthenticated, fetchStatement]);
+  }, [isAuthenticated, uuid, pinKey, fetchLedger]);
 
   const handleVerifyPin = async (e) => {
     if (e) e.preventDefault();
@@ -58,27 +90,12 @@ export function KhataStatement() {
     setPinError('');
 
     try {
-      const res = await fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerUuid: uuid,
-          pin: pin
-        })
-      });
-
-      const data = await res.json();
-
-      if (res.ok && data.success && data.token) {
-        localStorage.setItem(tokenKey, data.token);
-        setIsAuthenticated(true);
+      const success = await fetchLedger(uuid, pin);
+      if (success) {
         setPin('');
       } else {
-        setPinError(data.error || 'Incorrect PIN. Default is 1234.');
         setPin('');
       }
-    } catch {
-      setPinError('Connection failed. Please check internet.');
     } finally {
       setIsVerifying(false);
     }
@@ -86,10 +103,12 @@ export function KhataStatement() {
 
   const handleLockAccount = () => {
     localStorage.removeItem(tokenKey);
+    localStorage.removeItem(pinKey);
     setIsAuthenticated(false);
     setPin('');
     setPinError('');
     setAccount(null);
+    setLedgerData([]);
   };
 
   const handleChangePin = async (e) => {

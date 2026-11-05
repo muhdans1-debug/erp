@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
 import { getAllCustomersWithBalances, fetchMessGroupDetails } from './khata.js';
+import { verifyManagerPin } from '../middleware/auth.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
 const resolveNfcTagDetails = async (uid) => {
@@ -182,14 +183,18 @@ fastify.post('/api/nfc/relay', async (request, reply) => {
       timestamp: Date.now()
     };
 
-    // Forward to askar-local-bridge on port 8080 so laptop WebSocket clients receive it
-    try {
-      fetch('http://127.0.0.1:8080/api/nfc/relay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag_id: cleanId, id: cleanId, customer: resolvedCustomer })
-      }).catch(() => { });
-    } catch { }
+    // Broadcast via unified Fastify WebSocket bus
+    if (fastify.websocketServer?.clients) {
+      const event = {
+        type: 'NFC_SCANNED',
+        payload: { tag_id: cleanId, id: cleanId, customer: resolvedCustomer, scannedAt: new Date().toISOString() }
+      };
+      fastify.websocketServer.clients.forEach((client) => {
+        if (client.readyState === 1) {
+          client.send(JSON.stringify(event));
+        }
+      });
+    }
 
     return { success: true, tag_id: cleanId, customer: resolvedCustomer };
   } catch (err) {
@@ -205,6 +210,24 @@ fastify.get('/api/nfc/latest', async () => {
 fastify.post('/api/nfc/latest/clear', async () => {
   latestNfcScanEvent = null;
   return { success: true };
+});
+
+// Protected Cash Drawer Kick (Requires Valid Manager PIN via Bcrypt)
+fastify.post('/api/hardware/drawer-kick', { preHandler: verifyManagerPin }, async (request, reply) => {
+  try {
+    if (fastify.websocketServer?.clients) {
+      const kickEvent = JSON.stringify({ type: 'REMOTE_DRAWER_KICK', sentAt: new Date().toISOString() });
+      fastify.websocketServer.clients.forEach((client) => {
+        if (client.readyState === 1) {
+          client.send(kickEvent);
+        }
+      });
+    }
+    return { success: true, message: 'Cash drawer kick signal authorized and dispatched.' };
+  } catch (err) {
+    fastify.log.error(err);
+    return reply.status(500).send({ success: false, error: err.message });
+  }
 });
 
 // GET /api/nfc/cards - List all enrolled NFC cards with comprehensive balances and metadata
@@ -364,13 +387,17 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
         });
       } catch { }
 
-      try {
-        fetch('http://127.0.0.1:8080/api/nfc/relay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tag_id: cleanTag, card_type: 'MESS', mess_id: targetMessId })
-        }).catch(() => { });
-      } catch { }
+      if (fastify.websocketServer?.clients) {
+        const event = {
+          type: 'NFC_ASSIGNED',
+          payload: { tag_id: cleanTag, card_type: 'MESS', mess_id: targetMessId, assignedAt: new Date().toISOString() }
+        };
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify(event));
+          }
+        });
+      }
 
       const messGroupDetails = await fetchMessGroupDetails(targetMessId);
       return { success: true, tag_id: cleanTag, card_type: 'MESS', mess_id: targetMessId, messGroup: messGroupDetails };
@@ -407,6 +434,17 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       } catch { }
 
       const updated = await getCustomerWithBalanceById(customer_id);
+      if (fastify.websocketServer?.clients) {
+        const event = {
+          type: 'NFC_ASSIGNED',
+          payload: { tag_id: cleanTag, card_type: 'PERSONAL', customer: updated, target_name: updated?.name, assignedAt: new Date().toISOString() }
+        };
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify(event));
+          }
+        });
+      }
       return { success: true, tag_id: cleanTag, card_type: 'PERSONAL', customer: updated };
     }
   } catch (err) {

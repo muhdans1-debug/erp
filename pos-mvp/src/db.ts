@@ -2,7 +2,7 @@
 // Supports both Node.js (local.db file replica) and Browser (Local Sunmi Chip Bridge + 0ms Cache + Turso Sync)
 
 import { createClient } from '@libsql/client';
-import { ASKAR_OFFLINE_SALES_KEY } from './constants/storage';
+import { saveSaleOffline } from './utils/nativeDb';
 
 export interface DbExecuteResult {
   columns?: string[];
@@ -99,7 +99,8 @@ export const db: LibsqlDatabase = {
     const host = (isBrowser && window.location.hostname) || 'localhost';
     const masterBase = (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
     const endpoints = [
-      masterBase, 
+      masterBase,
+      'http://askar-master.local:3000',
       `http://${host}:3000`, 
       'http://localhost:3000',
       'http://192.168.8.7:3000',
@@ -159,13 +160,9 @@ export const db: LibsqlDatabase = {
         total_price: totalVal,
         createdAt: new Date().toISOString()
       };
-      try {
-        const queue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
-        queue.push(offlineSale);
-        localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(queue));
-      } catch {}
+      saveSaleOffline(offlineSale).catch(() => {});
 
-      console.log('Sale saved locally in hardware chip storage (offline queue)!');
+      console.log('⚡ Sale saved locally in native hardware storage (offline queue)!');
       return {
         columns: ['id', 'total_price'],
         rows: [],

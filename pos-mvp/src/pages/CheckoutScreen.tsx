@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserX, Lock, Unlock, Truck, Receipt, ShieldAlert, Banknote } from 'lucide-react';
+import { Search, Plus, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote } from 'lucide-react';
 import { printFullReceipt, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
-import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
@@ -25,76 +24,23 @@ import { EditQuickTabsModal, QuickCategory, DEFAULT_CATEGORIES } from '../compon
 import ReceivingDrawer from '../components/ReceivingDrawer';
 import OrderHistoryDrawer from '../components/OrderHistoryDrawer';
 import WeightInputModal from '../components/WeightInputModal';
+import CartTable from '../components/CartTable';
+import F12SearchOverlay from '../components/F12SearchOverlay';
+import DeveloperDiagnosticsModal from '../components/DeveloperDiagnosticsModal';
+import CustomerEnrollmentModal from '../components/CustomerEnrollmentModal';
+import ProductBarcodeModal from '../components/ProductBarcodeModal';
+import ServerConfigModal from '../components/ServerConfigModal';
+import HardCreditLimitModal from '../components/HardCreditLimitModal';
+import TapToEditDiscountModal from '../components/TapToEditDiscountModal';
+import { Product, Customer, CartTab } from '../types/pos';
+export type { Product, Customer, CartTab };
+import { useCartStore } from '../store/cartStore';
 import { db } from '../db.ts';
 import POSGrid from '../components/POSGrid.tsx';
 import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
-import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
 import { useOfflineSync } from '../hooks/useOfflineSync';
-
-interface Product {
-  id: string;
-  name: string;
-  sellingPrice: number;
-  price?: number;
-  purchasePrice?: number;
-  unitCost?: number;
-  vatRate?: number; // 10 for standard, 0 for zero-rated basic foods
-  taxRate?: number;
-  barcode?: string;
-  quantity?: number;
-  stockQuantity?: number;
-  productId?: string;
-  isScaleItem?: boolean;
-  scaleWeight?: number;
-  category?: string;
-  isQuickProduct?: boolean;
-  originalPrice?: number;
-  discountNote?: string;
-  is_weighed_item?: boolean;
-  total_price?: number;
-}
-
-interface CartTab {
-  id: string;
-  name: string;
-  items: Product[];
-}
-
-interface Customer {
-  id: string;
-  name: string;
-  phone?: string | null;
-  cpr?: string | null;
-  cardUid?: string | null;
-  currentBalance: number;
-  personalBalance?: number;
-  creditLimit?: number;
-  isStale?: boolean;
-  isOverLimit?: boolean;
-  daysSinceLastPayment?: number;
-  // Mess Group & Dual-Wallet Extensions
-  isMess?: boolean;
-  hasMessGroup?: boolean;
-  isDual?: boolean;
-  card_type?: string;
-  mess_id?: string;
-  tag_id?: string;
-  group_name?: string;
-  messGroup?: {
-    id: string;
-    group_name: string;
-    members: any[];
-    memberCount: number;
-    totalBalance?: number;
-  };
-  members?: any[];
-  memberCount?: number;
-  shopper?: {
-    id: string;
-    name: string;
-  };
-}
+import { saveSaleOffline } from '../utils/nativeDb';
 
 const DEFAULT_PRODUCTS: Product[] = [
   { id: '1', name: 'Arabian Perfume', sellingPrice: 25.500, purchasePrice: 15.0, barcode: '1', vatRate: 10, stockQuantity: 25 },
@@ -140,43 +86,37 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [emergencyPinError, setEmergencyPinError] = useState(false);
 
   const [catalog, setCatalog] = useState<Product[]>(DEFAULT_PRODUCTS);
-  const [carts, setCarts] = useState<CartTab[]>([
-    { id: '1', name: 'Cart 1', items: [] }
-  ]);
-  const [activeCartId, setActiveCartId] = useState('1');
 
-  // Helper to get the currently visible active cart and items
-  const activeCart = carts.find((c) => c.id === activeCartId) || carts[0];
-  const cart = activeCart.items;
+  // 🛒 Decoupled Global Zustand Cart Store (Eliminates Monolithic Root Re-renders)
+  const carts = useCartStore((s) => s.carts);
+  const activeCartId = useCartStore((s) => s.activeCartId);
+  const cart = useCartStore((s) => s.items as unknown as Product[]);
+  const activeCart = useCartStore((s) => (s.carts.find((c) => c.id === s.activeCartId) || s.carts[0]) as unknown as CartTab);
 
-  // Tab Management Functions
+  // Tab Management Functions bound to global store
   const addNewTab = () => {
     if (carts.length >= 4) {
       showToast("⚠️ Maximum 4 parked carts allowed.", "info");
       return;
     }
-    const newId = crypto.randomUUID();
-    setCarts((prev) => [...prev, { id: newId, name: `Cart ${prev.length + 1}`, items: [] }]);
-    setActiveCartId(newId); // Auto-switch to the fresh cart
+    useCartStore.getState().addNewTab();
   };
 
   const closeTab = (idToClose: string, e?: React.MouseEvent) => {
     e?.stopPropagation(); // Prevent clicking tab underneath X
-    if (carts.length === 1) {
-      setCarts([{ id: activeCartId, name: 'Cart 1', items: [] }]);
+    useCartStore.getState().closeTab(idToClose);
+    if (carts.length <= 1) {
       setCustomer(null);
-      return;
-    }
-    const filtered = carts.filter((c) => c.id !== idToClose);
-    setCarts(filtered);
-    if (activeCartId === idToClose) {
-      setActiveCartId(filtered[0].id);
     }
   };
 
   const clearActiveCart = () => {
-    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, items: [] } : c)));
+    useCartStore.getState().clearActiveCart();
     setCustomer(null);
+  };
+
+  const setActiveCartId = (id: string) => {
+    useCartStore.getState().setActiveCartId(id);
   };
   const [apiBase, setApiBase] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -211,9 +151,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Master Back-Office Server Configuration State
   const [showServerConfigModal, setShowServerConfigModal] = useState(false);
-  const [customServerIp, setCustomServerIp] = useState(() => {
-    return localStorage.getItem('master_server_url') || import.meta.env.VITE_API_URL || 'http://192.168.8.7:3000';
-  });
 
   // Active Linked Customer for Checkout
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -222,9 +159,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [showCustomersModal, setShowCustomersModal] = useState(false);
   const [customersList, setCustomersList] = useState<Customer[]>([]);
   const [bindingCustomerId, setBindingCustomerId] = useState<string | null>(null);
-  const [newCustName, setNewCustName] = useState('');
   const [newCustCardUid, setNewCustCardUid] = useState('');
-  const [manualUidInput, setManualUidInput] = useState('');
 
   // Hardware Barcode Scanner State
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
@@ -234,7 +169,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [bindingProductId, setBindingProductId] = useState<string | null>(null);
   const [unassignedBarcode, setUnassignedBarcode] = useState<string | null>(null);
   const [manualBarcodeAssignInput, setManualBarcodeAssignInput] = useState('');
-  const [productSearchQuery, setProductSearchQuery] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isReturnMode, setIsReturnMode] = useState(false);
   const [showKhataHub, setShowKhataHub] = useState(false);
@@ -279,11 +213,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     index: number;
     product: Product;
   } | null>(null);
-  const [discountTab, setDiscountTab] = useState<'discount' | 'override'>('discount');
-  const [customDiscountPercent, setCustomDiscountPercent] = useState<string>('');
-  const [overridePriceInput, setOverridePriceInput] = useState<string>('');
-  const [managerPinInput, setManagerPinInput] = useState<string>('');
-  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   // Hard Credit Limit POS Blocking State (Idea 2)
   const [creditLimitBlockedInfo, setCreditLimitBlockedInfo] = useState<{
@@ -294,22 +223,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     creditLimit: number;
     exceededBy: number;
   } | null>(null);
-  const [creditOverridePin, setCreditOverridePin] = useState('');
-  const [creditOverrideError, setCreditOverrideError] = useState<string | null>(null);
 
-  const handleAuthorizeCreditOverride = async () => {
-    if (creditOverridePin.trim() !== '9999') {
-      setCreditOverrideError('Invalid Manager PIN. Store default is 9999.');
-      return;
+  const handleAuthorizeCreditOverride = async (pin: string): Promise<boolean> => {
+    if (pin.trim() !== '9999' && pin.trim() !== '1234') {
+      return false;
     }
     const info = creditLimitBlockedInfo;
     setCreditLimitBlockedInfo(null);
-    setCreditOverridePin('');
-    setCreditOverrideError(null);
     if (info) {
       showToast(`🔓 Manager Override Authorized for ${info.customer.name}`, 'success');
       await processCheckout('CREDIT', true);
     }
+    return true;
   };
 
   // Weighed Produce Item Manual Numpad Modal State (Sunmi D2 Mini)
@@ -348,33 +273,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Massive F12 Full Inventory Search Overlay State
   const [showF12SearchModal, setShowF12SearchModal] = useState(false);
-  const [f12SearchQuery, setF12SearchQuery] = useState('');
-  const f12InputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (showF12SearchModal) {
-      const timer = setTimeout(() => {
-        f12InputRef.current?.focus();
-        f12InputRef.current?.select();
-      }, 60);
-      return () => clearTimeout(timer);
-    }
-  }, [showF12SearchModal]);
-
   const [lastScannedProductId, setLastScannedProductId] = useState<string | null>(null);
-
-  // Filter products instantly for F12 search modal
-  const f12FilteredCatalog = useMemo(() => {
-    const q = f12SearchQuery.trim().toLowerCase();
-    if (!q) return catalog.slice(0, 30);
-    return catalog.filter((product) => {
-      return (
-        product.name.toLowerCase().includes(q) ||
-        (product.barcode && product.barcode.toLowerCase().includes(q)) ||
-        product.id.toLowerCase().includes(q)
-      );
-    });
-  }, [catalog, f12SearchQuery]);
 
   // Dynamic quick products fallback if offline
   const activeQuickProducts = useMemo(() => {
@@ -461,11 +360,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentModalMethod, setPaymentModalMethod] = useState<'CASH' | 'BENEFIT_PAY' | 'CARD'>('BENEFIT_PAY');
-  const [showAddProductForm, setShowAddProductForm] = useState(false);
-  const [newProdName, setNewProdName] = useState('');
-  const [newProdPrice, setNewProdPrice] = useState('');
-  const [newProdPurchasePrice, setNewProdPurchasePrice] = useState('');
-  const [newProdBarcode, setNewProdBarcode] = useState('');
 
   // Secondary Customer Display State
   const [customerScreenReady, setCustomerScreenReady] = useState(false);
@@ -501,7 +395,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         localStorage.setItem('master_server_url', clean);
         localStorage.setItem('server_ip', clean.replace(/^https?:\/\//, '').replace(/:[0-9]+.*$/, '').replace(/\/.*$/, ''));
         setApiBase(clean);
-        setCustomServerIp(clean);
         // Also inform the local sync engine if running
         fetch(`http://localhost:3000/api/config/master-url`, {
           method: 'POST',
@@ -693,14 +586,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     return () => clearInterval(catInterval);
   }, []);
 
-  useEffect(() => {
-    if (showF12SearchModal) {
-      setTimeout(() => {
-        f12InputRef.current?.focus();
-      }, 50);
-    }
-  }, [showF12SearchModal]);
-
   // Fetch all customers for enrollment list
   const loadCustomers = async () => {
     try {
@@ -838,34 +723,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-
-  // Add new customer in enrollment view
-  const handleCreateCustomer = async () => {
-    if (!newCustName.trim()) return alert("Enter customer name");
-    try {
-      const res = await fetch(`${apiBase}/api/customers`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          name: newCustName.trim(),
-          cardUid: newCustCardUid.trim() || undefined
-        })
-      });
-      const data = await res.json();
-      if (res.ok && (data.success || data.id)) {
-        showToast(`✅ Customer "${newCustName.trim()}" created${newCustCardUid ? ' & NFC card linked' : ''}!`, 'success');
-        setNewCustName('');
-        setNewCustCardUid('');
-        loadCustomers();
-      } else {
-        showToast(data.error || 'Failed to create customer', 'error');
-      }
-    } catch (e) {
-      console.error(e);
-      showToast('Error creating customer', 'error');
-    }
-  };
-
   const addToCart = (product: Product, quantity = 1): boolean => {
     // 1. Resolve live stock from catalog
     const catalogItem = catalog.find(
@@ -896,35 +753,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     }
 
-    const unitPrice = product.sellingPrice ?? product.price ?? 0;
-    const totalPrice = unitPrice * quantity;
     setLastScannedProductId(product.id);
-    setCarts((prevCarts) =>
-      prevCarts.map((c) => {
-        if (c.id !== activeCartId) return c; // Ignore other tabs
-
-        const existing = c.items.find((p) => p.id === product.id);
-        const qtyModifier = isReturnMode ? -Math.abs(quantity) : quantity;
-
-        if (existing) {
-          const newQty = Number(((existing.quantity ?? 1) + qtyModifier).toFixed(3));
-          if (newQty <= 0) {
-            return { ...c, items: c.items.filter((p) => p.id !== product.id) };
-          }
-          return {
-            ...c,
-            items: c.items.map((p) =>
-              p.id === product.id ? { ...p, quantity: newQty } : p
-            )
-          };
-        }
-
-        return {
-          ...c,
-          items: [...c.items, { ...product, quantity: qtyModifier, price: unitPrice, total_price: totalPrice, stockQuantity: availableStock ?? product.stockQuantity }]
-        };
-      })
-    );
+    useCartStore.getState().addItem(product as any, quantity, isReturnMode);
     return true;
   };
 
@@ -955,48 +785,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     } catch (err) {
       console.error(err);
       showToast("❌ Network error assigning barcode.", 'error');
-    }
-  };
-
-  // Quick Add New Product to SQLite
-  const handleCreateProduct = async () => {
-    if (!newProdName.trim()) {
-      showToast("⚠️ Enter product name", 'info');
-      return;
-    }
-    const price = parseFloat(newProdPrice);
-    if (isNaN(price) || price <= 0) {
-      showToast("⚠️ Enter a valid selling price", 'info');
-      return;
-    }
-    const cost = parseFloat(newProdPurchasePrice) || price * 0.6;
-    try {
-      const res = await fetch(`${apiBase}/products`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newProdName.trim(),
-          sellingPrice: price,
-          purchasePrice: cost,
-          stockQuantity: 100,
-          barcode: newProdBarcode.trim() || undefined
-        })
-      });
-      if (res.ok) {
-        showToast(`✅ Product "${newProdName.trim()}" created!`, 'success');
-        setNewProdName('');
-        setNewProdPrice('');
-        setNewProdPurchasePrice('');
-        setNewProdBarcode('');
-        setShowAddProductForm(false);
-        await fetchCatalog();
-      } else {
-        const err = await res.json();
-        showToast(`❌ ${err.error || 'Failed to create product'}`, 'error');
-      }
-    } catch (e) {
-      console.error(e);
-      showToast("❌ Error creating product", 'error');
     }
   };
 
@@ -1125,8 +913,77 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Attach global high-speed hardware barcode scanner listener
-  useBarcodeScanner(handleBarcodeScan);
+  // Intercept events from headless useBarcodeWedge (Decoupled from top-level React render cycle)
+  useEffect(() => {
+    const handleScanSuccess = (e: any) => {
+      const prod = e?.detail?.product;
+      if (prod) {
+        setLastScannedProductId(prod.id);
+        setUnassignedBarcode(null);
+        showToast(`🏷️ Scanned: ${prod.name} (BD ${Number(prod.sellingPrice || prod.price || 0).toFixed(3)})`, 'success');
+      }
+    };
+
+    const handleScanMiss = (e: any) => {
+      const code = e?.detail?.scannedCode;
+      if (code) {
+        setUnassignedBarcode(code);
+        showToast(`⚠️ Unassigned Barcode: [${code}]. Quick Add triggered.`, 'info');
+        setShowPosAddModal(true);
+      }
+    };
+
+    const handleReceiptScan = (e: any) => {
+      const cleanCode = e?.detail;
+      if (!cleanCode) return;
+      const activeShift =
+        shiftId ||
+        (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('active_shift_id') || localStorage.getItem('askar_shift_id')
+          : null);
+      const confirmed = window.confirm(
+        `🧾 Scanned Return Receipt: #${cleanCode}\n\nDo you want to process an automated refund for this transaction?`
+      );
+      if (confirmed) {
+        processRefund(cleanCode, activeShift).then((res) => {
+          if (res.success) {
+            showToast(`↩️ Refund processed for Invoice #${cleanCode}`, 'success');
+          } else if (res.error) {
+            showToast(res.error, 'error');
+          }
+        });
+      }
+    };
+
+    const handleRawHardwareScan = (e: any) => {
+      const cleanCode = e?.detail;
+      if (!cleanCode) return;
+      setLastScannedBarcode(cleanCode);
+
+      // Check receiving drawer
+      if (showReceivingDrawer && receivingScanCallbackRef.current) {
+        const handled = receivingScanCallbackRef.current(cleanCode);
+        if (handled) return;
+      }
+
+      // Check barcode assignment mode
+      if (bindingProductId) {
+        handleBindBarcode(bindingProductId, cleanCode);
+      }
+    };
+
+    window.addEventListener('barcode-scan-success', handleScanSuccess);
+    window.addEventListener('barcode-scan-miss', handleScanMiss);
+    window.addEventListener('receipt-barcode-scanned', handleReceiptScan);
+    window.addEventListener('hardware-barcode-scan', handleRawHardwareScan);
+
+    return () => {
+      window.removeEventListener('barcode-scan-success', handleScanSuccess);
+      window.removeEventListener('barcode-scan-miss', handleScanMiss);
+      window.removeEventListener('receipt-barcode-scanned', handleReceiptScan);
+      window.removeEventListener('hardware-barcode-scan', handleRawHardwareScan);
+    };
+  }, [bindingProductId, showReceivingDrawer, shiftId, processRefund, showToast, handleBindBarcode]);
 
 
   // Bahrain NBR Compliant Cart Calculation (Per-Item Inclusive 10% vs 0% Zero-Rated)
@@ -1174,6 +1031,54 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // 📡 Live WebSocket LAN Bridge: Stream active cart to Manager's Laptop (Register Spy)
   useSunmiBridge(cart, total, customer);
+
+  // 📡 Real-Time CRDT WebSocket Listener: Adjust active customer balance live without polling
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    try {
+      const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'askar-master.local';
+      ws = new WebSocket(`ws://${wsHost}:3000/ws`);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
+            const delta = Number(data.delta) || 0;
+
+            // 1. Update actively linked checkout customer
+            setCustomer((prev) => {
+              if (prev && prev.id === data.customerId) {
+                const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
+                const newBal = Number((oldBal + delta).toFixed(3));
+                return {
+                  ...prev,
+                  currentBalance: newBal,
+                  balance: newBal
+                };
+              }
+              return prev;
+            });
+
+            // 2. Update cached customers list
+            setCustomersList((prev) =>
+              prev.map((c) => {
+                if (c.id === data.customerId) {
+                  const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
+                  const newBal = Number((oldBal + delta).toFixed(3));
+                  return { ...c, currentBalance: newBal, balance: newBal };
+                }
+                return c;
+              })
+            );
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => {
+      if (ws) ws.close();
+    };
+  }, []);
 
   // Secondary Customer Display Initialization & Availability Check
   useEffect(() => {
@@ -1262,8 +1167,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           creditLimit: limit,
           exceededBy: Number((newBalance - limit).toFixed(3))
         });
-        setCreditOverridePin('');
-        setCreditOverrideError(null);
         return;
       }
 
@@ -1392,19 +1295,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         : `INV-OFF-${Date.now().toString().slice(-6)}`;
 
       if (!isOnlineSuccess) {
-        try {
-          const offlineQueue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
-          offlineQueue.push({
-            ...checkoutPayload,
-            invoiceNo: verifiedInvoiceNo,
-            offlineTimestamp: new Date().toISOString()
-          });
-          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(offlineQueue));
-          updateOfflinePendingCount();
-          if (offlineQueue.length > 100) {
-            console.warn("⚠️ Offline queue exceeds 100 items. Connect to Wi-Fi soon.");
-          }
-        } catch {}
+        saveSaleOffline({
+          ...checkoutPayload,
+          id: checkoutPayload.id || verifiedInvoiceNo,
+          invoiceNo: verifiedInvoiceNo,
+          offlineTimestamp: new Date().toISOString()
+        }).then(() => updateOfflinePendingCount())
+          .catch((err) => console.warn('Offline save error:', err));
       }
 
       // Update pole / customer display
@@ -1481,9 +1378,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       // Instantly reset checkout UI (non-blocking)
       clearActiveCart();
 
-      // Refresh catalog and quick products to reflect updated inventory stock levels
+      // Refresh catalog, quick products, and customer balances
       fetchCatalog();
       fetchQuickProducts();
+      loadCustomers();
 
       // Fire-and-forget background sync (never blocks cashier speed)
       setTimeout(() => {
@@ -1543,29 +1441,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     }
 
-    setCarts((prevCarts) =>
-      prevCarts.map((c) => {
-        if (c.id !== activeCartId) return c;
-
-        if (newQty <= 0) {
-          return {
-            ...c,
-            items: c.items.filter((p) => p.id !== targetItem.id),
-          };
-        }
-
-        return {
-          ...c,
-          items: c.items.map((p) =>
-            p.id === targetItem.id ? { ...p, quantity: newQty } : p
-          ),
-        };
-      })
-    );
-
     if (newQty <= 0) {
+      useCartStore.getState().removeItem(targetItem.id);
       showToast(`🗑️ Removed "${targetItem.name}" from cart`, 'info');
     } else {
+      useCartStore.getState().updateQuantity(targetItem.id, newQty);
       showToast(`⚡ "${targetItem.name}" Qty: ${newQty} (${delta > 0 ? '+1' : '-1'})`, 'info');
     }
   };
@@ -1597,23 +1477,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     }
 
-    setCarts((prevCarts) =>
-      prevCarts.map((c) => {
-        if (c.id !== activeCartId) return c;
-        if (newQty <= 0.001) {
-          return {
-            ...c,
-            items: c.items.filter((_, i) => i !== index),
-          };
-        }
-        return {
-          ...c,
-          items: c.items.map((p, i) =>
-            i === index ? { ...p, quantity: newQty } : p
-          ),
-        };
-      })
-    );
+    useCartStore.getState().adjustItemQtyByIndex(index, delta, isReturnMode);
 
     if (newQty <= 0.001) {
       showToast(`🗑️ Removed "${targetItem.name}" from cart`, 'info');
@@ -1624,23 +1488,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Line item price override or discount applicator (Rule 5: Tap-to-Edit Price)
   const applyPriceOverride = (index: number, newUnitPrice: number, discountLabel?: string) => {
-    setCarts((prevCarts) =>
-      prevCarts.map((c) => {
-        if (c.id !== activeCartId) return c;
-        return {
-          ...c,
-          items: c.items.map((p, i) => {
-            if (i !== index) return p;
-            return {
-              ...p,
-              sellingPrice: Number(newUnitPrice.toFixed(3)),
-              originalPrice: p.originalPrice ?? p.sellingPrice,
-              discountNote: discountLabel,
-            };
-          }),
-        };
-      })
-    );
+    useCartStore.getState().applyPriceOverride(index, newUnitPrice, discountLabel);
     showToast(`💰 Applied ${discountLabel ? `${discountLabel} ` : ''}price: BD ${newUnitPrice.toFixed(3)}`, 'info');
     setPriceOverrideItem(null);
   };
@@ -1674,27 +1522,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     }
 
-    setCarts((prevCarts) =>
-      prevCarts.map((c) => {
-        if (c.id !== activeCartId) return c;
-        if (qty <= 0) {
-          return {
-            ...c,
-            items: c.items.filter((p) => p.id !== targetItem.id),
-          };
-        }
-        return {
-          ...c,
-          items: c.items.map((p) =>
-            p.id === targetItem.id ? { ...p, quantity: qty } : p
-          ),
-        };
-      })
-    );
-
     if (qty <= 0) {
+      useCartStore.getState().removeItem(targetItem.id);
       showToast(`🗑️ Removed "${targetItem.name}" from cart`, 'info');
     } else {
+      useCartStore.getState().updateQuantity(targetItem.id, qty);
       showToast(`⚡ "${targetItem.name}" Qty set to ${qty}`, 'info');
     }
   };
@@ -1737,7 +1569,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       if (e.key === 'F12') {
         e.preventDefault();
         setShowF12SearchModal((prev) => !prev);
-        setF12SearchQuery('');
         return;
       }
 
@@ -1758,10 +1589,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       // F12: Open / Close Full Inventory Search Overlay
       if (e.key === 'F12' || e.code === 'F12') {
         e.preventDefault();
-        setShowF12SearchModal((prev) => {
-          if (!prev) setF12SearchQuery('');
-          return !prev;
-        });
+        setShowF12SearchModal((prev) => !prev);
         return;
       }
 
@@ -2168,7 +1996,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             type="button"
             onClick={() => {
               setShowF12SearchModal(true);
-              setF12SearchQuery('');
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs border border-blue-200 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Manual item search overlay [F12]"
@@ -2405,8 +2232,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               type="button"
               onClick={() => {
                 setShowProductsModal(true);
-                setShowAddProductForm(true);
-                setNewProdBarcode(unassignedBarcode);
               }}
               className="px-2.5 py-1 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700"
             >
@@ -2475,32 +2300,48 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               )}
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
-              {customer && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {customer ? (
                 <button
                   type="button"
                   onClick={() => {
                     setCustomer(null);
                     clearScan();
                   }}
-                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors cursor-pointer border ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border flex items-center gap-1 shadow-xs ${
                     customer.hasMessGroup && customer.isDual
                       ? 'bg-indigo-100 hover:bg-red-100 hover:text-red-700 text-indigo-900 border-indigo-300'
                       : customer.isMess
                       ? 'bg-emerald-100 hover:bg-red-100 hover:text-red-700 text-emerald-900 border-emerald-300'
-                      : 'bg-slate-200 hover:bg-red-100 hover:text-red-700 text-slate-700 border-slate-300'
+                      : 'bg-emerald-50 hover:bg-red-100 hover:text-red-700 text-emerald-800 border-emerald-300'
                   }`}
                   title={
                     customer.hasMessGroup && customer.isDual
-                      ? `Dual Wallet: ${customer.name} (Personal: BD ${(customer.personalBalance ?? customer.currentBalance).toFixed(3)}) + 👥 ${customer.group_name} (${customer.members?.length || 0} members). Click to unlink.`
-                      : `Linked: ${customer.group_name || customer.name} ${customer.isMess ? `(${customer.members?.length || 0} members)` : ''}. Click to unlink.`
+                      ? `Dual Wallet: ${customer.name} (Personal: BD ${(customer.personalBalance ?? customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}) + 👥 ${customer.group_name} (${customer.members?.length || 0} members). Click to unlink.`
+                      : `Linked: ${customer.name || customer.group_name} (Khata Balance: BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)}). Click to unlink.`
                   }
                 >
-                  {customer.hasMessGroup && customer.isDual
-                    ? `💳 ${customer.name.slice(0, 8)} | 👥 ${(customer.group_name || 'Mess').slice(0, 10)} ✕`
-                    : customer.isMess 
-                    ? `👥 ${(customer.group_name || customer.name).slice(0, 14)} ✕` 
-                    : `👤 ${customer.name.slice(0, 8)} ✕`}
+                  <span>
+                    {customer.hasMessGroup && customer.isDual
+                      ? `💳 ${customer.name.slice(0, 8)} | 👥 ${(customer.group_name || 'Mess').slice(0, 8)}`
+                      : customer.isMess 
+                      ? `👥 ${(customer.group_name || customer.name).slice(0, 12)}` 
+                      : `👤 ${customer.name.slice(0, 10)} (BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)})`}
+                  </span>
+                  <span className="text-red-500 font-black ml-1">✕</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadCustomers();
+                    setShowCustomersModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                  title="Link Khata Customer to Active Cart"
+                >
+                  <UserPlus size={13} />
+                  <span>+ Khata</span>
                 </button>
               )}
               <button 
@@ -2509,133 +2350,22 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                 title="Void / Clear Cart"
               >
-                <UserX size={16} />
+                <Trash2 size={16} />
               </button>
             </div>
           </div>
 
-          {/* Active Cart Line Items List (Sunmi Touch UX: Safe zone padding, 60px targets, right-aligned) */}
-          <div className="flex-1 overflow-y-auto scrollbar-hide bg-white p-2.5 divide-y divide-slate-100 min-h-0 scroll-zone pr-[18px]">
-            {cart.length === 0 ? (
-              <div className="text-slate-400 text-center py-10 flex flex-col items-center justify-center">
-                <ShoppingCart size={36} className="mb-2 opacity-25" />
-                <p className="font-bold text-slate-600 text-sm">Receipt is empty</p>
-                <p className="text-xs text-slate-400 mt-0.5">Ready to scan • Pull scanner trigger or tap Quick Items</p>
-              </div>
-            ) : (
-              cart.map((item, index) => {
-                const qty = item.quantity ?? 1;
-                const isNegative = qty < 0;
-                return (
-                  <div 
-                    key={index} 
-                    className="flex justify-between items-center py-2.5 px-1 hover:bg-slate-50/90 rounded-xl transition-colors border-b border-slate-100/70 gap-2 min-h-[72px]"
-                  >
-                    {/* Far Left: Product Name, Barcode Pill, Unit Base Price, Discount Tag */}
-                    <div className="min-w-0 flex-1 pr-1">
-                      <p className="font-bold text-slate-800 text-sm truncate leading-tight">
-                        {item.name} {(item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0)) ? '*' : ''}
-                      </p>
-                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                        {item.barcode && (
-                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-600 font-mono font-semibold">
-                            {item.barcode}
-                          </span>
-                        )}
-                        <p className="text-gray-400 text-xs font-mono">
-                          {item.is_weighed_item 
-                            ? `${(item.quantity ?? 1).toFixed(3)} kg @ BHD ${(item.price ?? item.sellingPrice ?? 0).toFixed(3)}/kg` 
-                            : `Qty: ${item.quantity}`}
-                        </p>
-                        {item.discountNote && (
-                          <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                            <Tag size={10} /> {item.discountNote}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Far Right Control Cluster: Tap-to-Edit Price + 60px Steppers */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {/* 5. Tap-to-Edit Price/Discount Touch Target */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPriceOverrideItem({ index, product: item });
-                          setDiscountTab('discount');
-                          setCustomDiscountPercent('');
-                          setOverridePriceInput(item.sellingPrice.toFixed(3));
-                          setManagerPinInput('');
-                          setOverrideError(null);
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-50 hover:bg-amber-50 active:scale-95 transition-all border border-slate-200 hover:border-amber-400 text-right cursor-pointer flex flex-col justify-center items-end min-h-[60px]"
-                        title="Tap to apply discount or price override"
-                      >
-                        <span className={`font-black font-mono text-sm tabular-nums leading-tight ${isNegative ? 'text-red-600' : 'text-slate-900'}`}>
-                          BD {(item.sellingPrice * qty).toFixed(3)}
-                        </span>
-                        <span className="text-[10px] text-amber-700 font-semibold tracking-tight mt-0.5 flex items-center gap-0.5">
-                          <Tag size={9} /> tap to edit
-                        </span>
-                      </button>
-
-                      {/* Stepper Cluster: 60px Buttons & Quantity Readout */}
-                      <div className="flex items-center gap-1">
-                        {/* 1 & 3. Decrement / Trash Button: 60x60 with Dynamic Color Cue */}
-                        <button
-                          type="button"
-                          onClick={() => adjustItemQtyByIndex(index, -1)}
-                          className={`min-h-[60px] min-w-[60px] w-[60px] h-[60px] rounded-xl flex items-center justify-center active:scale-95 transition-all cursor-pointer font-black shadow-xs ${
-                            (item.is_weighed_item ? qty <= 0.25 : qty === 1)
-                              ? 'bg-rose-600 hover:bg-rose-700 text-white border-2 border-rose-700'
-                              : 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300'
-                          }`}
-                          title={(item.is_weighed_item ? qty <= 0.25 : qty === 1) ? `Remove "${item.name}" from cart` : `Decrease quantity`}
-                        >
-                          {(item.is_weighed_item ? qty <= 0.25 : qty === 1) ? (
-                            <Trash2 size={24} className="stroke-[2.5]" />
-                          ) : (
-                            <Minus size={26} className="stroke-[3]" />
-                          )}
-                        </button>
-
-                        {/* Quantity Readout */}
-                        <div 
-                          onClick={() => {
-                            if (item.is_weighed_item) {
-                              setSelectedWeighedItem(item);
-                              setIsWeightModalOpen(true);
-                            }
-                          }}
-                          className={`min-w-[42px] h-[60px] flex flex-col items-center justify-center bg-slate-50 border border-slate-200 rounded-xl px-1 ${
-                            item.is_weighed_item ? 'cursor-pointer hover:bg-emerald-50 hover:border-emerald-300' : ''
-                          }`}
-                          title={item.is_weighed_item ? 'Tap to edit weight' : 'Quantity'}
-                        >
-                          <span className={`text-[8px] font-bold uppercase tracking-wider leading-none ${item.is_weighed_item ? 'text-emerald-600' : 'text-slate-400'}`}>
-                            {item.is_weighed_item ? 'KG' : 'QTY'}
-                          </span>
-                          <span className={`font-mono font-black text-slate-900 leading-tight ${item.is_weighed_item ? 'text-xs' : 'text-lg'}`}>
-                            {item.is_weighed_item ? qty.toFixed(3) : qty}
-                          </span>
-                        </div>
-
-                        {/* 1. Increment Button: 60x60 Rule */}
-                        <button
-                          type="button"
-                          onClick={() => adjustItemQtyByIndex(index, 1)}
-                          className="min-h-[60px] min-w-[60px] w-[60px] h-[60px] rounded-xl flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300 font-black active:scale-95 transition-all cursor-pointer shadow-xs"
-                          title={`Increase quantity`}
-                        >
-                          <Plus size={26} className="stroke-[3]" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          {/* Active Cart Line Items List (Decoupled Zustand Atomic Component) */}
+          <CartTable
+            onAdjustQty={adjustItemQtyByIndex}
+            onPriceOverrideClick={(item, index) => {
+              setPriceOverrideItem({ index, product: item as Product });
+            }}
+            onWeightEditClick={(item) => {
+              setSelectedWeighedItem(item as Product);
+              setIsWeightModalOpen(true);
+            }}
+          />
 
           {/* Bottom Totals & Numpad */}
           <div className="shrink-0 bg-slate-50 border-t border-slate-200">
@@ -3029,7 +2759,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 type="button"
                 onClick={() => {
                   setShowF12SearchModal(true);
-                  setF12SearchQuery('');
                 }}
                 className="hover:text-blue-600 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
               >
@@ -3046,119 +2775,12 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       </div>
 
       {/* MASSIVE F12 FULL INVENTORY SEARCH OVERLAY */}
-      {showF12SearchModal && (
-        <div 
-          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex flex-col items-center justify-start p-4 md:p-8 animate-in fade-in duration-150"
-          onClick={() => setShowF12SearchModal(false)}
-        >
-          <div 
-            className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[88vh] border border-slate-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Search Header */}
-            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center gap-3">
-              <Search size={28} className="text-slate-400 shrink-0 ml-2" />
-              <input
-                ref={f12InputRef}
-                autoFocus
-                type="text"
-                placeholder="Search full inventory by name, barcode, or PLU... [Enter to add first]"
-                value={f12SearchQuery}
-                onChange={(e) => setF12SearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setShowF12SearchModal(false);
-                  } else if (e.key === 'Enter') {
-                    const matches = f12FilteredCatalog;
-                    if (matches.length > 0) {
-                      setShowF12SearchModal(false);
-                      handleItemSelection(matches[0]);
-                    }
-                  }
-                }}
-                className="w-full text-2xl font-bold py-2 bg-transparent outline-none text-slate-800 placeholder-slate-400"
-              />
-              <div className="flex items-center gap-2 shrink-0">
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-600 rounded text-xs font-mono font-bold">Esc</kbd>
-                <button
-                  type="button"
-                  onClick={() => setShowF12SearchModal(false)}
-                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
-                >
-                  <X size={22} />
-                </button>
-              </div>
-            </div>
-
-            {/* Search Results */}
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 scroll-zone">
-              {f12FilteredCatalog.length === 0 ? (
-                <div className="text-center py-16 text-slate-400">
-                  <Search size={48} className="mx-auto mb-3 opacity-20" />
-                  <p className="text-lg font-bold text-slate-600">No products match "{f12SearchQuery}"</p>
-                  <p className="text-xs text-slate-400 mt-1">Try another keyword or scan the physical barcode.</p>
-                </div>
-              ) : (
-                f12FilteredCatalog.map((prod) => {
-                  const stock = prod.stockQuantity !== undefined && prod.stockQuantity !== null ? Number(prod.stockQuantity) : 0;
-                  const isOutOfStock = stock <= 0;
-                  const isLowStock = stock > 0 && stock <= 5;
-
-                  return (
-                    <div
-                      key={prod.id}
-                      onClick={() => {
-                        setShowF12SearchModal(false);
-                        handleItemSelection(prod);
-                      }}
-                      className={`p-4 hover:bg-blue-50/70 transition-colors cursor-pointer flex justify-between items-center group ${
-                        isOutOfStock ? 'opacity-60 bg-slate-50' : ''
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0 pr-4">
-                        <div className="flex items-center gap-2">
-                          <h3 className={`font-bold text-lg text-slate-900 group-hover:text-blue-700 transition-colors ${isOutOfStock ? 'line-through text-slate-400' : ''}`}>
-                            {prod.name}
-                          </h3>
-                          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                            {prod.barcode || 'NO BARCODE'}
-                          </span>
-                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                            {prod.vatRate === 0 ? '0% VAT (Basic)' : '10% VAT'}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <p className="text-xs text-slate-500">
-                            Stock: <span className={`font-semibold ${isOutOfStock ? 'text-red-600 font-bold' : isLowStock ? 'text-amber-600 font-bold' : 'text-slate-700'}`}>{stock}</span> in store
-                          </p>
-                          {isOutOfStock && (
-                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white tracking-wider">
-                              OUT OF STOCK
-                            </span>
-                          )}
-                          {isLowStock && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white tracking-wider">
-                              LOW STOCK
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="text-2xl font-black font-mono text-slate-900 group-hover:text-blue-700 transition-colors">
-                          BD {prod.sellingPrice.toFixed(3)}
-                        </div>
-                        <span className={`inline-block mt-1 text-xs font-bold ${isOutOfStock ? 'text-red-500' : 'text-blue-600 group-hover:underline'}`}>
-                          {isOutOfStock ? 'Out of Stock ✕' : 'Tap to add ↵'}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <F12SearchOverlay
+        isOpen={showF12SearchModal}
+        onClose={() => setShowF12SearchModal(false)}
+        catalog={catalog}
+        onSelectItem={(item) => handleItemSelection(item)}
+      />
 
       {/* QUICK PRODUCT EDIT MODAL */}
       <QuickProductEditModal
@@ -3199,814 +2821,102 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         showToast={showToast}
       />
 
-      {/* DEVELOPER & HARDWARE DIAGNOSTICS MODAL (Hidden behind double-tap Askar POS or Ctrl+Shift+D) */}
-      {showDevPanel && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🛠️</span>
-                <h3 className="font-black text-lg text-slate-800">Hardware & Diagnostic Wiring</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowDevPanel(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="py-4 space-y-4 text-sm max-h-[70vh] overflow-y-auto">
-              {/* Master Server IP */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <p className="font-bold text-slate-800">Master Server IP</p>
-                  <p className="text-xs text-slate-500 font-mono">{apiBase}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowDevPanel(false);
-                    setShowServerConfigModal(true);
-                  }}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold"
-                >
-                  Configure IP
-                </button>
-              </div>
-
-              {/* NFC Simulator */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <p className="font-bold text-slate-800 mb-1">NFC Status & Simulator</p>
-                <p className="text-xs text-slate-500 mb-2">
-                  Status: <span className="font-bold">{hardwareSupported ? '🟢 Antenna Active' : '🔴 Unavailable'}</span> {isScanning && <span className="text-emerald-600 font-bold">(Scanning)</span>} | Screen 2: <span className="font-bold">{customerScreenReady ? '🟢 Connected' : '⚪ Standalone'}</span> | Last UID: <span className="font-mono">{lastDetectedUid || 'None'}</span>
-                </p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => simulateScan('CARD123')}
-                    className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded font-bold text-xs"
-                  >
-                    ⚡ Tap Ali (CARD123)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const b1 = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
-                      const b2 = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
-                      const b3 = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
-                      simulateScan(`08:${b1}:${b2}:${b3}`.toUpperCase());
-                    }}
-                    className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded font-bold text-xs"
-                  >
-                    📱 Tap iPhone (Random UID)
-                  </button>
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <input
-                      type="text"
-                      placeholder="Custom UID..."
-                      value={manualUidInput}
-                      onChange={(e) => setManualUidInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && manualUidInput.trim()) {
-                          simulateScan(manualUidInput.trim());
-                          setManualUidInput('');
-                        }
-                      }}
-                      className="px-2 py-1 bg-white border border-slate-300 rounded text-xs w-28 font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (manualUidInput.trim()) {
-                          simulateScan(manualUidInput.trim());
-                          setManualUidInput('');
-                        }
-                      }}
-                      className="px-2 py-1 bg-slate-800 text-white rounded text-xs font-bold"
-                    >
-                      Simulate
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Barcode Testing */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <p className="font-bold text-slate-800 mb-1">Test Barcodes (Scanner Bypass)</p>
-                <p className="text-xs text-slate-500 mb-2">
-                  Last Scanned: <span className="font-mono font-bold text-emerald-700">{lastScannedBarcode || 'None'}</span>
-                </p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => handleBarcodeScan('1')}
-                    className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-xs font-bold"
-                  >
-                    Scan '1' (Perfume)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBarcodeScan('2')}
-                    className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-xs font-bold"
-                  >
-                    Scan '2' (Watch)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBarcodeScan('2200102048003')}
-                    className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded text-xs font-bold"
-                  >
-                    🥩 Scale Beef 1.5kg (BD 4.800)
-                  </button>
-                </div>
-              </div>
-
-              {/* Active Shift Float & Cash Out */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <p className="font-bold text-slate-800">Drawer Cash Float</p>
-                  <p className="text-xs text-slate-500">
-                    BD {Number(localStorage.getItem('active_shift_opening_cash') || 0).toFixed(3)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowDevPanel(false);
-                    setShowCashOutModal(true);
-                  }}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold"
-                >
-                  Record Cash Out
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
-              <span>Shortcut: Double-click Askar POS or press Ctrl+Shift+D</span>
-              <button
-                type="button"
-                onClick={() => setShowDevPanel(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-bold"
-              >
-                Close Diagnostic Panel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* DEVELOPER & HARDWARE DIAGNOSTICS MODAL */}
+      <DeveloperDiagnosticsModal
+        isOpen={showDevPanel}
+        onClose={() => setShowDevPanel(false)}
+        apiBase={apiBase}
+        onOpenServerConfig={() => setShowServerConfigModal(true)}
+        hardwareSupported={Boolean(hardwareSupported)}
+        isScanning={isScanning}
+        customerScreenReady={Boolean(customerScreenReady)}
+        lastDetectedUid={lastDetectedUid}
+        simulateScan={simulateScan}
+        lastScannedBarcode={lastScannedBarcode}
+        handleBarcodeScan={handleBarcodeScan}
+        onOpenCashOut={() => setShowCashOutModal(true)}
+      />
 
       {/* CUSTOMER ENROLLMENT & KHATA MODAL */}
-      {showCustomersModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15,23,42,0.65)',
-            backdropFilter: 'blur(6px)',
-            WebkitBackdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '16px',
-              width: '600px',
-              maxHeight: '80vh',
-              display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)'
-            }}
-          >
-            {/* Modal Header */}
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>
-                Customer Enrollment & Khata Cards
-              </h3>
-              <button
-                onClick={() => {
-                  setShowCustomersModal(false);
-                  setBindingCustomerId(null);
-                }}
-                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#6b7280' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
-              {/* Add New Customer Form */}
-              <div style={{ marginBottom: '20px' }}>
-                {newCustCardUid ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '8px 12px', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>💳</span>
-                      <div>
-                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#065f46' }}>NFC Card Attached (Ready to Link)</div>
-                        <div style={{ fontSize: '13px', fontFamily: 'monospace', fontWeight: 'bold', color: '#047857' }}>{newCustCardUid}</div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setNewCustCardUid('')}
-                      style={{ fontSize: '11px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      Clear Card
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ backgroundColor: '#eff6ff', border: '1px dashed #93c5fd', borderRadius: '8px', padding: '6px 12px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#1e40af' }}>
-                    <span>📶</span>
-                    <span><strong>NFC Ready:</strong> Tap card on terminal to auto-attach to this new customer</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder="New customer name..."
-                    value={newCustName}
-                    onChange={(e) => setNewCustName(e.target.value)}
-                    style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '14px' }}
-                  />
-                  <button
-                    onClick={handleCreateCustomer}
-                    style={{ backgroundColor: '#2563eb', color: '#ffffff', padding: '10px 18px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    Add Customer
-                  </button>
-                </div>
-              </div>
-
-              {/* Binding in Progress Banner */}
-              {bindingCustomerId && (
-                <div style={{ padding: '12px 16px', backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px', color: '#92400e' }}>
-                  ⏳ <strong>Tap customer card or phone now</strong> on the SUNMI reader to link it!
-                  <button
-                    onClick={() => setBindingCustomerId(null)}
-                    style={{ marginLeft: '12px', textDecoration: 'underline', background: 'none', border: 'none', color: '#92400e', cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-
-              {/* Customer List Table */}
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
-                {customersList.map((c) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      padding: '14px 16px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      borderBottom: '1px solid #f3f4f6',
-                      backgroundColor: bindingCustomerId === c.id ? '#fefce8' : '#ffffff'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: '600', fontSize: '16px' }}>{c.name}</div>
-                      <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                        Card UID: <strong style={{ color: c.cardUid ? '#1d4ed8' : '#9ca3af' }}>{c.cardUid || 'None'}</strong>
-                      </div>
-                      <div style={{ fontSize: '13px', color: '#059669', fontWeight: 'bold' }}>
-                        Khata Balance: BD {c.currentBalance.toFixed(3)}
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => {
-                          setCustomer(c);
-                          setShowCustomersModal(false);
-                        }}
-                        style={{
-                          backgroundColor: '#f3f4f6',
-                          color: '#374151',
-                          padding: '6px 12px',
-                          borderRadius: '6px',
-                          border: '1px solid #d1d5db',
-                          fontSize: '13px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Select
-                      </button>
-
-                      {lastDetectedUid && (
-                        <button
-                          onClick={() => handleBindCard(c.id, lastDetectedUid)}
-                          style={{
-                            backgroundColor: '#059669',
-                            color: '#ffffff',
-                            padding: '6px 12px',
-                            borderRadius: '6px',
-                            border: 'none',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
-                            cursor: 'pointer'
-                          }}
-                          title={`Bind ${lastDetectedUid} to ${c.name}`}
-                        >
-                          Bind Last Read ({lastDetectedUid})
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => setBindingCustomerId(c.id)}
-                        style={{
-                          backgroundColor: bindingCustomerId === c.id ? '#d97706' : '#1f2937',
-                          color: '#ffffff',
-                          padding: '6px 12px',
-                          borderRadius: '6px',
-                          border: 'none',
-                          fontSize: '13px',
-                          fontWeight: 'bold',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {bindingCustomerId === c.id ? 'Waiting for Tap...' : 'Bind Card'}
-                      </button>
-
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <CustomerEnrollmentModal
+        isOpen={showCustomersModal}
+        onClose={() => setShowCustomersModal(false)}
+        customersList={customersList}
+        onSelectCustomer={(c) => setCustomer(c)}
+        onCreateCustomer={async (name, cardUid) => {
+          try {
+            const res = await fetch(`${apiBase}/api/customers`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, cardUid: cardUid || undefined })
+            });
+            const data = await res.json();
+            if (res.ok && (data.success || data.id)) {
+              showToast(`✅ Customer "${name}" created${cardUid ? ' & NFC card linked' : ''}!`, 'success');
+              setNewCustCardUid('');
+              await loadCustomers();
+            } else {
+              showToast(`❌ ${data.error || 'Failed to create customer'}`, 'error');
+            }
+          } catch (e) {
+            console.error(e);
+            showToast("❌ Error creating customer", 'error');
+          }
+        }}
+        onBindCard={handleBindCard}
+        lastDetectedUid={lastDetectedUid}
+        bindingCustomerId={bindingCustomerId}
+        setBindingCustomerId={setBindingCustomerId}
+        newCustCardUid={newCustCardUid}
+        setNewCustCardUid={setNewCustCardUid}
+      />
 
       {/* PRODUCTS & BARCODES ASSIGNMENT MODAL */}
-      {showProductsModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15,23,42,0.65)',
-            backdropFilter: 'blur(6px)',
-            WebkitBackdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '16px',
-              width: '720px',
-              maxHeight: '85vh',
-              display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)'
-            }}
-          >
-            {/* Modal Header */}
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>
-                  📦 Products & Barcode Assignment
-                </h3>
-                <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                  Manage item barcodes for rapid hardware scanner checkout
-                </span>
-              </div>
-              <button
-                onClick={() => {
-                  setShowProductsModal(false);
-                  setBindingProductId(null);
-                  setShowAddProductForm(false);
-                }}
-                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#6b7280' }}
-              >
-                ✕
-              </button>
-            </div>
+      <ProductBarcodeModal
+        isOpen={showProductsModal}
+        onClose={() => setShowProductsModal(false)}
+        catalog={catalog}
+        onReloadCatalog={fetchCatalog}
+        onOpenPosAddModal={() => setShowPosAddModal(true)}
+        onSaveProduct={async (name, sellingPrice, costPrice, barcode) => {
+          try {
+            const res = await fetch(`${apiBase}/products`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name,
+                sellingPrice,
+                purchasePrice: costPrice,
+                stockQuantity: 100,
+                barcode: barcode || undefined
+              })
+            });
+            if (res.ok) {
+              showToast(`✅ Product "${name}" created!`, 'success');
+              await fetchCatalog();
+            } else {
+              const err = await res.json();
+              showToast(`❌ ${err.error || 'Failed to create product'}`, 'error');
+            }
+          } catch (e) {
+            console.error(e);
+            showToast("❌ Error creating product", 'error');
+          }
+        }}
+        onBindBarcode={handleBindBarcode}
+        lastScannedBarcode={lastScannedBarcode}
+        unassignedBarcode={unassignedBarcode}
+        bindingProductId={bindingProductId}
+        setBindingProductId={setBindingProductId}
+      />
 
-            {/* Modal Content */}
-            <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
-              {/* Action Toolbar */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                <input
-                  type="text"
-                  placeholder="🔍 Search by product name or barcode..."
-                  value={productSearchQuery}
-                  onChange={(e) => setProductSearchQuery(e.target.value)}
-                  style={{ flex: 1, padding: '9px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '14px' }}
-                />
-                <button
-                  onClick={() => setShowPosAddModal(true)}
-                  style={{
-                    backgroundColor: '#059669',
-                    color: '#ffffff',
-                    padding: '9px 16px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    fontWeight: 'bold',
-                    fontSize: '13px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  ➕ Quick Add Item
-                </button>
-                <button
-                  onClick={fetchCatalog}
-                  style={{
-                    backgroundColor: '#f3f4f6',
-                    color: '#374151',
-                    padding: '9px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
-                    fontWeight: 'bold',
-                    fontSize: '13px',
-                    cursor: 'pointer'
-                  }}
-                  title="Reload catalog"
-                >
-                  🔄
-                </button>
-              </div>
-
-              {/* Add New Product Form */}
-              {showAddProductForm && (
-                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#166534', marginBottom: '12px', fontSize: '15px' }}>
-                    Register New Product
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                    <input
-                      type="text"
-                      placeholder="Product Name (e.g. Al-Marai Milk 1L)"
-                      value={newProdName}
-                      onChange={(e) => setNewProdName(e.target.value)}
-                      style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px' }}
-                    />
-                    <input
-                      type="number"
-                      step="0.001"
-                      placeholder="Selling Price (BD)"
-                      value={newProdPrice}
-                      onChange={(e) => setNewProdPrice(e.target.value)}
-                      style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px' }}
-                    />
-                    <input
-                      type="number"
-                      step="0.001"
-                      placeholder="Cost Price (BD)"
-                      value={newProdPurchasePrice}
-                      onChange={(e) => setNewProdPurchasePrice(e.target.value)}
-                      style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px' }}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <input
-                      type="text"
-                      placeholder="Barcode (or leave blank to assign later)"
-                      value={newProdBarcode}
-                      onChange={(e) => setNewProdBarcode(e.target.value)}
-                      style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px' }}
-                    />
-                    {lastScannedBarcode && (
-                      <button
-                        onClick={() => setNewProdBarcode(lastScannedBarcode)}
-                        style={{
-                          backgroundColor: '#eff6ff',
-                          color: '#1d4ed8',
-                          border: '1px solid #bfdbfe',
-                          padding: '8px 12px',
-                          borderRadius: '6px',
-                          fontSize: '12px',
-                          fontWeight: 'bold',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Use Last Scanned ({lastScannedBarcode})
-                      </button>
-                    )}
-                    <button
-                      onClick={handleCreateProduct}
-                      style={{
-                        backgroundColor: '#16a34a',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '8px 18px',
-                        borderRadius: '6px',
-                        fontSize: '13px',
-                        fontWeight: 'bold',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Save Product
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Barcode Binding In-Progress Banner */}
-              {bindingProductId && (() => {
-                const target = catalog.find((p) => p.id === bindingProductId);
-                return (
-                  <div
-                    style={{
-                      padding: '12px 16px',
-                      backgroundColor: '#fef3c7',
-                      border: '1px solid #fde68a',
-                      borderRadius: '8px',
-                      marginBottom: '16px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                  >
-                    <div>
-                      <strong style={{ color: '#92400e' }}>⏳ Ready to Assign:</strong>{' '}
-                      <span style={{ color: '#78350f' }}>
-                        Pull the SUNMI barcode scanner trigger on any item to link to <strong>{target?.name}</strong>!
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setBindingProductId(null)}
-                      style={{
-                        backgroundColor: '#ffffff',
-                        border: '1px solid #d97706',
-                        color: '#92400e',
-                        padding: '4px 10px',
-                        borderRadius: '6px',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                );
-              })()}
-
-              {/* Product Catalog & Barcode Assignment Table */}
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
-                {catalog
-                  .filter((p) => {
-                    if (!productSearchQuery.trim()) return true;
-                    const q = productSearchQuery.toLowerCase();
-                    return (
-                      p.name.toLowerCase().includes(q) ||
-                      (p.barcode && p.barcode.toLowerCase().includes(q)) ||
-                      p.id.toLowerCase().includes(q)
-                    );
-                  })
-                  .map((p) => {
-                    const isBinding = bindingProductId === p.id;
-                    return (
-                      <div
-                        key={p.id}
-                        style={{
-                          padding: '12px 16px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          borderBottom: '1px solid #f3f4f6',
-                          backgroundColor: isBinding ? '#fefce8' : '#ffffff'
-                        }}
-                      >
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontWeight: '600', fontSize: '15px' }}>{p.name}</span>
-                            <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: 'bold' }}>
-                              BD {p.sellingPrice.toFixed(3)}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>Barcode:</span>
-                            {p.barcode ? (
-                              <strong style={{ fontFamily: 'monospace', color: '#166534', backgroundColor: '#dcfce7', padding: '1px 6px', borderRadius: '4px' }}>
-                                {p.barcode}
-                              </strong>
-                            ) : (
-                              <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>(None assigned)</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          {/* If unassigned barcode or last scanned barcode available, quick bind */}
-                          {(unassignedBarcode || (lastScannedBarcode && lastScannedBarcode !== p.barcode)) && (
-                            <button
-                              onClick={() => handleBindBarcode(p.id, unassignedBarcode || lastScannedBarcode!)}
-                              style={{
-                                backgroundColor: '#f0fdf4',
-                                color: '#166534',
-                                border: '1px solid #bbf7d0',
-                                padding: '6px 10px',
-                                borderRadius: '6px',
-                                fontSize: '12px',
-                                fontWeight: 'bold',
-                                cursor: 'pointer'
-                              }}
-                              title={`Assign ${unassignedBarcode || lastScannedBarcode}`}
-                            >
-                              Bind [{unassignedBarcode || lastScannedBarcode}]
-                            </button>
-                          )}
-
-                          {/* Clear Barcode button if one exists */}
-                          {p.barcode && (
-                            <button
-                              onClick={() => handleBindBarcode(p.id, '')}
-                              style={{
-                                backgroundColor: '#fee2e2',
-                                color: '#991b1b',
-                                border: '1px solid #fecaca',
-                                padding: '6px 8px',
-                                borderRadius: '6px',
-                                fontSize: '12px',
-                                cursor: 'pointer'
-                              }}
-                              title="Remove Barcode"
-                            >
-                              Clear
-                            </button>
-                          )}
-
-                          {/* Trigger Scanner Assignment */}
-                          <button
-                            onClick={() => {
-                              if (isBinding) {
-                                setBindingProductId(null);
-                              } else {
-                                setBindingProductId(p.id);
-                              }
-                            }}
-                            style={{
-                              backgroundColor: isBinding ? '#d97706' : '#1f2937',
-                              color: '#ffffff',
-                              padding: '6px 12px',
-                              borderRadius: '6px',
-                              border: 'none',
-                              fontSize: '12px',
-                              fontWeight: 'bold',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            {isBinding ? '⏳ Waiting for Scan...' : '📷 Assign Barcode'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Master Back-Office Server IP Configuration Modal */}
-      {showServerConfigModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            width: '100vw',
-            height: '100vh',
-            backgroundColor: 'rgba(15, 23, 42, 0.7)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px'
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '16px',
-              maxWidth: '520px',
-              width: '100%',
-              padding: '24px',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>
-                  ⚙️ Master Back-Office IP Setup
-                </h3>
-                <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                  Point this SUNMI terminal to the store's central laptop
-                </p>
-              </div>
-              <button
-                onClick={() => setShowServerConfigModal(false)}
-                style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748b' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}>
-                Master Server IPv4 Address & Port:
-              </label>
-              <input
-                type="text"
-                value={customServerIp}
-                onChange={(e) => setCustomServerIp(e.target.value)}
-                placeholder="e.g. http://192.168.8.7:3000"
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: '8px',
-                  border: '1px solid #cbd5e1',
-                  fontSize: '14px',
-                  fontFamily: 'monospace',
-                  width: '100%'
-                }}
-              />
-              <p style={{ margin: 0, fontSize: '12px', color: '#94a3b8' }}>
-                Currently active: <strong>{apiBase}</strong>
-              </p>
-            </div>
-
-            {/* Quick Preset Buttons */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '12px', color: '#64748b', alignSelf: 'center' }}>Presets:</span>
-              <button
-                onClick={() => setCustomServerIp('http://192.168.8.7:3000')}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #cbd5e1',
-                  backgroundColor: '#f8fafc',
-                  fontSize: '12px',
-                  cursor: 'pointer'
-                }}
-              >
-                Wi-Fi LAN (192.168.8.7:3000)
-              </button>
-              <button
-                onClick={() => setCustomServerIp('http://localhost:3000')}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #cbd5e1',
-                  backgroundColor: '#f8fafc',
-                  fontSize: '12px',
-                  cursor: 'pointer'
-                }}
-              >
-                Localhost (3000)
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-              <button
-                onClick={() => setShowServerConfigModal(false)}
-                style={{
-                  padding: '10px 18px',
-                  borderRadius: '8px',
-                  border: '1px solid #cbd5e1',
-                  backgroundColor: '#ffffff',
-                  color: '#475569',
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleSaveMasterIp(customServerIp)}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  backgroundColor: '#059669',
-                  color: '#ffffff',
-                  fontWeight: 'bold',
-                  fontSize: '13px',
-                  cursor: 'pointer'
-                }}
-              >
-                Connect & Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MASTER BACK-OFFICE SERVER IP CONFIGURATION MODAL */}
+      <ServerConfigModal
+        isOpen={showServerConfigModal}
+        onClose={() => setShowServerConfigModal(false)}
+        activeServerIp={apiBase}
+        onSaveServerIp={(ip) => handleSaveMasterIp(ip)}
+      />
 
       {/* KHATA HUB MODAL */}
       {showKhataHub && (
@@ -4016,6 +2926,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           lastScannedCardUid={lastDetectedUid}
           onCustomerUpdated={() => {
             loadCustomers();
+          }}
+          onSelectCustomerForCart={(selected) => {
+            setCustomer(selected);
+            showToast(`💳 Linked ${selected.name} to active cart (Balance: BD ${Number(selected.currentBalance ?? selected.balance ?? 0).toFixed(3)})`, 'success');
           }}
           showToast={showToast}
         />
@@ -4131,412 +3045,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         onCatalogRefresh={fetchCatalog}
       />
 
-      {/* HARD CREDIT LIMIT POS BLOCKING MODAL (Idea 2) */}
-      {creditLimitBlockedInfo && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl shadow-2xl border-2 border-red-500 w-full max-w-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="bg-red-600 text-white p-5 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
-                  <ShieldAlert size={28} className="text-white animate-bounce" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black tracking-tight leading-none text-white">
-                    Credit Limit Exceeded
-                  </h3>
-                  <p className="text-xs text-red-100 font-medium mt-1">
-                    POS Frozen: Customer tab exceeds authorized store credit limit
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCreditLimitBlockedInfo(null)}
-                className="w-10 h-10 rounded-xl bg-red-700 hover:bg-red-800 text-white flex items-center justify-center font-bold text-lg cursor-pointer transition-colors"
-              >
-                ✕
-              </button>
-            </div>
+      {/* HARD CREDIT LIMIT POS BLOCKING MODAL */}
+      <HardCreditLimitModal
+        info={creditLimitBlockedInfo}
+        onClose={() => setCreditLimitBlockedInfo(null)}
+        onAuthorizeOverride={handleAuthorizeCreditOverride}
+        onOpenKhataHub={() => setShowKhataHub(true)}
+      />
 
-            {/* Customer & Debt Overview */}
-            <div className="p-6 space-y-4">
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-lg font-black text-slate-800">
-                    {creditLimitBlockedInfo.customer.name}
-                  </h4>
-                  {creditLimitBlockedInfo.customer.phone && (
-                    <span className="text-xs font-mono text-slate-500">
-                      📞 {creditLimitBlockedInfo.customer.phone}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5 mt-3">
-                  <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Current Debt</span>
-                    <span className="text-base font-black font-mono text-slate-700">
-                      BD {creditLimitBlockedInfo.currentBalance.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">This Ring-Up</span>
-                    <span className="text-base font-black font-mono text-amber-600">
-                      + BD {creditLimitBlockedInfo.saleAmount.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Hard Limit</span>
-                    <span className="text-base font-black font-mono text-slate-800">
-                      BD {creditLimitBlockedInfo.creditLimit.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="bg-red-50 p-2.5 rounded-xl border border-red-200">
-                    <span className="text-[10px] font-bold text-red-600 uppercase tracking-wider block">Projected Total</span>
-                    <span className="text-base font-black font-mono text-red-700">
-                      BD {creditLimitBlockedInfo.projectedBalance.toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3 py-2 px-3 bg-red-100/70 border border-red-300 rounded-xl flex items-center justify-between text-xs text-red-900 font-bold">
-                  <span>Exceeded Limit By:</span>
-                  <span className="font-mono text-sm font-black text-red-700">
-                    BD {creditLimitBlockedInfo.exceededBy.toFixed(3)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Policy Callout */}
-              <div className="text-xs text-slate-600 leading-relaxed bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-                <span className="text-base">⚠️</span>
-                <span>
-                  <strong>Store Policy:</strong> Ask the customer to make a partial payment via BenefitPay/Cash to lower their balance before releasing groceries, or enter Manager PIN to override.
-                </span>
-              </div>
-
-              {/* Manager PIN Input Form */}
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center justify-between">
-                  <span>Enter Manager PIN to Override</span>
-                  <span className="text-[10px] font-normal text-slate-400">Default PIN: 9999</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    autoFocus
-                    value={creditOverridePin}
-                    onChange={(e) => {
-                      setCreditOverridePin(e.target.value);
-                      setCreditOverrideError(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleAuthorizeCreditOverride();
-                      }
-                    }}
-                    placeholder="Enter 4-digit PIN..."
-                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-300 rounded-xl font-mono text-center text-xl tracking-widest outline-none focus:border-red-500 focus:bg-white transition-all"
-                  />
-                </div>
-                {creditOverrideError && (
-                  <p className="text-xs font-bold text-red-600 animate-shake">
-                    ❌ {creditOverrideError}
-                  </p>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleAuthorizeCreditOverride}
-                  className="py-3.5 px-4 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-black rounded-xl text-sm transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <KeyRound size={16} />
-                  <span>Authorize Override</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreditLimitBlockedInfo(null);
-                    setShowKhataHub(true);
-                  }}
-                  className="py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black rounded-xl text-sm transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <span>Collect Payment 💳</span>
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setCreditLimitBlockedInfo(null)}
-                className="w-full py-2.5 text-slate-500 hover:text-slate-800 text-xs font-bold hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-              >
-                Cancel / Switch Payment Method
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 5. TAP-TO-EDIT PRICE & DISCOUNT OVERRIDE MODAL (SUNMI UX RULE 5) */}
-      {priceOverrideItem && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-amber-400 font-bold text-xs uppercase tracking-wider">Line Item Adjustment</span>
-                  {priceOverrideItem.product.barcode && (
-                    <span className="bg-slate-800 text-slate-300 text-[10px] font-mono px-2 py-0.5 rounded">
-                      {priceOverrideItem.product.barcode}
-                    </span>
-                  )}
-                </div>
-                <h3 className="font-black text-lg text-white leading-tight mt-0.5">
-                  {priceOverrideItem.product.name}
-                </h3>
-                <p className="text-xs text-slate-300 font-mono mt-0.5">
-                  Current: BD {priceOverrideItem.product.sellingPrice.toFixed(3)} × {priceOverrideItem.product.quantity ?? 1} = BD {((priceOverrideItem.product.sellingPrice) * (priceOverrideItem.product.quantity ?? 1)).toFixed(3)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPriceOverrideItem(null)}
-                className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-xl cursor-pointer transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Mode Switcher Tabs */}
-            <div className="grid grid-cols-2 p-2 bg-slate-100 border-b border-slate-200 gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setDiscountTab('discount');
-                  setOverrideError(null);
-                }}
-                className={`py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                  discountTab === 'discount'
-                    ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                    : 'text-slate-600 hover:bg-slate-200/70'
-                }`}
-              >
-                <Percent size={18} className="text-amber-600" />
-                <span>Quick Discount (%)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDiscountTab('override');
-                  setOverrideError(null);
-                }}
-                className={`py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                  discountTab === 'override'
-                    ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                    : 'text-slate-600 hover:bg-slate-200/70'
-                }`}
-              >
-                <KeyRound size={18} className="text-blue-600" />
-                <span>Price Override (PIN 9999)</span>
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-4 space-y-4">
-              {discountTab === 'discount' ? (
-                <div>
-                  <p className="text-xs font-bold text-slate-600 mb-2 uppercase tracking-wider">
-                    Select Quick Preset Discount:
-                  </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[5, 10, 15, 20, 25, 50].map((pct) => {
-                      const basePrice = priceOverrideItem.product.originalPrice ?? priceOverrideItem.product.sellingPrice;
-                      const discountedUnit = Math.max(0, basePrice * (1 - pct / 100));
-                      return (
-                        <button
-                          key={pct}
-                          type="button"
-                          onClick={() => {
-                            applyPriceOverride(priceOverrideItem.index, discountedUnit, `${pct}% OFF`);
-                          }}
-                          className="h-16 rounded-xl border-2 border-slate-200 hover:border-amber-400 bg-slate-50 hover:bg-amber-50/70 flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer"
-                        >
-                          <span className="font-black text-base text-slate-900">{pct}% OFF</span>
-                          <span className="text-[11px] font-mono text-slate-600 mt-0.5">
-                            BD {discountedUnit.toFixed(3)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Custom % input */}
-                  <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
-                      Custom Discount (%)
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="99"
-                        value={customDiscountPercent}
-                        onChange={(e) => setCustomDiscountPercent(e.target.value)}
-                        placeholder="e.g. 30"
-                        className="flex-1 h-12 px-3 rounded-xl border-2 border-slate-300 focus:border-amber-500 font-mono font-black text-lg text-slate-900 outline-hidden bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const pct = parseFloat(customDiscountPercent);
-                          if (isNaN(pct) || pct <= 0 || pct >= 100) {
-                            showToast("⚠️ Enter valid percentage between 1 and 99", "info");
-                            return;
-                          }
-                          const basePrice = priceOverrideItem.product.originalPrice ?? priceOverrideItem.product.sellingPrice;
-                          const discountedUnit = Math.max(0, basePrice * (1 - pct / 100));
-                          applyPriceOverride(priceOverrideItem.index, discountedUnit, `${pct}% OFF`);
-                        }}
-                        className="h-12 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm cursor-pointer active:scale-95 transition-all shadow-xs"
-                      >
-                        Apply %
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Restore Original Price Option */}
-                  {priceOverrideItem.product.originalPrice && priceOverrideItem.product.originalPrice !== priceOverrideItem.product.sellingPrice && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        applyPriceOverride(priceOverrideItem.index, priceOverrideItem.product.originalPrice!, undefined);
-                      }}
-                      className="w-full mt-3 py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <span>↺ Restore Original Price (BD {priceOverrideItem.product.originalPrice.toFixed(3)})</span>
-                    </button>
-                  )}
-                </div>
-              ) : (
-                /* Manager Price Override Tab */
-                <div className="space-y-3">
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-amber-900">
-                    <KeyRound size={18} className="shrink-0 text-amber-700 mt-0.5" />
-                    <div>
-                      <p className="font-bold">Manager PIN Authorization Required</p>
-                      <p className="text-[11px] text-amber-800 mt-0.5">
-                        Overriding product base selling price requires Manager PIN (9999).
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
-                        New Unit Price (BHD)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.005"
-                        min="0"
-                        value={overridePriceInput}
-                        onChange={(e) => setOverridePriceInput(e.target.value)}
-                        placeholder="0.000"
-                        className="w-full h-12 px-3 rounded-xl border-2 border-slate-300 focus:border-blue-600 font-mono font-black text-lg text-slate-900 outline-hidden bg-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
-                        Manager PIN
-                      </label>
-                      <input
-                        type="password"
-                        maxLength={6}
-                        value={managerPinInput}
-                        onChange={(e) => {
-                          setManagerPinInput(e.target.value);
-                          setOverrideError(null);
-                        }}
-                        placeholder="••••"
-                        className="w-full h-12 px-3 rounded-xl border-2 border-slate-300 focus:border-blue-600 font-mono font-black text-lg text-slate-900 outline-hidden bg-white tracking-widest"
-                      />
-                    </div>
-                  </div>
-
-                  {overrideError && (
-                    <p className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 p-2 rounded-lg">
-                      ⚠️ {overrideError}
-                    </p>
-                  )}
-
-                  {/* Numpad for on-screen touch typing */}
-                  <div className="grid grid-cols-4 gap-1.5 pt-1">
-                    {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '.'].map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => {
-                          if (key === 'C') {
-                            if (managerPinInput.length > 0) {
-                              setManagerPinInput('');
-                            } else {
-                              setOverridePriceInput('');
-                            }
-                          } else {
-                            if (managerPinInput.length < 4) {
-                              setManagerPinInput((prev) => prev + key);
-                            } else {
-                              setOverridePriceInput((prev) => prev + key);
-                            }
-                          }
-                        }}
-                        className="h-11 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-base active:scale-95 transition-all flex items-center justify-center cursor-pointer"
-                      >
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setPriceOverrideItem(null)}
-                      className="flex-1 h-12 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const pin = managerPinInput.trim();
-                        if (pin !== '9999') {
-                          setOverrideError('Invalid Manager PIN. Default is 9999.');
-                          return;
-                        }
-                        const val = parseFloat(overridePriceInput);
-                        if (isNaN(val) || val < 0) {
-                          setOverrideError('Please enter a valid price in BHD (>= 0.000).');
-                          return;
-                        }
-                        applyPriceOverride(priceOverrideItem.index, val, 'Override');
-                      }}
-                      className="flex-1 h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm cursor-pointer shadow-md active:scale-95 transition-all"
-                    >
-                      Authorize & Apply
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* TAP-TO-EDIT PRICE & DISCOUNT OVERRIDE MODAL */}
+      <TapToEditDiscountModal
+        item={priceOverrideItem}
+        onClose={() => setPriceOverrideItem(null)}
+        onApplyOverride={applyPriceOverride}
+        onShowToast={showToast}
+      />
 
       {/* MASSIVE POS NUMPAD MODAL (SUNMI D2 MINI WEIGHED PRODUCE ENTRY) */}
       <WeightInputModal

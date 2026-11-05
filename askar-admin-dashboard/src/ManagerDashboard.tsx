@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { 
-  LayoutDashboard, Users, TrendingUp, Package, ArrowLeft, Receipt, X, Clock, 
-  CheckCircle, ShoppingCart, RefreshCw, AlertCircle, Check, Truck, PackageCheck, 
-  Printer, Search, FileText, Activity, MessageCircle, ShieldAlert, ArrowUpDown, 
-  Layers, Eye, Scale, Send, CreditCard 
+import {
+  LayoutDashboard, Users, TrendingUp, Package, ArrowLeft, Receipt, X, Clock,
+  CheckCircle, ShoppingCart, RefreshCw, AlertCircle, Check, Truck, PackageCheck,
+  Printer, Search, FileText, Activity, MessageCircle, ShieldAlert, ArrowUpDown,
+  Layers, Eye, Scale, Send, CreditCard
 } from 'lucide-react';
 // --- LAZY-LOADED PAGES (never downloaded until the manager navigates to them) ---
 const BarcodeGenerator = lazy(() => import('./BarcodeGenerator'));
@@ -95,13 +95,13 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
       setActiveNfcCustomer(null);
     };
 
-    // 1. WebSocket Bridge Connection (:8080)
+    // 1. WebSocket Bridge Connection (:3000/ws)
     const connectWs = () => {
       if (unmounted) return;
       try {
-        ws = new WebSocket('ws://localhost:8080');
+        ws = new WebSocket('ws://localhost:3000/ws');
         ws.onopen = () => {
-          console.log('⚡ [Manager Dashboard] Remote NFC Relay WebSocket connected on :8080');
+          console.log('⚡ [Manager Dashboard] Remote NFC Relay WebSocket connected on :3000/ws');
         };
         ws.onmessage = (event) => {
           try {
@@ -113,13 +113,13 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
                 handleNfcScan(tag, data.payload?.customer);
               }
             }
-          } catch {}
+          } catch { }
         };
         ws.onerror = () => ws?.close();
         ws.onclose = () => {
           if (!unmounted) setTimeout(connectWs, 3000);
         };
-      } catch {}
+      } catch { }
     };
 
     connectWs();
@@ -138,7 +138,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             handleNfcScan(data.latest.tag_id, data.latest.customer);
           }
         }
-      } catch {}
+      } catch { }
     }, 4000);
 
     return () => {
@@ -156,7 +156,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
           setPendingDraftsCount(data.drafts.length);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   useEffect(() => {
@@ -322,14 +322,14 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
           >
             <CreditCard size={19} />
             <span>NFC Card Manager</span>
-            <span style={{ 
-              marginLeft: 'auto', 
-              fontSize: '10px', 
-              fontWeight: 'bold', 
-              padding: '2px 8px', 
-              borderRadius: '9999px', 
-              backgroundColor: activeTab === 'nfc' ? '#ffffff' : '#064e3b', 
-              color: activeTab === 'nfc' ? '#065f46' : '#6ee7b7' 
+            <span style={{
+              marginLeft: 'auto',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              padding: '2px 8px',
+              borderRadius: '9999px',
+              backgroundColor: activeTab === 'nfc' ? '#ffffff' : '#064e3b',
+              color: activeTab === 'nfc' ? '#065f46' : '#6ee7b7'
             }}>
               Relay
             </span>
@@ -587,7 +587,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold">
-                    {activeNfcCustomer 
+                    {activeNfcCustomer
                       ? `⚡ Sunmi Tap: ${activeNfcCustomer.name} (Debt: ${(Number(activeNfcCustomer.balance || activeNfcCustomer.outstanding_balance || 0)).toFixed(3)} BHD)`
                       : `⚠️ Unregistered Card Tapped on Sunmi: ${unknownNfcTag}`
                     }
@@ -626,8 +626,8 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'pnl' && <FinancialDashboard apiBase={apiBase} />}
             {activeTab === 'khata' && <KhataLedger apiBase={apiBase} />}
             {activeTab === 'nfc' && (
-              <NfcManager 
-                apiBase={apiBase} 
+              <NfcManager
+                apiBase={apiBase}
                 onNavigateToKhata={() => setActiveTab('khata')}
                 onOpenCustomerStatement={() => setActiveTab('khata')}
               />
@@ -636,8 +636,8 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'stock' && <StockManagement apiBase={apiBase} />}
             {activeTab === 'barcodes' && <BarcodeGenerator apiBase={apiBase} />}
             {activeTab === 'spy' && (
-              <RegisterSpyWidget 
-                onDrawerKick={remoteDrawerKick} 
+              <RegisterSpyWidget
+                onDrawerKick={remoteDrawerKick}
                 onClearCart={remoteClearCart}
                 onLockRegister={remoteLockRegister}
               />
@@ -702,16 +702,16 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket(`ws://${host}:8080`);
+      ws = new WebSocket(`ws://${host}:3000/ws`);
       ws.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
           if (d.type === 'SALE_COMPLETED' || d.type === 'SHIFT_CLOSED') {
             fetchSales();
           }
-        } catch {}
+        } catch { }
       };
-    } catch {}
+    } catch { }
 
     return () => {
       clearInterval(interval);
@@ -989,6 +989,12 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
     });
   }, [statementSales, startDate, endDate]);
 
+  // Customer Settle Modal State (Receive Payment)
+  const [settleCustomer, setSettleCustomer] = useState<any | null>(null);
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleMethod, setSettleMethod] = useState<'CASH' | 'BENEFIT_PAY'>('CASH');
+  const [isSettling, setIsSettling] = useState(false);
+
   // Stale Bad Debt Write-Off Modal State
   const [writeOffCustomer, setWriteOffCustomer] = useState<any | null>(null);
   const [writeOffReason, setWriteOffReason] = useState('Uncollectible stale balance > 45 days');
@@ -996,6 +1002,45 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
   const [isWritingOff, setIsWritingOff] = useState(false);
   const [writeOffToast, setWriteOffToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+
+  const handleExecuteSettle = async () => {
+    if (!settleCustomer) return;
+    const amt = parseFloat(settleAmount);
+    if (isNaN(amt) || amt <= 0) {
+      alert('Please enter a valid payment amount.');
+      return;
+    }
+
+    setIsSettling(true);
+    try {
+      const res = await fetch(`${apiBase}/api/customers/${settleCustomer.id}/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: amt,
+          paymentMethod: settleMethod,
+          reference: `${settleMethod === 'BENEFIT_PAY' ? 'BenefitPay' : 'Cash'} Payment (Back-Office)`
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWriteOffToast({
+          type: 'success',
+          message: `✅ Received BD ${amt.toFixed(3)} for ${settleCustomer.name}! New Balance: BD ${Number(data.newBalance ?? 0).toFixed(3)}`
+        });
+        setTimeout(() => setWriteOffToast(null), 5000);
+        setSettleCustomer(null);
+        setSettleAmount('');
+        loadCustomers();
+      } else {
+        alert(data.error || 'Failed to record payment');
+      }
+    } catch (e: any) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      setIsSettling(false);
+    }
+  };
 
   const loadCustomers = () => {
     setLoadingCustomers(true);
@@ -1134,12 +1179,11 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 max-w-7xl mx-auto">
-      
+
       {/* Toast Notification */}
       {writeOffToast && (
-        <div className={`p-4 rounded-xl text-sm font-bold border flex items-center justify-between shadow-md animate-in fade-in ${
-          writeOffToast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-red-50 text-red-800 border-red-300'
-        }`}>
+        <div className={`p-4 rounded-xl text-sm font-bold border flex items-center justify-between shadow-md animate-in fade-in ${writeOffToast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-red-50 text-red-800 border-red-300'
+          }`}>
           <span>{writeOffToast.message}</span>
           <button onClick={() => setWriteOffToast(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
         </div>
@@ -1213,9 +1257,8 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
         </div>
 
         {/* Stale Debt / Red Zone (>45 Days) */}
-        <div className={`p-6 rounded-2xl border shadow-xs flex items-center justify-between border-l-4 ${
-          staleCustomers.length > 0 ? 'bg-rose-50/30 border-rose-200 border-l-rose-600' : 'bg-white border-slate-200/90 border-l-slate-400'
-        }`}>
+        <div className={`p-6 rounded-2xl border shadow-xs flex items-center justify-between border-l-4 ${staleCustomers.length > 0 ? 'bg-rose-50/30 border-rose-200 border-l-rose-600' : 'bg-white border-slate-200/90 border-l-slate-400'
+          }`}>
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-black uppercase tracking-wider text-rose-700">Stale Debt (Red Zone)</span>
@@ -1255,10 +1298,10 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
         <TableSkeleton rows={6} columns={6} />
       ) : (
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200/90 overflow-hidden">
-          
+
           {/* Controls Bar: Search + Sorting Dropdown + Filter Pills */}
           <div className="p-4 border-b bg-slate-50/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            
+
             {/* Search Input */}
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
@@ -1330,9 +1373,8 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   return (
                     <tr
                       key={customer.id}
-                      className={`transition-colors ${
-                        isStale ? 'bg-rose-50/40 hover:bg-rose-50/70' : 'even:bg-slate-50/50 hover:bg-blue-50/60'
-                      }`}
+                      className={`transition-colors ${isStale ? 'bg-rose-50/40 hover:bg-rose-50/70' : 'even:bg-slate-50/50 hover:bg-blue-50/60'
+                        }`}
                     >
                       {/* Name & Batch (Click to View Statement) */}
                       <td
@@ -1427,7 +1469,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                       {/* Action Hub: 1-Click WhatsApp + Statement + Bad Debt Write-Off */}
                       <td className="px-5 py-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
-                          
+
                           {/* Idea 1: 1-Click WhatsApp Reminder */}
                           {balance > 0 && phoneDigits ? (
                             <a
@@ -1442,6 +1484,21 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                               <MessageCircle size={14} className="fill-white/20" /> WhatsApp
                             </a>
                           ) : null}
+
+                          {/* Receive Payment / Settle Button */}
+                          {balance > 0 && (
+                            <button
+                              onClick={() => {
+                                setSettleCustomer(customer);
+                                setSettleAmount(balance.toFixed(3));
+                                setSettleMethod('CASH');
+                              }}
+                              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                              title="Receive Payment / Settle Khata Balance"
+                            >
+                              <span>💳 Settle</span>
+                            </button>
+                          )}
 
                           {/* View Statement Button */}
                           <button
@@ -1556,6 +1613,116 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
               >
                 {isWritingOff ? 'Recording...' : 'Confirm Write-Off'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settle Customer Khata Balance Modal */}
+      {settleCustomer && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                <span>Receive Khata Payment</span>
+              </h3>
+              <button
+                onClick={() => setSettleCustomer(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
+              <div className="font-bold text-slate-900 text-base">{settleCustomer.name}</div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">{settleCustomer.phone || 'No phone'}</div>
+              <div className="mt-2 flex justify-between items-center border-t border-slate-200 pt-2">
+                <span className="text-xs text-slate-500 font-bold uppercase">Current Outstanding:</span>
+                <span className="text-lg font-black text-red-600 font-mono">
+                  BD {Number(settleCustomer.currentBalance || 0).toFixed(3)}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Payment Method
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod('CASH')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      settleMethod === 'CASH'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>💵 Cash</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod('BENEFIT_PAY')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      settleMethod === 'BENEFIT_PAY'
+                        ? 'bg-red-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>📱 BenefitPay</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Amount Paying (BD)
+                </label>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettleAmount(Number(settleCustomer.currentBalance || 0).toFixed(3))}
+                    className="px-2.5 py-1 bg-amber-100 text-amber-900 font-bold text-xs rounded-lg hover:bg-amber-200 cursor-pointer"
+                  >
+                    Full Balance
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettleAmount((Number(settleCustomer.currentBalance || 0) / 2).toFixed(3))}
+                    className="px-2.5 py-1 bg-slate-100 text-slate-700 font-bold text-xs rounded-lg hover:bg-slate-200 cursor-pointer"
+                  >
+                    50% Partial
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={settleAmount}
+                  onChange={(e) => setSettleAmount(e.target.value)}
+                  placeholder="0.000"
+                  className="w-full text-2xl font-black font-mono p-3 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSettleCustomer(null)}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteSettle}
+                  disabled={isSettling || !settleAmount || parseFloat(settleAmount) <= 0}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm transition-all cursor-pointer disabled:opacity-50 shadow-sm flex items-center justify-center gap-1.5"
+                >
+                  {isSettling ? 'Recording...' : 'Confirm Payment'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1689,22 +1856,22 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                     {filteredStatement.length} Entries
                   </span>
                 </div>
-                
+
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase">FROM</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                       className="border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white font-medium"
                     />
                   </div>
-                  
+
                   <div className="flex items-center gap-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase">TO</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                       className="border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white font-medium"
@@ -1712,7 +1879,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   </div>
 
                   {(startDate || endDate) && (
-                    <button 
+                    <button
                       type="button"
                       onClick={() => { setStartDate(''); setEndDate(''); }}
                       className="text-red-600 hover:text-red-800 text-xs font-bold px-1.5 py-1 cursor-pointer transition-colors"
@@ -1722,7 +1889,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   )}
 
                   {/* Pass the FILTERED statement to thermal printer function */}
-                  <button 
+                  <button
                     type="button"
                     onClick={async () => {
                       if (!statementCustomer) return;
@@ -1800,7 +1967,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                       })}
                     </tbody>
                   </table>
-                  
+
                   {filteredStatement.length === 0 && (
                     <div className="p-8 text-center text-slate-500 font-medium text-sm">
                       No records found for the selected date range.
@@ -1931,16 +2098,14 @@ function KpiCard({
   highlight?: 'emerald' | 'blue' | 'amber';
 }) {
   return (
-    <div className={`bg-white p-6 lg:p-8 rounded-2xl border transition-all duration-200 shadow-xs hover:shadow-sm flex items-center justify-between gap-4 ${
-      highlight === 'emerald' ? 'border-emerald-200/80 bg-emerald-50/10' : 'border-slate-200/90'
-    }`}>
+    <div className={`bg-white p-6 lg:p-8 rounded-2xl border transition-all duration-200 shadow-xs hover:shadow-sm flex items-center justify-between gap-4 ${highlight === 'emerald' ? 'border-emerald-200/80 bg-emerald-50/10' : 'border-slate-200/90'
+      }`}>
       <div className="space-y-1.5 flex-1 min-w-0">
         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider truncate">
           {title}
         </h4>
-        <p className={`text-2xl lg:text-3xl font-black font-mono tabular-nums truncate tracking-tight ${
-          highlight === 'emerald' ? 'text-emerald-700' : 'text-slate-900'
-        }`}>
+        <p className={`text-2xl lg:text-3xl font-black font-mono tabular-nums truncate tracking-tight ${highlight === 'emerald' ? 'text-emerald-700' : 'text-slate-900'
+          }`}>
           {value}
         </p>
       </div>

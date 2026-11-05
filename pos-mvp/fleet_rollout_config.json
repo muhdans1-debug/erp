@@ -1,0 +1,31 @@
+{
+  "stableVersion": "1.0.4",
+  "canaryVersion": "2.0.0",
+  "pilotStores": [
+    "ASKAR_001",
+    "ASKAR_002"
+  ],
+  "wave2Stores": [
+    "ASKAR_003",
+    "ASKAR_004",
+    "ASKAR_005",
+    "ASKAR_006",
+    "ASKAR_007",
+    "ASKAR_008",
+    "ASKAR_009",
+    "ASKAR_010",
+    "ASKAR_011",
+    "ASKAR_012",
+    "ASKAR_013",
+    "ASKAR_014",
+    "ASKAR_015",
+    "ASKAR_016",
+    "ASKAR_017",
+    "ASKAR_018",
+    "ASKAR_019",
+    "ASKAR_020"
+  ],
+  "rolloutStage": "PILOT",
+  "paused": false,
+  "releaseNotes": "Performance optimization, atomic CRDT Khata ledger, and auto-replenishment."
+}

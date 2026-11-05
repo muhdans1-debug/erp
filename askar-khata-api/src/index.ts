@@ -2,67 +2,110 @@ import { createClient } from '@libsql/client/web';
 
 export interface Env {
   TURSO_URL: string;
-  TURSO_AUTH_TOKEN: string;
+  TURSO_AUTH_TOKEN?: string;
+  TURSO_TOKEN?: string;
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Support CORS preflight requests
+    // 1. Support CORS preflight requests
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Headers': 'x-khata-pin, Content-Type',
         },
       });
     }
 
-    // Only respond to the specific Khata route
-    if (url.pathname.startsWith('/api/khata/')) {
-      // Extract the UUID from the URL (e.g., /api/khata/f8a9-4b2c)
-      const uuid = url.pathname.split('/').pop() || '';
+    // 2. Secured Edge Customer Khata Route
+    if (request.method === 'GET' && url.pathname.startsWith('/api/khata/')) {
+      const customerId = (url.pathname.split('/').pop() || '').trim();
+      const providedPin = request.headers.get('x-khata-pin')?.trim();
 
-      // Connect to Turso using Cloudflare's secure environment variables
-      const client = createClient({
+      // 1. Block missing PINs at the edge
+      if (!providedPin) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: PIN required.' }), {
+          status: 401,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      // Initialize Turso Client securely with worker environment variables
+      const authToken = env.TURSO_AUTH_TOKEN || env.TURSO_TOKEN || '';
+      const turso = createClient({
         url: env.TURSO_URL,
-        authToken: env.TURSO_AUTH_TOKEN,
+        authToken: authToken,
       });
 
       try {
-        // Query the unified Customer database securely
-        const result = await client.execute({
-          sql: 'SELECT name, balance, phone FROM Customer WHERE access_token = ? OR id = ?',
-          args: [uuid, uuid]
+        // 2. Securely verify the PIN against the database
+        const authCheck = await turso.execute({
+          sql: `SELECT id, name, balance, phone, cpr, pin, khata_pin, access_token 
+                FROM Customer 
+                WHERE (id = ? OR access_token = ?) 
+                  AND (pin = ? OR khata_pin = ?)
+                LIMIT 1`,
+          args: [customerId, customerId, providedPin, providedPin],
         });
 
-        if (result.rows.length === 0) {
-          return new Response(JSON.stringify({ error: "Account Not Found" }), {
-            status: 404,
+        if (authCheck.rows.length === 0) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Invalid Khata PIN.' }), {
+            status: 403,
             headers: {
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
+              'Access-Control-Allow-Origin': '*',
+            },
           });
         }
 
-        // Return the customer's balance to the React PWA
-        return new Response(JSON.stringify(result.rows[0]), {
+        const customer = authCheck.rows[0];
+        const actualCustomerId = String(customer.id);
+
+        // 3. PIN is valid, proceed to fetch and return the financial ledger
+        const ledgerQuery = await turso.execute({
+          sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, created_at 
+                FROM KhataLedger 
+                WHERE customerId = ? 
+                ORDER BY timestamp DESC LIMIT 50`,
+          args: [actualCustomerId],
+        });
+
+        const responsePayload = {
+          success: true,
+          id: actualCustomerId,
+          name: customer.name,
+          balance: customer.balance ?? 0,
+          phone: customer.phone,
+          cpr: customer.cpr,
+          ledger: ledgerQuery.rows || [],
+        };
+
+        return new Response(JSON.stringify(responsePayload), {
           status: 200,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*' // Allows your Vercel PWA to read it
-          }
+            'Access-Control-Allow-Origin': '*',
+          },
         });
-
-      } catch (error) {
-        return new Response("Database Error", { status: 500 });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: 'Edge Database Error', details: error?.message }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
       }
     }
 
-    return new Response("Askar API is running.", { status: 200 });
+    return new Response('Not Found', { status: 404 });
   },
 };

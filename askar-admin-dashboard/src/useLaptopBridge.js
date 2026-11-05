@@ -22,11 +22,11 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     if (typeof window !== 'undefined') {
       const host = window.location.hostname;
       if (host === 'localhost' || host === '127.0.0.1') {
-        return 'ws://localhost:8080';
+        return 'ws://localhost:3000/ws';
       }
-      return `ws://${host}:8080`;
+      return `ws://${host}:3000/ws`;
     }
-    return 'ws://192.168.88.10:8080';
+    return 'ws://askar-master.local:3000/ws';
   };
 
   useEffect(() => {

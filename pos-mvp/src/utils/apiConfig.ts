@@ -14,7 +14,7 @@ export function getServerIp(): string {
       .replace(/\/.*$/, '');
   }
   const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-  if (isNative) return '192.168.8.7';
+  if (isNative) return 'askar-master.local';
   return window.location.hostname || '127.0.0.1';
 }
 
@@ -32,7 +32,7 @@ export function getApiBaseUrl(): string {
     return clean.replace(/\/$/, '');
   }
   const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-  if (isNative) return 'http://192.168.8.7:3000';
+  if (isNative) return 'http://askar-master.local:3000';
   const host = window.location.hostname || '127.0.0.1';
   return `http://${host}:3000`;
 }

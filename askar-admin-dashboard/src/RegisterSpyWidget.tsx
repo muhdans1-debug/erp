@@ -30,7 +30,7 @@ export default function RegisterSpyWidget({
   useEffect(() => {
     // Connect locally since the bridge runs on the same Master Windows PC
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
-    const wsUrl = `ws://${host}:8080`;
+    const wsUrl = `ws://${host}:3000/ws`;
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
     let isUnmounted = false;

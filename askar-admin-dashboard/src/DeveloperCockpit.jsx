@@ -47,7 +47,7 @@ export default function DeveloperCockpit({
   // 5. Live Event Bus Logs
   const [eventLogs, setEventLogs] = useState([
     { id: 1, time: '21:30:12', type: 'SYS', msg: 'Developer Cockpit initialized on port 5176' },
-    { id: 2, time: '21:31:05', type: 'NET', msg: 'RJ45 WebSocket bridge connected to counter (ws://0.0.0.0:8080)' },
+    { id: 2, time: '21:31:05', type: 'NET', msg: 'Unified WebSocket bus connected to counter (ws://0.0.0.0:3000/ws)' },
     { id: 3, time: '21:32:44', type: 'DB', msg: 'Turso Cloud LibSQL replica synced (0 pending mutations)' },
     { id: 4, time: '21:35:18', type: 'NFC', msg: 'NFC Card 08:F9:95:86 resolved: Ali (Dual-Wallet Personal + Mess)' },
     { id: 5, time: '21:38:02', type: 'SALE', msg: 'Invoice INV-005058 committed with paymentType: MESS_KHATA' }
@@ -555,8 +555,8 @@ export default function DeveloperCockpit({
                     <span className="font-mono text-emerald-400 font-bold">Online (0ms)</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-800/80">
-                    <span className="text-slate-400">RJ45 UI Bridge:</span>
-                    <span className="font-mono text-blue-400 font-bold">ws://0.0.0.0:8080</span>
+                    <span className="text-slate-400">WebSocket Event Bus:</span>
+                    <span className="font-mono text-blue-400 font-bold">ws://0.0.0.0:3000/ws</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-800/80">
                     <span className="text-slate-400">Turso Cloud LibSQL:</span>

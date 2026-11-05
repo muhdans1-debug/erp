@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
+import { getOfflineSales, markOfflineSalesSynced, getOfflineSalesCount } from '../utils/nativeDb';
+import { syncOfflineKhataEvents } from '../utils/offlineSync';
 
 export function useOfflineSync(apiBaseUrl?: string) {
   const [pendingCount, setPendingCount] = useState<number>(0);
@@ -8,39 +9,28 @@ export function useOfflineSync(apiBaseUrl?: string) {
   const [lastError, setLastError] = useState<string | null>(null);
   const isDrainingRef = useRef(false);
 
-  // Helper to read and normalize the queue (merging legacy keys if present)
-  const getQueue = useCallback((): any[] => {
+  // Helper to read and normalize the queue across Native SQLite and LocalStorage
+  const getQueue = useCallback(async (): Promise<any[]> => {
     try {
-      let queue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
-      
-      // Auto-migrate any un-drained legacy queue entries
-      const legacy = localStorage.getItem('askar_offline_sales');
-      if (legacy) {
-        try {
-          const legacyItems = JSON.parse(legacy);
-          if (Array.isArray(legacyItems) && legacyItems.length > 0) {
-            queue = [...queue, ...legacyItems];
-            localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(queue));
-          }
-          localStorage.removeItem('askar_offline_sales');
-        } catch {}
-      }
-
-      return Array.isArray(queue) ? queue : [];
+      return await getOfflineSales();
     } catch {
       return [];
     }
   }, []);
 
-  const updatePendingCount = useCallback(() => {
-    const queue = getQueue();
-    setPendingCount(queue.length);
-  }, [getQueue]);
+  const updatePendingCount = useCallback(async () => {
+    try {
+      const count = await getOfflineSalesCount();
+      setPendingCount(count);
+    } catch {
+      setPendingCount(0);
+    }
+  }, []);
 
   // Drain offline sales queue to Master Server
   const drainQueue = useCallback(async () => {
     if (isDrainingRef.current) return;
-    const queue = getQueue();
+    const queue = await getQueue();
     if (queue.length === 0) {
       setPendingCount(0);
       return { success: true, processed: 0 };
@@ -95,10 +85,10 @@ export function useOfflineSync(apiBaseUrl?: string) {
 
         if (response.ok) {
           const resData = await response.json();
-          // Clear the standardized key upon successful sync
-          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, '[]');
-          localStorage.removeItem('askar_offline_sales');
-          updatePendingCount();
+          // Purge synced sales from both Native SQLite and LocalStorage
+          const syncedIds = normalizedSales.map(s => s.id);
+          await markOfflineSalesSynced(syncedIds);
+          await updatePendingCount();
           setLastDrainTime(new Date());
           processedCount = resData.processed || normalizedSales.length;
           console.log(`🟢 [useOfflineSync] Successfully drained offline queue (${processedCount} sales) to ${base}`);
@@ -110,6 +100,11 @@ export function useOfflineSync(apiBaseUrl?: string) {
         setLastError(err?.message || 'Sync network error');
       }
     }
+
+    // Also trigger asynchronous CRDT Khata offline queue synchronization
+    syncOfflineKhataEvents().catch((err) => {
+      console.warn('⚠️ [useOfflineSync] Background Khata sync error:', err);
+    });
 
     isDrainingRef.current = false;
     setIsDraining(false);
@@ -129,8 +124,8 @@ export function useOfflineSync(apiBaseUrl?: string) {
     window.addEventListener('online', handleOnline);
 
     // Periodic check every 30 seconds
-    const interval = setInterval(() => {
-      const q = getQueue();
+    const interval = setInterval(async () => {
+      const q = await getQueue();
       if (q.length > 0) {
         drainQueue();
       } else {

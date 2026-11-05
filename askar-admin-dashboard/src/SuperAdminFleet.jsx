@@ -52,6 +52,10 @@ export default function SuperAdminFleet() {
   // Audit Logs State
   const [auditLogs, setAuditLogs] = useState([]);
 
+  // GitOps Canary Rollout & Telemetry State
+  const [rolloutData, setRolloutData] = useState(null);
+  const [updatingStage, setUpdatingStage] = useState(false);
+
   // Load initial data
   const loadFleetData = async () => {
     setLoading(true);
@@ -80,6 +84,13 @@ export default function SuperAdminFleet() {
       if (auditData.success) {
         setAuditLogs(auditData.logs || []);
       }
+
+      // 4. Fetch GitOps Fleet Telemetry & Canary Rollout Status
+      const rolloutRes = await fetch(`${API_BASE}/api/telemetry`);
+      const rolloutJson = await rolloutRes.json();
+      if (rolloutJson.success) {
+        setRolloutData(rolloutJson);
+      }
     } catch (err) {
       console.error('Failed to load fleet data:', err);
       setStatusMessage('⚠️ Could not connect to Super Admin backend. Ensure server is active on port 3000.');
@@ -104,7 +115,10 @@ export default function SuperAdminFleet() {
     try {
       const res = await fetch(`${API_BASE}/api/super-admin/query`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+        },
         body: JSON.stringify({
           databaseName: selectedDb,
           sqlQuery: sqlQuery.trim()
@@ -136,7 +150,10 @@ export default function SuperAdminFleet() {
     try {
       const res = await fetch(`${API_BASE}/api/super-admin/tenants/provision`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+        },
         body: JSON.stringify({
           slug: newStoreSlug.trim().toLowerCase(),
           group: 'default'
@@ -248,7 +265,10 @@ export default function SuperAdminFleet() {
     try {
       const res = await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+        },
         body: JSON.stringify({
           terminalId: terminal.id,
           licensed: newLicensedState
@@ -264,6 +284,33 @@ export default function SuperAdminFleet() {
       alert(`Kill switch trigger error: ${err.message}`);
     } finally {
       setTogglingLicense(false);
+    }
+  };
+
+  // Advance Progressive Canary Rollout Stage
+  const handleAdvanceRollout = async (stage, paused = false) => {
+    setUpdatingStage(true);
+    setStatusMessage('');
+    try {
+      const res = await fetch(`${API_BASE}/api/fleet/rollout-stage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+        },
+        body: JSON.stringify({ stage, paused })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusMessage(`✅ Fleet Rollout updated: Stage ${stage || (paused ? 'PAUSED' : 'ACTIVE')}`);
+        loadFleetData();
+      } else {
+        setStatusMessage(`❌ Error updating rollout: ${data.error || 'Server rejected request'}`);
+      }
+    } catch (err) {
+      setStatusMessage(`❌ Failed to update rollout: ${err.message}`);
+    } finally {
+      setUpdatingStage(false);
     }
   };
 
@@ -342,6 +389,18 @@ export default function SuperAdminFleet() {
         >
           <Cpu className="w-4 h-4 text-emerald-400" />
           The Fleet Matrix ({fleet.length})
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('rollout')}
+          className={`py-2 px-4 text-sm font-semibold rounded-t-lg transition flex items-center gap-2 ${
+            activeSubTab === 'rollout'
+              ? 'bg-slate-800 text-white border-t-2 border-cyan-500'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-cyan-400" />
+          GitOps Canary Rollout ({rolloutData?.totalStores || 25} Stores)
         </button>
 
         <button
@@ -495,6 +554,225 @@ export default function SuperAdminFleet() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: GITOPS CANARY ROLLOUT & TELEMETRY */}
+      {activeSubTab === 'rollout' && (
+        <div className="space-y-6">
+          {/* Rollout Control Header */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="font-black text-white text-lg flex items-center gap-2">
+                  <Radio className="w-5 h-5 text-cyan-400 animate-pulse" />
+                  GitOps Pull-Based Fleet Rollout & Canary Controller
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Autonomous pull-based upgrades for 100+ stores. Supermarket laptops independently query versions and deploy via GitOps.
+                </p>
+              </div>
+
+              {/* Status and Pause Badge */}
+              <div className="flex items-center gap-3">
+                <span className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
+                  rolloutData?.paused
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${rolloutData?.paused ? 'bg-red-400' : 'bg-emerald-400 animate-ping'}`} />
+                  {rolloutData?.paused ? 'DEPLOYMENTS PAUSED' : `ROLLOUT ACTIVE: ${rolloutData?.rolloutStage || 'PILOT'}`}
+                </span>
+
+                <button
+                  disabled={updatingStage}
+                  onClick={() => handleAdvanceRollout(rolloutData?.rolloutStage, !rolloutData?.paused)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                    rolloutData?.paused
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-red-600 hover:bg-red-500 text-white'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {rolloutData?.paused ? 'Resume Rollout' : 'Emergency Freeze'}
+                </button>
+              </div>
+            </div>
+
+            {/* Stage Progress Bar & KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase">Target Canary Version</p>
+                <p className="text-xl font-black text-cyan-400 mt-1">v{rolloutData?.canaryVersion || '1.0.5'}</p>
+                <span className="text-[10px] text-slate-500">Stable Baseline: v{rolloutData?.stableVersion || '1.0.4'}</span>
+              </div>
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase">Current Stage</p>
+                <p className="text-xl font-black text-white mt-1">
+                  {rolloutData?.rolloutStage === 'PILOT' && 'Stage 1: Pilot Stores'}
+                  {rolloutData?.rolloutStage === 'WAVE_2' && 'Stage 2: Wave 2 (20 Stores)'}
+                  {rolloutData?.rolloutStage === 'FULL' && 'Stage 3: 100+ Stores (Full)'}
+                </p>
+                <span className="text-[10px] text-cyan-400">Canary Channel Assigned</span>
+              </div>
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase">Fleet Adoption</p>
+                <p className="text-xl font-black text-emerald-400 mt-1">
+                  {rolloutData?.updatedCount || 2} / {rolloutData?.totalStores || 25} Stores
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  {Math.round(((rolloutData?.updatedCount || 2) / (rolloutData?.totalStores || 25)) * 100)}% on Canary release
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase">Updater Protocol</p>
+                <p className="text-xl font-black text-purple-400 mt-1">GitOps Pull</p>
+                <span className="text-[10px] text-slate-500">Zero-Downtime deploy.bat</span>
+              </div>
+            </div>
+
+            {/* Rollout Stage Controller Buttons */}
+            <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+              <p className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-400" />
+                Progressive Rollout Stage Transitions (Canary Releases)
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button
+                  disabled={updatingStage}
+                  onClick={() => handleAdvanceRollout('PILOT', false)}
+                  className={`p-3 rounded-lg border text-left transition ${
+                    rolloutData?.rolloutStage === 'PILOT'
+                      ? 'bg-cyan-950/40 border-cyan-500/60 ring-1 ring-cyan-500'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">Day 1: Pilot Stores</span>
+                    {rolloutData?.rolloutStage === 'PILOT' && <CheckCircle2 className="w-4 h-4 text-cyan-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Push v{rolloutData?.canaryVersion || '1.0.5'} to Stores #1 & #2 only. Monitor cashier telemetry for 24h.
+                  </p>
+                </button>
+
+                <button
+                  disabled={updatingStage}
+                  onClick={() => handleAdvanceRollout('WAVE_2', false)}
+                  className={`p-3 rounded-lg border text-left transition ${
+                    rolloutData?.rolloutStage === 'WAVE_2'
+                      ? 'bg-blue-950/40 border-blue-500/60 ring-1 ring-blue-500'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">Day 2: Wave 2 (Stores 3-20)</span>
+                    {rolloutData?.rolloutStage === 'WAVE_2' && <CheckCircle2 className="w-4 h-4 text-blue-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Expand deployment to 20 regional locations across Bahrain. Confirm load stability.
+                  </p>
+                </button>
+
+                <button
+                  disabled={updatingStage}
+                  onClick={() => handleAdvanceRollout('FULL', false)}
+                  className={`p-3 rounded-lg border text-left transition ${
+                    rolloutData?.rolloutStage === 'FULL'
+                      ? 'bg-emerald-950/40 border-emerald-500/60 ring-1 ring-emerald-500'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">Day 3: Full Fleet (100+ Stores)</span>
+                    {rolloutData?.rolloutStage === 'FULL' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    All 100+ stores pull latest release overnight. 100% fleet modernization.
+                  </p>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Stores Telemetry Grid */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+            <div className="p-4 bg-slate-800/40 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-white flex items-center gap-2 text-sm">
+                <Server className="w-4 h-4 text-cyan-400" />
+                Fleet Heartbeat & Telemetry Monitor ({rolloutData?.stores?.length || 25} Stores Reporting)
+              </h3>
+              <span className="text-xs text-slate-400">
+                Independent pull cycles every 60m · Telemetry heartbeat every 5m
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase font-mono text-[10px] tracking-wider border-b border-slate-800">
+                  <tr>
+                    <th className="p-3">Store ID</th>
+                    <th className="p-3">Branch & Location</th>
+                    <th className="p-3">Installed Version</th>
+                    <th className="p-3">Target Version</th>
+                    <th className="p-3">Channel / Stage</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Last Telemetry Ping</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50 font-mono">
+                  {(rolloutData?.stores || []).map((store) => (
+                    <tr key={store.storeId} className="hover:bg-slate-800/30 transition">
+                      <td className="p-3 font-bold text-white">{store.storeId}</td>
+                      <td className="p-3">
+                        <div className="font-sans font-semibold text-slate-200">{store.storeName}</div>
+                        <div className="text-[11px] text-slate-400">{store.location}</div>
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded font-bold ${
+                          store.version === rolloutData?.canaryVersion
+                            ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-300'
+                            : 'bg-slate-800 text-slate-300'
+                        }`}>
+                          v{store.version}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-400">
+                        v{store.targetVersion || rolloutData?.canaryVersion || '1.0.5'}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          store.stage === 'PILOT'
+                            ? 'bg-purple-500/10 border border-purple-500/30 text-purple-300'
+                            : (store.stage === 'WAVE_2' ? 'bg-blue-500/10 border border-blue-500/30 text-blue-300' : 'bg-slate-800 text-slate-400')
+                        }`}>
+                          {store.stage || 'STABLE'}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold ${
+                          store.status === 'ONLINE' || store.status === 'UPDATED'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : (store.status === 'UPDATING' ? 'bg-blue-500/10 text-blue-400 animate-pulse' : 'bg-amber-500/10 text-amber-400')
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            store.status === 'ONLINE' || store.status === 'UPDATED' ? 'bg-emerald-400' : 'bg-blue-400 animate-ping'
+                          }`} />
+                          {store.status || 'ONLINE'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-400">
+                        {store.lastPing ? new Date(store.lastPing).toLocaleTimeString() : 'Just now'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

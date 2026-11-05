@@ -130,40 +130,74 @@ fastify.post('/api/auth/change-pin', async (request, reply) => {
   }
 });
 
-// Khata Customer Statement Endpoint
+// Khata Customer Statement Endpoint (Secured by x-khata-pin header)
 fastify.get('/api/khata/:uuid', async (request, reply) => {
   const { uuid } = request.params;
+  const providedPin = String(request.headers['x-khata-pin'] || '').trim();
+
+  // 1. Block missing PINs
+  if (!providedPin) {
+    return reply.status(401).send({ error: 'Unauthorized: PIN required.' });
+  }
+
   try {
-    // 1. Primary lookup in unified Customer table
-    const result = await db.execute({
-      sql: 'SELECT id, name, COALESCE(balance, 0.0) AS balance, phone, access_token, cardUid, cpr, mess_id FROM Customer WHERE access_token = ? OR id = ? OR phone = ? OR cardUid = ? OR cpr = ? LIMIT 1',
+    // 2. Verify PIN against unified Customer table
+    const authCheck = await db.execute({
+      sql: `SELECT id, name, COALESCE(balance, 0.0) AS balance, phone, access_token, cardUid, cpr, mess_id, COALESCE(pin, khata_pin, '1234') as pin
+            FROM Customer 
+            WHERE access_token = ? OR id = ? OR phone = ? OR cardUid = ? OR cpr = ? 
+            LIMIT 1`,
       args: [uuid, uuid, uuid, uuid, uuid]
     });
 
-    if (result.rows && result.rows.length > 0) {
-      return result.rows[0];
+    if (authCheck.rows && authCheck.rows.length > 0) {
+      const customer = authCheck.rows[0];
+      const validPin = customer.pin ? String(customer.pin).trim() : '1234';
+
+      if (validPin !== providedPin) {
+        return reply.status(403).send({ error: 'Forbidden: Invalid Khata PIN.' });
+      }
+
+      // 3. Fetch financial ledger transactions
+      const ledgerQuery = await db.execute({
+        sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, created_at 
+              FROM KhataLedger 
+              WHERE customerId = ? 
+              ORDER BY timestamp DESC LIMIT 50`,
+        args: [String(customer.id)]
+      });
+
+      return reply.send({
+        success: true,
+        id: customer.id,
+        name: customer.name,
+        balance: customer.balance ?? 0,
+        phone: customer.phone,
+        cpr: customer.cpr,
+        ledger: ledgerQuery.rows || []
+      });
     }
 
+    // Demo / test account fallback
     if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {
-      return {
+      if (providedPin !== '1234') {
+        return reply.status(403).send({ error: 'Forbidden: Invalid Khata PIN.' });
+      }
+      return reply.send({
+        success: true,
         id: uuid,
         name: 'Camp Mess Alpha (Test Account)',
         balance: 14.500,
-        access_token: uuid
-      };
+        access_token: uuid,
+        ledger: [
+          { id: '1', customerId: uuid, amount: 14.500, type: 'DEBIT', reference: 'Initial Balance', timestamp: new Date().toISOString() }
+        ]
+      });
     }
 
     return reply.status(404).send({ error: "Account Not Found" });
   } catch (error) {
     fastify.log.error(error);
-    if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {
-      return {
-        id: uuid,
-        name: 'Camp Mess Alpha (Test Account)',
-        balance: 14.500,
-        access_token: uuid
-      };
-    }
     return reply.status(500).send({ error: "Database Error", message: error.message });
   }
 });

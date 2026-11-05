@@ -41,7 +41,11 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
 
   const list = customers.map((c) => {
     const customerLedger = allLedger.filter((l) => l.customerId === c.id);
-    const computedBalance = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const hasLedger = customerLedger.length > 0;
+    const ledgerSum = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const computedBalance = hasLedger 
+      ? Math.max(ledgerSum, Number(c.balance || 0))
+      : Number(c.balance || 0);
     const isAct = c.is_active === 1 || c.is_active === true || c.is_active === undefined || c.is_active === null;
 
     // 1. Calculate Last Payment Date & Aging
@@ -82,6 +86,7 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
       is_active: isAct ? 1 : 0,
       isActive: isAct,
       currentBalance: Number(currentBalance.toFixed(3)),
+      balance: Number(currentBalance.toFixed(3)),
       creditLimit: Number(creditLimit.toFixed(3)),
       isOverLimit,
       isStale,
@@ -137,7 +142,8 @@ const getCustomerWithBalanceById = async (id) => {
   const khataConfig = loadKhataConfig();
   const nowTime = Date.now();
   const customerLedger = allLedger.filter((l) => l.customerId === id);
-  const computedBalance = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const ledgerSum = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const computedBalance = Math.max(ledgerSum, Number(customer.balance || 0));
   const isAct = customer.is_active === 1 || customer.is_active === true || customer.is_active === undefined || customer.is_active === null;
 
   const paymentEntries = customerLedger.filter((e) => Number(e.amount) < 0 || e.type === 'PAYMENT');
@@ -481,9 +487,9 @@ const handleGetCustomerStatement = async (request, reply) => {
       sales: statement, // Backward compatibility for legacy UI
       customer: {
         ...(enrichedCust || customer),
-        currentBalance: Math.max(0, Number(runningBalance.toFixed(3))),
+        currentBalance: enrichedCust?.currentBalance !== undefined ? enrichedCust.currentBalance : Math.max(0, Number(runningBalance.toFixed(3))),
       },
-      currentBalance: Math.max(0, Number(runningBalance.toFixed(3))),
+      currentBalance: enrichedCust?.currentBalance !== undefined ? enrichedCust.currentBalance : Math.max(0, Number(runningBalance.toFixed(3))),
       messGroup,
     };
   } catch (error) {
@@ -956,11 +962,7 @@ fastify.put('/api/khata/:id', handleUpdateCustomer);
 
 // 1d. Bad Debt Write-Off (Settles balance as WRITE_OFF and logs business expense)
 fastify.post('/api/khata/write-off', { preHandler: managerAuth }, async (request, reply) => {
-  const { customerId, reason = 'Stale uncollectible balance write-off', managerPin } = request.body || {};
-  const effectivePin = request.headers['x-manager-pin'] || managerPin;
-  if (effectivePin !== (process.env.MANAGER_PIN || '9999')) {
-    return reply.status(401).send({ success: false, error: 'Unauthorized: Invalid Manager PIN' });
-  }
+  const { customerId, reason = 'Stale uncollectible balance write-off' } = request.body || {};
 
   const customer = await getCustomerWithBalanceById(customerId);
   if (!customer) {
@@ -1125,7 +1127,9 @@ const handleCustomerSettle = async (request, reply) => {
 
     const allLedger = await db.orm.KhataLedger.all();
     const customerLedger = allLedger.filter((l) => l.customerId === id);
-    const previousBalance = Math.max(0, customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0));
+    const ledgerSum = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const resolvedPrev = Math.max(ledgerSum, Number(customer.balance || 0));
+    const previousBalance = Math.max(0, resolvedPrev);
     const newBalance = Math.max(0, previousBalance - settleAmount);
 
     const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
@@ -1144,6 +1148,25 @@ const handleCustomerSettle = async (request, reply) => {
       tenantId: 'tenant_askar_01',
     };
     await db.orm.KhataLedger.create(ledgerEntry);
+
+    // Persist running balance directly into Customer table
+    await db.execute({
+      sql: 'UPDATE Customer SET balance = MAX(0, COALESCE(balance, 0) - ?) WHERE id = ?',
+      args: [settleAmount, id]
+    }).catch((err) => console.warn('Customer balance update warning:', err));
+
+    // Broadcast atomic settlement delta to all connected POS registers
+    if (fastify.websocketServer?.clients) {
+      fastify.websocketServer.clients.forEach(client => {
+        if (client.readyState === 1) {
+          client.send(JSON.stringify({
+            type: 'KHATA_BALANCE_UPDATED',
+            customerId: id,
+            delta: -settleAmount
+          }));
+        }
+      });
+    }
 
     const updatedCustomer = {
       ...customer,
@@ -1175,6 +1198,8 @@ const handleCustomerSettle = async (request, reply) => {
 fastify.post('/api/customers/:id/settle', handleCustomerSettle);
 fastify.post('/khata/:id/pay', handleCustomerSettle);
 fastify.post('/api/khata/:id/pay', handleCustomerSettle);
+fastify.post('/api/khata/:id/settle', handleCustomerSettle);
+fastify.post('/khata/:id/settle', handleCustomerSettle);
 
 // Alias endpoints for direct Khata payment submission
 fastify.post('/khata/pay', async (request, reply) => {
@@ -1254,5 +1279,63 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
     return reply.status(500).send({ error: 'Failed to fetch ledger updates' });
   }
 });
+
+  // --- CRDT Event-Sourced Atomic Khata Charge Endpoint ---
+  // Decouples balance calculation from individual registers: appends delta to KhataLedger
+  // and applies atomic relative delta (balance = balance + ?) to prevent concurrent overwrites.
+  const handleKhataCharge = async (request, reply) => {
+    const { customerId, customer_id, amount, invoiceNo, reference } = request.body || {};
+    const effectiveCustomerId = customerId || customer_id;
+    const effectiveInvoiceNo = invoiceNo || reference || `INV-${Date.now()}`;
+    const numAmount = Number(amount);
+
+    if (!effectiveCustomerId || isNaN(numAmount)) {
+      return reply.code(400).send({ error: 'Missing customerId or invalid amount' });
+    }
+
+    // Start an isolated transaction to guarantee atomic execution
+    const database = fastify.db || db;
+    const transaction = await database.transaction('write');
+
+    try {
+      // 1. Append the immutable event to the ledger (The CRDT Log)
+      const ledgerId = crypto.randomUUID();
+      await transaction.execute({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, timestamp) 
+              VALUES (?, ?, ?, 'CHARGE', ?, CURRENT_TIMESTAMP)`,
+        args: [ledgerId, effectiveCustomerId, numAmount, effectiveInvoiceNo]
+      });
+
+      // 2. Perform an atomic relative update, NEVER an absolute overwrite
+      await transaction.execute({
+        sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
+        args: [numAmount, effectiveCustomerId]
+      });
+
+      await transaction.commit();
+
+      // 3. Broadcast the balance update to all registers instantly
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach(client => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'KHATA_BALANCE_UPDATED',
+              customerId: effectiveCustomerId,
+              delta: numAmount
+            }));
+          }
+        });
+      }
+
+      return reply.send({ success: true, ledgerId });
+    } catch (error) {
+      await transaction.rollback().catch(() => {});
+      fastify.log.error('Khata CRDT Transaction Failed:', error);
+      return reply.code(500).send({ error: 'Database merge conflict' });
+    }
+  };
+
+  fastify.post('/api/khata/charge', handleKhataCharge);
+  fastify.post('/khata/charge', handleKhataCharge);
 
 }

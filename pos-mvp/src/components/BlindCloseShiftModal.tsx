@@ -204,7 +204,7 @@ export default function BlindCloseShiftModal({
           
           candidateHosts.forEach((host) => {
             try {
-              const ws = new WebSocket(`ws://${host}:8080`);
+              const ws = new WebSocket(`ws://${host}:3000/ws`);
               ws.onopen = () => {
                 ws.send(JSON.stringify({ type: 'SHIFT_CLOSED', payload: shiftClosedPayload }));
                 setTimeout(() => ws.close(), 1000);

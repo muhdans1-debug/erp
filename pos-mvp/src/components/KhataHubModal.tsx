@@ -12,6 +12,7 @@ interface Customer {
   description?: string | null;
   cardUid?: string | null;
   currentBalance: number;
+  balance?: number;
   creditLimit?: number;
   isStale?: boolean;
   isOverLimit?: boolean;
@@ -25,6 +26,7 @@ interface KhataHubModalProps {
   onClose: () => void;
   apiBase?: string;
   onCustomerUpdated?: () => void;
+  onSelectCustomerForCart?: (customer: Customer) => void;
   lastScannedCardUid?: string | null;
   showToast?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
@@ -33,6 +35,7 @@ export default function KhataHubModal({
   onClose,
   apiBase = 'http://localhost:3000',
   onCustomerUpdated,
+  onSelectCustomerForCart,
   lastScannedCardUid,
   showToast
 }: KhataHubModalProps) {
@@ -84,6 +87,8 @@ export default function KhataHubModal({
             <SettleBalanceView
               apiBase={apiBase}
               onCustomerUpdated={onCustomerUpdated}
+              onSelectCustomerForCart={onSelectCustomerForCart}
+              onClose={onClose}
               showToast={showToast}
               initialCardUid={lastScannedCardUid || lastDetectedUid}
               scannedCardUid={scannedUid}
@@ -113,6 +118,8 @@ export default function KhataHubModal({
 function SettleBalanceView({
   apiBase,
   onCustomerUpdated,
+  onSelectCustomerForCart,
+  onClose,
   showToast,
   initialCardUid,
   scannedCardUid,
@@ -120,6 +127,8 @@ function SettleBalanceView({
 }: {
   apiBase: string;
   onCustomerUpdated?: () => void;
+  onSelectCustomerForCart?: (customer: Customer) => void;
+  onClose?: () => void;
   showToast?: (message: string, type?: 'success' | 'info' | 'error') => void;
   initialCardUid?: string | null;
   scannedCardUid?: string | null;
@@ -162,6 +171,54 @@ function SettleBalanceView({
   useEffect(() => {
     fetchKhataCustomers();
   }, [apiBase, sortParam]);
+
+  // 📡 Real-Time CRDT WebSocket Listener: Adjust customer balances live across all registers
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    try {
+      const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'askar-master.local';
+      ws = new WebSocket(`ws://${wsHost}:3000/ws`);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
+            const delta = Number(data.delta) || 0;
+
+            // 1. Update customer in the active browse/search list
+            setCustomers((prev) =>
+              prev.map((c) => {
+                if (c.id === data.customerId) {
+                  const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
+                  const newBal = Number((oldBal + delta).toFixed(3));
+                  return { ...c, currentBalance: newBal, balance: newBal };
+                }
+                return c;
+              })
+            );
+
+            // 2. Update active customer details if currently selected
+            setSelectedCustomer((prev) => {
+              if (prev && prev.id === data.customerId) {
+                const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
+                const newBal = Number((oldBal + delta).toFixed(3));
+                return {
+                  ...prev,
+                  currentBalance: newBal,
+                  balance: newBal
+                };
+              }
+              return prev;
+            });
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => {
+      if (ws) ws.close();
+    };
+  }, []);
 
   const handleCustomerSaved = (updated: Customer) => {
     setCustomers((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)));
@@ -424,6 +481,19 @@ function SettleBalanceView({
             >
               <FileClock size={16} /> View Statement
             </button>
+            {onSelectCustomerForCart && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectCustomerForCart(selectedCustomer);
+                  onClose?.();
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-sm bg-amber-500 hover:bg-amber-600 text-white transition-all cursor-pointer active:scale-95 shadow-xs ml-1"
+                title="Link this customer to active cart for checkout"
+              >
+                🛒 Link to Cart
+              </button>
+            )}
           </div>
         </div>
 
@@ -518,7 +588,6 @@ function SettleBalanceView({
                   onChange={(e) => setPayAmount(e.target.value)}
                   className="w-full text-3xl font-black p-4 bg-white border-2 border-slate-300 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-300"
                   placeholder="0.000"
-                  autoFocus
                 />
               </div>
               <div className="flex gap-3 items-end">

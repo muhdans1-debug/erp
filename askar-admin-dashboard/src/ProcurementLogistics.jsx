@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { 
   Truck, ShoppingCart, MessageSquare, Plus, CheckCircle2, 
-  AlertTriangle, Phone, ExternalLink, Calendar, DollarSign, PackageCheck, Send 
+  AlertTriangle, Phone, ExternalLink, Calendar, DollarSign, PackageCheck, Send, Sparkles, Edit3 
 } from 'lucide-react';
+import ProcurementPanel from './ProcurementPanel';
 
 const BAHRAIN_DISTRIBUTORS = [
   {
@@ -48,6 +49,7 @@ const BAHRAIN_DISTRIBUTORS = [
 ];
 
 export default function ProcurementLogistics({ apiBase = 'http://localhost:3000' }) {
+  const [activeView, setActiveView] = useState('predictive'); // 'predictive' | 'manual'
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedDistributor, setSelectedDistributor] = useState(BAHRAIN_DISTRIBUTORS[0]);
@@ -132,7 +134,7 @@ Please confirm receipt and expected delivery invoice. Thank you!`;
   return (
     <div className="space-y-8 font-sans">
       
-      {/* Title */}
+      {/* Title & Mode Switcher */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
@@ -144,10 +146,31 @@ Please confirm receipt and expected delivery invoice. Thank you!`;
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold px-3 py-1 bg-amber-100 text-amber-800 rounded-full border border-amber-300">
-            5 Registered Distributors
-          </span>
+        {/* View Switcher Tabs */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
+          <button
+            onClick={() => setActiveView('predictive')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              activeView === 'predictive'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>Predictive Auto-Replenishment</span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('manual')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              activeView === 'manual'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Edit3 className="w-3.5 h-3.5 text-slate-500" />
+            <span>Manual PO Composer</span>
+          </button>
         </div>
       </div>
 
@@ -158,8 +181,12 @@ Please confirm receipt and expected delivery invoice. Thank you!`;
         </div>
       )}
 
-      {/* Main 2-Column Workflow */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {/* Render View */}
+      {activeView === 'predictive' ? (
+        <ProcurementPanel apiBase={apiBase} />
+      ) : (
+        /* Main 2-Column Workflow for Manual PO Composer */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Left Column: Distributor Directory */}
         <div className="space-y-4">
@@ -311,6 +338,7 @@ Please confirm receipt and expected delivery invoice. Thank you!`;
         </div>
 
       </div>
+      )}
 
     </div>
   );

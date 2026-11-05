@@ -10,13 +10,18 @@ import F100Pim from './F100Pim';
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
 import { useSunmiBridge } from './hooks/useSunmiBridge';
+import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 import { printFullReceipt } from './utils/printer';
 import { Printer } from 'capacitor-sunmi-printer';
 import { KeepAwake } from '@capacitor-community/keep-awake';
+import { initNativeOfflineStorage } from './utils/nativeDb';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
 export default function App() {
+  // Headless Hardware Barcode Scanner Wedge (runs silently outside React render tree)
+  useBarcodeWedge();
+
   // Target the 4.3" SUNMI Customer Display route directly (800x480)
   const isCustomerDisplayRoute = typeof window !== 'undefined' && (
     window.location.pathname === '/customer-display' ||
@@ -87,14 +92,14 @@ export default function App() {
 
   const [apiBase] = useState(() => {
     if (typeof window !== 'undefined') {
-      const custom = localStorage.getItem('master_server_url');
-      if (custom) return custom;
+      const custom = localStorage.getItem('master_server_url') || localStorage.getItem('ASKAR_FALLBACK_IP');
+      if (custom) return custom.replace(/\/+$/, '');
       const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-      if (isNative) return 'http://192.168.8.7:3000';
+      if (isNative) return 'http://askar-master.local:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
     }
-    return 'http://localhost:3000';
+    return 'http://askar-master.local:3000';
   });
 
   // Disaster Recovery Protocol: Cloud Traffic Light & Physical Backup
@@ -110,6 +115,13 @@ export default function App() {
   // Initialize Capgo Over-The-Air (OTA) updater for silent remote hot-swaps
   useEffect(() => {
     initOTA();
+  }, []);
+
+  // ⚡ Native Android SQLite Initialization (immunizes offline transactions against browser cache evictions)
+  useEffect(() => {
+    initNativeOfflineStorage().catch((err) => {
+      console.warn('Native offline storage notice (non-fatal on web):', err);
+    });
   }, []);
 
   // 🟢 PREVENTS DOZE MODE: Forces Android to keep screen and CPU active while POS is running

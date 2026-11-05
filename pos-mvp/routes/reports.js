@@ -103,8 +103,8 @@ const getFinancialReportData = async (query = {}) => {
   };
 
   filteredSales.forEach((sale) => {
-    const saleAmount = Number(sale.totalAmount ?? sale.total ?? 0);
-    const saleVat = Number(sale.totalVat ?? sale.vatTotal ?? 0);
+    const saleAmount = Number(sale.total ?? sale.totalAmount ?? 0);
+    const saleVat = Number(sale.vatTotal ?? sale.totalVat ?? 0);
     totalRevenue += saleAmount;
     totalVat += saleVat;
 
@@ -174,9 +174,9 @@ const getFinancialReportData = async (query = {}) => {
       id: s.id,
       invoiceNo: s.invoiceNo,
       createdAt: s.createdAt,
-      total_amount: Number(s.totalAmount ?? s.total ?? 0),
-      vat_amount: Number(s.totalVat ?? s.vatTotal ?? 0),
-      net_amount: Number((s.totalAmount ?? s.total ?? 0) - (s.totalVat ?? s.vatTotal ?? 0)),
+      total_amount: Number(s.total ?? s.totalAmount ?? 0),
+      vat_amount: Number(s.vatTotal ?? s.totalVat ?? 0),
+      net_amount: Number((s.total ?? s.totalAmount ?? 0) - (s.vatTotal ?? s.totalVat ?? 0)),
       paymentType: s.paymentType,
       status: s.status,
     }))

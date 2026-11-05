@@ -127,7 +127,7 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
 
     // 2. Real-time RJ45 WebSocket Bridge Listener
     const bridgeHost = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
-    const bridgeUrl = `ws://${bridgeHost}:8080`;
+    const bridgeUrl = `ws://${bridgeHost}:3000/ws`;
     let ws: WebSocket | null = null;
     let reconnectTimer: any = null;
     let isUnmounted = false;

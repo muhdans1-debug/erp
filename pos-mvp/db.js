@@ -48,8 +48,13 @@ if (!fs.existsSync(dataDir)) {
 export const localDbPath = path.resolve(dataDir, 'local.db');
 
 // Resolve cloud credentials
-const TURSO_URL = process.env.TURSO_DATABASE_URL || 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io';
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || '';
+const url = process.env.TURSO_DATABASE_URL;
+const authToken = process.env.TURSO_AUTH_TOKEN;
+
+if (!url || !authToken) {
+  console.error("❌ CRITICAL: Turso credentials missing from .env file.");
+  process.exit(1); // Kill the server if secrets are missing
+}
 
 // Safe Initialization: Allow LibSQL and SQLite WAL engine to handle recovery natively without deleting local.db
 // Compute relative file URL path for Windows/Unix cross-platform compatibility
@@ -60,12 +65,20 @@ const localDbUrl = `file:${relPath}`;
 // 1. Initialize the Singleton LibSQL Embedded Replica Client
 export const client = createClient({
   url: localDbUrl,
-  syncUrl: TURSO_URL,
-  authToken: TURSO_AUTH_TOKEN,
-  syncInterval: 60, // Automatic background sync every 60 seconds
+  syncUrl: url,
+  authToken: authToken,
+  syncInterval: 0, // Keep at 0 to prevent WAL collisions during schema migrations
 });
 
-console.log('✅ LibSQL Database Initialized Safely');
+console.log("🔒 Database client initialized securely via environment variables.");
+
+const IDENTIFIER_REGEX = /^[a-zA-Z0-9_]+$/;
+function validateIdentifier(ident) {
+  if (typeof ident !== 'string' || !IDENTIFIER_REGEX.test(ident)) {
+    throw new Error(`Invalid SQL identifier: ${ident}`);
+  }
+  return ident;
+}
 
 function formatArg(val) {
   if (val === undefined || val === null) return null;
@@ -84,8 +97,84 @@ function createChainablePromise(fn) {
   return p;
 }
 
+/**
+ * Strict Parameterized ORM Helper
+ * Guarantees that ALL values are safely isolated in the LibSQL engine args array
+ * and never concatenated into raw SQL strings.
+ */
+export const orm = {
+  /**
+   * SECURE SELECT
+   * Generates: SELECT * FROM table WHERE col1 = ? AND col2 = ?
+   */
+  where: async (table, conditions = {}) => {
+    validateIdentifier(table);
+    const keys = Object.keys(conditions).filter(k => conditions[k] !== undefined);
+    const args = [];
+
+    const whereClauses = keys.map((key) => {
+      validateIdentifier(key);
+      args.push(formatArg(conditions[key])); // Push actual value into secure args array
+      return `"${key}" = ?`;                 // Use strict placeholder
+    });
+
+    const sql = whereClauses.length > 0
+      ? `SELECT * FROM "${table}" WHERE ${whereClauses.join(' AND ')}`
+      : `SELECT * FROM "${table}"`;
+
+    const result = await client.execute({ sql, args });
+    return result.rows || [];
+  },
+
+  /**
+   * SECURE INSERT
+   * Generates: INSERT INTO table (col1, col2) VALUES (?, ?)
+   */
+  insert: async (table, data) => {
+    validateIdentifier(table);
+    const keys = Object.keys(data).filter(k => data[k] !== undefined);
+    const args = [];
+    const cols = keys.map(k => {
+      validateIdentifier(k);
+      args.push(formatArg(data[k]));
+      return `"${k}"`;
+    });
+    const placeholders = keys.map(() => '?').join(', ');
+
+    const sql = `INSERT INTO "${table}" (${cols.join(', ')}) VALUES (${placeholders})`;
+
+    const result = await client.execute({ sql, args });
+    return result;
+  },
+
+  /**
+   * SECURE UPDATE
+   * Generates: UPDATE table SET col1 = ?, col2 = ? WHERE id = ?
+   */
+  update: async (table, id, data) => {
+    validateIdentifier(table);
+    const keys = Object.keys(data).filter(k => data[k] !== undefined);
+    const args = [];
+
+    const setClauses = keys.map((key) => {
+      validateIdentifier(key);
+      args.push(formatArg(data[key]));
+      return `"${key}" = ?`;
+    });
+
+    // Add the ID for the WHERE clause at the end of the args array
+    args.push(formatArg(id));
+
+    const sql = `UPDATE "${table}" SET ${setClauses.join(', ')} WHERE id = ?`;
+
+    const result = await client.execute({ sql, args });
+    return result;
+  }
+};
+
 // Model query builder for seamless backward compatibility without Prisma
 function createModelHelper(clientInstance, tableName) {
+  validateIdentifier(tableName);
   return {
     all() {
       return createChainablePromise(async () => {
@@ -110,8 +199,12 @@ function createModelHelper(clientInstance, tableName) {
               rows.first = () => (rows.length > 0 ? rows[0] : null);
               return rows;
             }
-            const whereClause = keys.map(k => `"${k}" = ?`).join(' AND ');
-            const args = keys.map(k => formatArg(conditions[k]));
+            const args = [];
+            const whereClause = keys.map(k => {
+              validateIdentifier(k);
+              args.push(formatArg(conditions[k]));
+              return `"${k}" = ?`;
+            }).join(' AND ');
             const res = await clientInstance.execute({
               sql: `SELECT * FROM "${tableName}" WHERE ${whereClause}`,
               args
@@ -127,8 +220,12 @@ function createModelHelper(clientInstance, tableName) {
             const res = await clientInstance.execute(`SELECT * FROM "${tableName}" LIMIT 1`);
             return (res.rows && res.rows.length > 0) ? res.rows[0] : null;
           }
-          const whereClause = keys.map(k => `"${k}" = ?`).join(' AND ');
-          const args = keys.map(k => formatArg(conditions[k]));
+          const args = [];
+          const whereClause = keys.map(k => {
+            validateIdentifier(k);
+            args.push(formatArg(conditions[k]));
+            return `"${k}" = ?`;
+          }).join(' AND ');
           const res = await clientInstance.execute({
             sql: `SELECT * FROM "${tableName}" WHERE ${whereClause} LIMIT 1`,
             args
@@ -138,13 +235,20 @@ function createModelHelper(clientInstance, tableName) {
         async update(data) {
           const setKeys = Object.keys(data).filter(k => data[k] !== undefined);
           if (setKeys.length === 0) return { rowsAffected: 0 };
-          const setClause = setKeys.map(k => `"${k}" = ?`).join(', ');
+          const args = [];
+          const setClause = setKeys.map(k => {
+            validateIdentifier(k);
+            args.push(formatArg(data[k]));
+            return `"${k}" = ?`;
+          }).join(', ');
           const condKeys = Object.keys(conditions).filter(k => conditions[k] !== undefined);
-          const whereClause = condKeys.length > 0 ? condKeys.map(k => `"${k}" = ?`).join(' AND ') : '1=1';
-          const args = [
-            ...setKeys.map(k => formatArg(data[k])),
-            ...condKeys.map(k => formatArg(conditions[k]))
-          ];
+          const whereClause = condKeys.length > 0
+            ? condKeys.map(k => {
+                validateIdentifier(k);
+                args.push(formatArg(conditions[k]));
+                return `"${k}" = ?`;
+              }).join(' AND ')
+            : '1=1';
           return await clientInstance.execute({
             sql: `UPDATE "${tableName}" SET ${setClause} WHERE ${whereClause}`,
             args
@@ -152,8 +256,14 @@ function createModelHelper(clientInstance, tableName) {
         },
         async delete() {
           const condKeys = Object.keys(conditions).filter(k => conditions[k] !== undefined);
-          const whereClause = condKeys.length > 0 ? condKeys.map(k => `"${k}" = ?`).join(' AND ') : '1=1';
-          const args = condKeys.map(k => formatArg(conditions[k]));
+          const args = [];
+          const whereClause = condKeys.length > 0
+            ? condKeys.map(k => {
+                validateIdentifier(k);
+                args.push(formatArg(conditions[k]));
+                return `"${k}" = ?`;
+              }).join(' AND ')
+            : '1=1';
           return await clientInstance.execute({
             sql: `DELETE FROM "${tableName}" WHERE ${whereClause}`,
             args
@@ -163,11 +273,15 @@ function createModelHelper(clientInstance, tableName) {
     },
     async create(data) {
       const keys = Object.keys(data).filter(k => data[k] !== undefined);
-      const cols = keys.map(k => `"${k}"`).join(', ');
+      const args = [];
+      const cols = keys.map(k => {
+        validateIdentifier(k);
+        args.push(formatArg(data[k]));
+        return `"${k}"`;
+      });
       const placeholders = keys.map(() => '?').join(', ');
-      const args = keys.map(k => formatArg(data[k]));
       await clientInstance.execute({
-        sql: `INSERT INTO "${tableName}" (${cols}) VALUES (${placeholders})`,
+        sql: `INSERT INTO "${tableName}" (${cols.join(', ')}) VALUES (${placeholders})`,
         args
       });
       return data;

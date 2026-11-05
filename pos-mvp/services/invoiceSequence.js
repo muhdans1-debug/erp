@@ -13,10 +13,11 @@ import { db } from '../db.js';
  * @param {string} name - Sequence counter identifier (default: 'Sale')
  * @returns {Promise<number>} The newly generated sequential integer
  */
-export async function getNextInvoiceSequence(name = 'Sale') {
+export async function getNextInvoiceSequence(name = 'Sale', executor = db) {
   try {
+    const clientToUse = executor || db;
     // 🟢 SAFE UPSERT: Creates at 5000 if missing, increments if existing
-    const result = await db.execute({
+    const result = await clientToUse.execute({
       sql: `
         INSERT INTO InvoiceSequence (name, current_seq) 
         VALUES (?, 5000) 

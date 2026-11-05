@@ -49,6 +49,56 @@ export default async function salesRoutes(fastify, options) {
           args: [sale.id, invoiceNo, total, subtotal, paymentType, status, customerId, employeeId, shiftId, createdAt]
         });
 
+        // Record Khata ledger and update customer balance if offline credit transaction
+        const isCreditSale =
+          paymentType === 'CREDIT' ||
+          paymentType === 'CREDIT_PERSONAL' ||
+          paymentType === 'CREDIT_MESS' ||
+          paymentType === 'NFC_CREDIT' ||
+          paymentType === 'MESS_KHATA';
+
+        if (customerId && isCreditSale) {
+          const custRes = await transaction.execute({
+            sql: `SELECT COALESCE(balance, 0) as balance FROM Customer WHERE id = ? LIMIT 1`,
+            args: [customerId],
+          });
+          const balRes = await transaction.execute({
+            sql: `SELECT COALESCE(SUM(amount), 0) as balance FROM KhataLedger WHERE customerId = ?`,
+            args: [customerId],
+          });
+          const currentBal = Math.max(
+            Number(custRes.rows[0]?.balance || 0),
+            Number(balRes.rows[0]?.balance || 0)
+          );
+          const newBal = Number((currentBal + total).toFixed(3));
+          const ledgerId = `tx_off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+          await transaction.execute({
+            sql: `INSERT INTO KhataLedger (
+              id, tenantId, customerId, amount, type, reference, running_balance,
+              syncStatus, timestamp, created_at
+            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, ?, 'SYNCED', ?, ?)`,
+            args: [ledgerId, customerId, total, invoiceNo, newBal, createdAt, createdAt],
+          });
+
+          await transaction.execute({
+            sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
+            args: [total, customerId],
+          });
+
+          if (fastify.websocketServer?.clients) {
+            fastify.websocketServer.clients.forEach(client => {
+              if (client.readyState === 1) {
+                client.send(JSON.stringify({
+                  type: 'KHATA_BALANCE_UPDATED',
+                  customerId,
+                  delta: total
+                }));
+              }
+            });
+          }
+        }
+
         // Process line items AND deduct master inventory
         const items = Array.isArray(sale.items) ? sale.items : [];
         for (const item of items) {
@@ -440,6 +490,21 @@ const handleCheckout = async (request, reply) => {
           });
         })
       ).catch(() => { });
+    }
+
+    // Broadcast atomic Khata balance delta to all connected POS registers
+    if (saleData.customerId && ['CREDIT', 'NFC_CREDIT', 'MESS_KHATA'].includes(saleData.paymentType)) {
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach(client => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'KHATA_BALANCE_UPDATED',
+              customerId: saleData.customerId,
+              delta: finalTotal
+            }));
+          }
+        });
+      }
     }
 
     return {

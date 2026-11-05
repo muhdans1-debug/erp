@@ -8,6 +8,7 @@
     "dev": "vite --host 0.0.0.0",
     "dev:web": "vite --port 5173 --host 0.0.0.0",
     "server": "node server.js",
+    "updater": "node updater.js",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder",
     "electron:dev": "electron .",
@@ -15,7 +16,7 @@
     "tauri": "tauri",
     "dev:manager": "vite --port 5175 --host 0.0.0.0",
     "db:hydrate": "node scripts/hydrate_from_turso.mjs",
-    "start:master": "concurrently -n \"API,BRIDGE,DASH\" -c \"bgBlue.bold,bgMagenta.bold,bgCyan.bold\" \"node server.js\" \"node bridgeServer.js\" \"cd ../askar-admin-dashboard && npm run dev\""
+    "start:master": "concurrently -n \"API,DASH\" -c \"bgBlue.bold,bgCyan.bold\" \"node server.js\" \"cd ../askar-admin-dashboard && npm run dev\""
   },
   "dependencies": {
     "@capacitor-community/keep-awake": "^8.0.1",
@@ -33,11 +34,14 @@
     "@fastify/cors": "^11.3.1",
     "@fastify/multipart": "^10.1.7",
     "@fastify/static": "^10.1.8",
+    "@fastify/websocket": "^11.3.7",
     "@libsql/client": "^0.18.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@types/qrcode": "^1.5.6",
+    "bcrypt": "^6.0.0",
+    "bonjour-service": "^1.4.4",
     "capacitor-sunmi-printer": "^0.0.3",
     "fastify": "^5.12.7",
     "html5-qrcode": "^2.3.8",
@@ -50,7 +54,8 @@
     "react-barcode": "^1.6.1",
     "react-dom": "^19.1.0",
     "recharts": "^3.10.1",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -87,7 +92,6 @@
       "server.js",
       "db.js",
       "schema.sql",
-      "bridgeServer.js",
       "electron-main.js",
       "package.json",
       "repositories/**/*",

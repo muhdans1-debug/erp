@@ -85,7 +85,7 @@ export const SaleRepository = {
       const subtotalVal = Number(saleData.subtotal ?? (totalVal - vatVal));
 
       // Strictly sequential, gapless invoice numbering for Bahrain NBR VAT compliance
-      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence('Sale');
+      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence('Sale', tx);
       const invoiceNo =
         saleData.invoiceNo &&
           !saleData.invoiceNo.includes('NaN') &&

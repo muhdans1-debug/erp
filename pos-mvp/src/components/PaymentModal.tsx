@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt, kickCashDrawer } from '../utils/printer';
-import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
+import { saveSaleOffline } from '../utils/nativeDb';
+import { generateBenefitPayPayload } from '../utils/benefitPay';
 
 export interface PaymentItem {
   id: string;
@@ -29,28 +30,37 @@ export interface PaymentItem {
 export interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  totalAmount: number;
-  subtotal: number;
-  vat: number;
-  cart: PaymentItem[];
+  totalAmount?: number;
+  total?: number;
+  subtotal?: number;
+  vat?: number;
+  cart?: PaymentItem[];
   customer?: { id: string; name: string; currentBalance?: number; cardUid?: string | null } | null;
-  apiBase: string;
+  apiBase?: string;
   initialMethod?: 'CASH' | 'BENEFIT_PAY' | 'CARD';
-  onSuccess: (receiptData: any) => void;
+  invoiceNo?: string;
+  onSuccess?: (receiptData: any) => void;
+  onComplete?: () => void;
 }
 
 export default function PaymentModal({
   isOpen,
   onClose,
-  totalAmount,
-  subtotal,
-  vat,
-  cart,
+  totalAmount: propTotalAmount,
+  total: propTotal,
+  subtotal: propSubtotal = 0,
+  vat: propVat = 0,
+  cart = [],
   customer,
-  apiBase,
+  apiBase = 'http://localhost:3000',
   initialMethod = 'BENEFIT_PAY',
+  invoiceNo: propInvoiceNo,
   onSuccess,
+  onComplete,
 }: PaymentModalProps) {
+  const totalAmount = propTotalAmount !== undefined ? propTotalAmount : (propTotal !== undefined ? propTotal : 0);
+  const subtotal = propSubtotal;
+  const vat = propVat;
   const [selectedMethod, setSelectedMethod] = useState<'CASH' | 'BENEFIT_PAY' | 'CARD'>(initialMethod);
 
   // BenefitPay Merchant Settings
@@ -60,6 +70,11 @@ export default function PaymentModal({
   const [showMerchantConfig, setShowMerchantConfig] = useState(false);
   const [tempMerchantId, setTempMerchantId] = useState(merchantId);
 
+  // Stable session invoice number (persisted for the duration of this payment modal)
+  const activeInvoiceNo = useMemo(() => {
+    return propInvoiceNo || `INV-${Date.now().toString().slice(-6)}`;
+  }, [propInvoiceNo, isOpen]);
+
   // Generate unique transaction reference for this payment session
   const transactionRef = useMemo(() => {
     const timestamp = Date.now().toString().slice(-6);
@@ -67,23 +82,14 @@ export default function PaymentModal({
     return `BP-TXN-${timestamp}-${rand}`;
   }, [totalAmount, isOpen]);
 
-  // Fawri+ Dynamic QR Code Payload
-  // Embeds merchant ID, dynamic BHD amount formatted to 3 decimals, and unique reference
-  const fawriQrPayload = useMemo(() => {
-    return JSON.stringify({
-      scheme: 'FAWRI_PLUS',
-      merchantId: merchantId.trim(),
-      merchantName: 'AL-HILAL SUPERMARKET',
-      amount: Number(totalAmount.toFixed(3)),
-      currency: 'BHD',
-      reference: transactionRef,
-      service: 'MERCHANT_PAYMENT',
-      uri: `fawriplus://pay?mid=${encodeURIComponent(merchantId.trim())}&amt=${totalAmount.toFixed(3)}&cur=BHD&ref=${transactionRef}`
-    });
-  }, [merchantId, totalAmount, transactionRef]);
+  // Fawri+ Dynamic QR Code Payload (generated via benefitPay utility)
+  const qrPayload = useMemo(() => {
+    return generateBenefitPayPayload(totalAmount, activeInvoiceNo, merchantId);
+  }, [totalAmount, activeInvoiceNo, merchantId]);
 
   // Processing & Confirmation state
   const [processing, setProcessing] = useState(false);
+  const [webhookAutoSettled, setWebhookAutoSettled] = useState(false);
   const [completedSale, setCompletedSale] = useState<{
     invoiceNo: string;
     paidAmount: number;
@@ -132,25 +138,26 @@ export default function PaymentModal({
     setShowMerchantConfig(false);
   };
 
-  // Complete checkout process
-  const handleConfirmPayment = async () => {
+  // Complete checkout process (supports manual cashier click or automated BenefitPay webhook)
+  const executePayment = async (overrideMethod?: 'CASH' | 'BENEFIT_PAY' | 'CARD', overrideRef?: string) => {
+    const finalMethod = overrideMethod || selectedMethod;
+    const finalRef = overrideRef || (finalMethod === 'BENEFIT_PAY' ? transactionRef : undefined);
     setProcessing(true);
 
-    const invoiceNo = `INV-${Date.now()}`;
     const salePayload = {
       id: crypto.randomUUID(),
       tenantId: 'askar_main',
-      invoiceNo,
+      invoiceNo: activeInvoiceNo,
       cart,
       subtotal,
       vat,
       vatTotal: vat,
       total: totalAmount,
-      paymentType: selectedMethod,
+      paymentType: finalMethod,
       customerId: customer ? customer.id : null,
-      transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
-      cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
-      changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
+      transactionRef: finalRef,
+      cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+      changeDue: finalMethod === 'CASH' ? changeDue : undefined,
       items: cart.map((item) => ({
         productId: item.id,
         quantity: item.quantity ?? 1,
@@ -203,55 +210,52 @@ export default function PaymentModal({
       // Zero-block safeguard: Even if master server is unavailable, complete sale locally and print
       const isOnlineSuccess = Boolean(data && data.success);
       const verifiedInvoiceNo = isOnlineSuccess
-        ? (data.formattedInvoice || data.invoice || data.invoiceNo || invoiceNo)
-        : `INV-OFF-${Date.now().toString().slice(-6)}`;
+        ? (data.formattedInvoice || data.invoice || data.invoiceNo || activeInvoiceNo)
+        : activeInvoiceNo;
 
       if (!isOnlineSuccess) {
-        try {
-          const offlineQueue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_SALES_KEY) || '[]');
-          offlineQueue.push({
-            ...salePayload,
-            invoiceNo: verifiedInvoiceNo,
-            offlineTimestamp: new Date().toISOString()
-          });
-          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(offlineQueue));
-          if (offlineQueue.length > 100) {
-            console.warn("⚠️ Offline queue exceeds 100 items. Connect to Wi-Fi soon.");
-          }
-        } catch {}
+        saveSaleOffline({
+          ...salePayload,
+          id: salePayload.id || verifiedInvoiceNo,
+          invoiceNo: verifiedInvoiceNo,
+          offlineTimestamp: new Date().toISOString()
+        }).catch((err) => console.warn('Offline save error:', err));
       }
 
       const finalReceiptData = {
         invoiceNo: verifiedInvoiceNo,
         paidAmount: totalAmount,
-        paymentMethod: selectedMethod,
-        transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
-        cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
-        changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
+        paymentMethod: finalMethod,
+        transactionRef: finalRef,
+        cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: finalMethod === 'CASH' ? changeDue : undefined,
         createdAt: new Date().toISOString(),
       };
 
-      if (selectedMethod === 'CASH') {
+      // Strict hardware rule: Only trigger RJ11 solenoid kick on CASH payment!
+      // BenefitPay Fawri+ keeps drawer physically locked.
+      if (finalMethod === 'CASH') {
         kickCashDrawer().catch(() => {});
       }
 
       setCompletedSale(finalReceiptData);
-      onSuccess(finalReceiptData);
+      onSuccess?.(finalReceiptData);
+      onComplete?.();
 
-      // Attempt Sunmi hardware printer if available
+      // Print full NBR VAT receipt via printer utility / Web Worker
       printFullReceipt({
         invoiceNo: finalReceiptData.invoiceNo,
         items: cart,
         subtotal,
         vat,
         total: totalAmount,
-        paymentMode: selectedMethod,
-        cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
-        changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
+        paymentMode: finalMethod,
+        cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: finalMethod === 'CASH' ? changeDue : undefined,
         customerName: customer?.name,
         customerCardUid: customer?.cardUid || undefined,
         cashierName: 'Register 01',
-        transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
+        transactionRef: finalRef,
       }).catch(() => {});
     } catch (err) {
       console.error('Payment checkout error:', err);
@@ -259,6 +263,57 @@ export default function PaymentModal({
       setProcessing(false);
     }
   };
+
+  const handleConfirmPayment = () => executePayment();
+
+  // ⚡ BenefitPay Fawri+ Webhook WebSocket Listener
+  // Listens on Fastify /ws bus for BENEFIT_PAY_SUCCESS callback from Bahrain FinTech Bay
+  useEffect(() => {
+    if (!isOpen || completedSale) return;
+
+    let ws: WebSocket | null = null;
+    let isSubscribed = true;
+
+    try {
+      const wsUrl = (apiBase || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'))
+        .replace(/^http:/, 'ws:')
+        .replace(/^https:/, 'wss:')
+        .replace(/\/+$/, '') + '/ws';
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onmessage = async (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'BENEFIT_PAY_SUCCESS') {
+            const matchesInvoice = data.invoiceNo && data.invoiceNo === activeInvoiceNo;
+            const matchesRef = data.referenceNumber && (data.referenceNumber === transactionRef || data.referenceNumber.includes(transactionRef));
+            const matchesAmount = data.amount && Math.abs(Number(data.amount) - totalAmount) < 0.005;
+
+            if (matchesInvoice || matchesRef || (matchesAmount && selectedMethod === 'BENEFIT_PAY')) {
+              console.log('⚡ [BenefitPay Webhook] Instant Fawri+ payment received via Webhook! Auto-settling sale...');
+              if (isSubscribed) {
+                setWebhookAutoSettled(true);
+                setSelectedMethod('BENEFIT_PAY');
+                await executePayment('BENEFIT_PAY', data.referenceNumber || transactionRef);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('WebSocket parsing error:', err);
+        }
+      };
+    } catch (wsErr) {
+      console.warn('BenefitPay WS listener notice:', wsErr);
+    }
+
+    return () => {
+      isSubscribed = false;
+      if (ws) {
+        try { ws.close(); } catch {}
+      }
+    };
+  }, [isOpen, completedSale, activeInvoiceNo, transactionRef, totalAmount, selectedMethod, apiBase]);
 
   // Trigger thermal receipt print via window.print()
   const handlePrintReceipt = () => {
@@ -797,10 +852,10 @@ export default function PaymentModal({
                       }}
                     >
                       <QRCodeSVG
-                        value={fawriQrPayload}
-                        size={210}
+                        value={qrPayload}
+                        size={256}
                         level="H"
-                        includeMargin={false}
+                        includeMargin={true}
                         fgColor="#000000"
                         bgColor="#ffffff"
                       />
@@ -841,20 +896,38 @@ export default function PaymentModal({
                     </div>
 
                     {/* STATUS PULSE */}
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '6px',
-                        fontSize: '12px',
-                        color: '#f59e0b',
-                      }}
-                    >
-                      <RefreshCw size={14} className="animate-spin" />
-                      <span>Awaiting customer payment confirmation...</span>
-                    </div>
+                    {webhookAutoSettled ? (
+                      <div
+                        style={{
+                          marginTop: '12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          fontSize: '13px',
+                          fontWeight: 'bold',
+                          color: '#34d399',
+                        }}
+                      >
+                        <CheckCircle2 size={16} />
+                        <span>⚡ BenefitPay Fawri+ Confirmed! Printing receipt...</span>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          marginTop: '12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          fontSize: '12px',
+                          color: '#38bdf8',
+                        }}
+                      >
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>Fawri+ Webhook Active &bull; Waiting for customer scan...</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

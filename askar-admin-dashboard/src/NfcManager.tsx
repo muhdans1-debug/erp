@@ -255,7 +255,7 @@ export default function NfcManager({
         } else if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
           bridgeHost = window.location.hostname;
         }
-        ws = new WebSocket(`ws://${bridgeHost}:8080`);
+        ws = new WebSocket(`ws://${bridgeHost}:3000/ws`);
         ws.onopen = () => {
           setIsBridgeConnected(true);
           wsRef.current = ws;
@@ -717,7 +717,7 @@ export default function NfcManager({
             }`}>
               <span className={`w-2.5 h-2.5 rounded-full ${isBridgeConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
               <span>
-                {isBridgeConnected ? 'Sunmi POS Terminal Linked (0ms Relay)' : 'Connecting Bridge Hub (:8080)...'}
+                {isBridgeConnected ? 'Sunmi POS Terminal Linked (0ms Relay)' : 'Connecting Bridge Hub (:3000/ws)...'}
               </span>
             </div>
 

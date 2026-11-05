@@ -40,6 +40,8 @@ logs/
 *.jpg
 *.jpeg
 *.apk
+scratch/
+**/scratch/
 
 # IDE & OS files
 .vscode/*

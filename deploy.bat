@@ -12,9 +12,9 @@ echo [%date% %time%] Initiating automated zero-downtime store upgrade...
 
 cd /d "%~dp0"
 
-:: 1. Pull latest verified commit from main branch
+:: 1. Pull latest verified commit from master branch
 echo [1/4] Git pulling latest verified commit from remote repository...
-git pull origin main 2>nul
+git pull origin master 2>nul || git pull 2>nul
 if %errorlevel% neq 0 (
     echo [INFO] Git remote check or pull bypassed/offline. Continuing local deployment pipeline...
 )

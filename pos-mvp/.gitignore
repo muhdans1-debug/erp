@@ -30,6 +30,7 @@ dist-ssr
 # Environment & local credentials
 .env
 .env.*
+!.env.example
 *.env
 *.db
 *.db*

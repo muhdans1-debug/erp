@@ -73,7 +73,12 @@ export default function FinancialReportWidget({ apiBase: propApiBase, onRangeCha
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${apiBase}/reports/financial?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`);
+      const managerPin = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_pin') || (import.meta as any).env?.VITE_MANAGER_PIN) : null) || '9999';
+      const response = await fetch(`${apiBase}/reports/financial?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, {
+        headers: {
+          'x-manager-pin': managerPin
+        }
+      });
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }

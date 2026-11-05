@@ -23,7 +23,12 @@ export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }
   const fetchVatReturn = (startDate?: string, endDate?: string) => {
     setLoadingVat(true);
     const query = (startDate && endDate) ? `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : '';
-    fetch(`${apiBase}/api/reports/vat-return${query}`)
+    const managerPin = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_pin') || (import.meta as any).env?.VITE_MANAGER_PIN) : null) || '9999';
+    fetch(`${apiBase}/api/reports/vat-return${query}`, {
+      headers: {
+        'x-manager-pin': managerPin
+      }
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

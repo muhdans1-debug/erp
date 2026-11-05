@@ -13,7 +13,7 @@ import {
   Store
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { printFullReceipt } from '../utils/printer';
+import { printFullReceipt, kickCashDrawer } from '../utils/printer';
 import { ASKAR_OFFLINE_SALES_KEY } from '../constants/storage';
 
 export interface PaymentItem {
@@ -93,16 +93,26 @@ export default function PaymentModal({
   } | null>(null);
 
   const [copiedRef, setCopiedRef] = useState(false);
+  const [cashTendered, setCashTendered] = useState<string>('');
   const [tenderedAmount, setTenderedAmount] = useState<number>(totalAmount);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !completedSale) {
       setSelectedMethod(initialMethod);
       setCompletedSale(null);
       setProcessing(false);
+      setCashTendered('');
       setTenderedAmount(totalAmount);
     }
-  }, [isOpen, initialMethod, totalAmount]);
+  }, [isOpen, initialMethod]);
+
+  // Cash Tendered & Change Calculations
+  const parsedTender = parseFloat(cashTendered);
+  const activeTendered = selectedMethod === 'CASH'
+    ? (cashTendered.trim() !== '' && !isNaN(parsedTender) ? parsedTender : tenderedAmount)
+    : totalAmount;
+  const changeDue = activeTendered > totalAmount ? activeTendered - totalAmount : 0;
+  const isShort = selectedMethod === 'CASH' && activeTendered < totalAmount && cashTendered.trim() !== '';
 
   if (!isOpen) return null;
 
@@ -139,6 +149,8 @@ export default function PaymentModal({
       paymentType: selectedMethod,
       customerId: customer ? customer.id : null,
       transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
+      cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
+      changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
       items: cart.map((item) => ({
         productId: item.id,
         quantity: item.quantity ?? 1,
@@ -214,8 +226,14 @@ export default function PaymentModal({
         paidAmount: totalAmount,
         paymentMethod: selectedMethod,
         transactionRef: selectedMethod === 'BENEFIT_PAY' ? transactionRef : undefined,
+        cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
         createdAt: new Date().toISOString(),
       };
+
+      if (selectedMethod === 'CASH') {
+        kickCashDrawer().catch(() => {});
+      }
 
       setCompletedSale(finalReceiptData);
       onSuccess(finalReceiptData);
@@ -228,6 +246,8 @@ export default function PaymentModal({
         vat,
         total: totalAmount,
         paymentMode: selectedMethod,
+        cashTendered: selectedMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: selectedMethod === 'CASH' ? changeDue : undefined,
         customerName: customer?.name,
         customerCardUid: customer?.cardUid || undefined,
         cashierName: 'Register 01',
@@ -842,50 +862,57 @@ export default function PaymentModal({
               {/* METHOD TAB B: CASH */}
               {selectedMethod === 'CASH' && (
                 <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 text-center space-y-4">
-                  <div className="flex items-center justify-center gap-2 text-emerald-400">
-                    <Banknote size={36} />
-                    <span className="text-sm font-bold uppercase tracking-wider text-slate-400">
-                      Cash Due
-                    </span>
-                  </div>
-
-                  <div className="font-mono text-4xl font-extrabold text-emerald-400">
-                    BD {totalAmount.toFixed(3)}
-                  </div>
-
-                  {/* Fitts's Law Massive Quick Tender Buttons */}
-                  <div className="pt-2">
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 text-left">
-                      Quick Tender / Change Calculator
+                  <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+                    <div className="flex items-center gap-2 text-emerald-400">
+                      <Banknote size={28} />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                        Total Amount Due
+                      </span>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                    <div className="font-mono text-3xl font-black text-emerald-400">
+                      BD {totalAmount.toFixed(3)}
+                    </div>
+                  </div>
+
+                  {/* Fitts's Law Quick Tender Buttons */}
+                  <div>
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 text-left">
+                      Quick Denomination Tender
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                       <button
                         type="button"
-                        onClick={() => setTenderedAmount(totalAmount)}
-                        className={`h-16 rounded-xl font-mono font-black text-sm flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
-                          tenderedAmount === totalAmount
-                            ? 'bg-emerald-600 text-white border-emerald-500 shadow-md ring-2 ring-emerald-400/40'
+                        onClick={() => {
+                          setCashTendered(totalAmount.toFixed(3));
+                          setTenderedAmount(totalAmount);
+                        }}
+                        className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
+                          Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
+                            ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                             : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                         }`}
                       >
-                        <span className="text-[11px] font-sans font-bold text-emerald-200">EXACT</span>
+                        <span className="text-[10px] font-sans font-bold text-emerald-200">EXACT</span>
                         <span>BD {totalAmount.toFixed(3)}</span>
                       </button>
 
-                      {[1, 5, 10, 20].map((val) => {
-                        const isSelected = Math.abs(tenderedAmount - val) < 0.001;
+                      {[0.5, 1, 5, 10, 20].map((val) => {
+                        const isSelected = Math.abs(activeTendered - val) < 0.001 && cashTendered === val.toFixed(3);
                         return (
                           <button
                             key={val}
                             type="button"
-                            onClick={() => setTenderedAmount(val)}
-                            className={`h-16 rounded-xl font-mono font-black text-sm flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
+                            onClick={() => {
+                              setCashTendered(val.toFixed(3));
+                              setTenderedAmount(val);
+                            }}
+                            className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
                               isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-500 shadow-md ring-2 ring-emerald-400/40'
+                                ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                                 : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                             }`}
                           >
-                            <span className="text-[11px] font-sans font-bold text-slate-400">NOTE</span>
+                            <span className="text-[10px] font-sans font-bold text-slate-400">NOTE</span>
                             <span>BD {val.toFixed(3)}</span>
                           </button>
                         );
@@ -893,26 +920,52 @@ export default function PaymentModal({
                     </div>
                   </div>
 
-                  {/* Change Due Display */}
-                  <div className="bg-slate-900 border border-slate-700/80 rounded-xl p-4 flex items-center justify-between">
-                    <div className="text-left">
-                      <div className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-                        Customer Tendered
-                      </div>
-                      <div className="font-mono text-base font-bold text-slate-200">
-                        BD {tenderedAmount.toFixed(3)}
-                      </div>
+                  {/* Cash Tendered Input & Change Calculator */}
+                  <div className="bg-slate-900/90 p-4 rounded-xl border border-slate-700/80 space-y-3">
+                    <label className="block text-slate-300 font-bold text-xs uppercase tracking-wider text-left">
+                      Amount Customer Handed You:
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl font-black text-emerald-400 font-mono">BHD</span>
+                      <input 
+                        type="number" 
+                        step="0.050"
+                        className="w-full text-2xl font-mono font-black p-3 bg-slate-950 border-2 border-slate-700 rounded-xl text-white focus:border-emerald-500 focus:outline-hidden"
+                        value={cashTendered}
+                        onChange={(e) => {
+                          setCashTendered(e.target.value);
+                          const num = parseFloat(e.target.value);
+                          if (!isNaN(num)) setTenderedAmount(num);
+                        }}
+                        placeholder={`e.g. ${totalAmount.toFixed(3)}`}
+                      />
+                      {cashTendered && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCashTendered('');
+                            setTenderedAmount(totalAmount);
+                          }}
+                          className="px-3 py-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg text-xs font-bold"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-                        Change to Return
-                      </div>
-                      <div className={`font-mono text-2xl font-black ${
-                        tenderedAmount >= totalAmount ? 'text-emerald-400' : 'text-amber-400'
-                      }`}>
-                        BD {Math.max(0, tenderedAmount - totalAmount).toFixed(3)}
-                      </div>
+
+                    {/* Change Due Display */}
+                    <div className="mt-3 flex justify-between items-center p-4 bg-slate-950 rounded-xl border border-slate-800">
+                      <span className="text-base text-slate-300 font-bold">Change to Return:</span>
+                      <span className={`text-3xl font-mono font-extrabold ${changeDue > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        BHD {changeDue.toFixed(3)}
+                      </span>
                     </div>
+                    
+                    {isShort && (
+                      <p className="text-rose-400 font-bold text-xs mt-1 text-left flex items-center gap-1.5">
+                        <span>⚠️ Customer is short BHD {(totalAmount - activeTendered).toFixed(3)}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -951,13 +1004,15 @@ export default function PaymentModal({
 
                 <button
                   type="button"
-                  disabled={processing}
+                  disabled={processing || (selectedMethod === 'CASH' && isShort)}
                   onClick={handleConfirmPayment}
-                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-60 disabled:active:scale-100 ${
+                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
                     selectedMethod === 'BENEFIT_PAY'
                       ? 'bg-red-600 hover:bg-red-700'
                       : selectedMethod === 'CASH'
-                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      ? isShort
+                        ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
                       : 'bg-blue-600 hover:bg-blue-700'
                   }`}
                 >
@@ -971,8 +1026,12 @@ export default function PaymentModal({
                       <CheckCircle2 size={22} />
                       <span className="font-mono">
                         {selectedMethod === 'BENEFIT_PAY'
-                          ? `Confirm BenefitPay Received (BD ${totalAmount.toFixed(3)})`
-                          : `Confirm Payment (BD ${totalAmount.toFixed(3)})`}
+                          ? `Confirm BenefitPay (BD ${totalAmount.toFixed(3)})`
+                          : selectedMethod === 'CASH'
+                          ? changeDue > 0
+                            ? `Complete Sale (Return BD ${changeDue.toFixed(3)} Change)`
+                            : `Complete Exact Cash (BD ${totalAmount.toFixed(3)})`
+                          : `Confirm Card Sale (BD ${totalAmount.toFixed(3)})`}
                       </span>
                     </>
                   )}

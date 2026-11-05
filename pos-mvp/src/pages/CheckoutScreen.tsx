@@ -244,6 +244,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [showDevPanel, setShowDevPanel] = useState(false);
   const [showReceivingDrawer, setShowReceivingDrawer] = useState(false);
   const [showOrderHistoryDrawer, setShowOrderHistoryDrawer] = useState(false);
+  const [changeFlashNotice, setChangeFlashNotice] = useState<{ changeDue: number; tendered: number } | null>(null);
+  const changeFlashTimeoutRef = useRef<any>(null);
   const receivingScanCallbackRef = useRef<((barcode: string) => boolean) | null>(null);
   const handleRegisterReceivingScanListener = useCallback((cb: ((barcode: string) => boolean) | null) => {
     receivingScanCallbackRef.current = cb;
@@ -1206,12 +1208,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // Checkout & Payment Processing
   const processCheckout = async (
     paymentMethod: 'CASH' | 'BENEFIT_PAY' | 'CARD' | 'CREDIT' | 'CREDIT_PERSONAL' | 'CREDIT_MESS',
-    isManagerOverridden: boolean = false
+    isManagerOverridden: boolean = false,
+    cashTendered?: number
   ) => {
     if (cart.length === 0) {
       showToast("⚠️ Cart is empty!", 'info');
       return;
     }
+
+    const activeTendered = cashTendered !== undefined ? cashTendered : total;
+    const changeDue = activeTendered > total ? activeTendered - total : 0;
 
     let customerId: string | null = null;
     let customerName = "";
@@ -1285,6 +1291,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         total: cartTotals.finalTotal,
         totalAmount: cartTotals.finalTotal,
         paymentType: paymentMethod,
+        cashTendered: paymentMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: paymentMethod === 'CASH' ? changeDue : undefined,
         customerId,
         shiftId: shiftId || localStorage.getItem('active_shift_id') || null,
         employeeId: localStorage.getItem('active_employee_id') || 'emp_cashier_1',
@@ -1406,7 +1414,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         }).catch(() => {});
       } else if (paymentMethod === 'CASH') {
         CustomerDisplay.updateDisplay?.({
-          text: `THANK YOU!\nVISIT AGAIN\n\nCASH: BD ${total.toFixed(3)}`
+          text: `THANK YOU!\n\nTOTAL: BD ${total.toFixed(3)}\nTENDER: BD ${activeTendered.toFixed(3)}\nCHANGE: BD ${changeDue.toFixed(3)}`
         }).catch(() => {});
       } else if ((paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL') && customer) {
         CustomerDisplay.updateDisplay?.({
@@ -1428,6 +1436,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         vat,
         total,
         paymentMode: isMessCheckout ? 'MESS_KHATA' : paymentMethod,
+        cashTendered: paymentMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: paymentMethod === 'CASH' ? changeDue : undefined,
         isMess: isMessCheckout,
         groupName: customer?.group_name || customer?.messGroup?.group_name,
         shopperName: isMessCheckout ? (customer?.shopper?.name || customer?.name) : undefined,
@@ -1455,6 +1465,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           showToast(`🧾 ${formattedMethod} Sale Saved Offline (#${verifiedInvoiceNo}) & Printed!`, 'success');
         }
       }
+
+      // Flash Change Due prominently to eliminate cashier calculation mistakes
+      if (paymentMethod === 'CASH') {
+        setChangeFlashNotice({
+          changeDue,
+          tendered: activeTendered
+        });
+        if (changeFlashTimeoutRef.current) clearTimeout(changeFlashTimeoutRef.current);
+        changeFlashTimeoutRef.current = setTimeout(() => {
+          setChangeFlashNotice(null);
+        }, 6000);
+      }
       
       // Instantly reset checkout UI (non-blocking)
       clearActiveCart();
@@ -1473,9 +1495,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Dedicated Quick Pay Handler matching user's Step 2 specifications
-  const handlePayment = async (_cartTotal: number) => {
-    return processCheckout('CASH');
+  // Dedicated Quick Pay Handler
+  const handlePayment = (tender?: number) => {
+    if (cart.length === 0) {
+      showToast("⚠️ Cart is empty!", 'info');
+      return;
+    }
+    if (tender !== undefined) {
+      processCheckout('CASH', false, tender);
+    } else {
+      setPaymentModalMethod('CASH');
+      setShowPaymentModal(true);
+    }
   };
 
   // Adjust quantity of the most recently scanned item for +/- speed keys
@@ -1750,14 +1781,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       if (isAnyModalOpen) return;
 
-      // 2. F1: Trigger Exact Cash Payment
+      // 2. F1: Trigger Cash Payment Modal & Tender Calculator
       if (e.key === 'F1') {
         e.preventDefault();
-        if (cart.length === 0) {
-          showToast("⚠️ Cannot checkout: Cart is empty", 'info');
-          return;
-        }
-        processCheckout('CASH');
+        handlePayment();
         return;
       }
 
@@ -2643,11 +2670,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <div className="p-2.5 pt-0 grid grid-cols-3 gap-2">
               <button 
                 type="button"
-                onClick={() => handlePayment(total)}
+                onClick={() => handlePayment()}
                 disabled={cart.length === 0}
                 className="h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:scale-95 transition-all shadow-md disabled:opacity-50 cursor-pointer"
               >
-                <span className="text-[10px] opacity-80 mb-0.5 font-normal">[F1] Instant</span>
+                <span className="text-[10px] opacity-80 mb-0.5 font-normal">[F1] Tender</span>
                 PAY CASH
               </button>
               <button 
@@ -4516,10 +4543,47 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           apiBase={apiBase}
           initialMethod={paymentModalMethod}
           onSuccess={(receiptData) => {
+            setShowPaymentModal(false);
+            if (receiptData?.paymentMethod === 'CASH' && receiptData?.cashTendered !== undefined) {
+              const tendered = Number(receiptData.cashTendered);
+              const change = receiptData.changeDue !== undefined ? Number(receiptData.changeDue) : (tendered > total ? tendered - total : 0);
+              setChangeFlashNotice({ changeDue: change, tendered });
+              if (changeFlashTimeoutRef.current) clearTimeout(changeFlashTimeoutRef.current);
+              changeFlashTimeoutRef.current = setTimeout(() => {
+                setChangeFlashNotice(null);
+              }, 6000);
+            }
             clearActiveCart();
             showToast(`🧾 ${receiptData.paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay' : receiptData.paymentMethod} Payment Confirmed!`, 'success');
           }}
         />
+      )}
+
+      {/* CASH CHANGE TO RETURN FLASH BANNER */}
+      {changeFlashNotice && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-5 animate-in slide-in-from-top duration-200 border-2 border-emerald-300">
+          <div className="p-3 bg-white/20 rounded-xl flex items-center justify-center">
+            <Banknote size={36} className="text-white" />
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-emerald-100">
+              Change to Return to Customer
+            </div>
+            <div className="font-mono text-4xl font-black tracking-tight">
+              BD {changeFlashNotice.changeDue.toFixed(3)}
+            </div>
+            <div className="text-xs text-emerald-200 font-mono mt-0.5">
+              Customer Handed: BD {changeFlashNotice.tendered.toFixed(3)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setChangeFlashNotice(null)}
+            className="ml-4 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 rounded-lg text-xs font-bold cursor-pointer transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       {/* NBR-COMPLIANT SIMPLIFIED TAX INVOICE PRINT STRIP (58mm Thermal Receipt) */}

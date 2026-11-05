@@ -398,6 +398,8 @@ export interface FullReceiptProps {
   members?: any[];
   customerId?: string;
   customerUuid?: string;
+  cashTendered?: number;
+  changeDue?: number;
 }
 
 // 58mm thermal paper fits 32 characters per line in standard font
@@ -466,7 +468,9 @@ export const printFullReceipt = async ({
   shopperName,
   members = [],
   customerId,
-  customerUuid
+  customerUuid,
+  cashTendered,
+  changeDue
 }: FullReceiptProps) => {
   try {
     if (!isPrinterInitialized) {
@@ -548,6 +552,17 @@ export const printFullReceipt = async ({
     bodyLines.push("--------------------------------\n");
     bodyLines.push(formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`));
     bodyLines.push("--------------------------------\n");
+
+    // Cash details with Tendered & Change Due
+    if (paymentMode === 'CASH') {
+      bodyLines.push("*** Paid via CASH ***\n");
+      if (cashTendered !== undefined && Number(cashTendered) > 0) {
+        bodyLines.push(formatTwoCols("Cash Tendered:", `BD ${Number(cashTendered).toFixed(3)}`));
+        const finalChange = changeDue !== undefined ? changeDue : (Number(cashTendered) > total ? Number(cashTendered) - total : 0);
+        bodyLines.push(formatTwoCols("Change Returned:", `BD ${Number(finalChange).toFixed(3)}`));
+      }
+      bodyLines.push("--------------------------------\n");
+    }
 
     // BenefitPay details
     if (paymentMode === 'BENEFIT_PAY') {

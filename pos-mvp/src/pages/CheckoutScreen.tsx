@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, LogOut, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserX, Lock, Unlock, Truck, Receipt, ShieldAlert } from 'lucide-react';
+import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, LogOut, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserX, Lock, Unlock, Truck, Receipt, ShieldAlert, Banknote } from 'lucide-react';
 import { printFullReceipt, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
@@ -2212,6 +2212,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             title="Manual Cash Drawer Kick [No Sale]"
           >
             Drawer
+          </button>
+          <button 
+            type="button"
+            onClick={() => setShowCashOutModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            title="Record Cash Out: Business Operating Expenses & Owner Personal Withdrawals"
+          >
+            <Banknote size={14} className="text-rose-600" />
+            <span>Cash Out</span>
           </button>
           <button 
             type="button"

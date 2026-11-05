@@ -81,6 +81,21 @@ export default async function salesRoutes(fastify, options) {
 
       await transaction.commit();
       console.log(`✅ Synced ${processedCount} sales and deducted Master inventory.`);
+
+      // Broadcast to WebSocket bridge so Admin Dashboard on Laptop updates live
+      try {
+        const ws = new WebSocket('ws://127.0.0.1:8080');
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ 
+            type: 'SALE_COMPLETED', 
+            payload: { processed: processedCount }, 
+            timestamp: new Date().toISOString() 
+          }));
+          setTimeout(() => ws.close(), 500);
+        };
+        ws.onerror = () => {};
+      } catch {}
+
       return { success: true, processed: processedCount };
     } catch (error) {
       await transaction.rollback();

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Coins, CheckCircle, Calculator, Lock, AlertTriangle } from 'lucide-react';
-import { printShiftCloseout } from '../utils/printer';
+import { Coins, CheckCircle, Calculator, Lock, AlertTriangle, Unlock } from 'lucide-react';
+import { printShiftCloseout, kickCashDrawer } from '../utils/printer';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { db } from '../db';
 
@@ -56,6 +56,11 @@ export default function BlindCloseShiftModal({
       }
     };
     checkCurrentShift();
+  }, []);
+
+  // ⚡ Auto-pop hardware cash drawer so cashier can physically count notes and coins
+  useEffect(() => {
+    kickCashDrawer().catch(() => {});
   }, []);
 
   const [denominations, setDenominations] = useState<{ [key: string]: number }>({
@@ -264,12 +269,23 @@ export default function BlindCloseShiftModal({
           </div>
         </div>
 
-        {/* Security Alert */}
-        <div className="bg-amber-50 border-b border-amber-100 p-3.5 px-6 flex items-center gap-3">
-          <AlertTriangle size={18} className="text-amber-600 shrink-0" />
-          <p className="text-xs text-amber-800 leading-relaxed font-medium">
-            <strong>System Security Rule:</strong> Expected till balance is kept blind. Please physically count all coins and notes currently in the drawer and declare below.
-          </p>
+        {/* Security Alert & Manual Drawer Trigger */}
+        <div className="bg-amber-50 border-b border-amber-100 p-3.5 px-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+            <p className="text-xs text-amber-800 leading-relaxed font-medium">
+              <strong>System Security Rule:</strong> Expected till balance is kept blind. Please physically count all coins and notes currently in the drawer and declare below.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => kickCashDrawer()}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer whitespace-nowrap"
+            title="Re-open cash drawer"
+          >
+            <Unlock size={14} />
+            <span>Pop Drawer</span>
+          </button>
         </div>
 
         {/* Body */}

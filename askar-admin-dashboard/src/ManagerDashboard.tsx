@@ -20,8 +20,8 @@ const EmployeeShiftReconciliation = lazy(() => import('./EmployeeShiftReconcilia
 const NfcManager = lazy(() => import('./NfcManager'));
 // ---
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
+import { useLaptopBridge } from './useLaptopBridge';
 const printKhataStatement = () => window.print();
-const openCashDrawer = () => {};
 
 interface ManagerDashboardProps {
   apiBase?: string;
@@ -29,6 +29,7 @@ interface ManagerDashboardProps {
 }
 
 export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: ManagerDashboardProps) {
+  const { remoteDrawerKick, remoteClearCart, remoteLockRegister } = useLaptopBridge();
   const apiBase = propApiBase || (typeof window !== 'undefined'
     ? (localStorage.getItem('master_server_url') || `http://${window.location.hostname || 'localhost'}:3000`)
     : 'http://localhost:3000');
@@ -634,7 +635,13 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'orders' && <PendingOrders apiBase={apiBase} onOrdersUpdated={fetchDraftsCount} />}
             {activeTab === 'stock' && <StockManagement apiBase={apiBase} />}
             {activeTab === 'barcodes' && <BarcodeGenerator apiBase={apiBase} />}
-            {activeTab === 'spy' && <RegisterSpyWidget onDrawerKick={openCashDrawer} />}
+            {activeTab === 'spy' && (
+              <RegisterSpyWidget 
+                onDrawerKick={remoteDrawerKick} 
+                onClearCart={remoteClearCart}
+                onLockRegister={remoteLockRegister}
+              />
+            )}
             {activeTab === 'vat' && <FinancialsVatReturn apiBase={apiBase} />}
             {activeTab === 'whatsapp_po' && <ProcurementLogistics apiBase={apiBase} />}
             {activeTab === 'scale_labels' && <ScaleLabelStudio />}
@@ -690,6 +697,26 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     fetchSales();
+    const interval = setInterval(fetchSales, 5000);
+
+    const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(`ws://${host}:8080`);
+      ws.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.type === 'SALE_COMPLETED' || d.type === 'SHIFT_CLOSED') {
+            fetchSales();
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      ws?.close();
+    };
   }, [apiBase]);
 
   useEffect(() => {
@@ -708,24 +735,30 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
   }, []);
 
   useEffect(() => {
+    const loadFinancials = () => {
+      fetch(`${apiBase}/api/reports/financials?period=${period}`, {
+        headers: { 'x-manager-pin': '9999' }
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          return res.json();
+        })
+        .then((data) => {
+          if (data.metrics) {
+            setMetrics(data.metrics);
+          }
+          if (Array.isArray(data.chartData) && data.chartData.length > 0) {
+            setChartData(data.chartData);
+          }
+        })
+        .catch((err) => console.warn('Financials report notice:', err))
+        .finally(() => setLoading(false));
+    };
+
     setLoading(true);
-    fetch(`${apiBase}/api/reports/financials?period=${period}`, {
-      headers: { 'x-manager-pin': '9999' }
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        return res.json();
-      })
-      .then((data) => {
-        if (data.metrics) {
-          setMetrics(data.metrics);
-        }
-        if (Array.isArray(data.chartData) && data.chartData.length > 0) {
-          setChartData(data.chartData);
-        }
-      })
-      .catch((err) => console.warn('Financials report notice:', err))
-      .finally(() => setLoading(false));
+    loadFinancials();
+    const interval = setInterval(loadFinancials, 5000);
+    return () => clearInterval(interval);
   }, [period, apiBase]);
 
   return (

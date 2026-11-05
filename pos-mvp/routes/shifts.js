@@ -274,13 +274,13 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
     await queryLocalDevDb(`UPDATE Sale SET shiftId = ? WHERE (shiftId IS NULL OR shiftId = '') AND createdAt >= ?`, [id, shiftOpenIso]);
   } catch { }
 
-  // Calculate Expected Cash: Starting Float + Shift Cash Sales - Drawer Payouts
+  // Calculate Expected Cash: Starting Float + Shift Cash Sales + Khata Cash Payments - Drawer Payouts - Refunds
   const zData = await calculateZReport(id);
   const startingFloat = Number(shift.openingCash || 0);
   const cashSales = Number(zData.cashSales || 0);
   const refundsCash = Number(zData.refunds || 0);
   const paidOuts = Number(zData.supplierPayments || 0);
-  const expectedCash = Number((startingFloat + cashSales - refundsCash - paidOuts).toFixed(3));
+  const expectedCash = Number((zData.expectedDrawerCash ?? (startingFloat + cashSales - refundsCash - paidOuts)).toFixed(3));
   const declaredCash = Number((isNaN(countedCash) ? 0 : countedCash).toFixed(3));
   const variance = Number((declaredCash - expectedCash).toFixed(3));
 
@@ -645,9 +645,25 @@ const calculateZReport = async (shiftId = null) => {
     supplierPayments += Number(exp.amount) || 0;
   });
 
+  // 2b. Fetch Khata customer cash collections deposited into till drawer during this shift
+  let allLedger = [];
+  try {
+    allLedger = await db.orm.KhataLedger.all();
+  } catch {
+    allLedger = [];
+  }
+
+  const shiftKhataCash = (allLedger || []).filter((entry) => {
+    const d = new Date(entry.timestamp || entry.createdAt || entry.created_at);
+    const isWithinShift = d >= startTime && d <= endTime;
+    const isPayment = entry.type === 'PAYMENT' || Number(entry.amount) < 0;
+    const isCash = !entry.reference || !String(entry.reference).toLowerCase().includes('benefit');
+    return isWithinShift && isPayment && isCash;
+  }).reduce((sum, entry) => sum + Math.abs(Number(entry.amount) || 0), 0);
+
   // 3. THE MASTER FORMULA:
-  // expectedDrawerCash = openingCash + cashSales - refunds - supplierPayments
-  const rawExpected = openingCash + cashSales - refunds - supplierPayments;
+  // expectedDrawerCash = openingCash + cashSales + shiftKhataCash - refunds - supplierPayments
+  const rawExpected = openingCash + cashSales + shiftKhataCash - refunds - supplierPayments;
   const expectedDrawerCash = Number(Math.max(0, rawExpected).toFixed(3));
 
   return {
@@ -665,6 +681,7 @@ const calculateZReport = async (shiftId = null) => {
     cardSales: Number(cardSales.toFixed(3)),
     digitalSales: Number((benefitSales + cardSales).toFixed(3)),
     khataSales: Number(khataSales.toFixed(3)),
+    khataCashCollected: Number(shiftKhataCash.toFixed(3)),
     refunds: Number(refunds.toFixed(3)),
     drawerCashOut: Number(supplierPayments.toFixed(3)),
     supplierPayments: Number(supplierPayments.toFixed(3)),

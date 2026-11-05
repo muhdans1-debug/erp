@@ -2228,15 +2228,37 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           <button 
             type="button"
             onClick={async () => {
+              const storedPin = localStorage.getItem('manager_pin') || '9999';
+              const inputPin = window.prompt('🔒 Enter Manager PIN to open cash drawer (No-Sale):');
+              if (inputPin !== storedPin) {
+                if (inputPin !== null) {
+                  showToast('❌ Invalid Manager PIN', 'error');
+                }
+                return;
+              }
+
               const ok = await kickCashDrawer();
               if (ok) {
-                showToast('⚡ Cash Drawer kicked successfully', 'success');
+                showToast('⚡ Cash Drawer opened [Manager Override]', 'success');
+                try {
+                  fetch(`${apiBase}/api/expenses`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      type: 'BUSINESS',
+                      category: 'MISC_BUSINESS',
+                      amount: 0,
+                      description: `Manual No-Sale Drawer Kick by Cashier: ${localStorage.getItem('active_shift_cashier') || 'Staff'}`,
+                      recordedBy: 'Manager'
+                    })
+                  }).catch(() => {});
+                } catch (_) {}
               } else {
                 showToast('⚠️ Cash Drawer kick failed', 'error');
               }
             }}
             className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
-            title="Manual Cash Drawer Kick [No Sale]"
+            title="Manual Cash Drawer Kick [Requires Manager PIN 9999]"
           >
             Drawer
           </button>

@@ -11,6 +11,35 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Automatic Environment Configuration Loader (.env) before LibSQL initialization
+const envCandidatePaths = [
+  path.resolve(__dirname, '.env'),
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), 'pos-mvp', '.env')
+];
+for (const envFilePath of envCandidatePaths) {
+  if (fs.existsSync(envFilePath)) {
+    try {
+      const rawEnv = fs.readFileSync(envFilePath, 'utf8');
+      for (const line of rawEnv.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx !== -1) {
+          const k = trimmed.slice(0, eqIdx).trim();
+          let v = trimmed.slice(eqIdx + 1).trim();
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1);
+          }
+          if (!process.env[k]) {
+            process.env[k] = v;
+          }
+        }
+      }
+    } catch {}
+  }
+}
+
 export const dataDir = process.env.ASKAR_DATA_PATH || __dirname;
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });

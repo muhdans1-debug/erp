@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
+import { kickCashDrawer } from '../utils/printer';
 import { 
   X, 
   Search, 
@@ -258,6 +259,11 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
 
       const data = await res.json();
       if (res.ok && data.success) {
+        // ⚡ Pop hardware cash drawer if refund is paid out from drawer cash float
+        if (destination === 'CASH') {
+          kickCashDrawer().catch((err) => console.warn('Refund cash drawer kick error:', err));
+        }
+
         setCompletedRefund({
           refund: data.refund,
           creditNoteNo: data.creditNoteNo,

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { useNfcScanner } from '../hooks/useNfcScanner';
-import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
+import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '../utils/printer';
 
 interface Customer {
   id: string;
@@ -292,6 +292,11 @@ function SettleBalanceView({
         showToast ? showToast(msg, 'success') : alert(msg);
         onCustomerUpdated?.();
 
+        // ⚡ Hardware Cash Drawer Kick on physical currency settlement
+        if (method === 'CASH') {
+          kickCashDrawer().catch((err) => console.warn('Khata payment cash drawer kick error:', err));
+        }
+
         // Print physical 58mm thermal receipt immediately on Sunmi hardware
         try {
           await printKhataPaymentReceipt({
@@ -327,6 +332,11 @@ function SettleBalanceView({
       const msg = `✅ Recorded BD ${amountNum.toFixed(3)} offline via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}.`;
       showToast ? showToast(msg, 'success') : alert(msg);
       onCustomerUpdated?.();
+
+      // ⚡ Hardware Cash Drawer Kick on offline physical currency settlement
+      if (method === 'CASH') {
+        kickCashDrawer().catch((err) => console.warn('Offline Khata payment cash drawer kick error:', err));
+      }
 
       // Offline print attempt
       try {

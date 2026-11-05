@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { MinusCircle, X, Banknote, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { kickCashDrawer } from '../utils/printer';
 
 interface CashOutModalProps {
   onClose: () => void;
@@ -44,6 +45,9 @@ export default function CashOutModal({ onClose, apiBase: propApiBase, onExpenseR
 
       const data = await res.json();
       if (data.success) {
+        // ⚡ Pop cash drawer so cashier/manager can physically extract cash
+        kickCashDrawer().catch((err) => console.warn('CashOut drawer kick error:', err));
+
         setFeedback({ type: 'success', message: 'Expense recorded! Cash drawer balance adjusted.' });
         if (onExpenseRecorded) onExpenseRecorded();
         setTimeout(() => {

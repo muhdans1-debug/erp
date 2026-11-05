@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, LogOut, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserX, Lock, Unlock, Truck, Receipt, ShieldAlert, Banknote } from 'lucide-react';
+import { Search, X, Plus, Minus, Trash2, Tag, Percent, KeyRound, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserX, Lock, Unlock, Truck, Receipt, ShieldAlert, Banknote } from 'lucide-react';
 import { printFullReceipt, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
@@ -2231,6 +2231,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             🔒 Close Shift
           </button>
 
+          <div className="h-5 w-px bg-slate-200 mx-0.5"></div>
+
           {/* Dev Tools Quick Icon */}
           <button
             type="button"
@@ -2264,17 +2266,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             onBackupNow={exportDatabaseBackup}
             isExporting={isExporting}
           />
-
-          {onLockTerminal && (
-            <button 
-              type="button"
-              onClick={onLockTerminal}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer whitespace-nowrap ml-1"
-              title="Lock terminal for shift change"
-            >
-              <LogOut size={13} /> Lock Register
-            </button>
-          )}
         </div>
       </header>
 

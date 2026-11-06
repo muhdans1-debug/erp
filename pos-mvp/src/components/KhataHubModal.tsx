@@ -3,6 +3,7 @@ import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLef
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '../utils/printer';
 import { playThankYouVoice } from '../utils/sound';
+import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';
 
 interface Customer {
@@ -117,6 +118,91 @@ export default function KhataHubModal({
 
 // --- SUB-COMPONENTS ---
 
+/**
+ * Broadcasts live Khata payment details to Sunmi secondary customer-facing display & pole display.
+ */
+export function broadcastKhataPayment(
+  customer: Customer | null,
+  amount: number,
+  isConfirmed: boolean = false,
+  method?: string,
+  receiptNo?: string
+) {
+  if (typeof window === 'undefined') return;
+
+  const currentBal = customer ? Number(customer.currentBalance ?? customer.balance ?? 0) : 0;
+  const payAmt = Number(amount || 0);
+  const remainingBal = isConfirmed
+    ? Math.max(0, currentBal)
+    : Math.max(0, currentBal - payAmt);
+
+  const qrPayload = (customer && payAmt > 0)
+    ? `BH-BENEFIT-FAWRI:MERCHANT=BH-BENEFIT-97300182:CUST=${customer.id}:AMT=${payAmt.toFixed(3)}`
+    : null;
+
+  const payload = {
+    type: isConfirmed ? 'KHATA_PAYMENT_CONFIRMED' : 'KHATA_PAYMENT_PREVIEW',
+    payload: {
+      customer: customer ? {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        cpr: customer.cpr,
+        currentBalance: currentBal,
+        group_name: customer.batchNo || customer.description
+      } : null,
+      payAmount: payAmt,
+      remainingBalance: remainingBal,
+      paymentMethod: method || 'CASH',
+      status: isConfirmed ? 'CONFIRMED' : (payAmt > 0 ? 'READY_TO_PAY' : 'ENTERING_AMOUNT'),
+      qrPayload,
+      receiptNo,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  try {
+    localStorage.setItem('askar_khata_customer_display', JSON.stringify(payload));
+    const ch1 = new BroadcastChannel('sunmi_dual_screen');
+    ch1.postMessage(payload);
+    ch1.close();
+
+    const ch2 = new BroadcastChannel('askar_customer_display_channel');
+    ch2.postMessage(payload);
+    ch2.close();
+  } catch (_) {}
+
+  // Update hardware pole display
+  if (customer) {
+    if (isConfirmed) {
+      CustomerDisplay.updateDisplay?.({
+        text: `THANK YOU, ${customer.name.toUpperCase()}!\nPAID: BD ${payAmt.toFixed(3)}\nNEW BAL: BD ${remainingBal.toFixed(3)}`
+      }).catch(() => {});
+    } else {
+      CustomerDisplay.updateDisplay?.({
+        text: `${customer.name.toUpperCase()}\nOWED: BD ${currentBal.toFixed(3)}\nPAYING: BD ${payAmt.toFixed(3)}\nREM: BD ${remainingBal.toFixed(3)}`
+      }).catch(() => {});
+    }
+  } else {
+    CustomerDisplay.updateDisplay?.({
+      text: `ASKAR SUPERMARKET\nWELCOME!`
+    }).catch(() => {});
+  }
+}
+
+export function resetCustomerDisplay() {
+  const payload = { type: 'RESET_KHATA_DISPLAY' };
+  try {
+    localStorage.removeItem('askar_khata_customer_display');
+    const ch1 = new BroadcastChannel('sunmi_dual_screen');
+    ch1.postMessage(payload);
+    ch1.close();
+    const ch2 = new BroadcastChannel('askar_customer_display_channel');
+    ch2.postMessage(payload);
+    ch2.close();
+  } catch (_) {}
+}
+
 function SettleBalanceView({
   apiBase,
   onCustomerUpdated,
@@ -152,6 +238,22 @@ function SettleBalanceView({
   const [isLoadingStatement, setIsLoadingStatement] = useState(false);
 
   const [sortParam, setSortParam] = useState<'highest' | 'stale' | 'lowest' | 'alpha'>('highest');
+
+  // ⚡ Live mirror to Sunmi Customer-Facing Dual Screen & Pole Display
+  useEffect(() => {
+    if (selectedCustomer) {
+      const amt = parseFloat(payAmount) || 0;
+      broadcastKhataPayment(selectedCustomer, amt, false);
+    } else {
+      resetCustomerDisplay();
+    }
+  }, [selectedCustomer, payAmount]);
+
+  useEffect(() => {
+    return () => {
+      resetCustomerDisplay();
+    };
+  }, []);
 
   // Fetch active customers for the Khata Hub
   const fetchKhataCustomers = () => {
@@ -408,6 +510,9 @@ function SettleBalanceView({
         // Professional retail voice announcement
         playThankYouVoice('KHATA_PAYMENT');
 
+        // Broadcast confirmed settlement to customer-facing screen
+        broadcastKhataPayment(updated, amountNum, true, method, data?.receiptNo);
+
         // Print physical 58mm thermal receipt immediately on Sunmi hardware
         try {
           await printKhataPaymentReceipt({
@@ -451,6 +556,9 @@ function SettleBalanceView({
 
       // Professional retail voice announcement
       playThankYouVoice('KHATA_PAYMENT');
+
+      // Broadcast offline confirmed settlement to customer-facing screen
+      broadcastKhataPayment(updated, amountNum, true, method, `KH-OFF-${Date.now().toString().slice(-4)}`);
 
       // Offline print attempt
       try {

@@ -23,6 +23,24 @@ interface KhataCustomer {
   group_name?: string;
 }
 
+export interface KhataPaymentDisplayState {
+  customer: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    cpr?: string | null;
+    currentBalance: number;
+    group_name?: string;
+  };
+  payAmount: number;
+  remainingBalance: number;
+  paymentMethod?: string;
+  status: 'ENTERING_AMOUNT' | 'READY_TO_PAY' | 'CONFIRMED';
+  qrPayload?: string | null;
+  receiptNo?: string;
+  timestamp?: string;
+}
+
 // Supplier Ad Network Campaigns for Monetization (Almarai, Nada, Daily Specials)
 const PROMO_ADS = [
   {
@@ -79,6 +97,20 @@ export default function CustomerDisplayPage() {
   const [qrCheckoutUrl, setQrCheckoutUrl] = useState<string | null>(null);
   const [currentAdIndex, setCurrentAdIndex] = useState(0);
 
+  // Live Khata Debt Payment Preview & Settlement state
+  const [khataPayment, setKhataPayment] = useState<KhataPaymentDisplayState | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('askar_khata_customer_display');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed?.payload?.customer) return parsed.payload;
+        }
+      } catch (_) {}
+    }
+    return null;
+  });
+
   // 1. Dual-Channel Listeners (BroadcastChannel 'sunmi_dual_screen' & 'askar_customer_display_channel')
   useEffect(() => {
     let sunmiChannel: BroadcastChannel | null = null;
@@ -89,6 +121,16 @@ export default function CustomerDisplayPage() {
       sunmiChannel.onmessage = (event) => {
         const data = event.data;
         if (!data) return;
+
+        if (data.type === 'KHATA_PAYMENT_PREVIEW' || data.type === 'KHATA_PAYMENT_CONFIRMED') {
+          setKhataPayment(data.payload);
+          return;
+        }
+
+        if (data.type === 'RESET_KHATA_DISPLAY') {
+          setKhataPayment(null);
+          return;
+        }
 
         if (data.type === 'STATE_UPDATE' && data.payload) {
           const rawCart = data.payload.cart || [];
@@ -112,6 +154,16 @@ export default function CustomerDisplayPage() {
       askarChannel.onmessage = (event) => {
         const data = event.data;
         if (!data) return;
+
+        if (data.type === 'KHATA_PAYMENT_PREVIEW' || data.type === 'KHATA_PAYMENT_CONFIRMED') {
+          setKhataPayment(data.payload);
+          return;
+        }
+
+        if (data.type === 'RESET_KHATA_DISPLAY') {
+          setKhataPayment(null);
+          return;
+        }
 
         // Legacy format handling
         if (data.recentItems || data.total !== undefined) {
@@ -139,6 +191,20 @@ export default function CustomerDisplayPage() {
 
     // Storage event for cross-browser fallback
     const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'askar_khata_customer_display') {
+        if (!e.newValue) {
+          setKhataPayment(null);
+        } else {
+          try {
+            const parsed = JSON.parse(e.newValue);
+            if (parsed?.type === 'KHATA_PAYMENT_PREVIEW' || parsed?.type === 'KHATA_PAYMENT_CONFIRMED') {
+              setKhataPayment(parsed.payload);
+            }
+          } catch {}
+        }
+        return;
+      }
+
       if (e.key === 'askar_customer_display_state' && e.newValue) {
         try {
           const parsed = JSON.parse(e.newValue);
@@ -165,17 +231,212 @@ export default function CustomerDisplayPage() {
 
   // 2. The Idle Ad Network: Auto-loop billboards every 6 seconds when register is empty
   useEffect(() => {
-    if (cart.length > 0 || customer || qrCheckoutUrl) return;
+    if (cart.length > 0 || customer || qrCheckoutUrl || khataPayment) return;
 
     const timer = setInterval(() => {
       setCurrentAdIndex((prev) => (prev + 1) % PROMO_ADS.length);
     }, 6000);
 
     return () => clearInterval(timer);
-  }, [cart.length, customer, qrCheckoutUrl]);
+  }, [cart.length, customer, qrCheckoutUrl, khataPayment]);
 
   const activeAd = PROMO_ADS[currentAdIndex];
   const customerBalance = customer ? Number(customer.balance ?? customer.currentBalance ?? 0) : 0;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 🌟 KHATA DEBT PAYMENT PREVIEW: CUSTOMER-FACING REVEAL & CONFIRMATION
+  // ════════════════════════════════════════════════════════════════════════════
+  if (khataPayment && khataPayment.customer) {
+    const cust = khataPayment.customer;
+    const isConfirmed = khataPayment.status === 'CONFIRMED';
+    const payAmt = Number(khataPayment.payAmount || 0);
+    const initialBal = Number(cust.currentBalance || 0);
+    const remBal = isConfirmed
+      ? Number(khataPayment.remainingBalance || 0)
+      : Math.max(0, initialBal - payAmt);
+
+    const fawriPayload = `BH-BENEFIT-FAWRI:MERCHANT=BH-BENEFIT-97300182:CUST=${cust.id}:AMT=${payAmt > 0 ? payAmt.toFixed(3) : initialBal.toFixed(3)}`;
+
+    return (
+      <div className={`w-full h-full min-h-screen ${
+        isConfirmed
+          ? 'bg-gradient-to-br from-emerald-950 via-slate-950 to-teal-950'
+          : 'bg-slate-950'
+      } text-white flex flex-col justify-between p-4 sm:p-6 select-none animate-in fade-in duration-200 font-sans`}>
+        {/* TOP HEADER */}
+        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-xl shadow-lg">
+              📒
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-black text-white tracking-wider uppercase">
+                Askar Supermarket
+              </h2>
+              <p className="text-[10px] text-amber-400 font-bold font-arabic">
+                أسواق عسكر • تسوية حساب آجل (Khata Payment)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${
+              isConfirmed
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+            }`}>
+              {isConfirmed ? '✓ Payment Received' : 'Khata Debt Settlement'}
+            </span>
+          </div>
+        </div>
+
+        {/* CUSTOMER PROFILE BANNER */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-xl my-2">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-2xl font-bold text-blue-300">
+              👤
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                Khata Account Holder
+              </span>
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                {cust.name}
+              </h1>
+              <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-400 font-mono">
+                {cust.cpr && <span>CPR: {cust.cpr}</span>}
+                {cust.phone && <span>Tel: {cust.phone}</span>}
+                {cust.group_name && <span className="text-blue-400 font-bold">Group: {cust.group_name}</span>}
+              </div>
+            </div>
+          </div>
+
+          {isConfirmed && (
+            <div className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-3.5 py-1.5 rounded-xl text-right">
+              <span className="text-[10px] font-bold uppercase tracking-wider block">Status</span>
+              <span className="text-sm font-black flex items-center gap-1.5">
+                <CheckCircle2 size={16} className="text-emerald-400 inline" /> Paid & Cleared
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 3-METRIC FINANCIAL CARDS (CURRENT DEBT • PAYMENT AMOUNT • REMAINING) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 my-auto">
+          {/* Box 1: Initial Debt Balance */}
+          <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Initial Debt Balance
+              </span>
+              <span className="text-[10px] text-slate-500 font-arabic">الرصيد السابق قبل الدفع</span>
+            </div>
+            <div className="mt-3">
+              <div className="text-3xl sm:text-4xl font-black font-mono text-rose-400 tabular-nums">
+                BD {initialBal.toFixed(3)}
+              </div>
+              <span className="text-[10px] text-slate-500 font-mono mt-1 block">Total Owed</span>
+            </div>
+          </div>
+
+          {/* Box 2: Payment Amount (Hero Highlight) */}
+          <div className={`rounded-2xl p-5 flex flex-col justify-between shadow-2xl relative overflow-hidden border ${
+            isConfirmed
+              ? 'bg-gradient-to-br from-emerald-900/80 via-teal-900/80 to-slate-900 border-emerald-400/40 ring-2 ring-emerald-500/30'
+              : (payAmt > 0
+                ? 'bg-gradient-to-br from-amber-950 via-slate-900 to-slate-900 border-amber-400/40 ring-2 ring-amber-500/30'
+                : 'bg-slate-900/90 border-slate-700/80')
+          }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <span className={`text-xs font-black uppercase tracking-wider block ${
+                  isConfirmed ? 'text-emerald-300' : 'text-amber-300'
+                }`}>
+                  {isConfirmed ? 'Amount Received' : 'Paying Now'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-arabic">المبلغ المسدد الآن</span>
+              </div>
+              <span className="text-2xl">{isConfirmed ? '✅' : '💳'}</span>
+            </div>
+
+            <div className="mt-2">
+              <div className={`text-4xl sm:text-5xl lg:text-6xl font-black font-mono tracking-tight tabular-nums ${
+                isConfirmed ? 'text-emerald-300' : (payAmt > 0 ? 'text-amber-300' : 'text-slate-500')
+              }`}>
+                BD {payAmt.toFixed(3)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className="font-bold text-white/80">
+                  {payAmt > 0 ? (isConfirmed ? 'Settlement Confirmed' : 'Cashier Entered Amount') : 'Waiting for cashier input...'}
+                </span>
+                <span className="text-[11px] font-mono text-slate-400 uppercase">
+                  {khataPayment.paymentMethod || 'CASH'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Box 3: Remaining Balance */}
+          <div className="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Remaining Balance
+              </span>
+              <span className="text-[10px] text-slate-500 font-arabic">الرصيد المتبقي بعد السداد</span>
+            </div>
+            <div className="mt-3">
+              <div className={`text-3xl sm:text-4xl font-black font-mono tabular-nums ${
+                remBal === 0 ? 'text-emerald-400' : 'text-sky-400'
+              }`}>
+                BD {remBal.toFixed(3)}
+              </div>
+              <span className="text-[10px] text-slate-500 font-mono mt-1 block">
+                {remBal === 0 ? '🎉 Completely Debt Free!' : 'Remaining on account'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* BOTTOM SECTION: BenefitPay QR or Live Statement Link */}
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 mt-2">
+          <div className="flex items-center gap-3">
+            <div className="bg-white p-2 rounded-xl shrink-0 shadow">
+              <QRCodeSVG
+                value={khataPayment.paymentMethod === 'BENEFIT_PAY' ? fawriPayload : `https://askar-khata-pwa.vercel.app/tab/${cust.id}`}
+                size={55}
+                level="M"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                {khataPayment.paymentMethod === 'BENEFIT_PAY' ? (
+                  <>
+                    <span className="text-amber-400">⚡</span>
+                    <span>BenefitPay Fawri+ • Scan to Pay BD {payAmt.toFixed(3)}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>📱</span>
+                    <span>Scan for Live Statement & Digital Receipt</span>
+                  </>
+                )}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                {khataPayment.paymentMethod === 'BENEFIT_PAY'
+                  ? 'Open BenefitPay app and point camera at QR code to settle instantly'
+                  : 'Scan with any mobile camera to view your updated Khata balance anytime'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-slate-400 shrink-0 font-mono">
+            <ShieldCheck size={14} className="text-emerald-400" />
+            <span>Askar Central Ledger • Instant Sync</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // BIG IDEA 1: THE IDLE AD NETWORK & DIGITAL BILLBOARD (Cart = 0 & No Customer)

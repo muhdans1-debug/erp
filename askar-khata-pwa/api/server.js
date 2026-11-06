@@ -5,8 +5,21 @@ import crypto from 'crypto';
 
 const fastify = Fastify({ logger: true });
 
-const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || "libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io";
-const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || "";
+// CORS Support for all web clients & Sunmi PWA
+fastify.addHook('onRequest', async (request, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-khata-pin, x-tap-signature');
+  if (request.method === 'OPTIONS') {
+    return reply.status(204).send();
+  }
+});
+
+const TURSO_FALLBACK_URL = "libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io";
+const TURSO_FALLBACK_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg";
+
+const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || TURSO_FALLBACK_URL;
+const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN || TURSO_FALLBACK_TOKEN;
 const JWT_SECRET = process.env.JWT_SECRET || 'askar_khata_secure_jwt_secret_2026';
 
 const db = createClient({
@@ -130,35 +143,48 @@ fastify.post('/api/auth/change-pin', async (request, reply) => {
   }
 });
 
-// Khata Customer Statement Endpoint (Secured by x-khata-pin header)
-fastify.get('/api/khata/:uuid', async (request, reply) => {
-  const { uuid } = request.params;
+// Unified Khata Customer Statement & Public Tab Endpoint
+const handleKhataStatementOrTab = async (request, reply) => {
+  const targetId = request.params.uuid || request.params.id;
   const providedPin = String(request.headers['x-khata-pin'] || '').trim();
 
-  // 1. Block missing PINs
-  if (!providedPin) {
-    return reply.status(401).send({ error: 'Unauthorized: PIN required.' });
+  if (!targetId) {
+    return reply.status(400).send({ error: 'Customer identifier is required' });
   }
 
   try {
-    // 2. Verify PIN against unified Customer table
+    // 1. Look up customer in unified Customer table
     const authCheck = await db.execute({
-      sql: `SELECT id, name, COALESCE(balance, 0.0) AS balance, phone, access_token, cardUid, cpr, mess_id, COALESCE(pin, khata_pin, '1234') as pin
+      sql: `SELECT id, name, COALESCE(balance, 0.0) AS balance, COALESCE(credit_limit, 30.0) AS credit_limit, phone, access_token, cardUid, cpr, mess_id, COALESCE(pin, khata_pin, '1234') as pin
             FROM Customer 
             WHERE access_token = ? OR id = ? OR phone = ? OR cardUid = ? OR cpr = ? 
             LIMIT 1`,
-      args: [uuid, uuid, uuid, uuid, uuid]
+      args: [targetId, targetId, targetId, targetId, targetId]
     });
 
     if (authCheck.rows && authCheck.rows.length > 0) {
       const customer = authCheck.rows[0];
       const validPin = customer.pin ? String(customer.pin).trim() : '1234';
 
-      if (validPin !== providedPin) {
-        return reply.status(403).send({ error: 'Forbidden: Invalid Khata PIN.' });
+      // Safe Public Tab View (No PIN provided or public scan)
+      if (!providedPin) {
+        return reply.send({
+          success: true,
+          id: customer.id,
+          name: customer.name,
+          balance: Number(customer.balance ?? 0),
+          credit_limit: Number(customer.credit_limit ?? 30.0),
+          isLocked: true,
+          message: 'PIN required for detailed line-item statement'
+        });
       }
 
-      // 3. Fetch financial ledger transactions
+      // PIN verification for private statement access
+      if (validPin !== providedPin) {
+        return reply.status(403).send({ success: false, error: 'Forbidden: Invalid Khata PIN.' });
+      }
+
+      // PIN is valid: fetch and return detailed Khata ledger transactions
       const ledgerQuery = await db.execute({
         sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, created_at 
               FROM KhataLedger 
@@ -171,7 +197,8 @@ fastify.get('/api/khata/:uuid', async (request, reply) => {
         success: true,
         id: customer.id,
         name: customer.name,
-        balance: customer.balance ?? 0,
+        balance: Number(customer.balance ?? 0),
+        credit_limit: Number(customer.credit_limit ?? 30.0),
         phone: customer.phone,
         cpr: customer.cpr,
         ledger: ledgerQuery.rows || []
@@ -179,59 +206,47 @@ fastify.get('/api/khata/:uuid', async (request, reply) => {
     }
 
     // Demo / test account fallback
-    if (uuid === 'f8a9-4b2c' || uuid.includes('f8a9') || uuid.includes('cust_nfc')) {
+    if (targetId === 'f8a9-4b2c' || targetId.includes('f8a9') || targetId.includes('cust_nfc')) {
+      if (!providedPin) {
+        return reply.send({
+          success: true,
+          id: targetId,
+          name: 'Camp Mess Alpha (Test Account)',
+          balance: 14.500,
+          credit_limit: 30.0,
+          access_token: targetId,
+          isLocked: true
+        });
+      }
       if (providedPin !== '1234') {
-        return reply.status(403).send({ error: 'Forbidden: Invalid Khata PIN.' });
+        return reply.status(403).send({ success: false, error: 'Forbidden: Invalid Khata PIN.' });
       }
       return reply.send({
         success: true,
-        id: uuid,
+        id: targetId,
         name: 'Camp Mess Alpha (Test Account)',
         balance: 14.500,
-        access_token: uuid,
+        credit_limit: 30.0,
+        access_token: targetId,
         ledger: [
-          { id: '1', customerId: uuid, amount: 14.500, type: 'DEBIT', reference: 'Initial Balance', timestamp: new Date().toISOString() }
+          { id: '1', customerId: targetId, amount: 14.500, type: 'DEBIT', reference: 'Initial Balance', timestamp: new Date().toISOString() }
         ]
       });
     }
 
-    return reply.status(404).send({ error: "Account Not Found" });
+    return reply.status(404).send({ success: false, error: 'Account Not Found' });
   } catch (error) {
-    fastify.log.error(error);
-    return reply.status(500).send({ error: "Database Error", message: error.message });
+    fastify.log.error('Khata query error:', error);
+    return reply.status(500).send({ error: 'Database Error', message: error.message });
   }
-});
+};
 
-// Customer Tab Safe Public Ledger Query (for Thermal QR Code Scans)
-fastify.get('/api/customers/:id/tab', async (request, reply) => {
-  const { id } = request.params;
-  
-  try {
-    const result = await db.execute({
-      // 🟢 Querying the unified Customer table, strictly returning safe public data
-      sql: 'SELECT id, name, COALESCE(balance, 0.0) as balance, COALESCE(credit_limit, 30.0) as credit_limit, phone FROM Customer WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1',
-      args: [id, id, id]
-    });
-
-    if (result.rows.length === 0) {
-      if (id === 'f8a9-4b2c' || id.includes('f8a9')) {
-        return reply.send({ id, name: 'Camp Mess Alpha (Test Account)', balance: 14.500, credit_limit: 30.0 });
-      }
-      return reply.code(404).send({ error: 'Ledger not found.' });
-    }
-
-    const row = result.rows[0];
-    return reply.send({
-      id: row.id,
-      name: row.name,
-      balance: Number(row.balance || 0),
-      credit_limit: Number(row.credit_limit || 30.0)
-    });
-  } catch (error) {
-    fastify.log.error(error);
-    return reply.code(500).send({ error: 'Database connection failed.' });
-  }
-});
+// Route Aliases to satisfy every client caller
+fastify.get('/api/khata/:uuid', handleKhataStatementOrTab);
+fastify.get('/api/khata/:uuid/tab', handleKhataStatementOrTab);
+fastify.get('/api/customers/:id/tab', handleKhataStatementOrTab);
+fastify.get('/api/customers/:id', handleKhataStatementOrTab);
+fastify.get('/api/tab/:id', handleKhataStatementOrTab);
 
 // Secure Tap Payments Gateway Checkout Initialization
 fastify.post('/api/checkout/init', async (request, reply) => {
@@ -412,6 +427,7 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
 });
 
 // Step 4: The Fastify Serverless Export
+export { fastify };
 export default async function handler(req, res) {
   await fastify.ready();
   fastify.server.emit('request', req, res);

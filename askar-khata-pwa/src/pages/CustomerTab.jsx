@@ -18,22 +18,49 @@ export default function CustomerTab() {
     const fetchLedger = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`/api/customers/${encodeURIComponent(customerId)}/tab`);
-        if (!response.ok) {
-          // Fallback check to /api/khata/:uuid if /tab returns 404
-          const altRes = await fetch(`/api/khata/${encodeURIComponent(customerId)}`);
-          if (!altRes.ok) throw new Error('Ledger not found');
-          const altData = await altRes.json();
-          setLedger({
-            id: altData.id || customerId,
-            name: altData.name || 'Valued Customer',
-            balance: Number(altData.balance ?? altData.currentBalance ?? 0),
-            credit_limit: Number(altData.credit_limit ?? altData.creditLimit ?? 30.0)
-          });
-          return;
+        setError('');
+
+        // Pass saved PIN in header if device was previously authenticated
+        const savedPin = localStorage.getItem(`khata_pin_${customerId}`) || '';
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(savedPin ? { 'x-khata-pin': savedPin } : {})
+        };
+
+        let data = null;
+        let lastErrorMsg = '';
+
+        const candidateEndpoints = [
+          `/api/customers/${encodeURIComponent(customerId)}/tab`,
+          `/api/khata/${encodeURIComponent(customerId)}/tab`,
+          `/api/khata/${encodeURIComponent(customerId)}`,
+          `/api/tab/${encodeURIComponent(customerId)}`
+        ];
+
+        for (const ep of candidateEndpoints) {
+          try {
+            const res = await fetch(ep, { headers });
+            if (res.ok) {
+              const json = await res.json();
+              if (json && (json.balance !== undefined || json.name)) {
+                data = json;
+                break;
+              }
+            } else {
+              const errBody = await res.json().catch(() => ({}));
+              if (errBody && errBody.message) {
+                lastErrorMsg = errBody.message;
+              }
+            }
+          } catch (e) {
+            // continue fallback
+          }
         }
 
-        const data = await response.json();
+        if (!data) {
+          throw new Error(lastErrorMsg || 'Customer Khata record not found or server is unreachable.');
+        }
+
         setLedger({
           id: data.id || customerId,
           name: data.name || 'Valued Customer',
@@ -173,6 +200,16 @@ export default function CustomerTab() {
             <span>All Settled Up — No Debt Owed</span>
           </div>
         )}
+
+        <div className="mt-4 pt-3 text-center">
+          <a
+            href={`/statement/${encodeURIComponent(ledger.id || customerId)}`}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3.5 py-2 rounded-xl transition"
+          >
+            <span>🔒</span>
+            <span>View Full Itemized Statement (PIN Protected)</span>
+          </a>
+        </div>
 
         <div className="mt-8 pt-6 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
           <span>Secured by BenefitPay & Fawri+</span>

@@ -97,11 +97,11 @@ export default function App() {
       const savedIp = localStorage.getItem('server_ip');
       if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
       const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-      if (isNative) return 'http://192.168.8.20:3000';
+      if (isNative) return 'http://192.168.8.7:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
     }
-    return 'http://192.168.8.20:3000';
+    return 'http://192.168.8.7:3000';
   });
 
   // Disaster Recovery Protocol: Cloud Traffic Light & Physical Backup

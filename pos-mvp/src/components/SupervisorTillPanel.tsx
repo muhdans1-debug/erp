@@ -132,7 +132,7 @@ export default function SupervisorTillPanel({
             <p className="font-bold text-white text-sm mb-0.5">Unified Supermarket Management Notice</p>
             All supermarket back-office operations (PIM, Pricing, Distributor Orders, and Bahrain NBR VAT) are centralized on the Store Manager's Laptop at:
             <div className="mt-2 py-1 px-3 rounded-lg bg-slate-900 border border-slate-700 font-mono text-emerald-400 font-bold inline-block">
-              💻 http://192.168.8.20:5177/
+              💻 http://192.168.8.7:5177/
             </div>
           </div>
         </div>

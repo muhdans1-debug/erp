@@ -169,10 +169,10 @@ export default function CustomerStatementPage({
     // 6. Native Android Capacitor check (Default to Supermarket Laptop)
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
     if (isNative) {
-      return 'http://192.168.8.20:3000';
+      return 'http://192.168.8.7:3000';
     }
 
-    return apiBase || 'http://192.168.8.20:3000';
+    return apiBase || 'http://192.168.8.7:3000';
   };
 
   const handleVerifyPin = async (e?: React.FormEvent) => {

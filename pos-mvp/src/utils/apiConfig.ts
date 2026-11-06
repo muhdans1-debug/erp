@@ -7,6 +7,12 @@ export function getServerIp(): string {
   if (typeof window === 'undefined') return '127.0.0.1';
   const custom = localStorage.getItem('server_ip') || localStorage.getItem('master_server_url');
   if (custom && custom.trim()) {
+    if (custom.includes('192.168.8.20')) {
+      // Auto-heal legacy stale IP
+      localStorage.setItem('master_server_url', 'http://192.168.8.7:3000');
+      localStorage.setItem('server_ip', '192.168.8.7');
+      return '192.168.8.7';
+    }
     return custom
       .trim()
       .replace(/^https?:\/\//, '')
@@ -14,7 +20,7 @@ export function getServerIp(): string {
       .replace(/\/.*$/, '');
   }
   const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-  if (isNative) return '192.168.8.20';
+  if (isNative) return '192.168.8.7';
   return window.location.hostname || '127.0.0.1';
 }
 
@@ -22,6 +28,12 @@ export function getApiBaseUrl(): string {
   if (typeof window === 'undefined') return 'http://127.0.0.1:3000';
   const custom = localStorage.getItem('master_server_url') || localStorage.getItem('server_ip');
   if (custom && custom.trim()) {
+    if (custom.includes('192.168.8.20')) {
+      // Auto-heal legacy stale IP
+      localStorage.setItem('master_server_url', 'http://192.168.8.7:3000');
+      localStorage.setItem('server_ip', '192.168.8.7');
+      return 'http://192.168.8.7:3000';
+    }
     let clean = custom.trim();
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = `http://${clean}`;
@@ -32,7 +44,7 @@ export function getApiBaseUrl(): string {
     return clean.replace(/\/$/, '');
   }
   const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-  if (isNative) return 'http://192.168.8.20:3000';
+  if (isNative) return 'http://192.168.8.7:3000';
   const host = window.location.hostname || '127.0.0.1';
   return `http://${host}:3000`;
 }

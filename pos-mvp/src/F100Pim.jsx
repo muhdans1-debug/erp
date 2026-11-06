@@ -2508,7 +2508,7 @@ export default function F100Pim() {
 
             {/* Quick Preset Buttons */}
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {['http://192.168.8.20:3000', 'http://192.168.8.7:3000', 'http://192.168.8.12:3000', 'http://localhost:3000'].map((preset) => (
+              {['http://192.168.8.7:3000', 'http://192.168.8.12:3000', 'http://localhost:3000'].map((preset) => (
                 <button
                   key={preset}
                   type="button"

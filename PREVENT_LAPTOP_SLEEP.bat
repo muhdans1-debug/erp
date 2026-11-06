@@ -73,3 +73,4 @@ echo   Sunmi POS and Khata will never go offline!
 echo ========================================================
 echo.
 pause
+

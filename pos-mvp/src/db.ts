@@ -101,13 +101,12 @@ export const db: LibsqlDatabase = {
     const devSecret = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_SECRET) || '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06';
     const endpoints = [
       masterBase,
-      'http://192.168.8.20:3000',
-      `http://${host}:3000`, 
       'http://192.168.8.7:3000',
+      `http://${host}:3000`, 
       'http://askar-master.local:3000',
       'http://localhost:3000',
       'http://192.168.88.10:3000'
-    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
+    ].filter((v, i, a) => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
 
     for (const base of endpoints) {
       try {
@@ -191,14 +190,13 @@ export const db: LibsqlDatabase = {
     const masterBase = customBase || (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
     const endpoints = [
       masterBase,
-      'http://192.168.8.20:3000',
-      `http://${host}:3000`, 
       'http://192.168.8.7:3000',
+      `http://${host}:3000`, 
       'http://askar-master.local:3000',
       'http://localhost:3000', 
       'http://127.0.0.1:3000',
       'http://192.168.88.10:3000'
-    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
+    ].filter((v, i, a) => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
 
     for (const base of endpoints) {
       try {

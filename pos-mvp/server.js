@@ -110,14 +110,36 @@ fastify.register(reportRoutes);
 fastify.register(procurementRoutes);
 
 // APK Direct Download Endpoint for Sunmi Terminal Installation
-if (!fs.existsSync(path.join(__dirname, 'dist', 'pos.apk'))) {
-  fastify.get('/pos.apk', async (request, reply) => {
-    const apkPath = path.resolve('./android/app/build/outputs/apk/debug/app-debug.apk');
+fastify.get('/api/download/apk', async (request, reply) => {
+  const candidateApks = [
+    path.resolve(__dirname, 'updated-sunmi.apk'),
+    path.resolve(__dirname, 'dist', 'pos.apk'),
+    path.resolve(__dirname, 'android/app/build/outputs/apk/debug/app-debug.apk')
+  ];
+  for (const apkPath of candidateApks) {
     if (fs.existsSync(apkPath)) {
       const stream = fs.createReadStream(apkPath);
       reply.header('Content-Type', 'application/vnd.android.package-archive');
       reply.header('Content-Disposition', 'attachment; filename="askar-pos-latest.apk"');
       return reply.send(stream);
+    }
+  }
+  return reply.status(404).send({ error: 'APK build not found' });
+});
+
+if (!fs.existsSync(path.join(__dirname, 'dist', 'pos.apk'))) {
+  fastify.get('/pos.apk', async (request, reply) => {
+    const candidateApks = [
+      path.resolve(__dirname, 'updated-sunmi.apk'),
+      path.resolve(__dirname, 'android/app/build/outputs/apk/debug/app-debug.apk')
+    ];
+    for (const apkPath of candidateApks) {
+      if (fs.existsSync(apkPath)) {
+        const stream = fs.createReadStream(apkPath);
+        reply.header('Content-Type', 'application/vnd.android.package-archive');
+        reply.header('Content-Disposition', 'attachment; filename="askar-pos-latest.apk"');
+        return reply.send(stream);
+      }
     }
     return reply.status(404).send({ error: 'APK build not found' });
   });

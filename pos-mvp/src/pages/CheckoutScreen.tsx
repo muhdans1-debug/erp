@@ -124,15 +124,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [apiBase, setApiBase] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('master_server_url');
-      if (saved && saved.trim()) return saved.trim();
+      if (saved && saved.trim() && !saved.includes('192.168.8.20')) return saved.trim();
       const savedIp = localStorage.getItem('server_ip');
-      if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
+      if (savedIp && savedIp.trim() && !savedIp.includes('192.168.8.20')) return `http://${savedIp.trim()}:3000`;
       const isNative = (window as any).Capacitor?.isNativePlatform?.();
-      if (isNative) return 'http://192.168.8.20:3000';
+      if (isNative) return 'http://192.168.8.7:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
     }
-    return 'http://192.168.8.20:3000';
+    return 'http://192.168.8.7:3000';
   });
 
   // Disaster Recovery Protocol: Traffic Light & Physical Backup
@@ -510,7 +510,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       apiBase,
       localStorage.getItem('master_server_url'),
       localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
-      'http://192.168.8.20:3000',
       'http://192.168.8.7:3000',
       'http://askar-master.local:3000',
       'http://localhost:3000',
@@ -1459,7 +1458,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(checkoutPayload),
-          signal: AbortSignal.timeout(1800)
+          signal: AbortSignal.timeout(900)
         });
         if (res.ok) {
           data = await res.json();
@@ -1480,7 +1479,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(checkoutPayload),
-              signal: AbortSignal.timeout(1200)
+              signal: AbortSignal.timeout(600)
             });
             if (altRes.ok) {
               const altData = await altRes.json();

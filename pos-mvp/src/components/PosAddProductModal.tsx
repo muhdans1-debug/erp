@@ -143,13 +143,13 @@ export default function PosAddProductModal({
       apiBase,
       typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
       typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
-      'http://192.168.8.20:3000',
       'http://192.168.8.7:3000',
       'http://askar-master.local:3000',
       'http://localhost:3000',
       'http://192.168.88.10:3000'
     ];
-    return list.filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
+    return list
+      .filter((val, idx, arr): val is string => Boolean(val) && !val?.includes('192.168.8.20') && arr.indexOf(val) === idx);
   };
 
   // Fetch official distributors
@@ -247,73 +247,62 @@ export default function PosAddProductModal({
     };
 
     setIsSubmitting(true);
-    let success = false;
-    let savedProduct: any = null;
-    let errorDetail = '';
 
-    const candidates = getCandidateUrls();
-    for (const url of candidates) {
-      try {
-        const res = await fetch(`${url}/api/products`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(3000)
-        });
-        const data = await res.json();
-        if (res.ok && (data.success || data.id)) {
-          success = true;
-          savedProduct = data.product || data;
-          break;
-        } else {
-          errorDetail = data.error || data.message || 'Server rejected product';
-        }
-      } catch (err: any) {
-        errorDetail = err.message || 'Network timeout';
-      }
+    // ⚡ 0ms INSTANT OPTIMISTIC SAVE: Persist immediately to local embedded SQLite (<5ms)
+    try {
+      await db.execute({
+        sql: `INSERT OR REPLACE INTO Product (id, barcode, name, sellingPrice, unitCost, purchasePrice, stockQuantity, minThreshold, maxThreshold, vatRate, taxRate, is_weighed_item, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          payload.id,
+          payload.barcode,
+          payload.name,
+          payload.sellingPrice,
+          payload.unitCost,
+          payload.purchasePrice,
+          payload.stockQuantity,
+          payload.minThreshold,
+          payload.maxThreshold,
+          payload.vatRate,
+          payload.taxRate,
+          payload.is_weighed_item ? 1 : 0,
+          payload.category
+        ]
+      });
+    } catch (localErr: any) {
+      console.warn('Local instant save notice:', localErr);
     }
 
-    // 0ms Offline Hardware Chip Fallback: If network unreachable, persist locally directly
-    if (!success) {
-      try {
-        await db.execute({
-          sql: `INSERT OR REPLACE INTO Product (id, barcode, name, sellingPrice, unitCost, purchasePrice, stockQuantity, minThreshold, maxThreshold, vatRate, taxRate, is_weighed_item, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [
-            payload.id,
-            payload.barcode,
-            payload.name,
-            payload.sellingPrice,
-            payload.unitCost,
-            payload.purchasePrice,
-            payload.stockQuantity,
-            payload.minThreshold,
-            payload.maxThreshold,
-            payload.vatRate,
-            payload.taxRate,
-            payload.is_weighed_item ? 1 : 0,
-            payload.category
-          ]
-        });
-        success = true;
-        savedProduct = payload;
-      } catch (localErr: any) {
-        console.warn('Local fallback save notice:', localErr);
-      }
-    }
+    const savedProduct = {
+      ...payload,
+      price: salePrice,
+      sellingPrice: salePrice
+    };
 
+    // ⚡ 0ms UI UNBLOCK: Trigger callbacks and dismiss modal immediately
+    onProductAdded(savedProduct, andAddToCart);
     setIsSubmitting(false);
+    onClose();
 
-    if (success && savedProduct) {
-      onProductAdded({
-        ...payload,
-        ...savedProduct,
-        price: salePrice,
-        sellingPrice: salePrice
-      }, andAddToCart);
-      onClose();
-    } else {
-      setErrorMessage(errorDetail || "Could not reach POS server to save product.");
-    }
+    // ⚡ NON-BLOCKING BACKGROUND SYNC: Push to Master Server silently without stalling UI
+    (async () => {
+      const candidates = getCandidateUrls();
+      for (const url of candidates) {
+        try {
+          const res = await fetch(`${url}/api/products`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(1500)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success || data.id) break;
+          }
+        } catch {
+          // Fall through to next candidate or leave in local DB
+        }
+      }
+    })();
   };
 
   return (

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '../utils/printer';
+import { db } from '../db';
 
 interface Customer {
   id: string;
@@ -237,35 +238,83 @@ function SettleBalanceView({
     onCustomerUpdated?.();
   };
 
-  // Load statement for the selected customer
+  // Load statement for the selected customer with multi-endpoint fallback
   const loadStatement = async (customerId: string) => {
     setIsLoadingStatement(true);
-    try {
-      const res = await fetch(`${apiBase}/api/customers/${customerId}/statement`);
-      const data = await res.json();
-      if (data.success && Array.isArray(data.statement)) {
-        setStatement(data.statement);
-        setViewMode('STATEMENT');
+    let loaded = false;
+    const candidates = [
+      apiBase,
+      localStorage.getItem('master_server_url'),
+      localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
+      'http://192.168.8.20:3000',
+      'http://192.168.88.10:3000',
+      'http://192.168.8.7:3000',
+      'http://localhost:3000'
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/api/customers/${customerId}/statement`, {
+          signal: AbortSignal.timeout(3000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.statement)) {
+            setStatement(data.statement);
+            setViewMode('STATEMENT');
+            loaded = true;
+            break;
+          }
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    if (!loaded) {
+      try {
+        const localRows = await db.execute({
+          sql: `SELECT * FROM KhataLedger WHERE customerId = ? ORDER BY timestamp DESC`,
+          args: [customerId]
+        });
+        if (localRows.rows && localRows.rows.length > 0) {
+          setStatement(localRows.rows as any[]);
+          setViewMode('STATEMENT');
+          loaded = true;
+        }
+      } catch (err) {
+        console.warn('Local ledger read error', err);
+      }
+    }
+
+    if (!loaded) {
+      if (showToast) {
+        showToast("⚠️ Could not load customer statement.", "error");
       } else {
         alert("Failed to load customer statement.");
       }
-    } catch (error) {
-      console.error("Failed to load statement", error);
-      alert("Error fetching customer statement.");
-    } finally {
-      setIsLoadingStatement(false);
     }
+    setIsLoadingStatement(false);
   };
 
   const printStatement = () => {
     if (!selectedCustomer) return;
+    const formattedStatement = statement.map((item) => ({
+      id: item.id,
+      amount: Number(item.amount || item.total || 0),
+      type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
+      reference: item.reference || item.invoiceNo || 'Store Purchase',
+      formattedDate: item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : ''),
+      formattedTime: item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
+      runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
+    }));
     printKhataStatement({
       shopName: "ASKAR STORE - KHATA STATEMENT",
       customerName: selectedCustomer.name,
       customerPhone: selectedCustomer.phone,
       customerCpr: selectedCustomer.cpr,
-      statement: statement,
-      currentBalance: selectedCustomer.currentBalance
+      statement: formattedStatement,
+      currentBalance: Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0)
     });
   };
 

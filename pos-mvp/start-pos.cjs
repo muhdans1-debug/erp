@@ -19,3 +19,4 @@ main().catch((err) => {
   console.error('❌ Failed to start POS Vite server:', err);
   process.exit(1);
 });
+

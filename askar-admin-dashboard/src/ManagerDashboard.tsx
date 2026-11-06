@@ -21,7 +21,6 @@ const NfcManager = lazy(() => import('./NfcManager'));
 // ---
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
 import { useLaptopBridge } from './useLaptopBridge';
-const printKhataStatement = () => window.print();
 
 interface ManagerDashboardProps {
   apiBase?: string;
@@ -962,6 +961,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
 }
 
 function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }) {
+  const { sendStatementPrintRequest } = useLaptopBridge();
   const [customers, setCustomers] = useState<any[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [search, setSearch] = useState('');
@@ -972,6 +972,48 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
   const [loadingStatement, setLoadingStatement] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [remotePrintNotification, setRemotePrintNotification] = useState<string | null>(null);
+  const [thermalSlipCustomer, setThermalSlipCustomer] = useState<any | null>(null);
+  const [thermalSlipEntries, setThermalSlipEntries] = useState<any[]>([]);
+
+  const print58mmLocalSlip = (customer: any, entries: any[]) => {
+    if (!customer) return;
+    setThermalSlipCustomer(customer);
+    setThermalSlipEntries(entries);
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
+
+  const print58mmRemoteSunmi = (customer: any, entries: any[]) => {
+    if (!customer) return;
+    const formattedStatement = entries.map((s: any) => ({
+      id: s.id,
+      amount: Number(s.amount ?? s.total ?? 0),
+      type: s.type || s.paymentType || 'CHARGE',
+      reference: s.reference || s.invoiceNo || 'Store Purchase',
+      formattedDate: s.formattedDate || new Date(s.created_at || s.timestamp || s.createdAt || Date.now()).toLocaleDateString(),
+      formattedTime: s.formattedTime || new Date(s.created_at || s.timestamp || s.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      runningBalance: Number(s.running_balance ?? s.runningBalance ?? s.total ?? 0)
+    }));
+
+    const payload = {
+      shopName: "ASKAR SUPERMARKET",
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      customerCpr: customer.cpr,
+      statement: formattedStatement,
+      currentBalance: Number(customer.currentBalance || customer.balance || 0)
+    };
+
+    const sent = sendStatementPrintRequest(payload);
+    if (sent) {
+      setRemotePrintNotification(`🖨️ Statement beamed to Sunmi POS built-in 58mm printer for ${customer.name}!`);
+      setTimeout(() => setRemotePrintNotification(null), 4500);
+    } else {
+      alert("Sunmi POS bridge not connected. Ensure Sunmi POS is powered on and connected to the network, or use Local 58mm Print.");
+    }
+  };
 
   // Client-side date range filtering for dispute resolution & targeted monthly thermal printing
   const filteredStatement = useMemo(() => {
@@ -1804,35 +1846,26 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (!statementCustomer) return;
-                    const formattedStatement = filteredStatement.map((s: any) => ({
-                      id: s.id,
-                      amount: Number(s.amount ?? s.total ?? 0),
-                      type: s.type || s.paymentType || 'CHARGE',
-                      reference: s.reference || s.invoiceNo || 'Store Purchase',
-                      formattedDate: s.formattedDate || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleDateString(),
-                      formattedTime: s.formattedTime || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                      runningBalance: Number(s.running_balance ?? s.runningBalance ?? s.total ?? 0)
-                    }));
-                    await printKhataStatement({
-                      customerName: statementCustomer.name,
-                      customerPhone: statementCustomer.phone,
-                      customerCpr: statementCustomer.cpr,
-                      statement: formattedStatement,
-                      currentBalance: statementCustomer.currentBalance
-                    });
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors"
-                  title="Print official thermal statement slip on Sunmi printer"
+                  onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
+                  title="Send 58mm thermal statement directly to Sunmi POS built-in printer"
                 >
-                  <Printer size={14} /> Print Statement Slip
+                  <Printer size={14} /> ⚡ Print on Sunmi POS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
+                  title="Print official 58mm thermal receipt roll using Windows/browser printer"
+                >
+                  <Printer size={14} /> Print 58mm Slip
                 </button>
                 <button
                   onClick={() => {
                     setStatementCustomer(null);
                     setStartDate('');
                     setEndDate('');
+                    setRemotePrintNotification(null);
                   }}
                   style={{
                     background: 'none',
@@ -1850,6 +1883,13 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
 
             {/* Modal Body with Date Filter Control Bar & Data Table */}
             <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }} className="space-y-4">
+              {remotePrintNotification && (
+                <div className="bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between shadow-xs">
+                  <span>{remotePrintNotification}</span>
+                  <button onClick={() => setRemotePrintNotification(null)} className="text-emerald-700 font-bold ml-2">✕</button>
+                </div>
+              )}
+
               {/* Admin Control Bar */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap justify-between items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -1890,32 +1930,24 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                     </button>
                   )}
 
-                  {/* Pass the FILTERED statement to thermal printer function */}
+                  {/* Pass the FILTERED statement to 58mm thermal printer functions */}
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!statementCustomer) return;
-                      const formattedStatement = filteredStatement.map((s: any) => ({
-                        id: s.id,
-                        amount: Number(s.amount ?? s.total ?? 0),
-                        type: s.type || s.paymentType || 'CHARGE',
-                        reference: s.reference || s.invoiceNo || 'Store Purchase',
-                        formattedDate: s.formattedDate || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleDateString(),
-                        formattedTime: s.formattedTime || new Date(s.created_at || s.timestamp || s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        runningBalance: Number(s.running_balance ?? s.runningBalance ?? s.total ?? 0)
-                      }));
-                      await printKhataStatement({
-                        customerName: statementCustomer.name,
-                        customerPhone: statementCustomer.phone,
-                        customerCpr: statementCustomer.cpr,
-                        statement: formattedStatement,
-                        currentBalance: statementCustomer.currentBalance
-                      });
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                    onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement)}
+                    className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                    title="Send filtered 58mm statement to Sunmi POS printer"
                   >
                     <Printer size={13} />
-                    <span>Print Filtered Statement</span>
+                    <span>⚡ Sunmi Remote (58mm)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                    title="Print filtered 58mm slip using local browser / Windows printer"
+                  >
+                    <Printer size={13} />
+                    <span>Print 58mm Slip</span>
                   </button>
                 </div>
               </div>
@@ -2082,6 +2114,136 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
           </div>
         </div>
       )}
+
+      {/* DEDICATED 58MM THERMAL RECEIPT SLIP FOR BROWSER / HARDWARE PRINTING */}
+      <div id="thermal-58mm-slip" className="hidden print:block">
+        <style>{`
+          @media print {
+            @page {
+              size: 58mm auto;
+              margin: 0;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #fff !important;
+              color: #000 !important;
+            }
+            body * {
+              visibility: hidden !important;
+            }
+            #thermal-58mm-slip, #thermal-58mm-slip * {
+              visibility: visible !important;
+            }
+            #thermal-58mm-slip {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 54mm !important;
+              max-width: 58mm !important;
+              margin: 0 auto !important;
+              padding: 2mm 1mm !important;
+              font-family: 'Courier New', Courier, monospace !important;
+              font-size: 11px !important;
+              line-height: 1.25 !important;
+              color: #000 !important;
+              background: #fff !important;
+              box-sizing: border-box !important;
+            }
+            .slip-center {
+              text-align: center !important;
+            }
+            .slip-bold {
+              font-weight: 900 !important;
+            }
+            .slip-divider {
+              border-top: 1px dashed #000 !important;
+              margin: 4px 0 !important;
+            }
+            .slip-divider-double {
+              border-top: 1px double #000 !important;
+              border-bottom: 1px double #000 !important;
+              height: 3px !important;
+              margin: 4px 0 !important;
+            }
+            .slip-row {
+              display: flex !important;
+              justify-content: space-between !important;
+              align-items: flex-start !important;
+            }
+          }
+        `}</style>
+
+        {thermalSlipCustomer && (
+          <div>
+            <div className="slip-center">
+              <div className="slip-bold" style={{ fontSize: '13px' }}>ASKAR SUPERMARKET</div>
+              <div style={{ fontSize: '10px' }}>Kingdom of Bahrain • أسواق عسكر</div>
+              <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 'bold' }}>KHATA ACCOUNT STATEMENT</div>
+              <div style={{ fontSize: '9px' }}>{new Date().toLocaleString()}</div>
+            </div>
+
+            <div className="slip-divider" />
+
+            <div style={{ fontSize: '10px' }}>
+              <div><strong>Customer:</strong> {thermalSlipCustomer.name}</div>
+              {thermalSlipCustomer.phone && <div><strong>Phone:</strong> {thermalSlipCustomer.phone}</div>}
+              {thermalSlipCustomer.cpr && <div><strong>CPR:</strong> {thermalSlipCustomer.cpr}</div>}
+              {thermalSlipCustomer.cardUid && <div><strong>Card:</strong> {thermalSlipCustomer.cardUid}</div>}
+            </div>
+
+            <div className="slip-divider" />
+
+            <div className="slip-row slip-bold" style={{ fontSize: '10px' }}>
+              <span>DATE / DESC</span>
+              <span>AMT (BD)</span>
+            </div>
+            <div className="slip-divider" />
+
+            {thermalSlipEntries.map((item: any, idx: number) => {
+              const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.amount ?? item.total) < 0;
+              const displayAmt = Math.abs(Number(item.amount ?? item.total ?? 0));
+              const dateStr = item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : '');
+              const timeStr = item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+              return (
+                <div key={item.id || idx} style={{ marginBottom: '4px', fontSize: '10px' }}>
+                  <div style={{ fontSize: '9px', color: '#333' }}>
+                    {dateStr} {timeStr}
+                  </div>
+                  <div className="slip-row">
+                    <span style={{ maxWidth: '35mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.reference || item.invoiceNo || (isPayment ? 'Cash Payment' : 'Grocery Sale')}
+                    </span>
+                    <span className="slip-bold">
+                      {isPayment ? '-' : '+'}BD {displayAmt.toFixed(3)}
+                    </span>
+                  </div>
+                  {item.runningBalance !== undefined && (
+                    <div style={{ fontSize: '9px', textAlign: 'right' }}>
+                      Bal: BD {Number(item.runningBalance).toFixed(3)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="slip-divider-double" />
+
+            <div className="slip-row slip-bold" style={{ fontSize: '12px', margin: '4px 0' }}>
+              <span>OUTSTANDING DUE:</span>
+              <span>BD {Number(thermalSlipCustomer.currentBalance || thermalSlipCustomer.balance || 0).toFixed(3)}</span>
+            </div>
+
+            <div className="slip-divider" />
+
+            <div className="slip-center" style={{ fontSize: '9px', marginTop: '6px' }}>
+              <div>*** THANK YOU ***</div>
+              <div>Official Askar Store Ledger Slip</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

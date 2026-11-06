@@ -193,6 +193,20 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     return false;
   }, []);
 
+  // Command: Remote Print Khata Statement on Sunmi built-in 58mm thermal printer
+  const sendStatementPrintRequest = useCallback((statementPayload) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      console.log('🖨️ [Laptop RJ45 Bridge] Beaming 58mm Khata statement print payload to Sunmi hardware...', statementPayload);
+      ws.current.send(JSON.stringify({
+        type: 'PRINT_KHATA_STATEMENT',
+        payload: statementPayload,
+        sentAt: new Date().toISOString()
+      }));
+      return true;
+    }
+    return false;
+  }, []);
+
   // Command: Lock customer on Sunmi while editing on Laptop
   const lockCustomerForEditing = useCallback((customerId, customerName) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
@@ -283,6 +297,7 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     bridgeStatusMessage,
     liveCounterCart,
     sendPrintRequest,
+    sendStatementPrintRequest,
     lockCustomerForEditing,
     releaseCustomerLock,
     broadcastNfcAssigned,

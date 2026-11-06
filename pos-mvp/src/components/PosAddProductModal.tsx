@@ -46,8 +46,11 @@ export default function PosAddProductModal({
     const list = [
       apiBase,
       typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
-      'http://localhost:3000',
-      'http://192.168.8.7:3000'
+      typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
+      'http://192.168.8.20:3000',
+      'http://192.168.88.10:3000',
+      'http://192.168.8.7:3000',
+      'http://localhost:3000'
     ];
     return list.filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
   };

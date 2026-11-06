@@ -35,6 +35,7 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
       return [
         'ws://192.168.88.10:3000/ws',
         dynamicWs,
+        'ws://192.168.8.20:3000/ws',
         'ws://192.168.8.7:3000/ws',
         'ws://askar-master.local:3000/ws',
         'ws://10.0.2.2:3000/ws'
@@ -46,6 +47,7 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
       'ws://localhost:3000/ws',
       'ws://192.168.88.10:3000/ws',
       dynamicWs,
+      'ws://192.168.8.20:3000/ws',
       'ws://askar-master.local:3000/ws',
       `ws://${host}:3000/ws`,
       'ws://192.168.8.7:3000/ws'
@@ -90,6 +92,9 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
             } else if (data.type === 'PRINT_REQUEST') {
               console.log('🖨️ [Sunmi Bridge] Received Remote Print Request from Laptop:', data.payload);
               window.dispatchEvent(new CustomEvent('sunmi-remote-print', { detail: data.payload }));
+            } else if (data.type === 'PRINT_KHATA_STATEMENT') {
+              console.log('🖨️ [Sunmi Bridge] Received Remote Khata Statement Print Request from Laptop:', data.payload);
+              window.dispatchEvent(new CustomEvent('sunmi-remote-print-statement', { detail: data.payload }));
             } else if (data.type === 'NFC_ASSIGNED') {
               console.log('🎉 [Sunmi Bridge] Card assigned notification from Laptop:', data.payload);
               window.dispatchEvent(new CustomEvent('sunmi-nfc-assigned', { detail: data.payload }));

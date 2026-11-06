@@ -136,7 +136,7 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
         }, 8000);
       }).then((handle) => {
         networkListenerHandle = handle;
-      }).catch(() => {});
+      }).catch(() => { });
     } catch {
       // Ignore if not supported
     }
@@ -175,7 +175,7 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
           if (h && typeof h.remove === 'function') {
             h.remove();
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
     };
   }, [performSync, evaluateOfflineStatus, enabled]);

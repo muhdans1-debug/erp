@@ -11,7 +11,7 @@ import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
 import { useSunmiBridge } from './hooks/useSunmiBridge';
 import { useBarcodeWedge } from './hooks/useBarcodeWedge';
-import { printFullReceipt } from './utils/printer';
+import { printFullReceipt, printKhataStatement } from './utils/printer';
 import { Printer } from 'capacitor-sunmi-printer';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 import { initNativeOfflineStorage } from './utils/nativeDb';
@@ -94,12 +94,14 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const custom = localStorage.getItem('master_server_url') || localStorage.getItem('ASKAR_FALLBACK_IP');
       if (custom) return custom.replace(/\/+$/, '');
+      const savedIp = localStorage.getItem('server_ip');
+      if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
       const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-      if (isNative) return 'http://askar-master.local:3000';
+      if (isNative) return 'http://192.168.8.20:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
     }
-    return 'http://askar-master.local:3000';
+    return 'http://192.168.8.20:3000';
   });
 
   // Disaster Recovery Protocol: Cloud Traffic Light & Physical Backup
@@ -186,6 +188,13 @@ export default function App() {
       }
     };
 
+    const handleRemotePrintStatement = (e: any) => {
+      const payload = e?.detail;
+      if (payload) {
+        printKhataStatement(payload).catch((err) => console.warn('Remote statement print error:', err));
+      }
+    };
+
     const handleNfcAssigned = (e: any) => {
       const payload = e?.detail;
       if (payload?.tag_id) {
@@ -201,6 +210,7 @@ export default function App() {
     window.addEventListener('sunmi-nfc-broadcast', handleNfcBroadcast);
     window.addEventListener('sunmi-cart-broadcast', handleCartBroadcast);
     window.addEventListener('sunmi-remote-print', handleRemotePrint);
+    window.addEventListener('sunmi-remote-print-statement', handleRemotePrintStatement);
     window.addEventListener('sunmi-nfc-assigned', handleNfcAssigned);
     window.addEventListener('sunmi-remote-lock', handleRemoteLock);
 
@@ -208,6 +218,7 @@ export default function App() {
       window.removeEventListener('sunmi-nfc-broadcast', handleNfcBroadcast);
       window.removeEventListener('sunmi-cart-broadcast', handleCartBroadcast);
       window.removeEventListener('sunmi-remote-print', handleRemotePrint);
+      window.removeEventListener('sunmi-remote-print-statement', handleRemotePrintStatement);
       window.removeEventListener('sunmi-nfc-assigned', handleNfcAssigned);
       window.removeEventListener('sunmi-remote-lock', handleRemoteLock);
     };

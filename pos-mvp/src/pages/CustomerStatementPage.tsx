@@ -18,6 +18,7 @@ import {
   Zap
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { printKhataStatement } from '../utils/printer';
 
 interface LedgerEntry {
   id: string;
@@ -101,6 +102,21 @@ export default function CustomerStatementPage({
   // 4-Digit Khata PIN & Device Trust State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
+      // 1. Direct bypass if logged in as Cashier or Manager on POS terminal
+      const role = localStorage.getItem('askar_role');
+      if (role === 'CASHIER' || role === 'MANAGER') return true;
+
+      // 2. Direct bypass if running on native Sunmi / Android Capacitor app
+      const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+      if (isNative) return true;
+
+      // 3. Direct bypass if opened via POS interface flag
+      const search = new URLSearchParams(window.location.search);
+      if (search.get('pos') === 'true' || search.get('mode') === 'pos' || search.get('auth') === 'true' || search.get('cashier') === 'true') {
+        return true;
+      }
+
+      // 4. Saved device token
       const token = localStorage.getItem(`khata_token_${customerId}`);
       return Boolean(token);
     }
@@ -121,7 +137,13 @@ export default function CustomerStatementPage({
       return urlApi.replace(/\/+$/, '');
     }
 
-    // 2. Saved API override in localStorage (Vercel Serverless or Tunnel)
+    // 2. Saved API override in localStorage (Master server URL or IP)
+    const masterUrl = localStorage.getItem('master_server_url');
+    if (masterUrl && masterUrl.trim()) return masterUrl.trim().replace(/\/+$/, '');
+
+    const savedIp = localStorage.getItem('server_ip');
+    if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
+
     const savedApi = localStorage.getItem('khata_api_base') || localStorage.getItem('khata_tunnel_api');
     if (savedApi) return savedApi.replace(/\/+$/, '');
 
@@ -142,7 +164,13 @@ export default function CustomerStatementPage({
       return `http://${window.location.hostname}:3000`;
     }
 
-    return apiBase || 'http://localhost:3000';
+    // 6. Native Android Capacitor check (Default to Supermarket Laptop)
+    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+    if (isNative) {
+      return 'http://192.168.8.20:3000';
+    }
+
+    return apiBase || 'http://192.168.8.20:3000';
   };
 
   const handleVerifyPin = async (e?: React.FormEvent) => {
@@ -182,6 +210,32 @@ export default function CustomerStatementPage({
     localStorage.removeItem(`khata_token_${customerId}`);
     setIsAuthenticated(false);
     setPin('');
+  };
+
+  const handlePrintStatement = async () => {
+    if (!customer) return;
+    const formattedStatement = statement.map((item) => ({
+      id: item.id,
+      amount: Number(item.amount || item.raw_amount || 0),
+      type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
+      reference: item.reference || item.invoiceNo || 'Store Purchase',
+      formattedDate: item.formattedDate || new Date(item.created_at || item.timestamp || Date.now()).toLocaleDateString(),
+      formattedTime: item.formattedTime || new Date(item.created_at || item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
+    }));
+
+    try {
+      await printKhataStatement({
+        shopName: "ASKAR STORE - KHATA STATEMENT",
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        customerCpr: customer.cpr,
+        statement: formattedStatement,
+        currentBalance: currentBalance
+      });
+    } catch {
+      window.print();
+    }
   };
 
   const [loading, setLoading] = useState(true);
@@ -516,16 +570,33 @@ export default function CustomerStatementPage({
 
           <div className="flex items-center gap-1.5">
             <button
+              type="button"
+              onClick={handlePrintStatement}
+              title="Print 58mm Thermal Statement Slip on Sunmi"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Print Slip</span>
+            </button>
+            <button
               onClick={() => fetchStatement()}
               title="Refresh Ledger"
-              className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 active:scale-95 transition-all"
+              className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 active:scale-95 transition-all cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
             <button
+              type="button"
+              onClick={() => { window.location.href = '/'; }}
+              title="Return to Register POS"
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs active:scale-95 transition-all cursor-pointer"
+            >
+              ← POS
+            </button>
+            <button
               onClick={handleLockAccount}
-              title="Lock Account (Exit Trusted Device)"
-              className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 active:scale-95 transition-all"
+              title="Lock Account"
+              className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 active:scale-95 transition-all cursor-pointer"
             >
               <Lock className="w-4 h-4" />
             </button>
@@ -1007,11 +1078,12 @@ export default function CustomerStatementPage({
             ────────────────────────────────────────────────────────────────────────── */}
         <div className="pt-2 space-y-2">
           <button
-            onClick={() => window.print()}
-            className="w-full py-2.5 px-4 bg-slate-900 border border-slate-800 hover:bg-slate-800 active:scale-95 text-slate-300 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2"
+            type="button"
+            onClick={handlePrintStatement}
+            className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Print / Save PDF Statement (طباعة كشف الحساب)</span>
+            <span>Print 58mm Thermal Slip (طباعة كشف الحساب)</span>
           </button>
 
           <a

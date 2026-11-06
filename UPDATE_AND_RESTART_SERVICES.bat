@@ -75,3 +75,4 @@ echo   NFC Relay & Register Spy are fully active!
 echo ========================================================
 echo.
 pause
+

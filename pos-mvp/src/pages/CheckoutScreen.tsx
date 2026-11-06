@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote } from 'lucide-react';
-import { printFullReceipt, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X } from 'lucide-react';
+import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
@@ -122,12 +122,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('master_server_url');
       if (saved && saved.trim()) return saved.trim();
+      const savedIp = localStorage.getItem('server_ip');
+      if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
       const isNative = (window as any).Capacitor?.isNativePlatform?.();
-      if (isNative) return 'http://192.168.8.7:3000';
+      if (isNative) return 'http://192.168.8.20:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
     }
-    return 'http://localhost:3000';
+    return 'http://192.168.8.20:3000';
   });
 
   // Disaster Recovery Protocol: Traffic Light & Physical Backup
@@ -373,6 +375,87 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setTimeout(() => {
       setToast((curr) => (curr?.message === message ? null : curr));
     }, 3500);
+  };
+
+  // Customer Statement Modal State & Handlers
+  const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
+  const [customerStatementList, setCustomerStatementList] = useState<any[]>([]);
+  const [isLoadingStatement, setIsLoadingStatement] = useState(false);
+  const [statementFilter, setStatementFilter] = useState<'ALL' | 'CHARGES' | 'PAYMENTS'>('ALL');
+
+  const openCustomerStatement = async (cust: Customer) => {
+    setStatementCustomer(cust);
+    setIsLoadingStatement(true);
+    setStatementFilter('ALL');
+
+    const candidates = [
+      apiBase,
+      localStorage.getItem('master_server_url'),
+      localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
+      'http://192.168.8.20:3000',
+      'http://192.168.88.10:3000',
+      'http://192.168.8.7:3000',
+      'http://localhost:3000'
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+    let loaded = false;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/api/customers/${cust.id}/statement`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.statement)) {
+            setCustomerStatementList(data.statement);
+            loaded = true;
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    if (!loaded) {
+      try {
+        const localRows = await db.execute({
+          sql: `SELECT * FROM KhataLedger WHERE customerId = ? ORDER BY timestamp DESC`,
+          args: [cust.id]
+        });
+        if (localRows.rows && localRows.rows.length > 0) {
+          setCustomerStatementList(localRows.rows as any[]);
+          loaded = true;
+        }
+      } catch (err) {
+        console.warn('Local ledger read error', err);
+      }
+    }
+
+    if (!loaded) {
+      showToast('⚠️ Could not load statement records from server.', 'error');
+      setCustomerStatementList([]);
+    }
+    setIsLoadingStatement(false);
+  };
+
+  const handlePrintStatement = () => {
+    if (!statementCustomer) return;
+    const formattedStatement = customerStatementList.map((item) => ({
+      id: item.id,
+      amount: Number(item.amount || item.total || 0),
+      type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
+      reference: item.reference || item.invoiceNo || 'Store Purchase',
+      formattedDate: item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : ''),
+      formattedTime: item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''),
+      runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
+    }));
+
+    printKhataStatement({
+      shopName: "ASKAR STORE - KHATA STATEMENT",
+      customerName: statementCustomer.name,
+      customerPhone: statementCustomer.phone,
+      customerCpr: statementCustomer.cpr,
+      statement: formattedStatement,
+      currentBalance: Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0)
+    });
+    showToast(`🖨️ Printing 58mm statement slip for ${statementCustomer.name}...`, 'info');
   };
 
   // Native NFC Scanner Hook
@@ -1991,6 +2074,20 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* Right: Quick Actions & Navigation */}
         <div className="flex items-center gap-1.5">
+          {/* QUICK ADD PRODUCT BUTTON FOR SUNMI TOUCHSCREEN */}
+          <button
+            type="button"
+            onClick={() => {
+              setUnassignedBarcode(null);
+              setShowPosAddModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-lg text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap"
+            title="Quick Add Product to Catalog [Sunmi Touch]"
+          >
+            <PlusCircle size={14} className="text-white" />
+            <span>+ Product</span>
+          </button>
+
           {/* MASSIVE F12 SEARCH TRIGGER BUTTON */}
           <button
             type="button"
@@ -2302,34 +2399,46 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
             <div className="flex items-center gap-1.5 shrink-0">
               {customer ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomer(null);
-                    clearScan();
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border flex items-center gap-1 shadow-xs ${
-                    customer.hasMessGroup && customer.isDual
-                      ? 'bg-indigo-100 hover:bg-red-100 hover:text-red-700 text-indigo-900 border-indigo-300'
-                      : customer.isMess
-                      ? 'bg-emerald-100 hover:bg-red-100 hover:text-red-700 text-emerald-900 border-emerald-300'
-                      : 'bg-emerald-50 hover:bg-red-100 hover:text-red-700 text-emerald-800 border-emerald-300'
-                  }`}
-                  title={
-                    customer.hasMessGroup && customer.isDual
-                      ? `Dual Wallet: ${customer.name} (Personal: BD ${(customer.personalBalance ?? customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}) + 👥 ${customer.group_name} (${customer.members?.length || 0} members). Click to unlink.`
-                      : `Linked: ${customer.name || customer.group_name} (Khata Balance: BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)}). Click to unlink.`
-                  }
-                >
-                  <span>
-                    {customer.hasMessGroup && customer.isDual
-                      ? `💳 ${customer.name.slice(0, 8)} | 👥 ${(customer.group_name || 'Mess').slice(0, 8)}`
-                      : customer.isMess 
-                      ? `👥 ${(customer.group_name || customer.name).slice(0, 12)}` 
-                      : `👤 ${customer.name.slice(0, 10)} (BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)})`}
-                  </span>
-                  <span className="text-red-500 font-black ml-1">✕</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomer(null);
+                      clearScan();
+                    }}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border flex items-center gap-1 shadow-xs ${
+                      customer.hasMessGroup && customer.isDual
+                        ? 'bg-indigo-100 hover:bg-red-100 hover:text-red-700 text-indigo-900 border-indigo-300'
+                        : customer.isMess
+                        ? 'bg-emerald-100 hover:bg-red-100 hover:text-red-700 text-emerald-900 border-emerald-300'
+                        : 'bg-emerald-50 hover:bg-red-100 hover:text-red-700 text-emerald-800 border-emerald-300'
+                    }`}
+                    title={
+                      customer.hasMessGroup && customer.isDual
+                        ? `Dual Wallet: ${customer.name} (Personal: BD ${(customer.personalBalance ?? customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}) + 👥 ${customer.group_name} (${customer.members?.length || 0} members). Click to unlink.`
+                        : `Linked: ${customer.name || customer.group_name} (Khata Balance: BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)}). Click to unlink.`
+                    }
+                  >
+                    <span>
+                      {customer.hasMessGroup && customer.isDual
+                        ? `💳 ${customer.name.slice(0, 8)} | 👥 ${(customer.group_name || 'Mess').slice(0, 8)}`
+                        : customer.isMess 
+                        ? `👥 ${(customer.group_name || customer.name).slice(0, 12)}` 
+                        : `👤 ${customer.name.slice(0, 10)} (BD ${Number(customer.currentBalance ?? customer.personalBalance ?? customer.balance ?? 0).toFixed(3)})`}
+                    </span>
+                    <span className="text-red-500 font-black ml-1">✕</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openCustomerStatement(customer)}
+                    className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95 whitespace-nowrap"
+                    title="View Customer Khata Statement Ledger"
+                  >
+                    <FileText size={13} />
+                    <span>Statement</span>
+                  </button>
+                </div>
               ) : (
                 <button
                   type="button"
@@ -2614,6 +2723,19 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   )}
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setUnassignedBarcode(null);
+                  setShowPosAddModal(true);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                title="Quick Add Product to Catalog [Sunmi Touch]"
+              >
+                <PlusCircle size={13} className="text-amber-600" />
+                <span>+ Product</span>
+              </button>
 
               <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
@@ -3013,6 +3135,148 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             showToast(`✅ "${newProduct.name}" saved to catalog${andAddToCart ? ' and added to cart' : ''}!`, 'success');
           }}
         />
+      )}
+
+      {/* CUSTOMER KHATA STATEMENT MODAL (TOUCH-OPTIMIZED FOR SUNMI CASHIER) */}
+      {statementCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+            {/* Header */}
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black leading-tight">{statementCustomer.name}</h3>
+                  <p className="text-xs text-slate-400 flex items-center gap-2">
+                    {statementCustomer.phone && <span>📞 {statementCustomer.phone}</span>}
+                    {statementCustomer.cpr && <span>🆔 CPR: {statementCustomer.cpr}</span>}
+                    <span>• Balance: <strong className="text-amber-400 font-mono">BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}</strong></span>
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintStatement}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
+                  title="Print 58mm Thermal Statement Slip on Sunmi"
+                >
+                  <Printer size={14} />
+                  <span>Print (58mm)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatementCustomer(null)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="bg-slate-100 px-4 py-2 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-1">
+                {(['ALL', 'CHARGES', 'PAYMENTS'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setStatementFilter(filter)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      statementFilter === filter
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {filter === 'ALL' ? 'All Transactions' : filter === 'CHARGES' ? 'Purchases (+)' : 'Payments (-)'}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-slate-500 font-bold font-mono">
+                {customerStatementList.length} items
+              </span>
+            </div>
+
+            {/* Statement Items List */}
+            <div className="flex-1 overflow-y-auto p-4 divide-y divide-slate-100">
+              {isLoadingStatement ? (
+                <div className="py-12 text-center text-slate-400 flex flex-col items-center gap-2">
+                  <RefreshCw size={24} className="animate-spin text-blue-500" />
+                  <span className="text-sm font-bold">Loading statement records...</span>
+                </div>
+              ) : customerStatementList.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <p className="text-sm font-bold">No ledger records found for this account.</p>
+                </div>
+              ) : (
+                customerStatementList
+                  .filter((item) => {
+                    if (statementFilter === 'CHARGES') return item.type === 'SALE' || item.type === 'CHARGE' || Number(item.amount) > 0;
+                    if (statementFilter === 'PAYMENTS') return item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.amount) < 0;
+                    return true;
+                  })
+                  .map((item, idx) => {
+                    const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.amount) < 0;
+                    const displayAmt = Math.abs(Number(item.amount || item.total || 0));
+                    const dateStr = item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : '');
+                    const timeStr = item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+                    return (
+                      <div key={item.id || idx} className="py-2.5 flex items-center justify-between text-xs">
+                        <div className="min-w-0 pr-3">
+                          <p className="font-bold text-slate-800 truncate">
+                            {item.reference || item.invoiceNo || (isPayment ? 'Cash Payment Received' : 'Store Purchase')}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {dateStr} {timeStr}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className={`font-mono font-bold ${isPayment ? 'text-emerald-600' : 'text-slate-800'}`}>
+                            {isPayment ? '-' : '+'}BD {displayAmt.toFixed(3)}
+                          </span>
+                          {item.runningBalance !== undefined && (
+                            <p className="text-[10px] text-slate-400 font-mono">
+                              Bal: BD {Number(item.runningBalance).toFixed(3)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            {/* Footer Summary & Close */}
+            <div className="bg-slate-50 border-t border-slate-200 p-3 px-4 flex items-center justify-between shrink-0">
+              <div>
+                <span className="text-[11px] text-slate-500 uppercase font-bold tracking-wider">Current Balance:</span>
+                <p className="text-base font-black font-mono text-slate-900">
+                  BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintStatement}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Printer size={14} />
+                  <span>Print Slip</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatementCustomer(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* RETURN & REFUND MODAL */}

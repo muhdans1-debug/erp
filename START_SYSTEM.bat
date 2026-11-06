@@ -25,7 +25,7 @@ if not exist "%~dp0pos-mvp\node_modules" (
 )
 
 :: 1. CHECK UNIFIED BACKEND & WS EVENT BUS (PORT 3000)
-echo [1/4] Checking Unified Fastify Backend & WS Bus on port 3000...
+echo [1/5] Checking Unified Fastify Backend & WS Bus on port 3000...
 netstat -ano | findstr :3000 | findstr LISTENING >nul
 if %errorlevel% equ 0 (
     echo       Unified Backend is already running on http://localhost:3000
@@ -35,19 +35,30 @@ if %errorlevel% equ 0 (
     ping 127.0.0.1 -n 3 >nul
 )
 
-:: 2. CHECK VITE FRONTEND (PORT 5173)
-echo [2/4] Checking Vite Frontend on port 5173...
+:: 2. CHECK VITE FRONTEND POS (PORT 5173)
+echo [2/5] Checking Vite Frontend POS on port 5173...
 netstat -ano | findstr :5173 | findstr LISTENING >nul
 if %errorlevel% equ 0 (
-    echo       Vite Frontend is already running on http://localhost:5173
+    echo       Vite POS Frontend is already running on http://localhost:5173
 ) else (
-    echo       Starting Vite Frontend in background...
+    echo       Starting Vite POS Frontend in background...
     start "Askar POS Frontend (Vite)" cmd /c "cd /d %~dp0pos-mvp && npm run dev:web"
     ping 127.0.0.1 -n 3 >nul
 )
 
-:: 3. CHECK SUNMI / ANDROID SMART POS VIA ADB (PORTABLE DETECTION)
-echo [3/4] Checking Sunmi/F100 Terminal via ADB...
+:: 3. CHECK ADMIN BACKOFFICE DASHBOARD (PORT 5177)
+echo [3/5] Checking Admin Back-Office Dashboard on port 5177...
+netstat -ano | findstr :5177 | findstr LISTENING >nul
+if %errorlevel% equ 0 (
+    echo       Admin Dashboard is already running on http://localhost:5177
+) else (
+    echo       Starting Admin Dashboard Back-Office...
+    start "Askar Admin Dashboard" cmd /c "cd /d %~dp0askar-admin-dashboard && npm run dev"
+    ping 127.0.0.1 -n 2 >nul
+)
+
+:: 4. CHECK SUNMI / ANDROID SMART POS VIA ADB (PORTABLE DETECTION)
+echo [4/5] Checking Sunmi/F100 Terminal via ADB...
 set ADB_PATH=
 if exist "%~dp0platform-tools\adb.exe" set ADB_PATH=%~dp0platform-tools\adb.exe
 if not defined ADB_PATH (
@@ -79,18 +90,18 @@ echo       Smart POS screen is ready!
 
 :skip_adb
 
-:: 4. OPEN DESKTOP BROWSER
-echo [4/4] Opening Web POS / Dashboard...
+:: 5. OPEN DESKTOP BROWSER
+echo [5/5] Opening Web POS / Dashboard...
 start http://localhost:5173
+start http://localhost:5177
 
 echo.
 echo =======================================================
 echo   SYSTEM IS READY:
 echo   - Local POS Register: http://localhost:5173
+echo   - Admin Back-Office:  http://localhost:5177
 echo   - Unified Backend:    http://localhost:3000
 echo   - WebSocket Bus:      ws://localhost:3000/ws
-echo   - Admin Dashboard:    http://localhost:5175
-echo   - Khata PWA:          http://localhost:5174
 echo   - Manager PIN:        9999
 echo =======================================================
 echo.

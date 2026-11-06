@@ -18,6 +18,7 @@ const FinancialsVatReturn = lazy(() => import('./FinancialsVatReturn'));
 const ScaleLabelStudio = lazy(() => import('./ScaleLabelStudio'));
 const EmployeeShiftReconciliation = lazy(() => import('./EmployeeShiftReconciliation'));
 const NfcManager = lazy(() => import('./NfcManager'));
+const BenefitPaySettingsPanel = lazy(() => import('./BenefitPaySettingsPanel'));
 // ---
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
 import { useLaptopBridge } from './useLaptopBridge';
@@ -32,7 +33,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
   const apiBase = propApiBase || (typeof window !== 'undefined'
     ? (localStorage.getItem('master_server_url') || `http://${window.location.hostname || 'localhost'}:3000`)
     : 'http://localhost:3000');
-  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'pim' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts'>(() => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'pim' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts' | 'benefitpay'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
@@ -49,6 +50,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
       if (tabParam === 'whatsapp_po' || tabParam === 'distributors') return 'whatsapp_po';
       if (tabParam === 'scale_labels' || tabParam === 'scale') return 'scale_labels';
       if (tabParam === 'shifts' || tabParam === 'employees' || tabParam === 'reconciliation') return 'shifts';
+      if (tabParam === 'benefitpay' || tabParam === 'benefit' || tabParam === 'fawri') return 'benefitpay';
     }
     return 'overview';
   });
@@ -547,6 +549,42 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             <Clock size={19} />
             <span>Shift & Cashier Audits</span>
           </button>
+
+          {/* BenefitPay Owner Account Settings */}
+          <button
+            onClick={() => setActiveTab('benefitpay')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '14px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'benefitpay' ? '#dc2626' : 'transparent',
+              color: activeTab === 'benefitpay' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <CreditCard size={19} />
+            <span>BenefitPay Account</span>
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                padding: '2px 8px',
+                borderRadius: '9999px',
+                backgroundColor: activeTab === 'benefitpay' ? '#ffffff' : '#450a0a',
+                color: activeTab === 'benefitpay' ? '#dc2626' : '#fca5a5',
+              }}
+            >
+              Fawri+ ⚡
+            </span>
+          </button>
         </nav>
 
         {/* Back to POS Navigation */}
@@ -647,6 +685,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'whatsapp_po' && <ProcurementLogistics apiBase={apiBase} />}
             {activeTab === 'scale_labels' && <ScaleLabelStudio />}
             {activeTab === 'shifts' && <EmployeeShiftReconciliation apiBase={apiBase} />}
+            {activeTab === 'benefitpay' && <BenefitPaySettingsPanel apiBase={apiBase} />}
           </Suspense>
         </div>
       </main>

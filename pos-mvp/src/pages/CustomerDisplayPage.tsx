@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ShoppingBag, Sparkles, CheckCircle2, ShieldCheck, Users, ArrowRight } from 'lucide-react';
+import {
+  BenefitPayConfig,
+  getStoredBenefitPayConfig,
+  generateBenefitPayPayload,
+} from '../utils/benefitPay';
 
 interface CartItem {
   id?: string;
@@ -111,6 +116,17 @@ export default function CustomerDisplayPage() {
     return null;
   });
 
+  // BenefitPay Owner Configuration
+  const [benefitConfig, setBenefitConfig] = useState<BenefitPayConfig>(getStoredBenefitPayConfig);
+
+  useEffect(() => {
+    const handleConfigUpdate = (e: any) => {
+      setBenefitConfig(e.detail || getStoredBenefitPayConfig());
+    };
+    window.addEventListener('benefitpay_config_updated', handleConfigUpdate);
+    return () => window.removeEventListener('benefitpay_config_updated', handleConfigUpdate);
+  }, []);
+
   // 1. Dual-Channel Listeners (BroadcastChannel 'sunmi_dual_screen' & 'askar_customer_display_channel')
   useEffect(() => {
     let sunmiChannel: BroadcastChannel | null = null;
@@ -121,6 +137,11 @@ export default function CustomerDisplayPage() {
       sunmiChannel.onmessage = (event) => {
         const data = event.data;
         if (!data) return;
+
+        if (data.type === 'BENEFIT_PAY_CONFIG_UPDATED' && data.config) {
+          setBenefitConfig(data.config);
+          return;
+        }
 
         if (data.type === 'KHATA_PAYMENT_PREVIEW' || data.type === 'KHATA_PAYMENT_CONFIRMED') {
           setKhataPayment(data.payload);
@@ -154,6 +175,11 @@ export default function CustomerDisplayPage() {
       askarChannel.onmessage = (event) => {
         const data = event.data;
         if (!data) return;
+
+        if (data.type === 'BENEFIT_PAY_CONFIG_UPDATED' && data.config) {
+          setBenefitConfig(data.config);
+          return;
+        }
 
         if (data.type === 'KHATA_PAYMENT_PREVIEW' || data.type === 'KHATA_PAYMENT_CONFIRMED') {
           setKhataPayment(data.payload);
@@ -255,7 +281,11 @@ export default function CustomerDisplayPage() {
       ? Number(khataPayment.remainingBalance || 0)
       : Math.max(0, initialBal - payAmt);
 
-    const fawriPayload = `BH-BENEFIT-FAWRI:MERCHANT=BH-BENEFIT-97300182:CUST=${cust.id}:AMT=${payAmt > 0 ? payAmt.toFixed(3) : initialBal.toFixed(3)}`;
+    const fawriPayload = generateBenefitPayPayload(
+      payAmt > 0 ? payAmt : initialBal,
+      `KHATA-${cust.id}-${Date.now().toString().slice(-4)}`,
+      benefitConfig
+    );
 
     return (
       <div className={`w-full h-full min-h-screen ${
@@ -423,7 +453,7 @@ export default function CustomerDisplayPage() {
               </p>
               <p className="text-[10px] text-slate-400 mt-0.5">
                 {khataPayment.paymentMethod === 'BENEFIT_PAY'
-                  ? 'Open BenefitPay app and point camera at QR code to settle instantly'
+                  ? `Pay directly to ${benefitConfig.merchantName || 'Askar Supermarket'} (${benefitConfig.accountType === 'MOBILE_FAWRI' ? `Tel: ${benefitConfig.mobileNumber || ''}` : `ID: ${benefitConfig.merchantId || ''}`})`
                   : 'Scan with any mobile camera to view your updated Khata balance anytime'}
               </p>
             </div>
@@ -534,14 +564,7 @@ export default function CustomerDisplayPage() {
   if (qrCheckoutUrl) {
     const fawriPayload = qrCheckoutUrl.startsWith('http') || qrCheckoutUrl.startsWith('BH-')
       ? qrCheckoutUrl
-      : JSON.stringify({
-          scheme: 'FAWRI_PLUS',
-          merchantId: 'BH-BENEFIT-97300182',
-          merchantName: 'ASKAR SUPERMARKET',
-          amount: Number(total.toFixed(3)),
-          currency: 'BHD',
-          url: qrCheckoutUrl
-        });
+      : generateBenefitPayPayload(total, `CHECKOUT-${Date.now().toString().slice(-4)}`, benefitConfig);
 
     return (
       <div className="w-full h-full min-h-screen bg-gradient-to-br from-red-600 via-rose-700 to-red-900 text-white flex flex-col items-center justify-between p-4 sm:p-6 select-none animate-in zoom-in-95 duration-200">
@@ -580,6 +603,23 @@ export default function CustomerDisplayPage() {
             <p className="text-xs text-white/80 font-arabic">
               افتح تطبيق بنفت بي ووجّه الكاميرا لإتمام الدفع فوراً
             </p>
+
+            {/* Owner Beneficiary Info */}
+            <div className="mt-2.5 px-3 py-1.5 bg-black/30 backdrop-blur-xs rounded-xl border border-white/10 text-center">
+              <p className="text-xs font-black text-white">
+                {benefitConfig.merchantName || 'ASKAR SUPERMARKET'}
+              </p>
+              <p className="text-[11px] font-mono text-emerald-300 font-bold">
+                {benefitConfig.accountType === 'MOBILE_FAWRI'
+                  ? `Fawri+ Mobile: ${benefitConfig.mobileNumber || ''}`
+                  : `Merchant ID: ${benefitConfig.merchantId || ''}`}
+              </p>
+              {benefitConfig.iban && (
+                <p className="text-[10px] font-mono text-white/70">
+                  IBAN: {benefitConfig.iban}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 

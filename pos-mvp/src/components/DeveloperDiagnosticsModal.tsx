@@ -5,6 +5,7 @@ export interface DeveloperDiagnosticsModalProps {
   onClose: () => void;
   apiBase: string;
   onOpenServerConfig: () => void;
+  onOpenBenefitPayConfig?: () => void;
   hardwareSupported: boolean;
   isScanning: boolean;
   customerScreenReady: boolean;
@@ -20,6 +21,7 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
   onClose,
   apiBase,
   onOpenServerConfig,
+  onOpenBenefitPayConfig,
   hardwareSupported,
   isScanning,
   customerScreenReady,
@@ -67,6 +69,31 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
             >
               Configure IP
             </button>
+          </div>
+
+          {/* BenefitPay Owner Account Setup */}
+          <div className="bg-red-50/60 p-3 rounded-xl border border-red-200 flex items-center justify-between">
+            <div>
+              <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                <span>🇧🇭</span>
+                <span>BenefitPay Owner Account</span>
+              </p>
+              <p className="text-xs text-slate-500">
+                Configure Merchant ID or Fawri+ Mobile to receive customer payments
+              </p>
+            </div>
+            {onOpenBenefitPayConfig && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenBenefitPayConfig();
+                }}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors shadow-xs"
+              >
+                Configure Account
+              </button>
+            )}
           </div>
 
           {/* NFC Simulator */}

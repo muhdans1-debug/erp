@@ -5,6 +5,7 @@ import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '.
 import { playThankYouVoice } from '../utils/sound';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';
+import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 
 interface Customer {
   id: string;
@@ -137,7 +138,11 @@ export function broadcastKhataPayment(
     : Math.max(0, currentBal - payAmt);
 
   const qrPayload = (customer && payAmt > 0)
-    ? `BH-BENEFIT-FAWRI:MERCHANT=BH-BENEFIT-97300182:CUST=${customer.id}:AMT=${payAmt.toFixed(3)}`
+    ? generateBenefitPayPayload(
+        payAmt,
+        `KHATA-${customer.id}-${Date.now().toString().slice(-4)}`,
+        getStoredBenefitPayConfig()
+      )
     : null;
 
   const payload = {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   X, 
   Smartphone, 
@@ -9,14 +9,18 @@ import {
   Copy, 
   Check, 
   RefreshCw, 
-  Settings, 
-  Store
+  Settings 
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt, kickCashDrawer } from '../utils/printer';
 import { playThankYouVoice } from '../utils/sound';
 import { saveSaleOffline } from '../utils/nativeDb';
-import { generateBenefitPayPayload } from '../utils/benefitPay';
+import {
+  BenefitPayConfig,
+  getStoredBenefitPayConfig,
+  generateBenefitPayPayload,
+} from '../utils/benefitPay';
+import BenefitPayConfigModal from './BenefitPayConfigModal';
 
 export interface PaymentItem {
   id: string;
@@ -64,12 +68,17 @@ export default function PaymentModal({
   const vat = propVat;
   const [selectedMethod, setSelectedMethod] = useState<'CASH' | 'BENEFIT_PAY' | 'CARD'>(initialMethod);
 
-  // BenefitPay Merchant Settings
-  const [merchantId, setMerchantId] = useState<string>(() => {
-    return localStorage.getItem('benefitpay_merchant_id') || 'BH-BENEFIT-97300182';
-  });
-  const [showMerchantConfig, setShowMerchantConfig] = useState(false);
-  const [tempMerchantId, setTempMerchantId] = useState(merchantId);
+  // BenefitPay Owner Account Configuration
+  const [benefitConfig, setBenefitConfig] = useState<BenefitPayConfig>(getStoredBenefitPayConfig);
+  const [showBenefitConfigModal, setShowBenefitConfigModal] = useState(false);
+
+  useEffect(() => {
+    const handleConfigUpdate = (e: any) => {
+      setBenefitConfig(e.detail || getStoredBenefitPayConfig());
+    };
+    window.addEventListener('benefitpay_config_updated', handleConfigUpdate);
+    return () => window.removeEventListener('benefitpay_config_updated', handleConfigUpdate);
+  }, []);
 
   // Stable session invoice number (persisted for the duration of this payment modal)
   const activeInvoiceNo = useMemo(() => {
@@ -85,8 +94,8 @@ export default function PaymentModal({
 
   // Fawri+ Dynamic QR Code Payload (generated via benefitPay utility)
   const qrPayload = useMemo(() => {
-    return generateBenefitPayPayload(totalAmount, activeInvoiceNo, merchantId);
-  }, [totalAmount, activeInvoiceNo, merchantId]);
+    return generateBenefitPayPayload(totalAmount, activeInvoiceNo, benefitConfig);
+  }, [totalAmount, activeInvoiceNo, benefitConfig]);
 
   // Processing & Confirmation state
   const [processing, setProcessing] = useState(false);
@@ -130,15 +139,6 @@ export default function PaymentModal({
     navigator.clipboard.writeText(transactionRef);
     setCopiedRef(true);
     setTimeout(() => setCopiedRef(false), 2000);
-  };
-
-  // Save Merchant ID setting
-  const handleSaveMerchantId = (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = tempMerchantId.trim() || 'BH-BENEFIT-97300182';
-    localStorage.setItem('benefitpay_merchant_id', clean);
-    setMerchantId(clean);
-    setShowMerchantConfig(false);
   };
 
   // Complete checkout process (supports manual cashier click or automated BenefitPay webhook)
@@ -758,7 +758,7 @@ export default function PaymentModal({
                       position: 'relative',
                     }}
                   >
-                    {/* MERCHANT ID BANNER */}
+                    {/* BENEFITPAY OWNER ACCOUNT BANNER */}
                     <div
                       style={{
                         display: 'flex',
@@ -767,81 +767,48 @@ export default function PaymentModal({
                         fontSize: '11px',
                         color: '#94a3b8',
                         marginBottom: '14px',
-                        paddingBottom: '10px',
-                        borderBottom: '1px solid #334155',
+                        padding: '10px 14px',
+                        backgroundColor: '#0f172a',
+                        borderRadius: '10px',
+                        border: '1px solid #334155',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Store size={14} color="#f87171" />
-                        <span>Fawri+ Merchant ID: </span>
-                        <strong style={{ color: '#f8fafc' }}>{merchantId}</strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left' }}>
+                        <span style={{ fontSize: '18px' }}>🇧🇭</span>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase' }}>
+                            {benefitConfig.accountType === 'MOBILE_FAWRI'
+                              ? 'Owner Fawri+ Mobile:'
+                              : 'Fawri+ Merchant ID:'}
+                          </div>
+                          <div style={{ fontSize: '13px', fontWeight: 800, color: '#38bdf8', fontFamily: 'monospace' }}>
+                            {benefitConfig.accountType === 'MOBILE_FAWRI'
+                              ? (benefitConfig.mobileNumber || 'Not Set')
+                              : (benefitConfig.merchantId || 'Not Set')}
+                          </div>
+                        </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setShowMerchantConfig(!showMerchantConfig)}
+                        onClick={() => setShowBenefitConfigModal(true)}
                         style={{
-                          background: 'none',
-                          border: 'none',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #475569',
                           color: '#38bdf8',
                           fontSize: '11px',
+                          fontWeight: 'bold',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '3px',
+                          gap: '4px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
                           cursor: 'pointer',
                         }}
                       >
                         <Settings size={12} />
-                        <span>{showMerchantConfig ? 'Cancel' : 'Change'}</span>
+                        <span>Settings</span>
                       </button>
                     </div>
-
-                    {/* MERCHANT ID CONFIG INPUT */}
-                    {showMerchantConfig && (
-                      <form
-                        onSubmit={handleSaveMerchantId}
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          marginBottom: '14px',
-                          padding: '10px',
-                          backgroundColor: '#0f172a',
-                          borderRadius: '8px',
-                          border: '1px solid #475569',
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={tempMerchantId}
-                          onChange={(e) => setTempMerchantId(e.target.value)}
-                          placeholder="e.g. BH-BENEFIT-102934"
-                          style={{
-                            flex: 1,
-                            backgroundColor: '#1e293b',
-                            color: '#ffffff',
-                            border: '1px solid #64748b',
-                            borderRadius: '6px',
-                            padding: '6px 10px',
-                            fontSize: '12px',
-                            outline: 'none',
-                          }}
-                        />
-                        <button
-                          type="submit"
-                          style={{
-                            backgroundColor: '#dc2626',
-                            color: '#ffffff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            padding: '6px 14px',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Save
-                        </button>
-                      </form>
-                    )}
 
                     {/* TOTAL TO PAY PROMINENT BANNER */}
                     <div style={{ marginBottom: '14px' }}>
@@ -872,7 +839,7 @@ export default function PaymentModal({
                         padding: '14px',
                         borderRadius: '16px',
                         boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-                        marginBottom: '14px',
+                        marginBottom: '10px',
                       }}
                     >
                       <QRCodeSVG
@@ -883,6 +850,23 @@ export default function PaymentModal({
                         fgColor="#000000"
                         bgColor="#ffffff"
                       />
+                    </div>
+
+                    {/* OWNER BENEFICIARY DETAILS */}
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 800, color: '#f1f5f9' }}>
+                        {benefitConfig.merchantName || 'ASKAR SUPERMARKET'}
+                      </div>
+                      {benefitConfig.accountType === 'MOBILE_FAWRI' && benefitConfig.mobileNumber && (
+                        <div style={{ fontSize: '12px', color: '#34d399', fontWeight: 700, fontFamily: 'monospace', marginTop: '2px' }}>
+                          Fawri+ Mobile: {benefitConfig.mobileNumber}
+                        </div>
+                      )}
+                      {benefitConfig.iban && (
+                        <div style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace', marginTop: '1px' }}>
+                          IBAN: {benefitConfig.iban}
+                        </div>
+                      )}
                     </div>
 
                     {/* TRANSACTION REFERENCE STRIP */}
@@ -1266,6 +1250,14 @@ export default function PaymentModal({
           Please retain invoice for returns.
         </div>
       </div>
+
+      {/* BENEFITPAY OWNER ACCOUNT CONFIG MODAL */}
+      <BenefitPayConfigModal
+        isOpen={showBenefitConfigModal}
+        onClose={() => setShowBenefitConfigModal(false)}
+        apiBase={apiBase}
+        onConfigSaved={(updated) => setBenefitConfig(updated)}
+      />
     </div>
   );
 }

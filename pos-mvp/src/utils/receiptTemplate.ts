@@ -8,6 +8,8 @@
  * 5. Clean dashed single dividers (border-top: 1px dashed #000)
  */
 
+import { getStoredBenefitPayConfig } from './benefitPay';
+
 export interface ReceiptItemTemplate {
   name: string;
   nameAr?: string;
@@ -90,12 +92,17 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
     <span>Change:</span> <span>BD ${change.toFixed(3)}</span>
   </div>`;
   } else if (paymentMode === 'BENEFIT_PAY') {
+    const cfg = getStoredBenefitPayConfig();
+    const payeeIdent = cfg.accountType === 'MOBILE_FAWRI' ? `Tel: ${cfg.mobileNumber || ''}` : `MID: ${cfg.merchantId || ''}`;
     paymentSectionHtml = `  <div class="center bold" style="margin-top: 10px;">
     *** PAID VIA BENEFITPAY ***
   </div>
   
   <div class="row" style="margin-top: 5px;">
-    <span>Method:</span> <span>Fawri+ QR</span>
+    <span>Method:</span> <span>BenefitPay Fawri+</span>
+  </div>
+  <div class="row">
+    <span>Payee:</span> <span>${payeeIdent}</span>
   </div>${props.transactionRef ? `\n  <div class="row"><span>Ref No:</span> <span>${props.transactionRef}</span></div>` : ''}`;
   } else if (paymentMode === 'CARD') {
     paymentSectionHtml = `  <div class="center bold" style="margin-top: 10px;">

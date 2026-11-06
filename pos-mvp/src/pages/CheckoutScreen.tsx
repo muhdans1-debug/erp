@@ -33,6 +33,8 @@ import ProductBarcodeModal from '../components/ProductBarcodeModal';
 import ServerConfigModal from '../components/ServerConfigModal';
 import HardCreditLimitModal from '../components/HardCreditLimitModal';
 import TapToEditDiscountModal from '../components/TapToEditDiscountModal';
+import BenefitPayConfigModal from '../components/BenefitPayConfigModal';
+import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { Product, Customer, CartTab } from '../types/pos';
 export type { Product, Customer, CartTab };
 import { useCartStore } from '../store/cartStore';
@@ -154,6 +156,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Master Back-Office Server Configuration State
   const [showServerConfigModal, setShowServerConfigModal] = useState(false);
+  // BenefitPay Owner Account Configuration State
+  const [showBenefitPayConfigModal, setShowBenefitPayConfigModal] = useState(false);
 
   // Active Linked Customer for Checkout
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -1943,7 +1947,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     const dualScreenPayload = {
       type: isBenefitPay ? 'SHOW_QR' : 'STATE_UPDATE',
       payload: isBenefitPay ? {
-        url: `BH-BENEFIT-FAWRI:TOTAL=${total.toFixed(3)}:MERCHANT=97300182`,
+        url: generateBenefitPayPayload(total, `CHECKOUT-${activeCartId}`, getStoredBenefitPayConfig()),
         total,
       } : {
         cart: cart.map((item) => ({
@@ -3161,6 +3165,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         onClose={() => setShowDevPanel(false)}
         apiBase={apiBase}
         onOpenServerConfig={() => setShowServerConfigModal(true)}
+        onOpenBenefitPayConfig={() => setShowBenefitPayConfigModal(true)}
         hardwareSupported={Boolean(hardwareSupported)}
         isScanning={isScanning}
         customerScreenReady={Boolean(customerScreenReady)}
@@ -3250,6 +3255,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         onClose={() => setShowServerConfigModal(false)}
         activeServerIp={apiBase}
         onSaveServerIp={(ip) => handleSaveMasterIp(ip)}
+      />
+
+      {/* BENEFITPAY OWNER ACCOUNT CONFIGURATION MODAL */}
+      <BenefitPayConfigModal
+        isOpen={showBenefitPayConfigModal}
+        onClose={() => setShowBenefitPayConfigModal(false)}
+        apiBase={apiBase}
       />
 
       {/* KHATA HUB MODAL */}

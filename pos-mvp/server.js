@@ -647,6 +647,70 @@ fastify.post('/api/config/master-url', async (request, reply) => {
   return { success: true, masterUrl: getMasterBaseUrl() };
 });
 
+// 4. BenefitPay Owner Account Configuration Routes
+const benefitConfigFile = path.join(dataDir, 'benefit_account_config.json');
+
+const loadBenefitPayConfig = () => {
+  if (fs.existsSync(benefitConfigFile)) {
+    try {
+      const raw = fs.readFileSync(benefitConfigFile, 'utf-8');
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('Failed to read benefit_account_config.json:', e);
+    }
+  }
+  return {
+    accountType: 'MERCHANT',
+    merchantId: 'BH-BENEFIT-97300182',
+    merchantName: 'ASKAR SUPERMARKET',
+    mobileNumber: '+973 39000000',
+    iban: '',
+    cprOrCr: '200012345678901',
+    branchId: 'MAIN-01',
+    notes: 'Scan with BenefitPay app to pay directly',
+    updatedAt: new Date().toISOString()
+  };
+};
+
+const saveBenefitPayConfig = (config) => {
+  try {
+    fs.writeFileSync(benefitConfigFile, JSON.stringify(config, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    console.error('Failed to write benefit_account_config.json:', e);
+    return false;
+  }
+};
+
+fastify.get('/api/config/benefit-account', async () => {
+  return loadBenefitPayConfig();
+});
+
+fastify.post('/api/config/benefit-account', async (request, reply) => {
+  const current = loadBenefitPayConfig();
+  const updated = {
+    ...current,
+    ...(request.body || {}),
+    updatedAt: new Date().toISOString()
+  };
+  saveBenefitPayConfig(updated);
+
+  // Broadcast to all connected WebSocket clients (terminals & secondary displays)
+  if (fastify.websocketServer?.clients) {
+    const wsPayload = JSON.stringify({
+      type: 'BENEFIT_PAY_CONFIG_UPDATED',
+      config: updated
+    });
+    fastify.websocketServer.clients.forEach((client) => {
+      if (client.readyState === 1) {
+        client.send(wsPayload);
+      }
+    });
+  }
+
+  return { success: true, config: updated };
+});
+
 // --- AUTOMATED DATABASE BACKUP & SNAPSHOT ROUTES ---
 
 // 1. Download Latest Database Backup Snapshot Stream

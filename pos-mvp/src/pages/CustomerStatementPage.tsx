@@ -20,6 +20,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement } from '../utils/printer';
 import { playThankYouVoice } from '../utils/sound';
+import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 
 interface LedgerEntry {
   id: string;
@@ -1199,10 +1200,24 @@ export default function CustomerStatementPage({
               </span>
               <div className="bg-white p-2.5 rounded-xl shadow-lg">
                 <QRCodeSVG
-                  value={`BH-BENEFIT-FAWRI:MERCHANT=97300182:TOTAL=${parseFloat(customPayAmount || '0').toFixed(3)}:CUST=${customer.id}`}
+                  value={generateBenefitPayPayload(
+                    parseFloat(customPayAmount || '0'),
+                    `KHATA-${customer.id}-${Date.now().toString().slice(-4)}`,
+                    getStoredBenefitPayConfig()
+                  )}
                   size={120}
                   level="M"
                 />
+              </div>
+              <div className="text-center">
+                <p className="text-[11px] font-bold text-white">
+                  {getStoredBenefitPayConfig().merchantName || 'ASKAR SUPERMARKET'}
+                </p>
+                <p className="text-[10px] font-mono text-emerald-400">
+                  {getStoredBenefitPayConfig().accountType === 'MOBILE_FAWRI'
+                    ? `Fawri+ Mobile: ${getStoredBenefitPayConfig().mobileNumber || ''}`
+                    : `Merchant ID: ${getStoredBenefitPayConfig().merchantId || ''}`}
+                </p>
               </div>
               <p className="text-[10px] text-slate-400 font-arabic text-center">
                 افتح تطبيق بنفت بي ووجّه الكاميرا لدفع المبلغ المحدد

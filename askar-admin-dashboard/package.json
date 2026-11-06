@@ -16,6 +16,7 @@
     "@libsql/client": "^0.18.0",
     "@tailwindcss/vite": "^4.3.3",
     "lucide-react": "^1.64.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.3.1",
     "react-barcode": "^1.6.1",
     "react-dom": "^19.3.1",

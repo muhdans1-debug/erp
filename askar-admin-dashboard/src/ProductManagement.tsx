@@ -19,7 +19,9 @@ import {
   Sparkles,
   Info,
   Edit2,
-  Save
+  Save,
+  MoreVertical,
+  Trash2
 } from 'lucide-react';
 
 export interface ProductItem {
@@ -117,6 +119,17 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
   const [showAddProductModal, setShowAddProductModal] = useState<boolean>(false);
 
+  // 3-dots action menu dropdown state
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+  // Single delete modal state
+  const [productToDelete, setProductToDelete] = useState<ProductItem | null>(null);
+  const [isDeletingProduct, setIsDeletingProduct] = useState<boolean>(false);
+
+  // Bulk delete modal state
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [isDeletingBulk, setIsDeletingBulk] = useState<boolean>(false);
+
   // Bulk rules configuration
   const [bulkAction, setBulkAction] = useState<'PERCENT_INCREASE' | 'PERCENT_DECREASE' | 'FIXED_MARKUP' | 'SET_VAT_RATE' | 'ASSIGN_DISTRIBUTOR'>('PERCENT_INCREASE');
   const [bulkValue, setBulkValue] = useState<string>('5');
@@ -187,6 +200,20 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       cellInputRef.current.select();
     }
   }, [editingCell]);
+
+  // Close 3-dots menu on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.pim-action-menu-container')) {
+        setActiveMenuId(null);
+      }
+    };
+    if (activeMenuId) {
+      document.addEventListener('mousedown', handleOutsideClick);
+      return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }
+  }, [activeMenuId]);
 
   // Helper calculations
   const calculateMargin = (selling: number, cost: number) => {
@@ -505,6 +532,81 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     }
   };
 
+  // Delete single product
+  const handleDeleteProduct = async () => {
+    if (!productToDelete) return;
+    setIsDeletingProduct(true);
+    const id = productToDelete.id;
+    const name = productToDelete.name;
+
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`${apiBase}/api/products/${id}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (err) {
+        // Fallback to POST /delete
+        res = await fetch(`${apiBase}/api/products/${id}/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || (data && data.success === false)) {
+        throw new Error(data.error || 'Server failed to delete product');
+      }
+
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+
+      showToast(`Deleted "${name}" from catalog`, 'success');
+      setProductToDelete(null);
+    } catch (err: any) {
+      console.error('Delete product failed:', err);
+      showToast(`Failed to delete product: ${err.message || 'Unknown error'}`, 'error');
+    } finally {
+      setIsDeletingProduct(false);
+    }
+  };
+
+  // Bulk delete selected products
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setIsDeletingBulk(true);
+    const count = selectedIds.size;
+    const idsToDelete = Array.from(selectedIds);
+
+    try {
+      const res = await fetch(`${apiBase}/api/products/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productIds: idsToDelete })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || (data && data.success === false)) {
+        throw new Error(data.error || 'Failed to delete selected products');
+      }
+
+      setProducts((prev) => prev.filter((p) => !selectedIds.has(p.id)));
+      setSelectedIds(new Set());
+      showToast(`Successfully deleted ${count} products from catalog`, 'success');
+      setShowBulkDeleteModal(false);
+    } catch (err: any) {
+      console.error('Bulk delete failed:', err);
+      showToast(`Bulk delete failed: ${err.message || 'Unknown error'}`, 'error');
+    } finally {
+      setIsDeletingBulk(false);
+    }
+  };
+
   // Selection toggling
   const toggleSelectAll = () => {
     if (selectedIds.size === filteredProducts.length && filteredProducts.length > 0) {
@@ -802,6 +904,17 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
               <span>Print Shelf Tags {selectedIds.size > 0 && `(${selectedIds.size})`}</span>
             </button>
 
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => setShowBulkDeleteModal(true)}
+                className="flex items-center gap-2 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shadow-sm transition active:scale-95 cursor-pointer animate-in fade-in"
+                title="Delete selected items from catalog"
+              >
+                <Trash2 size={15} />
+                <span>Delete Selected ({selectedIds.size})</span>
+              </button>
+            )}
+
             <button
               onClick={handleExportCSV}
               className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
@@ -1066,7 +1179,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
-                {filteredProducts.map((p) => {
+                {filteredProducts.map((p, idx) => {
                   const cost = p.purchasePrice ?? p.unitCost ?? 0;
                   const margin = calculateMargin(p.sellingPrice, cost);
                   const marginStyling = getMarginClass(margin);
@@ -1454,8 +1567,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                         {p.supplierName || 'Direct / General'}
                       </td>
 
-                      {/* Actions: Full Edit Drawer + Price History */}
-                      <td className="py-2.5 px-3 text-center">
+                      {/* Actions: Full Edit Drawer + Price History + 3-dots Menu */}
+                      <td className="py-2.5 px-3 text-center relative">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => openEditModal(p)}
@@ -1471,6 +1584,85 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                           >
                             <History size={15} />
                           </button>
+
+                          {/* 3 Dots Menu Button */}
+                          <div className="relative pim-action-menu-container">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(activeMenuId === p.id ? null : p.id);
+                              }}
+                              className={`p-1.5 rounded transition cursor-pointer ${
+                                activeMenuId === p.id
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'hover:bg-slate-700/60 text-slate-400 hover:text-slate-200'
+                              }`}
+                              title="Product actions & delete"
+                            >
+                              <MoreVertical size={15} />
+                            </button>
+
+                            {/* Dropdown Menu */}
+                            {activeMenuId === p.id && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute right-0 ${
+                                  idx > filteredProducts.length - 4 ? 'bottom-full mb-1' : 'top-full mt-1'
+                                } w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 py-1.5 text-left font-sans animate-in fade-in zoom-in-95`}
+                              >
+                                <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                                  Actions
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    openEditModal(p);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition cursor-pointer"
+                                >
+                                  <Edit2 size={14} className="text-amber-400" />
+                                  <span>Edit Product</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    openPriceHistory(p);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition cursor-pointer"
+                                >
+                                  <History size={14} className="text-emerald-400" />
+                                  <span>Price History</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    setSelectedIds(new Set([p.id]));
+                                    setShowPrintModal(true);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition cursor-pointer"
+                                >
+                                  <Printer size={14} className="text-indigo-400" />
+                                  <span>Print Shelf Tag</span>
+                                </button>
+                                <div className="border-t border-slate-800 my-1" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    setProductToDelete(p);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 transition cursor-pointer"
+                                >
+                                  <Trash2 size={14} className="text-rose-400" />
+                                  <span>Delete Product</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -1646,22 +1838,38 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-800">
+              <div className="flex items-center justify-between gap-3 mt-6 pt-4 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setEditModalProduct(null)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg cursor-pointer"
+                  onClick={() => {
+                    const prod = editModalProduct;
+                    setEditModalProduct(null);
+                    setProductToDelete(prod);
+                  }}
+                  className="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  title="Delete this product from catalog"
                 >
-                  Cancel
+                  <Trash2 size={14} />
+                  <span>Delete SKU</span>
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSavingEditModal}
-                  className="flex items-center gap-1.5 px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-50"
-                >
-                  <Save size={15} />
-                  <span>{isSavingEditModal ? 'Saving...' : 'Save Product Changes'}</span>
-                </button>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditModalProduct(null)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEditModal}
+                    className="flex items-center gap-1.5 px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-50"
+                  >
+                    <Save size={15} />
+                    <span>{isSavingEditModal ? 'Saving...' : 'Save Product Changes'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -2206,6 +2414,124 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- DELETE SINGLE PRODUCT CONFIRMATION MODAL --- */}
+      {productToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-left">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-rose-500/20 text-rose-400 rounded-xl">
+                <Trash2 size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">Delete Product</h3>
+                <p className="text-xs text-slate-400">Remove product SKU permanently from the catalog.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 mb-4 space-y-2">
+              <div className="text-sm font-bold text-slate-100">{productToDelete.name}</div>
+              <div className="flex items-center gap-4 text-xs font-mono text-slate-400">
+                <span>Barcode: <strong className="text-slate-200">{productToDelete.barcode || 'N/A'}</strong></span>
+                <span>Price: <strong className="text-emerald-400">BD {productToDelete.sellingPrice.toFixed(3)}</strong></span>
+                <span>Stock: <strong className="text-slate-200">{productToDelete.stockQuantity}</strong></span>
+              </div>
+            </div>
+
+            <p className="text-xs text-rose-300/80 mb-6 bg-rose-500/10 border border-rose-500/20 rounded-lg p-2.5">
+              ⚠️ Warning: Deleting this product will remove it from PIM, quick-product grid, and future checkout scans. Completed sales receipts will retain their line item history.
+            </p>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={isDeletingProduct}
+                onClick={() => setProductToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingProduct}
+                onClick={handleDeleteProduct}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-rose-900/30 transition cursor-pointer flex items-center gap-2"
+              >
+                {isDeletingProduct ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Confirm Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- BULK DELETE SELECTED MODAL --- */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-left">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-rose-500/20 text-rose-400 rounded-xl">
+                <Trash2 size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">Bulk Delete Products</h3>
+                <p className="text-xs text-slate-400">Permanently delete multiple selected items.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 mb-4">
+              <div className="text-base font-black text-rose-400 mb-1">
+                {selectedIds.size} {selectedIds.size === 1 ? 'Product' : 'Products'} Selected
+              </div>
+              <p className="text-xs text-slate-400">
+                Are you sure you want to delete these {selectedIds.size} products from your catalog? This operation cannot be undone.
+              </p>
+            </div>
+
+            <p className="text-xs text-rose-300/80 mb-6 bg-rose-500/10 border border-rose-500/20 rounded-lg p-2.5">
+              ⚠️ Warning: All {selectedIds.size} selected items will be deleted from the catalog inventory and quick-sale grids.
+            </p>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={isDeletingBulk}
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingBulk}
+                onClick={handleBulkDelete}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-rose-900/30 transition cursor-pointer flex items-center gap-2"
+              >
+                {isDeletingBulk ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Deleting {selectedIds.size}...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Delete {selectedIds.size} Items</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

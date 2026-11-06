@@ -1031,6 +1031,123 @@ export default async function productRoutes(fastify, options) {
   fastify.put('/products/:id', handleUpdateProduct);
   fastify.post('/products/:id', handleUpdateProduct);
 
+  // 10b. Delete Product Handler
+  const handleDeleteProduct = async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const existing = await db.orm.Product.where({ id }).all().first();
+      if (!existing) {
+        return reply.status(404).send({ success: false, error: 'Product not found' });
+      }
+
+      // 1. Delete from SQLite Product table
+      try {
+        await db.execute({
+          sql: `DELETE FROM Product WHERE id = ?`,
+          args: [id]
+        });
+      } catch (err) {
+        fastify.log.warn('Direct SQL delete failed, falling back to ORM:', err.message);
+      }
+
+      // 2. Delete via ORM
+      try {
+        await db.orm.Product.where({ id }).delete();
+      } catch (err) {
+        fastify.log.warn('ORM delete failed:', err.message);
+      }
+
+      // 3. Cleanup quick config and mark removed
+      try {
+        const config = loadQuickConfig();
+        if (config.overrides && config.overrides[id]) {
+          delete config.overrides[id];
+        }
+        if (existing.barcode && config.overrides && config.overrides[existing.barcode]) {
+          delete config.overrides[existing.barcode];
+        }
+        if (!config.removedIds) config.removedIds = [];
+        if (!config.removedIds.includes(String(id))) {
+          config.removedIds.push(String(id));
+        }
+        if (existing.barcode && !config.removedIds.includes(String(existing.barcode))) {
+          config.removedIds.push(String(existing.barcode));
+        }
+        saveQuickConfig(config);
+      } catch (e) {
+        fastify.log.warn('Could not update quick config on delete:', e.message);
+      }
+
+      fastify.log.info(`[Catalog] Deleted product ${id} (${existing.name})`);
+      return {
+        success: true,
+        message: `Product "${existing.name}" deleted successfully`,
+        deletedId: id
+      };
+    } catch (error) {
+      fastify.log.error('Delete product failed:', error);
+      return reply.status(500).send({ success: false, error: 'Failed to delete product', details: error.message });
+    }
+  };
+
+  const handleBulkDeleteProducts = async (request, reply) => {
+    const { productIds = [] } = request.body || {};
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return reply.status(400).send({ success: false, error: 'No products selected for deletion.' });
+    }
+
+    try {
+      let deletedCount = 0;
+      const config = loadQuickConfig();
+      if (!config.removedIds) config.removedIds = [];
+      config.overrides = config.overrides || {};
+
+      for (const id of productIds) {
+        try {
+          const existing = await db.orm.Product.where({ id }).all().first();
+          await db.execute({
+            sql: `DELETE FROM Product WHERE id = ?`,
+            args: [id]
+          }).catch(() => {});
+          await db.orm.Product.where({ id }).delete().catch(() => {});
+
+          delete config.overrides[id];
+          if (existing?.barcode) {
+            delete config.overrides[existing.barcode];
+            if (!config.removedIds.includes(String(existing.barcode))) {
+              config.removedIds.push(String(existing.barcode));
+            }
+          }
+          if (!config.removedIds.includes(String(id))) {
+            config.removedIds.push(String(id));
+          }
+          deletedCount++;
+        } catch (e) {
+          fastify.log.warn(`Failed to delete product ${id}:`, e.message);
+        }
+      }
+
+      saveQuickConfig(config);
+
+      return {
+        success: true,
+        message: `Successfully deleted ${deletedCount} products.`,
+        deletedCount,
+        deletedIds: productIds
+      };
+    } catch (error) {
+      fastify.log.error('Bulk delete failed:', error);
+      return reply.status(500).send({ success: false, error: 'Bulk delete failed', details: error.message });
+    }
+  };
+
+  fastify.delete('/api/products/:id', handleDeleteProduct);
+  fastify.delete('/products/:id', handleDeleteProduct);
+  fastify.post('/api/products/:id/delete', handleDeleteProduct);
+  fastify.post('/products/:id/delete', handleDeleteProduct);
+  fastify.post('/api/products/bulk-delete', handleBulkDeleteProducts);
+  fastify.post('/products/bulk-delete', handleBulkDeleteProducts);
+
   // 11. Bulk Update & Price Hike
   fastify.post('/api/products/bulk-update', async (request, reply) => {
     const {

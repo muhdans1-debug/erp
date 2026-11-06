@@ -40,6 +40,7 @@ logs/
 *.jpg
 *.jpeg
 *.apk
+*.idsig
 scratch/
 **/scratch/
 

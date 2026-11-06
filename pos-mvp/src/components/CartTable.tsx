@@ -6,18 +6,28 @@ interface CartTableProps {
   onPriceOverrideClick?: (item: CartItem, index: number) => void;
   onWeightEditClick?: (item: CartItem) => void;
   onAdjustQty?: (index: number, delta: number) => void;
+  onRemoveItem?: (index: number, item: CartItem) => void;
 }
 
-export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onAdjustQty }: CartTableProps) {
+export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onAdjustQty, onRemoveItem }: CartTableProps) {
   // Fine-grained selector: re-render ONLY when active cart items array mutates
   const items = useCartStore((state) => state.items);
   const storeAdjust = useCartStore((state) => state.adjustItemQtyByIndex);
+  const storeRemove = useCartStore((state) => state.removeItem);
 
   const handleAdjust = (index: number, delta: number) => {
     if (onAdjustQty) {
       onAdjustQty(index, delta);
     } else {
       storeAdjust(index, delta);
+    }
+  };
+
+  const handleRemove = (index: number, item: CartItem) => {
+    if (onRemoveItem) {
+      onRemoveItem(index, item);
+    } else {
+      storeRemove(index);
     }
   };
 
@@ -46,7 +56,18 @@ export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onA
             key={item.id ? `${item.id}-${index}` : index}
             className="flex justify-between items-center py-2.5 px-1 hover:bg-slate-50/90 rounded-xl transition-colors border-b border-slate-100/70 gap-2 min-h-[72px]"
           >
-            {/* Far Left: Product Name, Barcode Pill, Unit Base Price, Discount Tag */}
+            {/* Quick 1-Tap Line Item Void/Delete Button (Voids entire item regardless of qty) */}
+            <button
+              type="button"
+              onClick={() => handleRemove(index, item)}
+              className="w-10 h-10 rounded-xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-600 hover:text-rose-700 flex items-center justify-center shrink-0 active:scale-90 transition-all cursor-pointer border border-rose-200 shadow-2xs"
+              aria-label={`Remove "${item.name}" (${qty} units) completely from cart`}
+              title={`Remove "${item.name}" (${qty} units) completely from cart`}
+            >
+              <Trash2 size={18} className="stroke-[2.5]" />
+            </button>
+
+            {/* Product Details: Name, Barcode Pill, Unit Base Price, Discount Tag */}
             <div className="min-w-0 flex-1 pr-1">
               <p className="font-bold text-slate-800 text-sm truncate leading-tight">
                 {item.name} {(item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0)) ? '*' : ''}

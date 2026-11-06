@@ -2499,6 +2499,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           {/* Active Cart Line Items List (Decoupled Zustand Atomic Component) */}
           <CartTable
             onAdjustQty={adjustItemQtyByIndex}
+            onRemoveItem={(index, item) => {
+              useCartStore.getState().removeItem(index);
+              showToast(`🗑️ Removed "${item.name}" from cart`, 'info');
+            }}
             onPriceOverrideClick={(item, index) => {
               setPriceOverrideItem({ index, product: item as Product });
             }}
@@ -3364,6 +3368,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         onClose={() => setPriceOverrideItem(null)}
         onApplyOverride={applyPriceOverride}
         onShowToast={showToast}
+        onRemoveItem={(indexOrId) => {
+          useCartStore.getState().removeItem(indexOrId as any);
+          showToast('🗑️ Removed item from cart', 'info');
+          setPriceOverrideItem(null);
+        }}
       />
 
       {/* MASSIVE POS NUMPAD MODAL (SUNMI D2 MINI WEIGHED PRODUCE ENTRY) */}

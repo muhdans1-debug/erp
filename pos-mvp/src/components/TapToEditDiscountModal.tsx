@@ -1,6 +1,6 @@
 // pos-mvp/src/components/TapToEditDiscountModal.tsx
 import React, { useState, useEffect } from 'react';
-import { Percent, KeyRound, Tag, RotateCcw, Check, Delete } from 'lucide-react';
+import { Percent, KeyRound, Tag, RotateCcw, Check, Delete, Trash2 } from 'lucide-react';
 import { PriceOverrideItem } from '../types/pos';
 
 export interface TapToEditDiscountModalProps {
@@ -8,6 +8,7 @@ export interface TapToEditDiscountModalProps {
   onClose: () => void;
   onApplyOverride: (indexOrId: number | string, newUnitPrice: number, note?: string) => void;
   onShowToast: (message: string, type: 'info' | 'success' | 'error') => void;
+  onRemoveItem?: (indexOrId: number | string) => void;
 }
 
 export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
@@ -15,6 +16,7 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
   onClose,
   onApplyOverride,
   onShowToast,
+  onRemoveItem,
 }) => {
   const [activeTab, setActiveTab] = useState<'percent' | 'amount' | 'override'>('percent');
   const [percentInput, setPercentInput] = useState<string>('10');
@@ -501,17 +503,34 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
             </button>
           </div>
 
-          {/* Restore Original Price Option */}
-          {isAlreadyDiscounted && (
-            <button
-              type="button"
-              onClick={handleRestore}
-              className="w-full py-2 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-            >
-              <RotateCcw size={12} />
-              <span>Restore Original Base Price (BD {basePrice.toFixed(3)})</span>
-            </button>
-          )}
+          {/* Item Actions: Quick Void / Remove from Cart & Restore Original Price */}
+          <div className="flex gap-2 pt-1">
+            {onRemoveItem && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRemoveItem(item.index ?? product.id);
+                  onClose();
+                }}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-2xs"
+                title={`Remove "${product.name}" (${qty} units) completely from cart`}
+              >
+                <Trash2 size={14} className="text-rose-600 stroke-[2.5]" />
+                <span>🗑️ Remove Item ({qty}x)</span>
+              </button>
+            )}
+
+            {isAlreadyDiscounted && (
+              <button
+                type="button"
+                onClick={handleRestore}
+                className="flex-1 py-2.5 px-3 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors active:scale-95"
+              >
+                <RotateCcw size={12} />
+                <span>↺ Restore Base Price (BD {basePrice.toFixed(3)})</span>
+              </button>
+            )}
+          </div>
 
         </div>
       </div>

@@ -187,6 +187,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     receivingScanCallbackRef.current = cb;
   }, []);
 
+  // In-app non-blocking toast notification
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  const showToast = useCallback((message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 3500);
+  }, []);
+
   // Quick Products State & Dynamic Fetching
   const [quickProducts, setQuickProducts] = useState<any[]>([]);
   const [selectedQuickCategory, setSelectedQuickCategory] = useState<string>('ALL');
@@ -264,18 +274,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Intercept Quick Product clicks: In Edit Mode opens customize modal; otherwise checks for weighed item
-  const handleQuickItemClick = (item: Product) => {
-    if (isEditMode) {
-      setEditingQuickProduct(item);
-    } else {
-      handleItemSelection(item);
-    }
-  };
-
   // Massive F12 Full Inventory Search Overlay State
   const [showF12SearchModal, setShowF12SearchModal] = useState(false);
   const [lastScannedProductId, setLastScannedProductId] = useState<string | null>(null);
+
+  // Card-to-Card Position Reordering & Swap Mode State
+  const [isPositionSwapActive, setIsPositionSwapActive] = useState(false);
+  const [swapSourceProduct, setSwapSourceProduct] = useState<Product | null>(null);
 
   // Dynamic quick products fallback if offline
   const activeQuickProducts = useMemo(() => {
@@ -297,6 +302,122 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     if (selectedQuickCategory === 'ALL') return activeQuickProducts;
     return activeQuickProducts.filter((p) => (p.category || 'ESSENTIALS') === selectedQuickCategory);
   }, [activeQuickProducts, selectedQuickCategory]);
+
+  // Helper to persist quick products to state and localStorage immediately (Local-First Guarantee)
+  const updateQuickProductsLocally = useCallback((newItems: any[]) => {
+    setQuickProducts(newItems);
+    writeQuickCache(newItems);
+  }, []);
+
+  // 1. Swap Product with another catalog item in-place
+  const handleSwapQuickProduct = useCallback((oldProduct: Product, newProduct: Product, newCategory?: string) => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const oldIndex = currentList.findIndex((p) => p.id === oldProduct.id || (p.barcode && oldProduct.barcode && p.barcode === oldProduct.barcode));
+    
+    const targetCategory = newCategory || oldProduct.category || (selectedQuickCategory !== 'ALL' ? selectedQuickCategory : 'ESSENTIALS');
+    const formattedNew: any = {
+      ...newProduct,
+      category: targetCategory,
+      isQuickProduct: true,
+    };
+
+    if (oldIndex !== -1) {
+      currentList[oldIndex] = formattedNew;
+    } else {
+      currentList.push(formattedNew);
+    }
+
+    updateQuickProductsLocally(currentList);
+  }, [activeQuickProducts, catalog, selectedQuickCategory, updateQuickProductsLocally]);
+
+  // 2. Change category/color of a quick product
+  const handleUpdateQuickProductColor = useCallback((product: Product, newCategory: string) => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const index = currentList.findIndex((p) => p.id === product.id || (p.barcode && product.barcode && p.barcode === product.barcode));
+    
+    if (index !== -1) {
+      currentList[index] = {
+        ...currentList[index],
+        category: newCategory,
+      };
+      updateQuickProductsLocally(currentList);
+    }
+  }, [activeQuickProducts, catalog, updateQuickProductsLocally]);
+
+  // 3. Remove quick product from grid
+  const handleRemoveQuickProduct = useCallback((product: Product) => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const updated = currentList.filter((p) => p.id !== product.id && (!product.barcode || p.barcode !== product.barcode));
+    updateQuickProductsLocally(updated);
+  }, [activeQuickProducts, catalog, updateQuickProductsLocally]);
+
+  // 4. Add product to grid
+  const handleAddQuickProduct = useCallback((product: Product, category: string) => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const exists = currentList.some((p) => p.id === product.id || (p.barcode && product.barcode && p.barcode === product.barcode));
+    if (!exists) {
+      currentList.push({
+        ...product,
+        category: category || (selectedQuickCategory !== 'ALL' ? selectedQuickCategory : 'ESSENTIALS'),
+        isQuickProduct: true,
+      });
+      updateQuickProductsLocally(currentList);
+    }
+  }, [activeQuickProducts, catalog, selectedQuickCategory, updateQuickProductsLocally]);
+
+  // 5. Swap positions of two cards in the grid
+  const handleSwapPosition = useCallback((sourceProduct: Product, targetProduct: Product) => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const sourceIdx = currentList.findIndex((p) => p.id === sourceProduct.id || (p.barcode && sourceProduct.barcode && p.barcode === sourceProduct.barcode));
+    const targetIdx = currentList.findIndex((p) => p.id === targetProduct.id || (p.barcode && targetProduct.barcode && p.barcode === targetProduct.barcode));
+
+    if (sourceIdx !== -1 && targetIdx !== -1 && sourceIdx !== targetIdx) {
+      const temp = currentList[sourceIdx];
+      currentList[sourceIdx] = currentList[targetIdx];
+      currentList[targetIdx] = temp;
+      updateQuickProductsLocally(currentList);
+      showToast(`🔄 Swapped positions: "${sourceProduct.name}" ⇄ "${targetProduct.name}"`, 'success');
+    }
+  }, [activeQuickProducts, catalog, updateQuickProductsLocally, showToast]);
+
+  // 6. Move card position left/right by 1 step
+  const handleMovePosition = useCallback((product: Product, direction: 'left' | 'right') => {
+    const currentList = activeQuickProducts.length > 0 ? [...activeQuickProducts] : [...catalog.slice(0, 15)];
+    const index = currentList.findIndex((p) => p.id === product.id || (p.barcode && product.barcode && p.barcode === product.barcode));
+    if (index === -1) return;
+
+    const newIndex = direction === 'left' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= currentList.length) return;
+
+    const temp = currentList[index];
+    currentList[index] = currentList[newIndex];
+    currentList[newIndex] = temp;
+    updateQuickProductsLocally(currentList);
+    showToast(`↔️ Moved "${product.name}" ${direction === 'left' ? 'left' : 'right'}`, 'info');
+  }, [activeQuickProducts, catalog, updateQuickProductsLocally, showToast]);
+
+  // Intercept Quick Product clicks: In Edit Mode supports position swapping or editing; otherwise checkout
+  const handleQuickItemClick = (item: Product) => {
+    if (isEditMode) {
+      if (isPositionSwapActive) {
+        if (!swapSourceProduct) {
+          setSwapSourceProduct(item);
+          showToast(`1️⃣ Selected "${item.name}". Tap another card to swap positions.`, 'info');
+        } else if (swapSourceProduct.id === item.id) {
+          setSwapSourceProduct(null);
+          showToast('Deselected card', 'info');
+        } else {
+          handleSwapPosition(swapSourceProduct, item);
+          setSwapSourceProduct(null);
+          setIsPositionSwapActive(false);
+        }
+        return;
+      }
+      setEditingQuickProduct(item);
+    } else {
+      handleItemSelection(item);
+    }
+  };
 
   const getCategoryTheme = (cat?: string) => {
     const raw = (cat || 'ESSENTIALS').toUpperCase();
@@ -367,15 +488,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [customerScreenReady, setCustomerScreenReady] = useState(false);
 
 
-  // In-app non-blocking toast notification
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
-    setToast({ message, type });
-    setTimeout(() => {
-      setToast((curr) => (curr?.message === message ? null : curr));
-    }, 3500);
-  };
 
   // Customer Statement Modal State & Handlers
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
@@ -2799,21 +2912,53 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             }`}>
             {/* Edit Mode Alert Banner */}
             {isEditMode && (
-              <div className="bg-amber-100 border border-amber-300 rounded-2xl px-3.5 py-2.5 mb-3 flex items-center justify-between text-amber-950 text-xs shadow-xs animate-in fade-in">
+              <div className="bg-amber-100 border border-amber-300 rounded-2xl px-3.5 py-2.5 mb-3 flex flex-wrap items-center justify-between text-amber-950 text-xs shadow-xs animate-in fade-in gap-2">
                 <div className="flex items-center gap-2 font-bold">
                   <span className="text-base">🛠️</span>
-                  <span>Edit Mode Active: Tap any card below to Swap, Recolor, or Remove. Tap "+" to add an item.</span>
+                  <span>
+                    {swapSourceProduct 
+                      ? `🔄 Swapping: Tap a 2nd card to swap position with "${swapSourceProduct.name}"`
+                      : isPositionSwapActive
+                      ? '👉 Tap 1st card, then tap 2nd card to swap positions'
+                      : 'Edit Mode: Tap card to customize/replace, or tap "⇄ Reorder Cards" to swap positions'}
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditMode(false);
-                    showToast('🔒 Quick Grid LOCKED: Fast checkout active', 'success');
-                  }}
-                  className="px-3.5 py-1.5 bg-amber-800 hover:bg-amber-900 text-white rounded-xl font-bold text-xs shadow-xs cursor-pointer active:scale-95"
-                >
-                  Done Editing
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (swapSourceProduct) {
+                        setSwapSourceProduct(null);
+                        showToast('Cancelled card selection', 'info');
+                      } else {
+                        setIsPositionSwapActive((prev) => !prev);
+                        if (!isPositionSwapActive) {
+                          showToast('👉 Tap 1st card, then tap 2nd card to swap positions!', 'info');
+                        }
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                      isPositionSwapActive || swapSourceProduct
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-white text-slate-800 border border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {swapSourceProduct ? 'Cancel' : isPositionSwapActive ? 'Exit Reorder' : '⇄ Reorder Cards'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditMode(false);
+                      setIsPositionSwapActive(false);
+                      setSwapSourceProduct(null);
+                      showToast('🔒 Quick Grid LOCKED: Fast checkout active', 'success');
+                    }}
+                    className="px-3.5 py-1.5 bg-amber-800 hover:bg-amber-900 text-white rounded-xl font-bold text-xs shadow-xs cursor-pointer active:scale-95"
+                  >
+                    Done Editing
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2829,13 +2974,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 const isOutOfStock = currentStock !== null && currentStock <= 0;
                 const isLowStock = currentStock !== null && currentStock > 0 && currentStock <= (prod.minThreshold ?? 5);
 
+                const isSelectedForSwap = swapSourceProduct?.id === prod.id;
+
                 return (
                   <button
                     key={prod.id}
                     type="button"
                     onClick={() => handleQuickItemClick(prod)}
                     className={`min-h-[85px] p-3 rounded-2xl flex flex-col justify-between border cursor-pointer active:scale-95 transition-all shadow-xs text-left relative ${
-                      isEditMode
+                      isSelectedForSwap
+                        ? 'border-2 border-blue-600 ring-4 ring-blue-400 bg-blue-100 text-blue-950 shadow-lg scale-102 animate-pulse'
+                        : isEditMode
                         ? 'border-2 border-dashed border-amber-500 ring-2 ring-amber-300/60 bg-amber-50/80 hover:bg-amber-100 text-amber-950 shadow-md'
                         : isOutOfStock
                         ? 'bg-slate-100 border-slate-200 text-slate-400 opacity-60'
@@ -2843,8 +2992,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     }`}
                   >
                     {isEditMode && (
-                      <span className="absolute -top-2 -right-1.5 px-2 py-0.5 bg-amber-600 text-white text-[9px] rounded-full font-black uppercase shadow-xs tracking-wider border border-white">
-                        ✏️ EDIT
+                      <span className={`absolute -top-2 -right-1.5 px-2 py-0.5 text-white text-[9px] rounded-full font-black uppercase shadow-xs tracking-wider border border-white ${
+                        isSelectedForSwap
+                          ? 'bg-blue-600 animate-bounce'
+                          : isPositionSwapActive
+                          ? (swapSourceProduct ? 'bg-emerald-600' : 'bg-blue-600')
+                          : 'bg-amber-600'
+                      }`}>
+                        {isSelectedForSwap
+                          ? '1️⃣ SOURCE'
+                          : isPositionSwapActive
+                          ? (swapSourceProduct ? 'SWAP HERE ↵' : '⇄ SWAP')
+                          : '✏️ EDIT'}
                       </span>
                     )}
                     <div className="flex items-center justify-between gap-1 w-full">
@@ -2955,6 +3114,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         product={editingQuickProduct}
         catalog={catalog}
         apiBase={apiBase}
+        onSwapProduct={handleSwapQuickProduct}
+        onUpdateColor={handleUpdateQuickProductColor}
+        onRemoveProduct={handleRemoveQuickProduct}
+        onMovePosition={handleMovePosition}
         onProductUpdated={() => {
           fetchQuickProducts();
           fetchCatalog();
@@ -2968,8 +3131,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         isOpen={showAddQuickModal}
         onClose={() => setShowAddQuickModal(false)}
         catalog={catalog}
-        currentQuickIds={new Set(quickProducts.map((p) => p.id))}
+        currentQuickIds={new Set(activeQuickProducts.map((p) => p.id))}
         apiBase={apiBase}
+        onAddProduct={handleAddQuickProduct}
         onProductAdded={() => {
           fetchQuickProducts();
           fetchCatalog();

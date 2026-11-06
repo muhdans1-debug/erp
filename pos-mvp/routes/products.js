@@ -134,14 +134,15 @@ export default async function productRoutes(fastify, options) {
         if (removedSet.has(String(p.id)) || (p.barcode && removedSet.has(String(p.barcode)))) {
           return false;
         }
-        if (config.overrides && config.overrides[p.id]?.isQuickProduct === false) {
+        const override = config.overrides ? (config.overrides[p.id] || (p.barcode ? config.overrides[p.barcode] : null)) : null;
+        if (override?.isQuickProduct === false) {
           return false;
         }
         return true;
       });
 
       const scored = eligibleProducts.map((p) => {
-        const override = config.overrides ? config.overrides[p.id] : null;
+        const override = config.overrides ? (config.overrides[p.id] || (p.barcode ? config.overrides[p.barcode] : null)) : null;
         const recentQty = salesCountByProduct[p.id] || 0;
         const isNonBarcoded = !p.barcode || p.barcode.trim() === '';
         const isScale = p.isScaleItem || (p.barcode && (p.barcode.startsWith('20') || p.barcode.startsWith('001')));

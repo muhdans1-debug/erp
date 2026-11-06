@@ -27,7 +27,8 @@ interface AddQuickProductModalProps {
   catalog: Product[];
   currentQuickIds: Set<string>;
   apiBase: string;
-  onProductAdded: () => void;
+  onProductAdded?: () => void;
+  onAddProduct?: (product: Product, category: string) => void;
   showToast: (message: string, type: 'success' | 'info' | 'error') => void;
   categories?: QuickCategory[];
 }
@@ -48,6 +49,7 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
   currentQuickIds,
   apiBase,
   onProductAdded,
+  onAddProduct,
   showToast,
   categories,
 }) => {
@@ -91,13 +93,16 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
   const handleAddProduct = async (product: Product) => {
     setIsSaving(true);
     try {
+      if (onAddProduct) {
+        onAddProduct(product, selectedCategory);
+      }
+
       const candidates = [apiBase, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
         (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
       );
-      let success = false;
       for (const url of candidates) {
         try {
-          const res = await fetch(`${url}/api/quick-products/update`, {
+          fetch(`${url}/api/quick-products/update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -106,24 +111,13 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
               category: selectedCategory,
               isQuickProduct: true,
             }),
-          });
-          if (res.ok) {
-            success = true;
-            break;
-          }
-        } catch (e) {
-          // next candidate
-        }
+          }).catch(() => {});
+        } catch {}
       }
-      if (success) {
-        showToast(`✅ Added ${product.name} to Quick Grid (${selectedCategory})`, 'success');
-        onProductAdded();
-        onClose();
-      } else {
-        showToast('⚠️ Added locally', 'info');
-        onProductAdded();
-        onClose();
-      }
+
+      showToast(`✅ Added ${product.name} to Quick Grid (${selectedCategory})`, 'success');
+      onProductAdded?.();
+      onClose();
     } catch (e) {
       showToast('❌ Failed to add product', 'error');
     } finally {

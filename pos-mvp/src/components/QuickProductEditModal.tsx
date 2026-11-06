@@ -27,7 +27,11 @@ interface QuickProductEditModalProps {
   product: Product | null;
   catalog: Product[];
   apiBase: string;
-  onProductUpdated: () => void;
+  onProductUpdated?: () => void;
+  onSwapProduct?: (oldProduct: Product, newProduct: Product, category: string) => void;
+  onUpdateColor?: (product: Product, category: string) => void;
+  onRemoveProduct?: (product: Product) => void;
+  onMovePosition?: (product: Product, direction: 'left' | 'right') => void;
   showToast: (message: string, type: 'success' | 'info' | 'error') => void;
   categories?: QuickCategory[];
 }
@@ -48,6 +52,10 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
   catalog,
   apiBase,
   onProductUpdated,
+  onSwapProduct,
+  onUpdateColor,
+  onRemoveProduct,
+  onMovePosition,
   showToast,
   categories,
 }) => {
@@ -112,17 +120,21 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
 
   if (!isOpen || !product) return null;
 
-  // 1. Save Category / Color Change
+  // 1. Save Category / Color Change (Instant Local-First + Background Sync)
   const handleSaveColor = async () => {
     setIsSaving(true);
     try {
+      if (onUpdateColor) {
+        onUpdateColor(product, selectedCategory);
+      }
+
+      // Background sync to server
       const candidates = [apiBase, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
         (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
       );
-      let success = false;
       for (const url of candidates) {
         try {
-          const res = await fetch(`${url}/api/quick-products/update`, {
+          fetch(`${url}/api/quick-products/update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -131,24 +143,13 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
               category: selectedCategory,
               isQuickProduct: true,
             }),
-          });
-          if (res.ok) {
-            success = true;
-            break;
-          }
-        } catch (e) {
-          // next candidate
-        }
+          }).catch(() => {});
+        } catch {}
       }
-      if (success) {
-        showToast(`🎨 Updated ${product.name} to ${selectedCategory}`, 'success');
-        onProductUpdated();
-        onClose();
-      } else {
-        showToast('⚠️ Could not save to server, local update applied', 'info');
-        onProductUpdated();
-        onClose();
-      }
+
+      showToast(`🎨 Updated ${product.name} to ${selectedCategory}`, 'success');
+      onProductUpdated?.();
+      onClose();
     } catch (e) {
       showToast('❌ Failed to update product', 'error');
     } finally {
@@ -156,42 +157,38 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
     }
   };
 
-  // 2. Swap Item with Another Catalog Product
+  // 2. Swap Item with Another Catalog Product (Instant Local-First + Background Sync)
   const handleSwapItem = async (newProduct: Product) => {
     setIsSaving(true);
     try {
+      const targetCategory = selectedCategory || product.category || 'ESSENTIALS';
+
+      // Immediate local swap (works instantly offline & online)
+      if (onSwapProduct) {
+        onSwapProduct(product, newProduct, targetCategory);
+      }
+
+      // Background sync to server if available
       const candidates = [apiBase, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
         (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
       );
-      let success = false;
       for (const url of candidates) {
         try {
-          const res = await fetch(`${url}/api/quick-products/swap`, {
+          fetch(`${url}/api/quick-products/swap`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               oldId: product.id,
               newId: newProduct.id,
-              category: selectedCategory,
+              category: targetCategory,
             }),
-          });
-          if (res.ok) {
-            success = true;
-            break;
-          }
-        } catch (e) {
-          // next candidate
-        }
+          }).catch(() => {});
+        } catch {}
       }
-      if (success) {
-        showToast(`🔄 Swapped with ${newProduct.name}`, 'success');
-        onProductUpdated();
-        onClose();
-      } else {
-        showToast('⚠️ Swapped locally', 'info');
-        onProductUpdated();
-        onClose();
-      }
+
+      showToast(`🔄 Swapped with ${newProduct.name}`, 'success');
+      onProductUpdated?.();
+      onClose();
     } catch (e) {
       showToast('❌ Swap request failed', 'error');
     } finally {
@@ -199,41 +196,33 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
     }
   };
 
-  // 3. Remove Item from Quick Grid
+  // 3. Remove Item from Quick Grid (Instant Local-First + Background Sync)
   const handleRemoveItem = async () => {
     setIsSaving(true);
     try {
+      if (onRemoveProduct) {
+        onRemoveProduct(product);
+      }
+
       const candidates = [apiBase, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
         (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
       );
-      let success = false;
       for (const url of candidates) {
         try {
-          const res = await fetch(`${url}/api/quick-products/remove`, {
+          fetch(`${url}/api/quick-products/remove`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               id: product.id,
               barcode: product.barcode,
             }),
-          });
-          if (res.ok) {
-            success = true;
-            break;
-          }
-        } catch (e) {
-          // next candidate
-        }
+          }).catch(() => {});
+        } catch {}
       }
-      if (success) {
-        showToast(`🗑️ Removed ${product.name} from Quick Grid`, 'info');
-        onProductUpdated();
-        onClose();
-      } else {
-        showToast('⚠️ Removed locally', 'info');
-        onProductUpdated();
-        onClose();
-      }
+
+      showToast(`🗑️ Removed ${product.name} from Quick Grid`, 'info');
+      onProductUpdated?.();
+      onClose();
     } catch (e) {
       showToast('❌ Removal failed', 'error');
     } finally {
@@ -404,17 +393,40 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
         </div>
 
         {/* Modal Footer Actions */}
-        <div className="p-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
-          {/* Action 3: Remove from Quick Grid */}
-          <button
-            type="button"
-            disabled={isSaving}
-            onClick={handleRemoveItem}
-            className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-          >
-            <Trash2 size={14} />
-            <span>Remove from Grid</span>
-          </button>
+        <div className="p-3.5 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+          {/* Action: Remove from Quick Grid & Reorder Position */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={handleRemoveItem}
+              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs flex items-center gap-1 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            >
+              <Trash2 size={13} />
+              <span>Remove</span>
+            </button>
+
+            {onMovePosition && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onMovePosition(product, 'left')}
+                  className="px-2.5 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-bold text-xs flex items-center gap-0.5 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                  title="Move card 1 slot earlier in grid"
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMovePosition(product, 'right')}
+                  className="px-2.5 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-bold text-xs flex items-center gap-0.5 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                  title="Move card 1 slot later in grid"
+                >
+                  ▶
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center gap-2">
             <button

@@ -175,7 +175,7 @@ export default function PaymentModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(salePayload),
-        signal: AbortSignal.timeout(3500)
+        signal: AbortSignal.timeout(1800)
       });
       if (res.ok) {
         data = await res.json();
@@ -183,7 +183,7 @@ export default function PaymentModal({
         try { data = await res.json(); } catch {}
       }
     } catch (netErr) {
-      console.warn('Payment checkout network notice:', netErr);
+      console.warn('Payment checkout network notice (initiating instant local zero-block fallback):', netErr);
     }
 
     // Try failover alternative server if primary failed or returned error
@@ -195,7 +195,7 @@ export default function PaymentModal({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(salePayload),
-            signal: AbortSignal.timeout(3000)
+            signal: AbortSignal.timeout(1200)
           });
           if (altRes.ok) {
             const altData = await altRes.json();

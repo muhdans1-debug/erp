@@ -24,6 +24,17 @@ if not exist "%~dp0pos-mvp\node_modules" (
     call npm install --no-audit --prefer-offline
 )
 
+:: 0B. ENFORCE 24/7 SERVER MODE (PREVENT LAPTOP SLEEP & LID CLOSE SUSPEND)
+echo [0/5] Enforcing 24/7 Store Server Mode (Preventing Laptop Sleep)...
+powercfg /change standby-timeout-ac 0 >nul 2>&1
+powercfg /change hibernate-timeout-ac 0 >nul 2>&1
+powercfg /change standby-timeout-dc 0 >nul 2>&1
+powercfg /change hibernate-timeout-dc 0 >nul 2>&1
+powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setactive SCHEME_CURRENT >nul 2>&1
+echo       Laptop sleep and lid suspend are DISABLED. System will stay online 24/7.
+
 :: 1. CHECK UNIFIED BACKEND & WS EVENT BUS (PORT 3000)
 echo [1/5] Checking Unified Fastify Backend & WS Bus on port 3000...
 netstat -ano | findstr :3000 | findstr LISTENING >nul

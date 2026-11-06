@@ -26,6 +26,17 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: 2B. Prevent Laptop Sleep (Ensure PM2 background services run 24/7)
+echo [0/4] Enforcing 24/7 Retail Server Power Plan (Sleep = Never)...
+powercfg /change standby-timeout-ac 0 >nul 2>&1
+powercfg /change hibernate-timeout-ac 0 >nul 2>&1
+powercfg /change standby-timeout-dc 0 >nul 2>&1
+powercfg /change hibernate-timeout-dc 0 >nul 2>&1
+powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setactive SCHEME_CURRENT >nul 2>&1
+echo       Laptop sleep and lid suspend disabled!
+
 :: 3. Check and install PM2 globally if not present
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (

@@ -719,3 +719,4 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
     </div>
   );
 }
+

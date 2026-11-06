@@ -89,6 +89,18 @@ cd /d "%~dp0pos-mvp"
 node -e "import('./db.js').then(m => { console.log('       Database connection verified: ' + m.localDbPath); process.exit(0); }).catch(e => { console.error('       Database check:', e.message); process.exit(0); })"
 cd /d "%~dp0"
 
+:: 4B. LOCK LAPTOP INTO 24/7 SERVER MODE (PREVENT SLEEP)
+echo.
+echo [4B/5] Configuring 24/7 Server Power Plan (Never Sleep / Lid Close Run)...
+powercfg /change standby-timeout-ac 0 >nul 2>&1
+powercfg /change hibernate-timeout-ac 0 >nul 2>&1
+powercfg /change standby-timeout-dc 0 >nul 2>&1
+powercfg /change hibernate-timeout-dc 0 >nul 2>&1
+powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0 >nul 2>&1
+powercfg /setactive SCHEME_CURRENT >nul 2>&1
+echo       Laptop sleep and lid suspend disabled. 24/7 server mode locked!
+
 :: 5. READY
 echo.
 echo [5/5] Setup finished!

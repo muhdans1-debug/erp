@@ -1459,7 +1459,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(checkoutPayload),
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(1800)
         });
         if (res.ok) {
           data = await res.json();
@@ -1467,7 +1467,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           try { data = await res.json(); } catch {}
         }
       } catch (netErr) {
-        console.warn("Primary checkout request failed:", netErr);
+        console.warn("Primary checkout request failed (instant zero-block offline fallback):", netErr);
       }
 
       // Automatic high-availability failover: If primary failed or threw database error, try alternative candidate
@@ -1480,7 +1480,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(checkoutPayload),
-              signal: AbortSignal.timeout(3000)
+              signal: AbortSignal.timeout(1200)
             });
             if (altRes.ok) {
               const altData = await altRes.json();

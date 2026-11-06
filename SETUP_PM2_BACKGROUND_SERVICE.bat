@@ -72,3 +72,4 @@ echo   Fastify API:      http://localhost:3000
 echo ========================================================
 echo.
 pause
+

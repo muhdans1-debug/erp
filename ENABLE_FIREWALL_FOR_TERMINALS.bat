@@ -47,3 +47,4 @@ echo All Sunmi and Feitian POS terminals on your Wi-Fi router
 echo can now connect to this computer on port 3000.
 echo.
 pause
+

@@ -185,6 +185,7 @@ await fastify.register(fastifyWebsocket, {
 
 let activeLock = null;
 let lastRelayedNfc = null;
+let lastCartState = null;
 
 fastify.register(async function (fastifyWsInstance) {
   fastifyWsInstance.get('/ws', { websocket: true }, (connection, req) => {
@@ -203,6 +204,24 @@ fastify.register(async function (fastifyWsInstance) {
       }
     }
 
+    // Push live cart state immediately to newly connected Register Spy widgets
+    if (lastCartState) {
+      try {
+        ws.send(JSON.stringify(lastCartState));
+      } catch (err) {
+        fastify.log.warn(`⚠️ [Unified WS Bus] Failed to sync cart state: ${err.message}`);
+      }
+    }
+
+    // Push recent NFC scan if tapped within last 30 seconds
+    if (lastRelayedNfc && (Date.now() - lastRelayedNfc.timestamp < 30000)) {
+      try {
+        ws.send(JSON.stringify({ type: 'NFC_SCANNED', payload: lastRelayedNfc }));
+      } catch (err) {
+        fastify.log.warn(`⚠️ [Unified WS Bus] Failed to sync NFC scan: ${err.message}`);
+      }
+    }
+
     ws.on('message', (message) => {
       const msgString = message.toString();
       try {
@@ -213,7 +232,17 @@ fastify.register(async function (fastifyWsInstance) {
           activeLock = null;
         } else if (event.type === 'NFC_SCANNED' || event.type === 'UNKNOWN_NFC_SCANNED') {
           const tagId = (event.payload?.tag_id || event.payload?.id || '').trim().toUpperCase();
-          lastRelayedNfc = { tag_id: tagId, timestamp: Date.now() };
+          lastRelayedNfc = {
+            tag_id: tagId,
+            id: tagId,
+            customer: event.payload?.customer || null,
+            terminal_id: event.payload?.terminal_id || 'SUNMI-D2-REG01',
+            timestamp: Date.now()
+          };
+          fastify.log.info(`📡 [Unified WS Bus] Stored NFC event for tag: ${tagId}`);
+        } else if (event.type === 'CART_UPDATE' || event.type === 'CART_UPDATED') {
+          lastCartState = event;
+          fastify.log.info(`🛒 [Unified WS Bus] Live cart updated (${(event.payload?.items || event.items || []).length} items)`);
         }
       } catch {
         // Non-JSON or raw payload
@@ -246,6 +275,7 @@ fastify.get('/api/bridge/status', async (_request, reply) => {
     unified: true,
     activeLock,
     lastRelayedNfc,
+    lastCartState,
     connectedClients: fastify.websocketServer?.clients ? fastify.websocketServer.clients.size : 0
   };
 });

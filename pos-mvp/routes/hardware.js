@@ -134,7 +134,7 @@ export default async function hardwareRoutes(fastify, options) {
 
   // --- NFC Card, Mess Groups, and Relay Hardware Routes ---
 // 2. NFC Customer Lookup (by card UID) - Upgraded to resolve PERSONAL, MESS, and DUAL-WALLET cards
-fastify.get('/api/customers/nfc/:uid', async (request, reply) => {
+const handleNfcLookup = async (request, reply) => {
   try {
     const { uid } = request.params;
     if (!uid) {
@@ -150,7 +150,9 @@ fastify.get('/api/customers/nfc/:uid', async (request, reply) => {
     fastify.log.error(error);
     return reply.status(500).send({ error: 'NFC lookup failed' });
   }
-});
+};
+
+fastify.get('/api/customers/nfc/:uid', handleNfcLookup);
 
 // (latestNfcScanEvent initialized above)
 
@@ -204,12 +206,53 @@ fastify.post('/api/nfc/relay', async (request, reply) => {
 });
 
 fastify.get('/api/nfc/latest', async () => {
-  return { success: true, latest: latestNfcScanEvent };
+  return {
+    success: true,
+    latest: latestNfcScanEvent,
+    tag_id: latestNfcScanEvent?.tag_id || null,
+    id: latestNfcScanEvent?.id || null,
+    customer: latestNfcScanEvent?.customer || null,
+    timestamp: latestNfcScanEvent?.timestamp || 0
+  };
 });
 
 fastify.post('/api/nfc/latest/clear', async () => {
   latestNfcScanEvent = null;
   return { success: true };
+});
+
+let liveCartSnapshot = null;
+
+// Live Register Cart Snapshot & Ingest (Register Spy Support)
+fastify.get('/api/register/cart/live', async () => {
+  if (liveCartSnapshot?.payload) return liveCartSnapshot.payload;
+  if (liveCartSnapshot) return liveCartSnapshot;
+  return { items: [], total: 0, customerName: 'Walk-in', itemCount: 0 };
+});
+
+fastify.post('/api/register/cart/live', async (request) => {
+  const body = request.body || {};
+  liveCartSnapshot = {
+    type: 'CART_UPDATED',
+    payload: {
+      items: body.items || [],
+      itemCount: body.itemCount || (body.items || []).length,
+      total: Number(body.total || 0),
+      customer: body.customer || null,
+      customerName: body.customerName || (body.customer ? body.customer.name : 'Walk-in'),
+      activeCartId: body.activeCartId || '1',
+      terminalId: body.terminalId || 'SUNMI-D2-REG01',
+      updatedAt: new Date().toISOString()
+    }
+  };
+
+  if (fastify.websocketServer?.clients) {
+    const msg = JSON.stringify(liveCartSnapshot);
+    fastify.websocketServer.clients.forEach((c) => {
+      if (c.readyState === 1) c.send(msg);
+    });
+  }
+  return { ok: true };
 });
 
 // Protected Cash Drawer Kick (Requires Valid Manager PIN via Bcrypt)

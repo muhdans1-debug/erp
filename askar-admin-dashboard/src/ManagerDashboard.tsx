@@ -99,9 +99,10 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
     const connectWs = () => {
       if (unmounted) return;
       try {
-        ws = new WebSocket('ws://localhost:3000/ws');
+        const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+        ws = new WebSocket(`ws://${wsHost}:3000/ws`);
         ws.onopen = () => {
-          console.log('⚡ [Manager Dashboard] Remote NFC Relay WebSocket connected on :3000/ws');
+          console.log(`⚡ [Manager Dashboard] Remote NFC Relay WebSocket connected to ws://${wsHost}:3000/ws`);
         };
         ws.onmessage = (event) => {
           try {
@@ -637,6 +638,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'barcodes' && <BarcodeGenerator apiBase={apiBase} />}
             {activeTab === 'spy' && (
               <RegisterSpyWidget
+                apiBase={apiBase}
                 onDrawerKick={remoteDrawerKick}
                 onClearCart={remoteClearCart}
                 onLockRegister={remoteLockRegister}

@@ -10,12 +10,14 @@ interface CartItem {
 }
 
 interface RegisterSpyWidgetProps {
+  apiBase?: string;
   onDrawerKick?: () => void;
   onClearCart?: () => void;
   onLockRegister?: () => void;
 }
 
 export default function RegisterSpyWidget({
+  apiBase,
   onDrawerKick,
   onClearCart,
   onLockRegister
@@ -28,12 +30,27 @@ export default function RegisterSpyWidget({
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    // Connect locally since the bridge runs on the same Master Windows PC
+    // Connect locally or across LAN since the bridge runs on Fastify :3000
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     const wsUrl = `ws://${host}:3000/ws`;
+    const resolvedApi = apiBase || `http://${host}:3000`;
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
     let isUnmounted = false;
+
+    // Fetch live cart snapshot immediately via HTTP fallback
+    fetch(`${resolvedApi}/api/register/cart/live`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isUnmounted && data && Array.isArray(data.items) && data.items.length > 0) {
+          setLiveCart({
+            items: data.items,
+            total: Number(data.total || 0),
+            customerName: data.customer?.name || data.customerName || 'Walk-in'
+          });
+        }
+      })
+      .catch(() => {});
 
     const connect = () => {
       if (isUnmounted) return;

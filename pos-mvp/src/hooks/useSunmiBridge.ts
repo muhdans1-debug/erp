@@ -33,10 +33,10 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
 
     if (isNative) {
       return [
-        dynamicWs,
-        'ws://askar-master.local:3000/ws',
-        'ws://192.168.8.7:3000/ws',
         'ws://192.168.88.10:3000/ws',
+        dynamicWs,
+        'ws://192.168.8.7:3000/ws',
+        'ws://askar-master.local:3000/ws',
         'ws://10.0.2.2:3000/ws'
       ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
     }
@@ -44,11 +44,11 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
     return [
       'ws://127.0.0.1:3000/ws',
       'ws://localhost:3000/ws',
-      'ws://askar-master.local:3000/ws',
+      'ws://192.168.88.10:3000/ws',
       dynamicWs,
+      'ws://askar-master.local:3000/ws',
       `ws://${host}:3000/ws`,
-      'ws://192.168.8.7:3000/ws',
-      'ws://192.168.88.10:3000/ws'
+      'ws://192.168.8.7:3000/ws'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
   }, []);
 
@@ -285,33 +285,53 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
 
   // Broadcast active counter cart to Manager's Laptop (Register Spy)
   const broadcastCartState = useCallback((cart: any[], total: number, customer?: any, activeCartId: string = '1') => {
+    const cartPayload = {
+      items: cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price ?? item.sellingPrice ?? 0,
+        quantity: item.quantity,
+        total: (item.price ?? item.sellingPrice ?? 0) * (item.quantity ?? 1),
+        is_weighed_item: !!item.is_weighed_item
+      })),
+      itemCount: cart.reduce((sum, item) => sum + (item.quantity || 1), 0),
+      total: Number(total || 0),
+      customer: customer ? {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        balance: customer.balance,
+        card_type: customer.card_type,
+        mess_id: customer.mess_id
+      } : null,
+      activeCartId,
+      terminalId: 'SUNMI-D2-REG01',
+      updatedAt: new Date().toISOString()
+    };
+
     if (ws.current?.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify({
         type: 'CART_UPDATED',
-        payload: {
-          items: cart.map((item) => ({
-            id: item.id,
-            name: item.name,
-            price: item.price ?? item.sellingPrice ?? 0,
-            quantity: item.quantity,
-            total: (item.price ?? item.sellingPrice ?? 0) * (item.quantity ?? 1),
-            is_weighed_item: !!item.is_weighed_item
-          })),
-          itemCount: cart.reduce((sum, item) => sum + (item.quantity || 1), 0),
-          total: Number(total || 0),
-          customer: customer ? {
-            id: customer.id,
-            name: customer.name,
-            phone: customer.phone,
-            balance: customer.balance,
-            card_type: customer.card_type,
-            mess_id: customer.mess_id
-          } : null,
-          activeCartId,
-          terminalId: 'SUNMI-D2-REG01',
-          updatedAt: new Date().toISOString()
-        }
+        payload: cartPayload
       }));
+    }
+
+    // Dual-channel fallback: Always POST active cart to Manager's Laptop endpoints
+    const dynamicServerIp = getServerIp();
+    const dynamicApiBase = getApiBaseUrl();
+    const candidateBases = [
+      'http://192.168.88.10:3000',
+      dynamicApiBase,
+      `http://${dynamicServerIp}:3000`,
+      'http://192.168.8.7:3000'
+    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
+
+    for (const base of candidateBases) {
+      fetch(`${base}/api/register/cart/live`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartPayload)
+      }).catch(() => {});
     }
   }, []);
 

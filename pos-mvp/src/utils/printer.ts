@@ -3,6 +3,9 @@ import { Printer } from 'capacitor-sunmi-printer';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import { db } from '../db';
+import { generateNBRReceiptHtml, ReceiptTemplateProps } from './receiptTemplate';
+export { generateNBRReceiptHtml };
+export type { ReceiptTemplateProps };
 
 // Initialize the printer Web Worker natively in Vite for off-main-thread receipt formatting
 const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefined'
@@ -495,12 +498,13 @@ export const printFullReceipt = async ({
     await Printer.setFontSize({ fontSize: 24 });
     const headerBlock = [
       `${shopName}\n`,
+      "أسكار سوبر ماركت\n",
       "Simplified Tax Invoice\n",
       "فاتورة ضريبية مبسطة\n",
       `VAT No: ${vatNumber}\n`,
       `${shopAddress}\n`,
       `${shopPhone}\n`,
-      "================================\n"
+      "--------------------------------\n"
     ].join('');
     await Printer.printText({ textToPrint: headerBlock });
 
@@ -626,7 +630,7 @@ export const printFullReceipt = async ({
       `Invoice: ${finalInvoiceDisplay}\n`,
       "THANK YOU FOR SHOPPING!\n",
       "Please retain invoice for returns.\n",
-      "================================\n",
+      "--------------------------------\n",
       "SCAN TO RETURN ITEMS\n"
     ].join('');
     await Printer.printText({ textToPrint: footerLines });
@@ -658,7 +662,7 @@ export const printFullReceipt = async ({
 
       if (isKhataCustomer && targetCustId) {
         await Printer.setPrinterAlignment({ alignment: 'center' });
-        await Printer.printText({ textToPrint: "\n================================\n" });
+        await Printer.printText({ textToPrint: "\n--------------------------------\n" });
         const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
         const qrHeader = [
           "LIVE KHATA STATEMENT & PAYMENT\n",
@@ -667,7 +671,7 @@ export const printFullReceipt = async ({
         await Printer.printText({ textToPrint: qrHeader });
         await printQRCode(pwaUrl, 190);
         await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
-        await Printer.printText({ textToPrint: "================================\n" });
+        await Printer.printText({ textToPrint: "--------------------------------\n" });
       }
     } catch (qrErr) {
       console.warn("Receipt QR print warning:", qrErr);

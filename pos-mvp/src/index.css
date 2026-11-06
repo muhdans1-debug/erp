@@ -206,15 +206,46 @@ input, textarea, [contenteditable] {
     max-width: 58mm !important;
     margin: 0 auto !important;
     padding: 2mm !important;
-    font-family: monospace !important;
+    font-family: 'Roboto Mono', Consolas, "Courier New", monospace !important;
+    font-weight: 600 !important;
     font-size: 12px !important;
-    color: black !important;
-    background: white !important;
+    line-height: 1.4 !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   
   .print-receipt h1, .print-receipt h2, .print-receipt h3, .print-receipt p {
     margin: 0 !important;
-    padding: 2px 0 !important;
+    padding: 1px 0 !important;
+  }
+
+  /* Nesto / NBB Strict Justification POS Styles */
+  .print-receipt .center { text-align: center !important; }
+  .print-receipt .bold { font-weight: 700 !important; }
+  .print-receipt .large { font-size: 16px !important; }
+  .print-receipt .row {
+    display: flex !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+  }
+  .print-receipt .divider {
+    border-top: 1px dashed #000000 !important;
+    margin: 8px 0 !important;
+  }
+  .print-receipt .item-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    margin-bottom: 4px !important;
+    width: 100% !important;
+  }
+  .print-receipt .item-name { width: 50% !important; text-align: left !important; word-break: break-word !important; }
+  .print-receipt .item-qty { width: 20% !important; text-align: center !important; }
+  .print-receipt .item-amt { width: 30% !important; text-align: right !important; }
+  .print-receipt .barcode-container {
+    margin-top: 15px !important;
+    text-align: center !important;
   }
 
   /* Barcode sticker grid — 3 columns on A4 when printing labels */

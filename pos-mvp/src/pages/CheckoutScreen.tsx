@@ -3614,64 +3614,99 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         </div>
       )}
 
-      {/* NBR-COMPLIANT SIMPLIFIED TAX INVOICE PRINT STRIP (58mm Thermal Receipt) */}
-      <div className="hidden print:block print-receipt bg-white text-black p-4 w-[58mm] text-xs font-mono">
-        <div className="text-center mb-4">
-          <h2 className="font-black text-lg">ASKAR SUPERMARKET</h2>
-          <p>Simplified Tax Invoice</p>
-          <p className="font-bold">VAT No: 200012345678901</p>
-          <p>Invoice: #{`INV-${Date.now()}`}</p>
-          <p>{new Date().toLocaleString()}</p>
-        </div>
+      {/* NBR-COMPLIANT SIMPLIFIED TAX INVOICE PRINT STRIP (58mm Thermal Receipt - Nesto/NBB Style) */}
+      <div className="hidden print:block print-receipt bg-white text-black w-[58mm] text-xs font-mono">
+        {/* HEADER */}
+        <div className="center bold large">ASKAR SUPERMARKET</div>
+        <div className="center bold">أسكار سوبر ماركت</div>
+        <div className="center">Simplified Tax Invoice</div>
+        <div className="center">VAT No: 200012345678901</div>
+        <div className="center">Tel: +973 1700 0000</div>
+        
+        <div className="divider" />
 
-        <table className="w-full text-left mb-2 border-b border-black pb-2">
-          <thead>
-            <tr className="border-b border-black">
-              <th>Item</th>
-              <th>Qty</th>
-              <th>Amt</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cart.map((item) => {
-              const qty = item.quantity ?? 1;
-              const rate = item.vatRate !== undefined ? Number(item.vatRate) : (item.taxRate === 0 ? 0 : 10);
-              return (
-                <tr key={item.id}>
-                  <td>{item.name} {rate === 10 ? '*' : ''}</td>
-                  <td>{item.is_weighed_item ? `${qty.toFixed(3)}kg` : qty}</td>
-                  <td>{(item.sellingPrice * qty).toFixed(3)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {/* META INFO (Strict Alignment) */}
+        <div className="row"><span>Inv:</span> <span>INV-{Date.now().toString().slice(-6)}</span></div>
+        <div className="row"><span>Date:</span> <span>{new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span></div>
+        <div className="row"><span>Staff:</span> <span>Register 01</span></div>
+        <div className="row"><span>Mode:</span> <span>CASH</span></div>
 
-        <div className="flex justify-between font-bold">
-          <span>Subtotal:</span>
-          <span>BD {cartTotals.subtotalStr}</span>
-        </div>
-        <div className="flex justify-between font-bold">
-          <span>VAT (10%):</span>
-          <span>BD {cartTotals.totalVatStr}</span>
-        </div>
-        <div className="flex justify-between text-lg font-black mt-1 border-t border-black pt-1">
-          <span>TOTAL:</span>
-          <span>BD {cartTotals.finalTotalStr}</span>
+        <div className="divider" />
+
+        {/* ITEMS HEADER */}
+        <div className="item-row bold">
+          <div className="item-name">Item</div>
+          <div className="item-qty">Qty</div>
+          <div className="item-amt">Amt(BD)</div>
         </div>
         
-        <div className="text-center mt-4 text-[10px]">
-          <p>* Item includes 10% VAT</p>
+        <div className="divider" />
+
+        {/* ITEMS LIST */}
+        {cart.map((item) => {
+          const qty = item.quantity ?? 1;
+          const rate = item.vatRate !== undefined ? Number(item.vatRate) : (item.taxRate === 0 ? 0 : 10);
+          const isTaxable = rate === 10;
+          return (
+            <div key={item.id} className="item-row">
+              <div className="item-name">{item.name} {isTaxable ? '*' : ''}</div>
+              <div className="item-qty">{item.is_weighed_item ? `${qty.toFixed(3)}kg` : qty}</div>
+              <div className="item-amt">{(item.sellingPrice * qty).toFixed(3)}</div>
+            </div>
+          );
+        })}
+
+        <div className="divider" />
+
+        {/* TOTALS */}
+        <div className="row"><span>Subtotal:</span> <span>BD {cartTotals.subtotalStr}</span></div>
+        <div className="row"><span>VAT (10%):</span> <span>BD {cartTotals.totalVatStr}</span></div>
+        
+        {/* Highlighted Total */}
+        <div className="divider" />
+        <div className="row bold large">
+          <span>TOTAL:</span> 
+          <span>BD {cartTotals.finalTotalStr}</span>
+        </div>
+        <div className="divider" />
+
+        <div className="center bold" style={{ marginTop: '8px' }}>
+          *** PAID VIA CASH ***
+        </div>
+        
+        {changeFlashNotice && (
+          <>
+            <div className="row" style={{ marginTop: '4px' }}>
+              <span>Cash Tendered:</span> <span>BD {changeFlashNotice.tendered.toFixed(3)}</span>
+            </div>
+            <div className="row">
+              <span>Change:</span> <span>BD {changeFlashNotice.changeDue.toFixed(3)}</span>
+            </div>
+          </>
+        )}
+
+        {/* FOOTER & BARCODE */}
+        <div className="barcode-container">
+          <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '13px', lineHeight: 1 }}>
+            |||| | ||||| |||| || |||||||
+          </div>
+          <div style={{ fontSize: '10px', marginTop: '4px', fontWeight: 700 }}>INV-{Date.now().toString().slice(-6)}</div>
         </div>
 
-        <div className="flex flex-col items-center justify-center mt-4 pt-3 border-t border-dashed border-black">
+        <div className="center" style={{ marginTop: '10px', fontSize: '10px' }}>
+          * Item includes 10% VAT<br />
+          Thank You For Shopping!<br />
+          Please retain invoice for returns.
+        </div>
+
+        {/* Khata QR Code */}
+        <div className="flex flex-col items-center justify-center mt-3 pt-2 border-t border-dashed border-black">
           <QRCodeSVG
             value={customer?.id ? `https://askar-khata-pwa.vercel.app/tab/${customer.id}` : `https://askar-khata-pwa.vercel.app`}
-            size={110}
+            size={90}
             level="M"
           />
           <p className="text-[9px] font-bold text-center mt-1">SCAN FOR LIVE STATEMENT & BENEFITPAY</p>
-          <p className="text-[8px] text-center text-slate-600">Askar Supermarket Cloud Ledger</p>
         </div>
       </div>
 

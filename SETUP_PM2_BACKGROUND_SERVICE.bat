@@ -35,22 +35,21 @@ if %errorlevel% neq 0 (
     echo [1/4] PM2 is already installed.
 )
 
-:: 4. Stop existing instances cleanly if present
+:: 4. Stop existing instances cleanly to avoid duplicates
 echo [2/4] Resetting PM2 service registrations...
-call pm2 delete askar-api 2>nul
-call pm2 delete askar-updater 2>nul
-call pm2 delete askar-pos 2>nul
-call pm2 delete askar-dash 2>nul
+call pm2 delete all 2>nul
 
-:: 5. Launch services with correct working directories
+:: 5. Launch services natively via Node launchers
 echo [3/4] Registering and launching background services...
 cd /d "%~dp0pos-mvp"
 call pm2 start server.js --name "askar-api"
-call pm2 start updater.js --name "askar-updater"
-call pm2 start "npm run dev:web" --name "askar-pos"
+if exist "updater.js" (
+    call pm2 start updater.js --name "askar-updater"
+)
+call pm2 start start-pos.cjs --name "askar-pos"
 
 cd /d "%~dp0askar-admin-dashboard"
-call pm2 start "npm run dev:host" --name "askar-dash"
+call pm2 start start-dashboard.cjs --name "askar-dash"
 
 cd /d "%~dp0"
 
@@ -67,9 +66,8 @@ echo   Check status:     pm2 status
 echo   View live logs:   pm2 logs askar-api
 echo.
 echo   Cashier POS:      http://localhost:5173
-echo   Admin Dashboard:  http://localhost:5175
+echo   Admin Dashboard:  http://localhost:5177
 echo   Fastify API:      http://localhost:3000
 echo ========================================================
 echo.
 pause
-

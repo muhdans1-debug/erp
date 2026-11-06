@@ -69,19 +69,23 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
 
       // 2. Secondary: If cloud handshake timed out or failed, verify if Local Wi-Fi / Master Server is reachable
       const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+      const savedServerUrl = typeof window !== 'undefined' ? (localStorage.getItem('master_server_url') || localStorage.getItem('server_ip')) : null;
+      const normalizedSaved = savedServerUrl ? (savedServerUrl.startsWith('http') ? savedServerUrl : `http://${savedServerUrl}:3000`) : null;
       const checkCandidates = [
         apiBase,
+        normalizedSaved,
+        'http://192.168.88.10:3000',
+        'http://192.168.8.20:3000',
+        'http://192.168.8.7:3000',
         `http://${host}:3000`,
         'http://localhost:3000',
         'http://127.0.0.1:3000',
-        'http://192.168.8.7:3000',
-        'http://192.168.88.10:3000',
       ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
       for (const target of checkCandidates) {
         try {
           const pingRes = await fetch(`${target}/api/sync/status`, {
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(6000),
           });
           if (pingRes.ok) {
             const now = new Date();

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement } from '../utils/printer';
+import { playThankYouVoice } from '../utils/sound';
 
 interface LedgerEntry {
   id: string;
@@ -375,6 +376,7 @@ export default function CustomerStatementPage({
         amount: amount,
         reference: data.receiptNo || `BP-${Date.now().toString().slice(-6)}`
       });
+      playThankYouVoice('KHATA_PAYMENT');
 
       // Update URL silently with ?success=true
       if (typeof window !== 'undefined' && window.history?.replaceState) {

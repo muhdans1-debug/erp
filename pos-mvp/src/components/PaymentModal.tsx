@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt, kickCashDrawer } from '../utils/printer';
+import { playThankYouVoice } from '../utils/sound';
 import { saveSaleOffline } from '../utils/nativeDb';
 import { generateBenefitPayPayload } from '../utils/benefitPay';
 
@@ -241,6 +242,7 @@ export default function PaymentModal({
       setCompletedSale(finalReceiptData);
       onSuccess?.(finalReceiptData);
       onComplete?.();
+      playThankYouVoice('SALE');
 
       // Print full NBR VAT receipt via printer utility / Web Worker
       printFullReceipt({

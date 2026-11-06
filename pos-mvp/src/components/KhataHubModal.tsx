@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '../utils/printer';
+import { playThankYouVoice } from '../utils/sound';
 import { db } from '../db';
 
 interface Customer {
@@ -404,6 +405,9 @@ function SettleBalanceView({
           kickCashDrawer().catch((err) => console.warn('Khata payment cash drawer kick error:', err));
         }
 
+        // Professional retail voice announcement
+        playThankYouVoice('KHATA_PAYMENT');
+
         // Print physical 58mm thermal receipt immediately on Sunmi hardware
         try {
           await printKhataPaymentReceipt({
@@ -444,6 +448,9 @@ function SettleBalanceView({
       if (method === 'CASH') {
         kickCashDrawer().catch((err) => console.warn('Offline Khata payment cash drawer kick error:', err));
       }
+
+      // Professional retail voice announcement
+      playThankYouVoice('KHATA_PAYMENT');
 
       // Offline print attempt
       try {

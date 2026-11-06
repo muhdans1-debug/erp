@@ -13,6 +13,7 @@ import {
   TrendingUp,
   Store
 } from 'lucide-react';
+import { playThankYouVoice } from '../utils/sound';
 
 interface SponsoredRoom {
   roomId: string;
@@ -146,6 +147,7 @@ export default function CorporateSponsorDashboard({
       if (json.success) {
         setSettleSuccess(json);
         fetchSummary();
+        playThankYouVoice('KHATA_PAYMENT');
       } else {
         alert(json.error || 'Bulk settlement failed');
       }

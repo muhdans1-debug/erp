@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
+import { playThankYouVoice } from '../utils/sound';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
@@ -1568,6 +1569,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           showToast(`🧾 ${formattedMethod} Sale Saved Offline (#${verifiedInvoiceNo}) & Printed!`, 'success');
         }
       }
+
+      // Professional retail audio greeting
+      playThankYouVoice('SALE');
 
       // Flash Change Due prominently to eliminate cashier calculation mistakes
       if (paymentMethod === 'CASH') {

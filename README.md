@@ -70,16 +70,19 @@ This automated script will:
 
 ---
 
-### Step 3: Launch the Entire System
-Double-click `START_SYSTEM.bat`:
-```cmd
-START_SYSTEM.bat
-```
-This script automatically starts:
-- Fastify Unified REST & WebSocket Bus on `http://localhost:3000`
-- Cashier POS Register on `http://localhost:5173`
-- Detects any USB-connected Sunmi / Feitian terminals and binds reverse port tunnels
-- Launches your default web browser directly to the POS screen.
+### Step 3: Launch the System
+
+Choose either **Interactive Mode** or **Silent Background Service (PM2)**:
+
+#### Option A: Quick Interactive Launch (Default)
+Double-click `START_SYSTEM.bat`.
+This opens the servers in terminal windows and automatically pops open the POS browser.
+
+#### Option B: Silent Windows Background Service (PM2 - Recommended for Store Laptops)
+Double-click `SETUP_PM2_BACKGROUND_SERVICE.bat`.
+This registers all services (`askar-api`, `askar-updater`, `askar-pos`, `askar-dash`) under PM2 and configures them to boot automatically on Windows startup even before staff logs in.
+- View status: `pm2 status`
+- View live backend logs: `pm2 logs askar-api`
 
 ---
 
@@ -118,3 +121,4 @@ To pull the latest verified improvements, features, and fixes from GitHub onto t
 deploy.bat
 ```
 This pulls from `origin master`, installs any newly added dependencies, synchronizes the database schema, and reloads the services with zero store disruption.
+

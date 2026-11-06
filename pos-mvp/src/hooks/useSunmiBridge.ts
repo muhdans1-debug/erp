@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { startHardwareScanning, stopHardwareScanning, getActiveSubscribers } from './useNfcScanner';
 import { getServerIp, getApiBaseUrl } from '../utils/apiConfig';
+import { playNfcChime } from '../utils/sound';
 
 export interface LockState {
   customerId: string;
@@ -131,6 +132,7 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
                 if (!hexString) return;
 
                 console.log('📡 [Sunmi On-Demand NFC] Card captured for Manager:', hexString);
+                playNfcChime();
 
                 // Send result back to Laptop
                 if (ws.current?.readyState === WebSocket.OPEN) {
@@ -241,6 +243,7 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
     const cleanId = (nfcId || '').trim().toUpperCase();
     if (!cleanId) return;
 
+    playNfcChime();
     console.log(`📡 [Sunmi NFC Relay] Beaming NFC card: ${cleanId} to Laptop`);
 
     const nfcPayload = {

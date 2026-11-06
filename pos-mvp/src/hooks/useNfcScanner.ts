@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CapacitorNfc } from '@capgo/capacitor-nfc';
+import { playNfcChime } from '../utils/sound';
 
 // Shared singleton state across components to prevent premature hardware shutdown
 let activeSubscribers = 0;
@@ -40,6 +41,9 @@ export const startHardwareScanning = async () => {
         console.log('📡 [Hardware NFC Scanned]:', hexString);
         isCooldown = true;
         globalLastDetectedUid = hexString;
+
+        // Play instant audible NFC detection chime on Sunmi hardware
+        playNfcChime();
 
         // Broadcast to all active listeners and components
         if (typeof window !== 'undefined') {
@@ -123,6 +127,9 @@ export const useNfcScanner = () => {
     globalLastDetectedUid = formatted;
     setLastDetectedUid(formatted);
     setScannedUid(formatted);
+
+    // Play instant audible NFC detection chime
+    playNfcChime();
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: formatted } }));

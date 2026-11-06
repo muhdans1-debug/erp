@@ -7,6 +7,9 @@ interface CartItem {
   name: string;
   price?: number;
   sellingPrice?: number;
+  originalPrice?: number;
+  discountNote?: string;
+  total_price?: number;
   qty?: number;
   quantity?: number;
 }
@@ -71,6 +74,7 @@ const PROMO_ADS = [
 export default function CustomerDisplayPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [total, setTotal] = useState<number>(0);
+  const [totalSavings, setTotalSavings] = useState<number>(0);
   const [customer, setCustomer] = useState<KhataCustomer | null>(null);
   const [qrCheckoutUrl, setQrCheckoutUrl] = useState<string | null>(null);
   const [currentAdIndex, setCurrentAdIndex] = useState(0);
@@ -90,6 +94,7 @@ export default function CustomerDisplayPage() {
           const rawCart = data.payload.cart || [];
           setCart(rawCart);
           setTotal(Number(data.payload.total ?? rawCart.reduce((s: number, i: any) => s + (i.price || i.sellingPrice || 0) * (i.qty || i.quantity || 1), 0)));
+          setTotalSavings(Number(data.payload.totalSavings ?? 0));
           setCustomer(data.payload.customer || null);
           setQrCheckoutUrl(null);
         }
@@ -112,6 +117,7 @@ export default function CustomerDisplayPage() {
         if (data.recentItems || data.total !== undefined) {
           setCart(data.recentItems || []);
           setTotal(Number(data.total || 0));
+          setTotalSavings(Number(data.totalSavings || 0));
           if (data.customerName) {
             setCustomer({ id: 'active', name: data.customerName, balance: data.customerBalance || 0 });
           } else if (data.customer) {
@@ -137,6 +143,7 @@ export default function CustomerDisplayPage() {
         try {
           const parsed = JSON.parse(e.newValue);
           setTotal(Number(parsed.total || 0));
+          setTotalSavings(Number(parsed.totalSavings || 0));
           setCart(parsed.recentItems || []);
           if (parsed.isBenefitPay) {
             setQrCheckoutUrl(parsed.qrPayload || `BH-BENEFIT-FAWRI:TOTAL=${parsed.total}`);
@@ -370,6 +377,11 @@ export default function CustomerDisplayPage() {
             <div className="text-5xl lg:text-6xl font-black font-mono text-emerald-400 tracking-tighter mt-1 leading-none tabular-nums">
               BD {total.toFixed(3)}
             </div>
+            {totalSavings > 0 && (
+              <div className="mt-2.5 inline-flex items-center gap-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 px-3 py-1 rounded-xl text-xs font-black animate-pulse">
+                <span>⚡ You Saved BD {totalSavings.toFixed(3)} Today!</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -388,8 +400,10 @@ export default function CustomerDisplayPage() {
               </div>
             ) : (
               cart.slice(-4).map((item, idx) => {
-                const qty = item.qty ?? item.quantity ?? 1;
-                const unitPrice = item.price ?? item.sellingPrice ?? 0;
+                const qty = Number(item.qty ?? item.quantity ?? 1);
+                const unitPrice = Number(item.price ?? item.sellingPrice ?? 0);
+                const origPrice = Number(item.originalPrice ?? unitPrice);
+                const hasDiscount = origPrice > unitPrice || Boolean(item.discountNote);
                 const isLatest = idx === Math.min(cart.length, 4) - 1;
 
                 return (
@@ -405,13 +419,34 @@ export default function CustomerDisplayPage() {
                       <span className="text-lg font-black text-emerald-400 font-mono shrink-0">
                         {qty}x
                       </span>
-                      <span className="text-base font-bold text-white truncate leading-tight">
-                        {item.name}
-                      </span>
+                      <div className="min-w-0">
+                        <span className="text-base font-bold text-white truncate leading-tight block">
+                          {item.name}
+                        </span>
+                        {hasDiscount && (
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {item.discountNote && (
+                              <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded border border-amber-500/30">
+                                🏷️ {item.discountNote}
+                              </span>
+                            )}
+                            <span className="text-xs line-through text-slate-400 font-mono">
+                              BD {(origPrice * qty).toFixed(3)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-base font-black font-mono text-emerald-400 tabular-nums shrink-0">
-                      BD {(unitPrice * qty).toFixed(3)}
-                    </span>
+                    <div className="text-right shrink-0">
+                      <span className="text-base font-black font-mono text-emerald-400 tabular-nums block">
+                        BD {(unitPrice * qty).toFixed(3)}
+                      </span>
+                      {hasDiscount && (
+                        <span className="text-[10px] text-amber-300 font-bold font-mono">
+                          Save BD {Math.max(0, (origPrice - unitPrice) * qty).toFixed(3)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })

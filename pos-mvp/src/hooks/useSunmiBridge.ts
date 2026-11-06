@@ -219,8 +219,11 @@ export function useSunmiBridge(cartItems?: any[], cartTotal?: number, customer?:
             name: item.name,
             qty: item.qty || item.quantity || 1,
             quantity: item.quantity || item.qty || 1,
-            price: Number(item.price ?? item.sellingPrice ?? 0),
-            sellingPrice: Number(item.price ?? item.sellingPrice ?? 0),
+            price: Number(item.sellingPrice ?? item.price ?? 0),
+            sellingPrice: Number(item.sellingPrice ?? item.price ?? 0),
+            originalPrice: Number(item.originalPrice ?? item.sellingPrice ?? item.price ?? 0),
+            discountNote: item.discountNote,
+            total_price: Number(item.total_price ?? ((item.sellingPrice ?? item.price ?? 0) * (item.quantity ?? item.qty ?? 1))),
             is_weighed_item: !!item.is_weighed_item
           })),
           total: Number(cartTotal || 0),

@@ -34,20 +34,27 @@ export interface CartTotals {
   subtotal: number;
   totalVat: number;
   finalTotal: number;
+  totalSavings: number;
   subtotalStr: string;
   totalVatStr: string;
   finalTotalStr: string;
+  totalSavingsStr: string;
 }
 
 export function calculateCartTotals(cartItems: CartItem[]): CartTotals {
   let subtotal = 0;
   let totalVat = 0;
   let finalTotal = 0;
+  let totalSavings = 0;
 
   cartItems.forEach((item) => {
-    const qty = item.quantity ?? item.qty ?? 1;
-    const unitPrice = item.sellingPrice ?? item.price ?? 0;
-    const lineTotal = unitPrice * qty;
+    const qty = Number(item.quantity ?? item.qty ?? 1);
+    const unitPrice = Number(item.sellingPrice ?? item.price ?? 0);
+    const origPrice = Number(item.originalPrice ?? unitPrice);
+    if (origPrice > unitPrice) {
+      totalSavings += (origPrice - unitPrice) * qty;
+    }
+    const lineTotal = Number((unitPrice * qty).toFixed(3));
     finalTotal += lineTotal;
 
     // Bahrain NBR Tax Rules: 10% standard, basic food items are 0% (Zero-Rated)
@@ -68,9 +75,11 @@ export function calculateCartTotals(cartItems: CartItem[]): CartTotals {
     subtotal: Number(subtotal.toFixed(3)),
     totalVat: Number(totalVat.toFixed(3)),
     finalTotal: Number(finalTotal.toFixed(3)),
+    totalSavings: Number(totalSavings.toFixed(3)),
     subtotalStr: subtotal.toFixed(3),
     totalVatStr: totalVat.toFixed(3),
-    finalTotalStr: finalTotal.toFixed(3)
+    finalTotalStr: finalTotal.toFixed(3),
+    totalSavingsStr: totalSavings.toFixed(3)
   };
 }
 
@@ -86,7 +95,7 @@ export interface CartState {
   updateQuantity: (idOrIndex: string | number, newQty: number) => void;
   adjustItemQtyByIndex: (index: number, delta: number, isReturnMode?: boolean) => void;
   removeItem: (idOrIndex: string | number) => void;
-  applyPriceOverride: (index: number, newUnitPrice: number, discountLabel?: string) => void;
+  applyPriceOverride: (idOrIndex: string | number, newUnitPrice: number, discountLabel?: string) => void;
   resetCart: () => void;
   clearActiveCart: () => void;
   setCartItems: (items: CartItem[]) => void;
@@ -241,19 +250,24 @@ export const useCartStore = create<CartState>((set, get) => ({
     set({ items: updatedItems, carts: updatedCarts });
   },
 
-  applyPriceOverride: (index, newUnitPrice, discountLabel) => {
+  applyPriceOverride: (idOrIndex, newUnitPrice, discountLabel) => {
     const state = get();
-    const cleanPrice = Number(newUnitPrice.toFixed(3));
+    const cleanPrice = Math.max(0, Number(newUnitPrice.toFixed(3)));
 
     const updatedItems = state.items.map((item, idx) => {
-      if (idx !== index) return item;
-      const qty = item.quantity ?? item.qty ?? 1;
+      const isMatch = typeof idOrIndex === 'number' ? idx === idOrIndex : item.id === idOrIndex;
+      if (!isMatch) return item;
+      const qty = Number(item.quantity ?? item.qty ?? 1);
+      const currentOrig = Number(item.originalPrice ?? item.sellingPrice ?? item.price ?? cleanPrice);
+      const preservedOrig = currentOrig > 0 ? currentOrig : cleanPrice;
+      const effectiveNote = cleanPrice >= preservedOrig && !discountLabel ? undefined : discountLabel;
+
       return {
         ...item,
         price: cleanPrice,
         sellingPrice: cleanPrice,
-        originalPrice: item.originalPrice ?? item.sellingPrice,
-        discountNote: discountLabel,
+        originalPrice: preservedOrig,
+        discountNote: effectiveNote,
         total_price: Number((cleanPrice * qty).toFixed(3))
       };
     });

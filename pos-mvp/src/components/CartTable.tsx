@@ -76,14 +76,25 @@ export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onA
               <button
                 type="button"
                 onClick={() => onPriceOverrideClick?.(item, index)}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-50 hover:bg-amber-50 active:scale-95 transition-all border border-slate-200 hover:border-amber-400 text-right cursor-pointer flex flex-col justify-center items-end min-h-[60px]"
+                className={`px-2.5 py-1.5 rounded-xl active:scale-95 transition-all border text-right cursor-pointer flex flex-col justify-center items-end min-h-[60px] ${
+                  item.originalPrice && item.originalPrice > unitPrice
+                    ? 'bg-amber-50/70 border-amber-300 hover:border-amber-500'
+                    : 'bg-slate-50 hover:bg-amber-50 border-slate-200 hover:border-amber-400'
+                }`}
                 title="Tap to apply discount or price override"
               >
-                <span className={`font-black font-mono text-sm tabular-nums leading-tight ${isNegative ? 'text-red-600' : 'text-slate-900'}`}>
+                {item.originalPrice && item.originalPrice > unitPrice && (
+                  <span className="text-[10px] line-through text-slate-400 font-mono font-bold leading-none mb-0.5">
+                    BD {(item.originalPrice * qty).toFixed(3)}
+                  </span>
+                )}
+                <span className={`font-black font-mono text-sm tabular-nums leading-tight ${
+                  isNegative ? 'text-red-600' : (item.originalPrice && item.originalPrice > unitPrice ? 'text-emerald-700' : 'text-slate-900')
+                }`}>
                   BD {lineTotal.toFixed(3)}
                 </span>
                 <span className="text-[10px] text-amber-700 font-semibold tracking-tight mt-0.5 flex items-center gap-0.5">
-                  <Tag size={9} /> tap to edit
+                  <Tag size={9} /> {item.discountNote || 'tap to edit'}
                 </span>
               </button>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X } from 'lucide-react';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
@@ -1075,10 +1075,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     let subtotal = 0;
     let totalVat = 0;
     let finalTotal = 0;
+    let totalSavings = 0;
 
     cartItems.forEach((item) => {
-      const qty = item.quantity ?? 1;
-      const lineTotal = item.sellingPrice * qty;
+      const qty = Number(item.quantity ?? (item as any).qty ?? 1);
+      const unitPrice = Number(item.sellingPrice ?? item.price ?? 0);
+      const origPrice = Number(item.originalPrice ?? unitPrice);
+      if (origPrice > unitPrice) {
+        totalSavings += (origPrice - unitPrice) * qty;
+      }
+      const lineTotal = Number((unitPrice * qty).toFixed(3));
       finalTotal += lineTotal;
 
       // In Bahrain, standard is 10%, basic food items (milk, bread, produce, meat) are 0% (Zero-Rated)
@@ -1102,9 +1108,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       subtotal: Number(subtotal.toFixed(3)), 
       totalVat: Number(totalVat.toFixed(3)), 
       finalTotal: Number(finalTotal.toFixed(3)),
+      totalSavings: Number(totalSavings.toFixed(3)),
       subtotalStr: subtotal.toFixed(3),
       totalVatStr: totalVat.toFixed(3),
-      finalTotalStr: finalTotal.toFixed(3)
+      finalTotalStr: finalTotal.toFixed(3),
+      totalSavingsStr: totalSavings.toFixed(3)
     };
   };
 
@@ -1112,6 +1120,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const subtotal = cartTotals.subtotal;
   const vat = cartTotals.totalVat;
   const total = cartTotals.finalTotal;
+  const totalSavings = cartTotals.totalSavings;
 
   // 📡 Live WebSocket LAN Bridge: Stream active cart to Manager's Laptop (Register Spy)
   useSunmiBridge(cart, total, customer);
@@ -1571,10 +1580,22 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   };
 
   // Line item price override or discount applicator (Rule 5: Tap-to-Edit Price)
-  const applyPriceOverride = (index: number, newUnitPrice: number, discountLabel?: string) => {
-    useCartStore.getState().applyPriceOverride(index, newUnitPrice, discountLabel);
+  const applyPriceOverride = (indexOrId: number | string, newUnitPrice: number, discountLabel?: string) => {
+    useCartStore.getState().applyPriceOverride(indexOrId as any, newUnitPrice, discountLabel);
     showToast(`💰 Applied ${discountLabel ? `${discountLabel} ` : ''}price: BD ${newUnitPrice.toFixed(3)}`, 'info');
     setPriceOverrideItem(null);
+
+    // Immediately push discount update to customer pole display
+    try {
+      const activeItems = useCartStore.getState().items;
+      const targetItem = typeof indexOrId === 'number' ? activeItems[indexOrId] : activeItems.find(i => i.id === indexOrId);
+      const newTotals = calculateCartTotals(activeItems as unknown as Product[]);
+      if (targetItem) {
+        CustomerDisplay.updateDisplay?.({
+          text: `${targetItem.name}\n${discountLabel ? `[${discountLabel}] ` : ''}BD ${newUnitPrice.toFixed(3)}\n\nTOTAL: BD ${newTotals.finalTotalStr}`
+        }).catch(() => {});
+      }
+    } catch {}
   };
 
   // Set explicit quantity for the most recently scanned item
@@ -1784,13 +1805,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       total,
       subtotal,
       vat,
+      totalSavings,
       recentItems: cart.map((item) => ({
         id: item.id,
         name: item.name,
-        sellingPrice: item.sellingPrice,
-        price: item.sellingPrice,
-        quantity: item.quantity ?? 1,
-        qty: item.quantity ?? 1,
+        sellingPrice: Number(item.sellingPrice ?? item.price ?? 0),
+        price: Number(item.sellingPrice ?? item.price ?? 0),
+        originalPrice: Number(item.originalPrice ?? item.sellingPrice ?? item.price ?? 0),
+        discountNote: item.discountNote,
+        total_price: Number(item.total_price ?? ((item.sellingPrice ?? item.price ?? 0) * (item.quantity ?? (item as any).qty ?? 1))),
+        quantity: Number(item.quantity ?? (item as any).qty ?? 1),
+        qty: Number(item.quantity ?? (item as any).qty ?? 1),
       })),
       isBenefitPay,
       customerName: customer ? customer.name : undefined,
@@ -1807,12 +1832,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         cart: cart.map((item) => ({
           id: item.id,
           name: item.name,
-          price: item.sellingPrice,
-          sellingPrice: item.sellingPrice,
-          qty: item.quantity ?? 1,
-          quantity: item.quantity ?? 1,
+          price: Number(item.sellingPrice ?? item.price ?? 0),
+          sellingPrice: Number(item.sellingPrice ?? item.price ?? 0),
+          originalPrice: Number(item.originalPrice ?? item.sellingPrice ?? item.price ?? 0),
+          discountNote: item.discountNote,
+          total_price: Number(item.total_price ?? ((item.sellingPrice ?? item.price ?? 0) * (item.quantity ?? (item as any).qty ?? 1))),
+          qty: Number(item.quantity ?? (item as any).qty ?? 1),
+          quantity: Number(item.quantity ?? (item as any).qty ?? 1),
         })),
         total,
+        subtotal,
+        vat,
+        totalSavings,
         customer,
       }
     };
@@ -2518,6 +2549,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 <span>Subtotal</span>
                 <span className="font-mono">BD {subtotal.toFixed(3)}</span>
               </div>
+              {totalSavings > 0 && (
+                <div className="flex justify-between text-emerald-700 text-xs font-black bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                  <span className="flex items-center gap-1">
+                    <Tag size={12} className="text-emerald-600" /> Total Discount
+                  </span>
+                  <span className="font-mono">-BD {totalSavings.toFixed(3)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-slate-500 text-xs font-bold">
                 <span>VAT (10%)</span>
                 <span className="font-mono">BD {vat.toFixed(3)}</span>
@@ -3320,6 +3359,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       {/* TAP-TO-EDIT PRICE & DISCOUNT OVERRIDE MODAL */}
       <TapToEditDiscountModal
+        key={priceOverrideItem ? `${priceOverrideItem.index}-${priceOverrideItem.product.id}` : 'closed'}
         item={priceOverrideItem}
         onClose={() => setPriceOverrideItem(null)}
         onApplyOverride={applyPriceOverride}

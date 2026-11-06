@@ -74,12 +74,13 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
       const checkCandidates = [
         apiBase,
         normalizedSaved,
-        'http://192.168.88.10:3000',
         'http://192.168.8.20:3000',
         'http://192.168.8.7:3000',
+        'http://askar-master.local:3000',
         `http://${host}:3000`,
         'http://localhost:3000',
         'http://127.0.0.1:3000',
+        'http://192.168.88.10:3000',
       ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
       for (const target of checkCandidates) {

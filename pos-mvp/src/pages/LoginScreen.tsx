@@ -72,17 +72,17 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
   };
 
   const getCandidateBases = () => {
-    const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
     const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
     const custom = typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : null;
     return [
       custom,
       apiBase,
-      isNative ? 'http://192.168.8.7:3000' : null,
+      'http://192.168.8.20:3000',
       'http://192.168.8.7:3000',
-      'http://192.168.88.10:3000',
+      'http://askar-master.local:3000',
       `http://${host}:3000`,
-      'http://localhost:3000'
+      'http://localhost:3000',
+      'http://192.168.88.10:3000'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
   };
 

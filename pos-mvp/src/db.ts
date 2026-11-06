@@ -98,12 +98,14 @@ export const db: LibsqlDatabase = {
     // 2. If running in Browser environment (SUNMI D2 Mini Screen / Chrome):
     const host = (isBrowser && window.location.hostname) || 'localhost';
     const masterBase = (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
+    const devSecret = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_SECRET) || '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06';
     const endpoints = [
       masterBase,
-      'http://askar-master.local:3000',
+      'http://192.168.8.20:3000',
       `http://${host}:3000`, 
-      'http://localhost:3000',
       'http://192.168.8.7:3000',
+      'http://askar-master.local:3000',
+      'http://localhost:3000',
       'http://192.168.88.10:3000'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
@@ -111,7 +113,10 @@ export const db: LibsqlDatabase = {
       try {
         const res = await fetch(`${base}/api/db/execute`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-dev-secret': devSecret
+          },
           body: JSON.stringify({ sql, args }),
           signal: AbortSignal.timeout(1500),
         });
@@ -185,11 +190,13 @@ export const db: LibsqlDatabase = {
     const host = (isBrowser && window.location.hostname) || 'localhost';
     const masterBase = customBase || (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
     const endpoints = [
-      masterBase, 
+      masterBase,
+      'http://192.168.8.20:3000',
       `http://${host}:3000`, 
+      'http://192.168.8.7:3000',
+      'http://askar-master.local:3000',
       'http://localhost:3000', 
       'http://127.0.0.1:3000',
-      'http://192.168.8.7:3000',
       'http://192.168.88.10:3000'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 

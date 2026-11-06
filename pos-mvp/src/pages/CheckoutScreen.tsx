@@ -3322,6 +3322,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           initialBarcode={unassignedBarcode || lastScannedBarcode || ''}
           apiBase={apiBase}
           categories={quickCategories}
+          catalog={catalog}
           onProductAdded={(newProduct, andAddToCart = true) => {
             const price = Number(newProduct.sellingPrice || newProduct.price || 0);
             const cost = Number(newProduct.unitCost || newProduct.purchasePrice || 0);

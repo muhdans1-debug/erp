@@ -746,6 +746,10 @@ export default async function productRoutes(fastify, options) {
       if (!existing && cleanBarcode) {
         existing = await db.orm.Product.where({ barcode: cleanBarcode }).all().first();
       }
+      if (!existing && name && name.trim()) {
+        const allProds = await db.orm.Product.all();
+        existing = allProds.find(p => (p.name || '').trim().toLowerCase() === name.trim().toLowerCase());
+      }
       if (existing) {
         request.params = { id: existing.id };
         return handleUpdateProduct(request, reply);

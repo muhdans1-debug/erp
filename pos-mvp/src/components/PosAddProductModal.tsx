@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PackagePlus, X, ScanBarcode, Truck, Percent, Scale, Tag, Layers, CheckCircle2, AlertCircle } from 'lucide-react';
+import { PackagePlus, X, ScanBarcode, Truck, Percent, Scale, Tag, Layers, CheckCircle2, AlertCircle, RotateCcw, ShoppingCart, Search, RefreshCw } from 'lucide-react';
 import { db } from '../db';
 
 export interface PosAddProductModalProps {
@@ -8,6 +8,7 @@ export interface PosAddProductModalProps {
   initialBarcode?: string;
   apiBase?: string;
   categories?: { id: string; label: string; color?: string }[];
+  catalog?: any[];
 }
 
 export default function PosAddProductModal({
@@ -15,7 +16,8 @@ export default function PosAddProductModal({
   onProductAdded,
   initialBarcode = '',
   apiBase = 'http://localhost:3000',
-  categories = []
+  categories = [],
+  catalog = []
 }: PosAddProductModalProps) {
   const [distributors, setDistributors] = useState<any[]>([]);
   const [formData, setFormData] = useState({
@@ -33,6 +35,100 @@ export default function PosAddProductModal({
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [allProducts, setAllProducts] = useState<any[]>(catalog || []);
+  const [isUpdateMode, setIsUpdateMode] = useState(false);
+  const [dismissedExistingId, setDismissedExistingId] = useState<string | null>(null);
+
+  // Sync catalog prop or load directly from local SQLite table Product
+  useEffect(() => {
+    if (catalog && catalog.length > 0) {
+      setAllProducts(catalog);
+    } else {
+      db.execute('SELECT * FROM Product').then((res) => {
+        if (res?.rows && Array.isArray(res.rows)) {
+          setAllProducts(res.rows);
+        }
+      }).catch(() => {});
+    }
+  }, [catalog]);
+
+  // 1. Detect existing product by Barcode / ID
+  const detectedByBarcode = useMemo(() => {
+    const rawBarcode = formData.barcode.trim();
+    if (!rawBarcode || rawBarcode.length < 2) return null;
+    const target = rawBarcode.toLowerCase();
+    return allProducts.find((p) => {
+      const b = (p.barcode || '').trim().toLowerCase();
+      const id = (p.id || '').trim().toLowerCase();
+      return b === target || id === target;
+    }) || null;
+  }, [allProducts, formData.barcode]);
+
+  // 2. Detect existing product by Exact Name (case-insensitive)
+  const detectedByName = useMemo(() => {
+    const rawName = formData.name.trim();
+    if (!rawName || rawName.length < 2) return null;
+    const target = rawName.toLowerCase();
+    return allProducts.find((p) => {
+      const n = (p.name || '').trim().toLowerCase();
+      return n === target;
+    }) || null;
+  }, [allProducts, formData.name]);
+
+  // Active detected existing product (prioritize barcode match, then exact name match)
+  const existingProduct = useMemo(() => {
+    const candidate = detectedByBarcode || detectedByName;
+    if (!candidate) return null;
+    if (dismissedExistingId && (candidate.id === dismissedExistingId || candidate.barcode === dismissedExistingId)) {
+      return null;
+    }
+    return candidate;
+  }, [detectedByBarcode, detectedByName, dismissedExistingId]);
+
+  const matchReason: 'barcode' | 'name' | null = detectedByBarcode ? 'barcode' : detectedByName ? 'name' : null;
+
+  // 3. Similar products by partial name match
+  const similarByName = useMemo(() => {
+    const rawName = formData.name.trim();
+    if (!rawName || rawName.length < 3) return [];
+    const target = rawName.toLowerCase();
+    return allProducts
+      .filter((p) => {
+        const n = (p.name || '').trim().toLowerCase();
+        if (existingProduct && (p.id === existingProduct.id || p.barcode === existingProduct.barcode)) return false;
+        return n.includes(target) || target.includes(n);
+      })
+      .slice(0, 4);
+  }, [allProducts, formData.name, existingProduct]);
+
+  const handleLoadExistingDetails = (prod: any) => {
+    setFormData({
+      barcode: prod.barcode || prod.id,
+      name: prod.name,
+      sellingPrice: String(prod.sellingPrice || prod.price || ''),
+      purchasePrice: String(prod.purchasePrice || prod.unitCost || ''),
+      stockQuantity: String(prod.stockQuantity ?? '10'),
+      minThreshold: String(prod.minThreshold ?? '10'),
+      maxThreshold: String(prod.maxThreshold ?? '50'),
+      distributorId: prod.distributorId || '',
+      vatRate: String(prod.vatRate !== undefined ? prod.vatRate : '10.0'),
+      is_weighed_item: Boolean(prod.is_weighed_item),
+      category: prod.category || 'ESSENTIALS'
+    });
+    setIsUpdateMode(true);
+    setDismissedExistingId(null);
+  };
+
+  const handleAddExistingToCart = (prod: any) => {
+    onProductAdded({
+      ...prod,
+      sellingPrice: Number(prod.sellingPrice || prod.price || 0),
+      purchasePrice: Number(prod.purchasePrice || prod.unitCost || 0),
+      barcode: prod.barcode || prod.id,
+      category: prod.category || 'ESSENTIALS'
+    }, true);
+    onClose();
+  };
 
   // Sync barcode if changed
   useEffect(() => {
@@ -122,26 +218,32 @@ export default function PosAddProductModal({
       return;
     }
 
-    const cleanBarcode = (formData.barcode || crypto.randomUUID()).trim();
+    const existing = existingProduct || detectedByBarcode || detectedByName;
+    const targetId = (existing ? existing.id : (formData.barcode || crypto.randomUUID())).trim();
+    const cleanBarcode = (formData.barcode || (existing ? existing.barcode : targetId) || crypto.randomUUID()).trim();
     const costPrice = parseFloat(formData.purchasePrice) || 0;
     const salePrice = parseFloat(formData.sellingPrice) || 0;
     const vat = parseFloat(formData.vatRate) || 10.0;
 
+    const enteredQty = parseInt(formData.stockQuantity, 10) || 1;
+    const existingStock = existing ? (parseInt(existing.stockQuantity, 10) || 0) : 0;
+    const finalStock = isUpdateMode ? enteredQty : (existing ? existingStock + enteredQty : enteredQty);
+
     const payload = {
-      id: cleanBarcode,
+      id: targetId,
       barcode: cleanBarcode,
       name: formData.name.trim(),
       sellingPrice: salePrice,
       purchasePrice: costPrice,
       unitCost: costPrice,
-      stockQuantity: parseInt(formData.stockQuantity, 10) || 1,
+      stockQuantity: finalStock,
       minThreshold: parseInt(formData.minThreshold, 10) || 10,
       maxThreshold: parseInt(formData.maxThreshold, 10) || 50,
       distributorId: formData.distributorId || null,
       vatRate: vat,
       taxRate: vat / 100.0,
       is_weighed_item: Boolean(formData.is_weighed_item),
-      category: formData.category || 'ESSENTIALS'
+      category: formData.category || (existing?.category || 'ESSENTIALS')
     };
 
     setIsSubmitting(true);
@@ -248,8 +350,74 @@ export default function PosAddProductModal({
         )}
 
         {/* Scrollable Form Body */}
-        <div className="p-6 overflow-y-auto scroll-zone space-y-5 text-xs">
+        <div className="p-6 overflow-y-auto scroll-zone space-y-4 text-xs">
           
+          {/* EXISTING ITEM DETECTED NOTIFICATION CARD */}
+          {existingProduct && (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-amber-950 animate-in fade-in space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-amber-200 text-amber-900 rounded-xl text-base">⚠️</span>
+                  <div>
+                    <h4 className="font-black text-sm text-amber-900 leading-tight">
+                      Existing Product Detected in Catalog!
+                    </h4>
+                    <span className="text-[10px] font-bold text-amber-700 tracking-wide uppercase">
+                      Recognized by {matchReason === 'barcode' ? `Barcode: [${existingProduct.barcode || existingProduct.id}]` : `Exact Name: "${existingProduct.name}"`}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedExistingId(existingProduct.id || existingProduct.barcode)}
+                  className="text-amber-700 hover:text-amber-950 text-xs font-black p-1 cursor-pointer"
+                  title="Dismiss warning"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Snapshot of existing product */}
+              <div className="bg-white p-3 rounded-xl border border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div>
+                  <p className="font-black text-slate-800 text-sm">{existingProduct.name}</p>
+                  <div className="flex items-center gap-2 mt-0.5 text-slate-500 font-mono text-[11px]">
+                    <span>Barcode: <strong className="text-slate-700">{existingProduct.barcode || existingProduct.id}</strong></span>
+                    <span>•</span>
+                    <span>Stock: <strong className="text-slate-700">{existingProduct.stockQuantity ?? 0} in store</strong></span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Retail Price</span>
+                  <span className="font-mono font-black text-emerald-700 text-base">
+                    BD {Number(existingProduct.sellingPrice || existingProduct.price || 0).toFixed(3)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Action Buttons */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleLoadExistingDetails(existingProduct)}
+                  className="py-2.5 px-3 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-2xs"
+                >
+                  <RotateCcw size={14} />
+                  <span>Load & Edit Details</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleAddExistingToCart(existingProduct)}
+                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-md"
+                >
+                  <ShoppingCart size={14} />
+                  <span>Add to Cart (BD {Number(existingProduct.sellingPrice || existingProduct.price || 0).toFixed(3)})</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 1. Barcode & Product Name */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-1">
@@ -277,6 +445,31 @@ export default function PosAddProductModal({
                 className="w-full text-base p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-bold" 
                 placeholder="e.g. Almarai Fresh Milk 1L" 
               />
+              {/* Similar items recognized by partial name */}
+              {similarByName.length > 0 && !existingProduct && (
+                <div className="mt-1.5 p-2 bg-blue-50/80 border border-blue-200 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-blue-900">
+                    <span className="flex items-center gap-1">
+                      <Search size={11} /> Similar items already in store:
+                    </span>
+                    <span>{similarByName.length} found</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {similarByName.map((sim) => (
+                      <button
+                        key={sim.id}
+                        type="button"
+                        onClick={() => handleLoadExistingDetails(sim)}
+                        className="px-2 py-1 bg-white hover:bg-blue-100 border border-blue-200 rounded-lg text-slate-800 text-[11px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <span className="font-bold">{sim.name}</span>
+                        <span className="font-mono text-emerald-700 font-bold">BD {Number(sim.sellingPrice || sim.price || 0).toFixed(3)}</span>
+                        <span className="text-[9px] text-slate-400 font-mono">({sim.barcode || sim.id})</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -490,17 +683,19 @@ export default function PosAddProductModal({
             onClick={() => handleSave(false)}
             className="px-4 py-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-xs disabled:opacity-50"
           >
-            Save to Catalog Only
+            {isUpdateMode ? 'Update Catalog Only' : 'Save to Catalog Only'}
           </button>
 
           <button 
             type="button"
             disabled={isSubmitting}
             onClick={() => handleSave(true)}
-            className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            className={`flex-1 py-3.5 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+              isUpdateMode ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+            }`}
           >
-            <CheckCircle2 size={18} />
-            <span>{isSubmitting ? 'Saving...' : 'Save & Add to Cart (Checkout)'}</span>
+            {isUpdateMode ? <RefreshCw size={18} /> : <CheckCircle2 size={18} />}
+            <span>{isSubmitting ? 'Saving...' : isUpdateMode ? 'Update Product & Add to Cart' : 'Save & Add to Cart (Checkout)'}</span>
           </button>
         </div>
 

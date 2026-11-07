@@ -57,8 +57,18 @@ export default {
           const timestamp = sale.timestamp || sale.createdAt || new Date().toISOString();
 
           await db.execute({
-            sql: "INSERT OR REPLACE INTO Sale (id, invoiceNo, total, status, timestamp) VALUES (?, ?, ?, 'CLOUD_SYNCED', ?)",
-            args: [sale.id || invoiceNo, invoiceNo, total, timestamp]
+            sql: `INSERT OR REPLACE INTO Sale (
+              id, tenantId, invoiceNo, subtotal, total, totalAmount, paymentType, status, syncStatus, createdAt
+            ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 'CLOUD_SYNCED', 'SYNCED', ?)`,
+            args: [
+              sale.id || invoiceNo,
+              invoiceNo,
+              Number(sale.subtotal || total),
+              total,
+              total,
+              sale.paymentType || 'CASH',
+              timestamp
+            ]
           });
         }
 

@@ -95,6 +95,30 @@ export default async function salesRoutes(fastify, options) {
           const price = Number(item.price || item.priceAtSale || 0);
           const totalPrice = Number(item.total_price || (qty * price));
 
+          // Auto-register missing product from offline sales to satisfy Foreign Key constraint
+          if (prodId) {
+            const prodExists = await transaction.execute({
+              sql: 'SELECT id FROM Product WHERE id = ? LIMIT 1',
+              args: [prodId]
+            });
+            if (!prodExists.rows || prodExists.rows.length === 0) {
+              const cartList = Array.isArray(sale.cart) ? sale.cart : [];
+              const cartItem = cartList.find((c) => c && (c.id === prodId || c.productId === prodId)) || item;
+              const prodName = cartItem.name || item.name || 'Quick / Produce Item';
+              const prodPrice = Number(cartItem.price ?? cartItem.sellingPrice ?? price ?? 0);
+              const isWeighed = cartItem.is_weighed_item ? 1 : 0;
+              const cat = cartItem.category || 'PRODUCE';
+
+              await transaction.execute({
+                sql: `INSERT INTO Product (id, tenantId, name, purchasePrice, unitCost, sellingPrice, stockQuantity, taxRate, vatRate, category, is_weighed_item)
+                      VALUES (?, 'tenant_askar_01', ?, ?, 0, ?, 0, 0.1, 10.0, ?, ?)
+                      ON CONFLICT(id) DO NOTHING`,
+                args: [prodId, prodName, Number((prodPrice * 0.7).toFixed(3)), prodPrice, cat, isWeighed]
+              });
+              fastify.log.info(`[Sync Sales] Auto-registered missing product from offline sale: ${prodId} (${prodName})`);
+            }
+          }
+
           // Insert the line item
           await transaction.execute({
             sql: `INSERT INTO SaleItem (id, saleId, productId, quantity, priceAtSale, total_price) 

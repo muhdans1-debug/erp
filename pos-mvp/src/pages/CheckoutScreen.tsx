@@ -42,6 +42,7 @@ export type { Product, Customer, CartTab };
 import { useCartStore, calculateCartTotals } from '../store/cartStore';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
 import { useNfcReader } from '../hooks/useNfcReader';
+import { useNetworkSync } from '../hooks/useNetworkSync';
 import { useCheckoutProcessor } from '../hooks/useCheckoutProcessor';
 import { QuickProductGrid } from '../components/QuickProductGrid';
 import { db } from '../db.ts';
@@ -1235,53 +1236,42 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // 📡 Live WebSocket LAN Bridge: Stream active cart to Manager's Laptop (Register Spy)
   useSunmiBridge(cart, total, customer);
 
-  // 📡 Real-Time CRDT WebSocket Listener: Adjust active customer balance live without polling
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    try {
-      const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'askar-master.local';
-      ws = new WebSocket(`ws://${wsHost}:3000/ws`);
+  // Fetch the static Master IP locked in earlier via DHCP
+  const masterIp = typeof window !== 'undefined' ? (localStorage.getItem('MASTER_IP') || '192.168.8.7') : '192.168.8.7';
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
-            const delta = Number(data.delta) || 0;
+  // 📡 Decoupled Network & Offline Synchronization Hook:
+  // Handles WebSocket connection, 10s auto-sync polling loop, and CRDT Khata balance sync outside React render tree
+  const { isServerOnline } = useNetworkSync(masterIp, useCallback((data: any) => {
+    if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
+      const delta = Number(data.delta) || 0;
 
-            // 1. Update actively linked checkout customer
-            setCustomer((prev) => {
-              if (prev && prev.id === data.customerId) {
-                const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
-                const newBal = Number((oldBal + delta).toFixed(3));
-                return {
-                  ...prev,
-                  currentBalance: newBal,
-                  balance: newBal
-                };
-              }
-              return prev;
-            });
+      // 1. Update actively linked checkout customer
+      setCustomer((prev) => {
+        if (prev && prev.id === data.customerId) {
+          const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
+          const newBal = Number((oldBal + delta).toFixed(3));
+          return {
+            ...prev,
+            currentBalance: newBal,
+            balance: newBal
+          };
+        }
+        return prev;
+      });
 
-            // 2. Update cached customers list
-            setCustomersList((prev) =>
-              prev.map((c) => {
-                if (c.id === data.customerId) {
-                  const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
-                  const newBal = Number((oldBal + delta).toFixed(3));
-                  return { ...c, currentBalance: newBal, balance: newBal };
-                }
-                return c;
-              })
-            );
+      // 2. Update cached customers list
+      setCustomersList((prev) =>
+        prev.map((c) => {
+          if (c.id === data.customerId) {
+            const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
+            const newBal = Number((oldBal + delta).toFixed(3));
+            return { ...c, currentBalance: newBal, balance: newBal };
           }
-        } catch {}
-      };
-    } catch {}
-
-    return () => {
-      if (ws) ws.close();
-    };
-  }, []);
+          return c;
+        })
+      );
+    }
+  }, []));
 
   // Secondary Customer Display Initialization & Availability Check
   useEffect(() => {
@@ -2163,7 +2153,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   }
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-100 overflow-hidden font-sans select-none text-slate-900">
+    <div className="flex flex-col h-screen w-screen bg-slate-100 overflow-hidden font-sans select-none text-slate-900 relative">
+      
+      {/* Live Master Network Sync Status Indicator */}
+      <div 
+        className={`absolute top-2 right-2 w-3 h-3 rounded-full z-50 transition-colors ${isServerOnline ? 'bg-green-500 shadow-xs shadow-green-500/50' : 'bg-red-500 shadow-xs shadow-red-500/50'}`} 
+        title={isServerOnline ? "Master PC Online (Real-Time Sync Active)" : "Master PC Offline (Standalone POS Mode)"}
+      />
       
       {/* Instant Non-blocking Toast Notification */}
       {toast && (
@@ -2197,6 +2193,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
           {/* System Status Tray */}
           <div className="flex items-center gap-2 text-slate-400">
+            <span 
+              className={`w-2.5 h-2.5 rounded-full transition-colors ${isServerOnline ? 'bg-emerald-500 shadow-xs shadow-emerald-500/50' : 'bg-red-500 shadow-xs shadow-red-500/50'}`} 
+              title={isServerOnline ? "Master Server Online (WebSocket Active)" : "Master Server Offline (Standalone Mode)"}
+            />
             <span title={hardwareSupported ? "Wi-Fi & Hardware Online" : "Network Standalone"}>
               <Wifi size={16} className={hardwareSupported ? "text-emerald-500" : "text-slate-400"} />
             </span>

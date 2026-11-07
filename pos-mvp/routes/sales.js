@@ -6,9 +6,17 @@ import { managerAuth } from '../middleware/auth.js';
 export default async function salesRoutes(fastify, options) {
 
   // 1. Sync Ingestion Route (Master Windows PC catches incoming sales & actively decrements inventory)
-  fastify.post('/api/sync/sales', async (request, reply) => {
+  const handleSyncSales = async (request, reply) => {
     const incoming = request.body;
-    const sales = Array.isArray(incoming) ? incoming : (incoming?.sales || []);
+    let sales = [];
+    if (Array.isArray(incoming)) {
+      sales = incoming;
+    } else if (incoming?.sales && Array.isArray(incoming.sales)) {
+      sales = incoming.sales;
+    } else if (incoming && typeof incoming === 'object' && (incoming.id || incoming.invoiceNo)) {
+      sales = [incoming];
+    }
+
     if (!sales || !Array.isArray(sales) || sales.length === 0) {
       return { success: true, processed: 0 };
     }
@@ -166,7 +174,10 @@ export default async function salesRoutes(fastify, options) {
       fastify.log.error(error);
       return reply.status(500).send({ error: 'Sync failed, rolled back changes', details: error.message });
     }
-  });
+  };
+
+  fastify.post('/api/sync/sales', handleSyncSales);
+  fastify.post('/api/sales/sync', handleSyncSales);
 
   // 2. Manager Secured Sales Reporting Endpoint
   fastify.get('/api/reports/sales', { preHandler: managerAuth }, async (request, reply) => {

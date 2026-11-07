@@ -60,35 +60,39 @@ const getFinancialReportData = async (query = {}) => {
     end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
   }
 
-  // Fetch sales from SQLite
+  // NEW: Optimized SQL Date-Range Fetch
   let allSales = [];
+  let allSaleItems = [];
+
+  const startIso = start instanceof Date ? start.toISOString() : new Date(start).toISOString();
+  const endIso = end instanceof Date ? end.toISOString() : new Date(end).toISOString();
+
   try {
-    allSales = await db.orm.Sale.all();
+    const salesResult = await db.execute({
+      sql: `SELECT * FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) ORDER BY createdAt ASC`,
+      args: [startIso, endIso]
+    });
+    allSales = salesResult.rows || [];
+
+    // Fetch only the line items that belong to these specific sales
+    const itemsResult = await db.execute({
+      sql: `SELECT i.* FROM SaleItem i 
+            JOIN Sale s ON i.saleId = s.id 
+            WHERE s.createdAt BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso]
+    });
+    allSaleItems = itemsResult.rows || [];
   } catch (err) {
-    allSales = [];
+    fastify.log.error('Failed to fetch optimized reports:', err);
   }
 
-  // Fetch line items for line-level VAT and cost calculations
-  let allSaleItems = [];
-  try {
-    allSaleItems = await db.orm.SaleItem.all();
-  } catch {
-    allSaleItems = [];
-  }
   const saleItemMap = new Map();
   allSaleItems.forEach((it) => {
     if (!saleItemMap.has(it.saleId)) saleItemMap.set(it.saleId, []);
     saleItemMap.get(it.saleId).push(it);
   });
 
-  // Strict Filter:
-  // 1. Timestamp between start (00:00:00) and end (23:59:59.999)
-  // 2. Exclude VOIDED sales from revenue totals!
-  const filteredSales = allSales.filter((sale) => {
-    const saleDate = new Date(sale.createdAt);
-    const isCompleted = sale.status !== 'VOIDED' && sale.status !== 'CANCELLED';
-    return isCompleted && saleDate >= start && saleDate <= end;
-  });
+  const filteredSales = allSales;
 
   let totalRevenue = 0;
   let totalVat = 0;
@@ -389,16 +393,23 @@ fastify.get('/api/reports/vat-return', { preHandler: managerAuth }, async (reque
     end.setHours(23, 59, 59, 999);
 
     // 1. Calculate Output VAT (Tax collected from customers - strictly excluding VOIDED sales)
-    const allSales = await db.orm.Sale.all();
-    const salesInPeriod = allSales.filter((s) => {
-      const d = new Date(s.createdAt);
-      const isCompleted = s.status !== 'VOIDED' && s.status !== 'CANCELLED';
-      return isCompleted && d >= start && d <= end;
-    });
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
 
-    const allSaleItems = await db.orm.SaleItem.all();
+    const salesRes = await db.execute({
+      sql: `SELECT * FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) ORDER BY createdAt ASC`,
+      args: [startIso, endIso]
+    });
+    const salesInPeriod = salesRes.rows || [];
+
+    const itemsRes = await db.execute({
+      sql: `SELECT i.* FROM SaleItem i 
+            JOIN Sale s ON i.saleId = s.id 
+            WHERE s.createdAt BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso]
+    });
     const saleItemMap = new Map();
-    allSaleItems.forEach((it) => {
+    (itemsRes.rows || []).forEach((it) => {
       if (!saleItemMap.has(it.saleId)) saleItemMap.set(it.saleId, []);
       saleItemMap.get(it.saleId).push(it);
     });

@@ -1303,22 +1303,27 @@ export default async function productRoutes(fastify, options) {
   fastify.get('/api/sync/products', async (request, reply) => {
     const { lastSyncDate } = request.query || {};
 
+    // NEW: Optimized Delta Sync Query
     try {
-      const allProducts = await db.orm.Product.all();
-      if (!lastSyncDate) {
-        return { success: true, products: allProducts };
-      }
+      let updatedProducts = [];
 
-      const cutoff = new Date(lastSyncDate);
-      const updatedProducts = allProducts.filter((p) => {
-        const pDate = p.updatedAt ? new Date(p.updatedAt) : new Date(0);
-        return pDate > cutoff;
-      });
+      if (!lastSyncDate) {
+        // Initial sync: fetch all (Only happens once per terminal install)
+        const result = await db.execute('SELECT * FROM Product');
+        updatedProducts = result.rows || [];
+      } else {
+        // Delta sync: fetch strictly what changed since the last poll
+        const result = await db.execute({
+          sql: 'SELECT * FROM Product WHERE updatedAt > ?',
+          args: [new Date(lastSyncDate).toISOString()]
+        });
+        updatedProducts = result.rows || [];
+      }
 
       return { success: true, products: updatedProducts };
     } catch (err) {
       fastify.log.error('Delta sync products failed:', err);
-      return reply.status(500).send({ success: false, error: 'Failed to delta sync products' });
+      return reply.code(500).send({ error: 'Failed to sync products' });
     }
   });
 }

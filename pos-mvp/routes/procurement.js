@@ -4,38 +4,61 @@ import { runReorderCheck, snoozedDistributors } from '../src/automation/reorderJ
 
 export default async function procurementRoutes(fastify, options) {
   // --- Distributors Management & Minimum Order Value (MOV) Rules ---
-  // 1. Fetch all distributors with real-time inventory metrics
-  fastify.get('/api/distributors', async () => {
-    const [distributors, products] = await Promise.all([
-      db.orm.Distributor.all(),
-      db.orm.Product.all()
-    ]);
+  // 1. Fetch all distributors with real-time inventory metrics (High-Performance SQLite Aggregation)
+  const handleGetDistributorMetrics = async (request, reply) => {
+    try {
+      // 1. Fetch distributors normally
+      const distributorsRes = await db.execute('SELECT * FROM Distributor');
+      const distributors = distributorsRes.rows || [];
 
-    const enriched = distributors.map((dist) => {
-      const distProducts = products.filter((p) => p.distributorId === dist.id);
-      const lowStock = distProducts.filter((p) => (p.stockQuantity ?? 0) <= (p.minThreshold ?? 20));
+      // NEW: 2. Offload the heavy low-stock and reorder calculations entirely to SQLite
+      const metricsRes = await db.execute(`
+        SELECT 
+          distributorId, 
+          COUNT(id) as productCount,
+          SUM(CASE WHEN stockQuantity <= COALESCE(minThreshold, 20) THEN 1 ELSE 0 END) as lowStockCount,
+          SUM(CASE WHEN stockQuantity <= COALESCE(minThreshold, 20) 
+                   THEN MAX(1, COALESCE(maxThreshold, 100) - stockQuantity) * COALESCE(purchasePrice, 0) 
+                   ELSE 0 END) as pendingReorderTotal
+        FROM Product
+        WHERE distributorId IS NOT NULL
+        GROUP BY distributorId
+      `);
 
-      let pendingReorderTotal = 0;
-      lowStock.forEach((p) => {
-        const reorderQty = Math.max(1, (p.maxThreshold ?? 100) - (p.stockQuantity ?? 0));
-        pendingReorderTotal += reorderQty * Number(p.purchasePrice || 0);
+      // 3. Map the optimized SQL results back to the distributor objects
+      const metricsMap = new Map();
+      (metricsRes.rows || []).forEach((row) => {
+        metricsMap.set(row.distributorId, {
+          productCount: Number(row.productCount || 0),
+          lowStockCount: Number(row.lowStockCount || 0),
+          pendingReorderTotal: Number(Number(row.pendingReorderTotal || 0).toFixed(3))
+        });
       });
 
-      const mov = Number(dist.minimumOrderValue || 0);
-      const meetsMov = pendingReorderTotal >= mov;
+      const enrichedDistributors = distributors.map((d) => {
+        const m = metricsMap.get(d.id) || { productCount: 0, lowStockCount: 0, pendingReorderTotal: 0 };
+        const mov = Number(d.minimumOrderValue || 0);
+        const meetsMov = m.pendingReorderTotal >= mov;
+        return {
+          ...d,
+          productCount: m.productCount,
+          lowStockCount: m.lowStockCount,
+          pendingReorderTotal: m.pendingReorderTotal,
+          meetsMov,
+          deficit: meetsMov ? 0 : Number((mov - m.pendingReorderTotal).toFixed(3)),
+          metrics: m
+        };
+      });
 
-      return {
-        ...dist,
-        productCount: distProducts.length,
-        lowStockCount: lowStock.length,
-        pendingReorderTotal: Number(pendingReorderTotal.toFixed(3)),
-        meetsMov,
-        deficit: meetsMov ? 0 : Number((mov - pendingReorderTotal).toFixed(3))
-      };
-    });
+      return reply.send({ success: true, distributors: enrichedDistributors });
+    } catch (err) {
+      request.log.error(err, 'Failed to fetch distributor metrics');
+      return reply.code(500).send({ error: 'Database error' });
+    }
+  };
 
-    return { success: true, distributors: enriched };
-  });
+  fastify.get('/api/distributors', handleGetDistributorMetrics);
+  fastify.get('/api/distributors/metrics', handleGetDistributorMetrics);
 
   // 2. Register new distributor
   fastify.post('/api/distributors', async (request, reply) => {

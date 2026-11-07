@@ -14,21 +14,23 @@ export const runReorderCheck = async (options = {}) => {
   console.log(`🕒 [Auto-Restock Engine] Evaluating inventory by Distributor (bypassMov: ${bypassMov})...`);
 
   try {
-    // 1. Fetch all registered distributors and catalog products
-    const [distributors, allProducts] = await Promise.all([
-      db.orm.Distributor.all(),
-      db.orm.Product.all(),
+    // 1. Fetch registered distributors and low-stock products via targeted SQL (No full-catalog heap dump)
+    const [distributorsRes, lowStockRes] = await Promise.all([
+      db.execute('SELECT * FROM Distributor'),
+      db.execute('SELECT * FROM Product WHERE stockQuantity <= COALESCE(minThreshold, 20)'),
     ]);
 
+    const distributors = distributorsRes.rows || [];
+    const lowStockProductsList = lowStockRes.rows || [];
     const drafts = [];
     const skipped = [];
 
     // Fallback distributor lookup map
     const distributorMap = new Map(distributors.map((d) => [d.id, d]));
 
-    // 2. Group products by distributorId (including fallback for unassigned items)
+    // 2. Group low-stock products by distributorId (including fallback for unassigned items)
     const productsByDistributor = new Map();
-    for (const prod of allProducts) {
+    for (const prod of lowStockProductsList) {
       const distId = prod.distributorId || 'UNASSIGNED';
       if (!productsByDistributor.has(distId)) {
         productsByDistributor.set(distId, []);
@@ -50,14 +52,7 @@ export const runReorderCheck = async (options = {}) => {
         continue;
       }
 
-      const distProducts = productsByDistributor.get(distributor.id) || [];
-      if (distProducts.length === 0) continue;
-
-      // Filter products at or below danger threshold (stock <= minThreshold)
-      const lowStockProducts = distProducts.filter(
-        (p) => (p.stockQuantity ?? 0) <= (p.minThreshold ?? 20)
-      );
-
+      const lowStockProducts = productsByDistributor.get(distributor.id) || [];
       if (lowStockProducts.length === 0) continue;
 
       let totalOrderCost = 0;

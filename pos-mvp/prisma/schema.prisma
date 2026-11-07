@@ -200,6 +200,8 @@ model KhataLedger {
   created_at      DateTime? @default(now())
   
   customer        Customer  @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
 }
 
 model InvoiceSequence {

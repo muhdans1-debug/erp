@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS "KhataLedger" (
 );
 
 CREATE INDEX IF NOT EXISTS "idx_ledger_customer" ON "KhataLedger" ("customerId");
+CREATE INDEX IF NOT EXISTS "idx_khataledger_customer" ON "KhataLedger" ("customerId");
 
 -- 4. MESS GROUPS & NFC CARDS
 CREATE TABLE IF NOT EXISTS "MessGroup" (

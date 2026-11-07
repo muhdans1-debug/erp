@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag } from 'lucide-react';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
 import { openCashDrawer, kickCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
@@ -2238,9 +2238,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       )}
 
       {/* TOP FULL-WIDTH HEADER */}
-      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-3 md:px-4 shrink-0 z-20 shadow-xs">
-        {/* Left: Brand & Status Tray */}
-        <div className="flex items-center gap-3">
+      <header className="h-14 bg-white border-b border-slate-200/90 flex items-center justify-between px-3 md:px-4 shrink-0 z-20 shadow-xs select-none">
+        {/* Left: Brand & Status Capsule */}
+        <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2">
             <h1 
               onDoubleClick={() => setShowDevPanel((prev) => !prev)}
@@ -2249,116 +2249,113 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             >
               Askar POS
             </h1>
-            <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 uppercase tracking-wider">
+            <span className="hidden sm:inline-block px-2 py-0.5 rounded-md text-[10px] font-black bg-slate-100 text-slate-600 uppercase tracking-wider border border-slate-200/60">
               Scan-First
             </span>
           </div>
 
-          <div className="h-5 w-px bg-slate-300 mx-1"></div>
+          <div className="h-5 w-px bg-slate-200 mx-0.5"></div>
 
-          {/* System Status Tray */}
-          <div className="flex items-center gap-2 text-slate-400">
+          {/* System Status Tray Capsule */}
+          <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 border border-slate-200/80 rounded-xl text-slate-400">
             <span 
-              className={`w-2.5 h-2.5 rounded-full transition-colors ${isServerOnline ? 'bg-emerald-500 shadow-xs shadow-emerald-500/50' : 'bg-red-500 shadow-xs shadow-red-500/50'}`} 
+              className={`w-2 h-2 rounded-full transition-colors ${isServerOnline ? 'bg-emerald-500 shadow-xs shadow-emerald-500/50' : 'bg-red-500 shadow-xs shadow-red-500/50'}`} 
               title={isServerOnline ? "Master Server Online (WebSocket Active)" : "Master Server Offline (Standalone Mode)"}
             />
             <span title={hardwareSupported ? "Wi-Fi & Hardware Online" : "Network Standalone"}>
-              <Wifi size={16} className={hardwareSupported ? "text-emerald-500" : "text-slate-400"} />
+              <Wifi size={14} className={hardwareSupported ? "text-emerald-500" : "text-slate-400"} />
             </span>
             <span title="Zero-Touch Scanner Hardware Ready (Listening globally)">
-              <ScanLine size={16} className="text-emerald-500" />
+              <ScanLine size={14} className="text-emerald-500" />
             </span>
             <span title={syncInfo && syncInfo.pendingCount > 0 ? `${syncInfo.pendingCount} offline transactions queued` : "Local SQLite Database in Sync"}>
-              <HardDrive size={16} className={syncInfo && syncInfo.pendingCount > 0 ? "text-amber-500" : "text-slate-400"} />
+              <HardDrive size={14} className={syncInfo && syncInfo.pendingCount > 0 ? "text-amber-500" : "text-slate-400"} />
             </span>
             <button
               type="button"
               onClick={handleManualSync}
-              className="p-1 hover:text-slate-600 transition-colors cursor-pointer"
+              className="p-0.5 hover:text-slate-700 transition-colors cursor-pointer"
               title="Push offline sales to Master PC"
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={13} />
             </button>
           </div>
         </div>
 
         {/* Right: Quick Actions & Navigation */}
         <div className="flex items-center gap-1.5">
-          {/* QUICK ADD PRODUCT BUTTON FOR SUNMI TOUCHSCREEN */}
-          <button
-            type="button"
-            onClick={() => {
-              setUnassignedBarcode(null);
-              setShowPosAddModal(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-lg text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap"
-            title="Quick Add Product to Catalog [Sunmi Touch]"
-          >
-            <PlusCircle size={14} className="text-white" />
-            <span>+ Product</span>
-          </button>
-
-          {/* MASSIVE F12 SEARCH TRIGGER BUTTON */}
+          {/* F12 SEARCH TRIGGER BUTTON */}
           <button
             type="button"
             onClick={() => {
               setShowF12SearchModal(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs border border-blue-200 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-blue-50/90 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold rounded-xl text-xs border border-blue-200/80 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Manual item search overlay [F12]"
           >
             <Search size={14} className="text-blue-600" />
-            <span>Search Catalog</span>
-            <kbd className="bg-blue-200/80 px-1.5 py-0.2 rounded text-[10px] font-mono text-blue-900">F12</kbd>
+            <span>Search</span>
+            <kbd className="bg-blue-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-blue-900 leading-none">F12</kbd>
           </button>
 
+          {/* RECEIVING */}
           <button 
             type="button"
             onClick={() => {
               setShowOrderHistoryDrawer(false);
               setShowReceivingDrawer(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg text-xs border border-emerald-200 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Open Delivery Receiving Drawer [Manager PIN 9999]"
           >
             <Truck size={14} className="text-emerald-600" />
             <span>Receiving</span>
           </button>
 
+          {/* RECEIPTS */}
           <button 
             type="button"
             onClick={() => {
               setShowReceivingDrawer(false);
               setShowOrderHistoryDrawer(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 font-bold rounded-lg text-xs border border-blue-200 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Today's Receipts & Void Bill [Manager PIN 9999]"
           >
             <Receipt size={14} className="text-blue-600" />
             <span>Receipts</span>
           </button>
 
+          {/* KHATA (F3) */}
           <button 
             type="button"
             onClick={() => {
               setShowKhataHub(true);
               loadCustomers();
             }}
-            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap"
-            title="Khata Hub [F3]"
+            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Khata Hub & Customer Ledger [F3]"
           >
-            Khata (F3)
+            <CreditCard size={14} className="text-indigo-600" />
+            <span>Khata</span>
+            <kbd className="bg-slate-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-700 leading-none">F3</kbd>
           </button>
+
+          {/* REFUND */}
           <button 
             type="button"
             onClick={() => {
               setIsReturnMode((prev) => !prev);
               setShowRefundModal(true);
             }}
-            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap"
+            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Process Item or Receipt Refund"
           >
-            Refund
+            <RotateCcw size={14} className="text-rose-600" />
+            <span>Refund</span>
           </button>
+
+          {/* CASH DRAWER */}
           <button 
             type="button"
             onClick={async () => {
@@ -2391,39 +2388,45 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 showToast('⚠️ Cash Drawer kick failed', 'error');
               }
             }}
-            className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Manual Cash Drawer Kick [Requires Manager PIN 9999]"
           >
-            Drawer
+            <Coins size={14} className="text-amber-600" />
+            <span>Drawer</span>
           </button>
+
+          {/* CASH OUT */}
           <button 
             type="button"
             onClick={() => setShowCashOutModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border border-rose-200/80 font-bold rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Record Cash Out: Business Operating Expenses & Owner Personal Withdrawals"
           >
             <Banknote size={14} className="text-rose-600" />
             <span>Cash Out</span>
           </button>
+
+          {/* CLOSE SHIFT */}
           <button 
             type="button"
             onClick={() => setShowBlindCloseModal(true)}
-            className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Perform Blind End-of-Shift Cash Reconciliation"
           >
-            🔒 Close Shift
+            <Lock size={13} className="text-white" />
+            <span>Close Shift</span>
           </button>
 
           <div className="h-5 w-px bg-slate-200 mx-0.5"></div>
 
-          {/* Dev Tools Quick Icon */}
+          {/* DEV TOOLS / SETTINGS ICON BUTTON */}
           <button
             type="button"
             onClick={() => setShowDevPanel((prev) => !prev)}
-            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer text-xs"
+            className="h-9 w-9 flex items-center justify-center bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 border border-slate-200/80 rounded-xl transition-all cursor-pointer"
             title="Diagnostics & Simulators [Ctrl+Shift+D]"
           >
-            ⚙️
+            <Settings size={15} />
           </button>
 
           {/* OFFLINE SALES QUEUE DRAIN BADGE */}
@@ -2432,7 +2435,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               type="button"
               onClick={() => drainOfflineQueue()}
               disabled={isDrainingOfflineSales}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-full font-bold text-xs transition-all shadow-xs cursor-pointer animate-pulse select-none"
+              className="h-9 flex items-center gap-1.5 px-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer animate-pulse select-none"
               title="Offline sales queued in device memory. Tap to sync immediately."
             >
               <RefreshCw size={12} className={isDrainingOfflineSales ? "animate-spin" : ""} />
@@ -2448,6 +2451,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             onSyncNow={performSync}
             onBackupNow={exportDatabaseBackup}
             isExporting={isExporting}
+            className="h-9 px-3 rounded-xl"
           />
         </div>
       </header>

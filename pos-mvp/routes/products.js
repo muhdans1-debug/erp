@@ -3,6 +3,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import { db, dataDir } from '../db.js';
+import { managerAuth } from '../middleware/auth.js';
 
 export default async function productRoutes(fastify, options) {
   const uploadsStaticDir = path.join(process.cwd(), 'public', 'uploads');
@@ -1023,12 +1024,12 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.put('/api/products/:id', handleUpdateProduct);
-  fastify.patch('/api/products/:id', handleUpdateProduct);
-  fastify.post('/api/products/:id', handleUpdateProduct);
-  fastify.post('/api/products/:id/update', handleUpdateProduct);
-  fastify.put('/products/:id', handleUpdateProduct);
-  fastify.post('/products/:id', handleUpdateProduct);
+  fastify.put('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.patch('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.post('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.post('/api/products/:id/update', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.put('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.post('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
 
   // 10b. Delete Product Handler
   const handleDeleteProduct = async (request, reply) => {
@@ -1140,15 +1141,15 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.delete('/api/products/:id', handleDeleteProduct);
-  fastify.delete('/products/:id', handleDeleteProduct);
-  fastify.post('/api/products/:id/delete', handleDeleteProduct);
-  fastify.post('/products/:id/delete', handleDeleteProduct);
-  fastify.post('/api/products/bulk-delete', handleBulkDeleteProducts);
-  fastify.post('/products/bulk-delete', handleBulkDeleteProducts);
+  fastify.delete('/api/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.delete('/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/api/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/api/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
+  fastify.post('/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
 
   // 11. Bulk Update & Price Hike
-  fastify.post('/api/products/bulk-update', async (request, reply) => {
+  fastify.post('/api/products/bulk-update', { preHandler: managerAuth }, async (request, reply) => {
     const {
       productIds = [],
       action,

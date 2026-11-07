@@ -1145,36 +1145,51 @@ const handleCustomerSettle = async (request, reply) => {
       return reply.status(404).send({ success: false, error: 'Customer not found' });
     }
 
-    const sumResult = await db.execute({
-      sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
-      args: [id]
-    });
-    const ledgerSum = Number(sumResult.rows[0]?.balance || 0);
-    const previousBalance = Number(ledgerSum.toFixed(3));
-    const newBalance = Number((previousBalance - settleAmount).toFixed(3));
-
     const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
+    const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
+    let previousBalance = 0;
+    let newBalance = '0.000';
+    let ledgerEntry = null;
 
-    // Append-only ledger record: negative amount for payment received
-    const ledgerEntry = {
-      id: crypto.randomUUID(),
-      customerId: id,
-      amount: -settleAmount, // Negative for balance deduction
-      type: 'PAYMENT',
-      reference: payRef,
-      running_balance: Number(newBalance.toFixed(3)),
-      syncStatus: 'PENDING',
-      timestamp: new Date(),
-      created_at: new Date(),
-      tenantId: 'tenant_askar_01',
-    };
-    await db.orm.KhataLedger.create(ledgerEntry);
+    // NEW: Atomic transaction to prevent split-brain balance overwrites
+    await db.transaction(async (tx) => {
+      // 0. Fetch current ledger balance before settlement
+      const prevResult = await tx.execute({
+        sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
+        args: [id]
+      });
+      previousBalance = Number(prevResult.rows[0]?.balance || 0);
 
-    // Persist running balance directly into Customer table
-    await db.execute({
-      sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
-      args: [newBalance, id]
-    }).catch((err) => console.warn('Customer balance update warning:', err));
+      // Build append-only ledger record (negative amount for payment received)
+      ledgerEntry = {
+        id: crypto.randomUUID(),
+        customerId: id,
+        amount: -settleAmount, // Negative for balance deduction
+        type: 'PAYMENT',
+        reference: payRef,
+        running_balance: Number((previousBalance - settleAmount).toFixed(3)),
+        syncStatus: 'PENDING',
+        timestamp: new Date(),
+        created_at: new Date(),
+        tenantId: 'tenant_askar_01',
+      };
+
+      // 1. Insert the payment ledger entry
+      await tx.orm.KhataLedger.create(ledgerEntry);
+      
+      // 2. Lock the ledger and calculate the exact new sum
+      const sumResult = await tx.execute({
+        sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
+        args: [id]
+      });
+      newBalance = Number(sumResult.rows[0].balance).toFixed(3);
+      
+      // 3. Update the Customer profile with the validated sum
+      await tx.execute({ 
+        sql: 'UPDATE Customer SET balance = ? WHERE id = ?', 
+        args: [newBalance, id] 
+      });
+    });
 
     // Broadcast atomic settlement delta to all connected POS registers
     if (fastify.websocketServer?.clients) {
@@ -1191,28 +1206,28 @@ const handleCustomerSettle = async (request, reply) => {
 
     const updatedCustomer = {
       ...customer,
-      balance: Number(newBalance.toFixed(3)),
-      currentBalance: Number(newBalance.toFixed(3)),
+      balance: Number(newBalance),
+      currentBalance: Number(newBalance),
     };
 
-    return {
+    return reply.send({
       success: true,
+      message: 'Debt settled successfully',
       result: updatedCustomer,
-      message: `Payment of BD ${settleAmount.toFixed(3)} successfully recorded`,
       customerName: customer.name,
       amountPaid: settleAmount,
       settledAmount: settleAmount,
       previousBalance: Number(previousBalance.toFixed(3)),
-      newBalance: Number(newBalance.toFixed(3)),
+      newBalance: Number(newBalance),
       paymentMethod: paymentMethod || 'CASH',
-      receiptNo: `KH-${Date.now().toString().slice(-6)}`,
-      timestamp: ledgerEntry.timestamp,
+      receiptNo,
+      timestamp: ledgerEntry?.timestamp,
       customer: updatedCustomer,
       ledgerEntry,
-    };
+    });
   } catch (err) {
-    fastify.log.error(err);
-    reply.status(500).send({ success: false, error: 'Failed to settle balance' });
+    request.log.error(err, 'Failed to settle customer debt');
+    return reply.code(500).send({ error: 'Database transaction failed' });
   }
 };
 

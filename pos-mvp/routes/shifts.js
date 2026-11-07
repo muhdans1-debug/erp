@@ -357,24 +357,23 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
     });
   } catch { }
 
-  // Broadcast SHIFT_CLOSED across Local RJ45 WebSocket Bridge (0ms laptop refresh)
-  try {
-    const bridgeSocket = new WebSocket('ws://127.0.0.1:8080');
-    bridgeSocket.onopen = () => {
-      bridgeSocket.send(JSON.stringify({
-        type: 'SHIFT_CLOSED',
-        payload: {
-          shiftId: id,
-          actualCash: declaredCash,
-          expectedCash,
-          variance
-        },
-        timestamp: new Date().toISOString()
-      }));
-      setTimeout(() => bridgeSocket.close(), 500);
-    };
-    bridgeSocket.onerror = () => { };
-  } catch { }
+  // Broadcast SHIFT_CLOSED across active Fastify WebSocket clients
+  if (fastify.websocketServer?.clients) {
+    fastify.websocketServer.clients.forEach((client) => {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify({
+          type: 'SHIFT_CLOSED',
+          payload: {
+            shiftId: id,
+            actualCash: declaredCash,
+            expectedCash,
+            variance
+          },
+          timestamp: new Date().toISOString()
+        }));
+      }
+    });
+  }
 
   const closedShift = await db.orm.Shift.where({ id }).all().first();
   fastify.log.info(`Shift ${id} blind-closed: Expected BHD ${expectedCash}, Actual BHD ${declaredCash}, Variance: ${variance} BHD`);

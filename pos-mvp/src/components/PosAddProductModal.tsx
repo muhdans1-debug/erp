@@ -145,8 +145,7 @@ export default function PosAddProductModal({
       typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
       'http://192.168.8.7:3000',
       'http://askar-master.local:3000',
-      'http://localhost:3000',
-      'http://192.168.88.10:3000'
+      'http://localhost:3000'
     ];
     return list
       .filter((val, idx, arr): val is string => Boolean(val) && !val?.includes('192.168.8.20') && arr.indexOf(val) === idx);

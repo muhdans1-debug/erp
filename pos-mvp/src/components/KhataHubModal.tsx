@@ -356,8 +356,7 @@ function SettleBalanceView({
       localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
       'http://192.168.8.7:3000',
       'http://askar-master.local:3000',
-      'http://localhost:3000',
-      'http://192.168.88.10:3000'
+      'http://localhost:3000'
     ].filter((v, i, a): v is string => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
 
     for (const url of candidates) {

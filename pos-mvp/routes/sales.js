@@ -147,19 +147,18 @@ export default async function salesRoutes(fastify, options) {
       await transaction.commit();
       console.log(`✅ Synced ${processedCount} sales and reconciled running balances.`);
 
-      // Broadcast to WebSocket bridge so Admin Dashboard on Laptop updates live
-      try {
-        const ws = new WebSocket('ws://127.0.0.1:8080');
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ 
-            type: 'SALE_COMPLETED', 
-            payload: { processed: processedCount }, 
-            timestamp: new Date().toISOString() 
-          }));
-          setTimeout(() => ws.close(), 500);
-        };
-        ws.onerror = () => {};
-      } catch {}
+      // Broadcast to active Fastify WebSocket clients
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) { // 1 = OPEN
+            client.send(JSON.stringify({ 
+              type: 'SALE_COMPLETED', 
+              payload: { processed: processedCount }, 
+              timestamp: new Date().toISOString() 
+            }));
+          }
+        });
+      }
 
       return { success: true, processed: processedCount };
     } catch (error) {

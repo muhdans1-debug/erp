@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { adminDb } from './db';
 
 export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
   const ws = useRef(null);
@@ -82,69 +81,33 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
               console.log(`📱 [Laptop RJ45 Bridge] Received NFC scan from Sunmi: ${scannedId}`);
               setLastScannedId(scannedId);
 
-              // Query Turso cloud to check NfcCard registry
+              // Query backend NFC endpoint directly (Safe REST API)
               try {
-                // 1. Check NfcCard table
-                let nfcCardResult = await adminDb.execute({
-                  sql: `SELECT * FROM NfcCard WHERE tag_id = ? LIMIT 1;`,
-                  args: [scannedId]
-                });
-
-                if (nfcCardResult.rows.length > 0) {
-                  const card = nfcCardResult.rows[0];
-                  if (card.card_type === 'MESS') {
-                    // Fetch mess group
-                    const messRes = await adminDb.execute({
-                      sql: `SELECT m.id, m.group_name, COUNT(c.id) as memberCount 
-                            FROM MessGroup m 
-                            LEFT JOIN Customer c ON c.mess_id = m.id 
-                            WHERE m.id = ? 
-                            GROUP BY m.id LIMIT 1;`,
-                      args: [card.mess_id]
-                    });
-                    const mess = messRes.rows[0];
-                    const gName = mess?.group_name || 'Mess Group';
-                    setBridgeStatusMessage(`⚡ Mess Card scanned on Sunmi: "${gName}" (${mess?.memberCount || 0} members)`);
-                    return;
-                  } else if (card.customer_id) {
-                    // Fetch personal customer
-                    const custRes = await adminDb.execute({
-                      sql: `SELECT * FROM Customer WHERE id = ? LIMIT 1;`,
-                      args: [card.customer_id]
-                    });
-                    if (custRes.rows.length > 0) {
-                      const cust = custRes.rows[0];
-                      setBridgeStatusMessage(`⚡ Personal Card scanned: ${cust.name}`);
-                      if (callbacksRef.current.onCustomerDetected) {
-                        callbacksRef.current.onCustomerDetected(cust);
-                      }
+                const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+                const res = await fetch(`${backendUrl}/api/customers/nfc/${encodeURIComponent(scannedId)}`);
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data && data.success && data.customer) {
+                    const cust = data.customer;
+                    if (data.isMess && data.messGroup) {
+                      setBridgeStatusMessage(`⚡ Mess Card scanned on Sunmi: "${data.messGroup.group_name}" (${data.messGroup.memberCount || 0} members)`);
                       return;
                     }
+                    setBridgeStatusMessage(`⚡ Personal Card scanned: ${cust.name}`);
+                    if (callbacksRef.current.onCustomerDetected) {
+                      callbacksRef.current.onCustomerDetected(cust);
+                    }
+                    return;
                   }
                 }
 
-                // 2. Lookup Customer by cardUid, access_token, phone, or id
-                let result = await adminDb.execute({
-                  sql: `SELECT * FROM Customer WHERE cardUid = ? OR access_token = ? OR phone = ? OR id = ? LIMIT 1;`,
-                  args: [scannedId, scannedId, scannedId, scannedId]
-                });
-
-                if (result.rows.length > 0) {
-                  const customer = result.rows[0];
-                  console.log(`🎯 [Laptop RJ45 Bridge] Customer matched: ${customer.name}`);
-                  setBridgeStatusMessage(`⚡ Card scanned on Sunmi: ${customer.name}`);
-                  if (callbacksRef.current.onCustomerDetected) {
-                    callbacksRef.current.onCustomerDetected(customer);
-                  }
-                } else {
-                  console.log(`⚠️ Unregistered Card scanned on Sunmi: ${scannedId} - prompting assignment`);
-                  setBridgeStatusMessage(`⚡ Unregistered Card scanned on Sunmi: ID ${scannedId}`);
-                  if (callbacksRef.current.onUnknownNfcScanned) {
-                    callbacksRef.current.onUnknownNfcScanned(scannedId);
-                  }
+                console.log(`⚠️ Unregistered Card scanned on Sunmi: ${scannedId} - prompting assignment`);
+                setBridgeStatusMessage(`⚡ Unregistered Card scanned on Sunmi: ID ${scannedId}`);
+                if (callbacksRef.current.onUnknownNfcScanned) {
+                  callbacksRef.current.onUnknownNfcScanned(scannedId);
                 }
-              } catch (dbErr) {
-                console.warn('⚠️ [Laptop RJ45 Bridge] Turso customer lookup error:', dbErr);
+              } catch (nfcErr) {
+                console.warn('NFC lookup notice:', nfcErr?.message || nfcErr);
               }
             }
           } catch (parseErr) {

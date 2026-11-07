@@ -851,27 +851,6 @@ fastify.post('/api/system/invoice-sequence/seed', async (request, reply) => {
 // 0ms SUNMI Local Chip Execution + Background Turso Sync
 // ==========================================
 
-// Secured Database Execution Route
-fastify.post('/api/db/execute', async (request, reply) => {
-  const devSecret = request.headers['x-dev-secret'];
-
-  // Enforce strict developer secret validation
-  if (!devSecret || devSecret !== process.env.DEV_SECRET) {
-    return reply.code(403).send({ error: 'Forbidden. Invalid developer secret.' });
-  }
-
-  const body = request.body || {};
-  let sql = typeof body === 'string' ? body : (body.sql || body.query);
-  let args = body.args || [];
-
-  try {
-    const result = await db.execute({ sql, args });
-    return { success: true, rows: result.rows, rowsAffected: result.rowsAffected };
-  } catch (error) {
-    console.error("DB Execute Error:", error);
-    return reply.code(500).send({ error: error.message });
-  }
-});
 
 export const syncKhataBalancesToTurso = async () => {
   try {

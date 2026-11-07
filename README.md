@@ -92,7 +92,7 @@ This registers all services (`askar-api`, `askar-updater`, `askar-pos`, `askar-d
 | :--- | :--- | :--- |
 | **Cashier Register** | `http://localhost:5173` | Cashier PIN: `1234` |
 | **Manager Admin Dashboard** | `http://localhost:5175` | Manager PIN: `9999` |
-| **Fastify Server & WS Bus** | `http://localhost:3000` | Token: Built-in `DEV_SECRET` |
+| **Fastify Server & WS Bus** | `http://localhost:3000` | Port 3000 REST + WS Bus |
 | **Customer Khata PWA** | `http://localhost:5174` | Phone Number verification |
 
 ---

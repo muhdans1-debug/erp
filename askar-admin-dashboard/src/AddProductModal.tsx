@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Save, X, Barcode, Truck, Percent, Scale, AlertCircle } from 'lucide-react';
-import { db } from './db';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -130,31 +129,7 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
       }
     }
 
-    // 0ms Offline Hardware Chip Fallback: If network unreachable, persist locally directly
-    if (!success) {
-      try {
-        await db.execute({
-          sql: `INSERT OR REPLACE INTO Product (id, barcode, name, sellingPrice, unitCost, purchasePrice, stockQuantity, minThreshold, maxThreshold, vatRate, taxRate, is_weighed_item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [
-            payload.id,
-            payload.barcode,
-            payload.name,
-            payload.sellingPrice,
-            payload.unitCost,
-            payload.purchasePrice,
-            payload.stockQuantity,
-            payload.minThreshold,
-            payload.maxThreshold,
-            payload.vatRate,
-            payload.taxRate,
-            payload.is_weighed_item ? 1 : 0
-          ]
-        });
-        success = true;
-      } catch (localErr: any) {
-        console.warn('Local fallback save notice:', localErr);
-      }
-    }
+
 
     setIsSubmitting(false);
 

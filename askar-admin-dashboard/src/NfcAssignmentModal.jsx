@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { adminDb } from './db';
 import {
   CreditCard, Users, User, Check, X, Search, Plus,
   Copy, CheckCheck, RefreshCw, AlertCircle, Sparkles, Building2, ShieldCheck
@@ -43,31 +42,30 @@ export default function NfcAssignmentModal({
     }
   }, [initialTagId]);
 
-  // Load Customers & Mess Groups from Turso Cloud
+  // Load Customers & Mess Groups from REST APIs
   const loadData = async () => {
     try {
-      // 1. Fetch all customers from unified Customer table
-      const custRes = await adminDb.execute(`
-        SELECT id, name, phone, batchNo, cpr, cardUid, mess_id, COALESCE(balance, 0) as balance, access_token 
-        FROM Customer 
-        ORDER BY name ASC
-      `);
-      setCustomers(custRes.rows);
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+      // 1. Fetch all customers from unified Customer endpoint
+      const custRes = await fetch(`${backendUrl}/api/customers`);
+      if (custRes.ok) {
+        const custData = await custRes.json();
+        setCustomers(Array.isArray(custData) ? custData : (custData.customers || []));
+      }
 
-      // 3. Fetch existing Mess Groups
-      const messRes = await adminDb.execute(`
-        SELECT id, group_name, createdAt 
-        FROM MessGroup 
-        ORDER BY group_name ASC
-      `);
-      setMessGroups(messRes.rows);
-
-      if (messRes.rows.length > 0 && !selectedMessGroupId) {
-        setSelectedMessGroupId(messRes.rows[0].id);
+      // 2. Fetch existing Mess Groups from REST endpoint
+      const messRes = await fetch(`${backendUrl}/api/nfc/mess-groups`);
+      if (messRes.ok) {
+        const messData = await messRes.json();
+        const groups = Array.isArray(messData) ? messData : (messData.groups || messData.messGroups || []);
+        setMessGroups(groups);
+        if (groups.length > 0 && !selectedMessGroupId) {
+          setSelectedMessGroupId(groups[0].id);
+        }
       }
     } catch (err) {
-      console.error('Error loading NFC modal data from Turso:', err);
-      setErrorMsg('Failed to fetch customers/groups from Turso.');
+      console.error('Error loading NFC modal data from backend:', err);
+      setErrorMsg('Failed to fetch customers/groups from backend.');
     }
   };
 
@@ -149,6 +147,8 @@ export default function NfcAssignmentModal({
 
     setIsSubmitting(true);
     try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+      
       // If manager created a new customer on-the-fly
       if (showCreateQuickCustomer) {
         if (!newCustomerName.trim()) {
@@ -158,42 +158,48 @@ export default function NfcAssignmentModal({
         }
         targetCustId = 'cust_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-        await adminDb.execute({
-          sql: `INSERT INTO Customer (id, tenantId, name, phone, batchNo, cardUid, access_token, balance, createdAt, is_active, isActive)
-                VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 0.0, datetime('now'), 1, 1)`,
-          args: [targetCustId, newCustomerName.trim(), newCustomerPhone.trim() || null, newCustomerBatch.trim() || null, cleanTag, cleanTag]
+        const createRes = await fetch(`${backendUrl}/api/customers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: targetCustId,
+            name: newCustomerName.trim(),
+            phone: newCustomerPhone.trim() || undefined,
+            batchNo: newCustomerBatch.trim() || undefined,
+            cardUid: cleanTag
+          })
         });
+        const createData = await createRes.json();
+        if (!createRes.ok || !createData.success) {
+          throw new Error(createData.error || 'Failed to create new customer');
+        }
       } else {
         if (!targetCustId) {
           setErrorMsg('Please select a customer to link this NFC card.');
           setIsSubmitting(false);
           return;
         }
-
-        // Update customer's cardUid
-        await adminDb.execute({
-          sql: `UPDATE Customer SET cardUid = ? WHERE id = ?`,
-          args: [cleanTag, targetCustId]
-        });
       }
 
-      // Find if customer belongs to a Mess Group
+      // Secure REST Call: Assign NFC Card to Personal Customer
+      const assignRes = await fetch(`${backendUrl}/api/nfc/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tag_id: cleanTag,
+          card_type: 'PERSONAL',
+          customer_id: targetCustId
+        })
+      });
+      const assignData = await assignRes.json();
+      if (!assignRes.ok || !assignData.success) {
+        throw new Error(assignData.error || 'Failed to assign card');
+      }
+
       const customerObj = customers.find(c => c.id === targetCustId) || { name: newCustomerName };
       const targetName = customerObj.name || 'Customer';
-      const messIdForCustomer = customerObj.mess_id || null;
 
-      // Upsert into NfcCard table - preserves mess_id so the card is Dual-Wallet ready!
-      await adminDb.execute({
-        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt)
-              VALUES (?, 'PERSONAL', ?, ?, datetime('now'))
-              ON CONFLICT(tag_id) DO UPDATE SET 
-                card_type = 'PERSONAL',
-                customer_id = excluded.customer_id,
-                mess_id = excluded.mess_id`,
-        args: [cleanTag, targetCustId, messIdForCustomer]
-      });
-
-      setSuccessMsg(`Card [${cleanTag}] linked to ${targetName}${messIdForCustomer ? ' (Dual-Wallet: Personal + Mess ready!)' : ''}!`);
+      setSuccessMsg(`Card [${cleanTag}] linked to ${targetName}!`);
 
       // Broadcast over RJ45 Bridge to Sunmi terminal
       if (broadcastNfcAssigned) {
@@ -230,6 +236,7 @@ export default function NfcAssignmentModal({
 
     setIsSubmitting(true);
     try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
       let targetGroupId = selectedMessGroupId;
       let targetGroupName = '';
 
@@ -244,25 +251,7 @@ export default function NfcAssignmentModal({
           setIsSubmitting(false);
           return;
         }
-
-        targetGroupId = 'mess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         targetGroupName = newGroupName.trim();
-
-        // Create MessGroup in Turso
-        await adminDb.execute({
-          sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
-                VALUES (?, 'tenant_1', ?, datetime('now'))`,
-          args: [targetGroupId, targetGroupName]
-        });
-
-        // Link all selected members to this mess group
-        const memberIdsArray = Array.from(selectedMemberIds);
-        for (const mId of memberIdsArray) {
-          await adminDb.execute({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
-            args: [targetGroupId, mId]
-          });
-        }
       } else {
         if (!targetGroupId) {
           setErrorMsg('Please select an existing mess group.');
@@ -271,27 +260,24 @@ export default function NfcAssignmentModal({
         }
         const found = messGroups.find(g => g.id === targetGroupId);
         targetGroupName = found?.group_name || 'Mess Group';
-
-        // Update any newly selected members
-        const memberIdsArray = Array.from(selectedMemberIds);
-        for (const mId of memberIdsArray) {
-          await adminDb.execute({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
-            args: [targetGroupId, mId]
-          });
-        }
       }
 
-      // Upsert into NfcCard table as MESS card
-      await adminDb.execute({
-        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt)
-              VALUES (?, 'MESS', NULL, ?, datetime('now'))
-              ON CONFLICT(tag_id) DO UPDATE SET 
-                card_type = 'MESS',
-                customer_id = NULL,
-                mess_id = excluded.mess_id`,
-        args: [cleanTag, targetGroupId]
+      // Secure REST Call: Assign NFC Card to Mess Group
+      const assignRes = await fetch(`${backendUrl}/api/nfc/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tag_id: cleanTag,
+          card_type: 'MESS',
+          mess_id: messMode === 'NEW' ? undefined : targetGroupId,
+          mess_name: messMode === 'NEW' ? targetGroupName : undefined,
+          member_ids: Array.from(selectedMemberIds)
+        })
       });
+      const assignData = await assignRes.json();
+      if (!assignRes.ok || !assignData.success) {
+        throw new Error(assignData.error || 'Failed to assign mess card');
+      }
 
       const memberCount = messMode === 'NEW' ? selectedMemberIds.size : 'Active';
       setSuccessMsg(`Card [${cleanTag}] linked to Mess Group: "${targetGroupName}" (${memberCount} members)!`);

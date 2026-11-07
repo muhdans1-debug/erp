@@ -35,7 +35,7 @@ export const TURSO_CONFIG = {
 const isBrowser = typeof window !== 'undefined';
 
 // Fallback cache helper for 0ms browser reads even when restarting
-const getCachedProducts = (): any[] => {
+export const getCachedProducts = (): any[] => {
   if (!isBrowser) return [];
   try {
     const raw = localStorage.getItem('askar_local_db_cache_Product');
@@ -45,7 +45,7 @@ const getCachedProducts = (): any[] => {
   }
 };
 
-const setCachedProducts = (rows: any[]) => {
+export const setCachedProducts = (rows: any[]) => {
   if (!isBrowser || !rows || rows.length === 0) return;
   try {
     localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(rows));
@@ -95,56 +95,8 @@ export const db: LibsqlDatabase = {
       return { ...res, rows };
     }
 
-    // 2. If running in Browser environment (SUNMI D2 Mini Screen / Chrome):
-    const host = (isBrowser && window.location.hostname) || 'localhost';
-    const masterBase = (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
-    const devSecret = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_SECRET) || '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06';
-    const endpoints = [
-      masterBase,
-      'http://192.168.8.7:3000',
-      `http://${host}:3000`, 
-      'http://askar-master.local:3000',
-      'http://localhost:3000',
-      'http://192.168.88.10:3000'
-    ].filter((v, i, a) => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
-
-    for (const base of endpoints) {
-      try {
-        const res = await fetch(`${base}/api/db/execute`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-dev-secret': devSecret
-          },
-          body: JSON.stringify({ sql, args }),
-          signal: AbortSignal.timeout(1500),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.success) {
-            const rows = (data.rows || []).map((r: any) => ({
-              ...r,
-              price: r.sellingPrice !== undefined ? r.sellingPrice : (r.price || 0),
-            }));
-
-            if (sql.toUpperCase().includes('PRODUCT')) {
-              setCachedProducts(rows);
-            }
-
-            return {
-              columns: data.columns || [],
-              rows,
-              rowsAffected: data.rowsAffected || 0
-            };
-          }
-        }
-      } catch {
-        // Continue to fallback
-      }
-    }
-
-    // 3. Fallback: If local bridge is unreachable (offline terminal):
+    // 2. Browser Environment: Safe offline local cache & storage execution
+    // (Arbitrary SQL execution over network is disabled for zero-trust security)
     if (sql.toUpperCase().includes('PRODUCT')) {
       const cached = getCachedProducts();
       if (cached && cached.length > 0) {

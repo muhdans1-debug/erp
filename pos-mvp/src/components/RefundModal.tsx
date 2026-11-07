@@ -242,11 +242,21 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
     });
 
     try {
+      let managerPin = (localStorage.getItem('manager_pin') || '').trim();
+      if (!managerPin) {
+        managerPin = (window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter PIN to process refund:") || '').trim();
+      }
+      if (!managerPin) {
+        setErrorMessage('Manager authorization PIN is required to process refunds.');
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch(`${apiBase}/api/sales/refund`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': localStorage.getItem('manager_pin') || '9999'
+          'x-manager-pin': managerPin
         },
         body: JSON.stringify({
           invoiceNo: sale.invoiceNo,

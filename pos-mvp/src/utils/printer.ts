@@ -2,7 +2,6 @@ import { Printer } from 'capacitor-sunmi-printer';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
-import { db } from '../db';
 import { generateNBRReceiptHtml, ReceiptTemplateProps } from './receiptTemplate';
 import { generateNbrTlvBase64 } from './nbrQr';
 export { generateNBRReceiptHtml };
@@ -886,158 +885,25 @@ export const printNBRReceipt = async (
 };
 
 /**
- * Automated Barcode Refund Engine
- * Intercepts scanned receipt barcodes, validates against fraud/duplicate refunds,
- * reverses the exact financial tender (Khata credit or Cash drawer payout),
- * logs negative shift drawer transactions, marks sale REFUNDED, and forces cloud sync.
+ * Pure Hardware Printer Command: Print Refund / Return Credit Note Receipt
+ * (Financial logic, authorization, and database sync are decoupled in salesService.ts)
  */
-export const processRefund = async (
-  scannedInvoiceNumber: string,
-  currentShiftId?: string | null
-): Promise<{ success: boolean; message?: string; error?: string; sale?: any }> => {
-  const cleanInvoice = String(scannedInvoiceNumber || '').trim();
-  if (!cleanInvoice) {
-    return { success: false, error: 'Empty invoice number provided.' };
-  }
+export const printRefundReceipt = async (
+  invoiceNo: string,
+  refundData: any = {}
+): Promise<boolean> => {
+  const cleanInvoice = String(invoiceNo || '').trim();
+  const totalAmount = Number(refundData.totalAmount || refundData.total || 0);
+  const vatAmount = Number(refundData.vatAmount || refundData.vat || (totalAmount - (totalAmount / 1.10)));
 
-  try {
-    // 1. Find the exact sale in the local database (checking both Sale and Sales)
-    let sale: any = null;
-    try {
-      const saleResult = await db.execute({
-        sql: 'SELECT * FROM Sale WHERE invoiceNo = ? OR id = ? LIMIT 1',
-        args: [cleanInvoice, cleanInvoice],
-      });
-      if (saleResult.rows && saleResult.rows.length > 0) {
-        sale = saleResult.rows[0];
-      }
-    } catch (e) {
-      console.warn('Local Sale check notice:', e);
-    }
-
-    if (!sale) {
-      try {
-        const salesResult = await db.execute({
-          sql: 'SELECT * FROM Sales WHERE invoice_number = ? OR id = ? LIMIT 1',
-          args: [cleanInvoice, cleanInvoice],
-        });
-        if (salesResult.rows && salesResult.rows.length > 0) {
-          sale = salesResult.rows[0];
-        }
-      } catch (e) {
-        console.warn('Sales view check notice:', e);
-      }
-    }
-
-    if (!sale) {
-      const msg = `Invalid Receipt: Sale #${cleanInvoice} not found.`;
-      if (typeof window !== 'undefined') alert(msg);
-      return { success: false, error: msg };
-    }
-
-    // 2. Prevent double refunding
-    if (sale.status === 'REFUNDED') {
-      const fraudMsg = `FRAUD WARNING: This receipt has already been refunded!`;
-      if (typeof window !== 'undefined') alert(fraudMsg);
-      return { success: false, error: fraudMsg };
-    }
-
-    const saleTotal = Number(sale.total || sale.totalAmount || 0);
-    const pType = String(sale.paymentType || sale.payment_type || 'CASH').toUpperCase();
-    const khataCustomerId = sale.customerId || sale.khata_id;
-    const shift =
-      currentShiftId ||
-      sale.shiftId ||
-      sale.shift_id ||
-      (typeof localStorage !== 'undefined'
-        ? localStorage.getItem('active_shift_id') || localStorage.getItem('askar_shift_id')
-        : null);
-
-    // 3. Reverse the Financials based on Payment Type
-    if (pType === 'KHATA' || pType === 'CREDIT' || pType === 'MESS_KHATA') {
-      // Revert the customer's debt balance on unified Customer table
-      if (khataCustomerId) {
-        await db.execute({
-          sql: 'UPDATE Customer SET balance = MAX(0, balance - ?) WHERE id = ?',
-          args: [saleTotal, khataCustomerId],
-        });
-      }
-      const khataMsg = `Refunded ${saleTotal.toFixed(3)} BHD back to Customer Khata ledger.`;
-      if (typeof window !== 'undefined') alert(khataMsg);
-    } else if (pType === 'CASH') {
-      // Create a negative cash transaction on the CURRENT active shift to balance the drawer
-      const refundSaleId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `ref_${Date.now()}`;
-      await db.execute({
-        sql: `INSERT INTO Sale (id, invoiceNo, total, subtotal, paymentType, status, shiftId, createdAt) 
-              VALUES (?, ?, ?, ?, 'CASH', 'REFUNDED', ?, datetime('now'))`,
-        args: [refundSaleId, `REF-${cleanInvoice}`, -saleTotal, -saleTotal, shift],
-      });
-
-      // Kick the physical cash drawer open so the cashier can return cash
-      await kickCashDrawer();
-      const cashMsg = `Cash Drawer Opened. Return ${saleTotal.toFixed(3)} BHD to customer.`;
-      if (typeof window !== 'undefined') alert(cashMsg);
-    } else {
-      // Digital BenefitPay / Card
-      const digitalMsg = `Refund approved for ${pType} transaction. Return ${saleTotal.toFixed(3)} BHD to customer.`;
-      if (typeof window !== 'undefined') alert(digitalMsg);
-    }
-
-    // 4. Mark the original sale as REFUNDED in local database
-    await db.execute({
-      sql: "UPDATE Sale SET status = 'REFUNDED' WHERE invoiceNo = ? OR id = ?",
-      args: [cleanInvoice, sale.id],
-    });
-
-    // Also update via server API for central audit
-    try {
-      const host = (typeof window !== 'undefined' && window.location.hostname) || 'localhost';
-      const masterBase =
-        (typeof window !== 'undefined' && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
-      await fetch(`${masterBase}/api/sales/refund`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-manager-pin': '9999'
-        },
-        body: JSON.stringify({
-          invoiceNo: cleanInvoice,
-          items: [{ productId: 'REFUND_ALL', quantity: 1, unitPrice: saleTotal }],
-          reason: 'CUSTOMER_RETURN',
-          destination: pType === 'KHATA' || pType === 'CREDIT' ? 'KHATA_CREDIT' : 'CASH',
-          processedBy: 'Sunmi POS Barcode Scanner',
-        }),
-      }).catch(() => { });
-    } catch { }
-
-    // Print Void / Credit Note on Sunmi Printer
-    try {
-      await printCreditNote({
-        invoiceNo: cleanInvoice,
-        creditNoteNo: `CN-${cleanInvoice.replace(/^INV-?/i, '')}`,
-        totalAmount: saleTotal,
-        vatAmount: Number((saleTotal - saleTotal / 1.1).toFixed(3)),
-        date: new Date().toISOString(),
-        cashierName: 'POS Scanner',
-      });
-    } catch (prErr) {
-      console.warn('Credit note print error:', prErr);
-    }
-
-    // 5. Instantly force cloud sync
-    await db.sync();
-
-    return {
-      success: true,
-      message: `Invoice #${cleanInvoice} refunded successfully.`,
-      sale,
-    };
-  } catch (error: any) {
-    console.error('Refund failed:', error);
-    const errText = `Refund failed: ${error?.message || error}`;
-    if (typeof window !== 'undefined') alert(errText);
-    return { success: false, error: errText };
-  }
+  return await printCreditNote({
+    invoiceNo: cleanInvoice,
+    creditNoteNo: refundData.creditNoteNo || `CN-${cleanInvoice.replace(/^INV-?/i, '')}`,
+    totalAmount,
+    vatAmount: Number(vatAmount.toFixed(3)),
+    date: new Date().toISOString(),
+    cashierName: refundData.cashierName || 'POS Register',
+  });
 };
 
 // Backwards compatibility alias

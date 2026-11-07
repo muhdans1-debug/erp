@@ -79,3 +79,4 @@ export async function generateNbrQrDataUrl(params: NbrInvoiceQrParams, width: nu
     }
   });
 }
+

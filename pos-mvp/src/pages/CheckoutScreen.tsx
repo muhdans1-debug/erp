@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag } from 'lucide-react';
-import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, processRefund } from '../utils/printer';
+import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, printRefundReceipt } from '../utils/printer';
+import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
 import { useNfcScanner } from '../hooks/useNfcScanner';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
@@ -1026,12 +1027,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         `🧾 Scanned Return Receipt: #${cleanCode}\n\nDo you want to process an automated refund for this transaction?`
       );
       if (confirmed) {
-        processRefund(cleanCode, activeShift).then((res) => {
-          if (res.success) {
-            showToast(`↩️ Refund processed for Invoice #${cleanCode}`, 'success');
-          } else if (res.error) {
-            showToast(res.error, 'error');
-          }
+        const enteredPin = window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter PIN to process refund:");
+        if (!enteredPin) {
+          showToast("Refund cancelled: Manager PIN required.", "info");
+          return;
+        }
+
+        processSecureRefund(cleanCode, enteredPin, {
+          shiftId: activeShift,
+          reason: 'CUSTOMER_RETURN',
+          destination: 'CASH',
+        }).then(async (res) => {
+          await printRefundReceipt(cleanCode, res);
+          showToast(`↩️ Refund processed for Invoice #${cleanCode}`, 'success');
+        }).catch((err) => {
+          showToast(`Refund Failed: ${err.message}`, 'error');
         });
       }
       return;
@@ -1147,12 +1157,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         `🧾 Scanned Return Receipt: #${cleanCode}\n\nDo you want to process an automated refund for this transaction?`
       );
       if (confirmed) {
-        processRefund(cleanCode, activeShift).then((res) => {
-          if (res.success) {
-            showToast(`↩️ Refund processed for Invoice #${cleanCode}`, 'success');
-          } else if (res.error) {
-            showToast(res.error, 'error');
-          }
+        const enteredPin = window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter PIN to process refund:");
+        if (!enteredPin) {
+          showToast("Refund cancelled: Manager PIN required.", "info");
+          return;
+        }
+
+        processSecureRefund(cleanCode, enteredPin, {
+          shiftId: activeShift,
+          reason: 'CUSTOMER_RETURN',
+          destination: 'CASH',
+        }).then(async (res) => {
+          await printRefundReceipt(cleanCode, res);
+          showToast(`↩️ Refund processed for Invoice #${cleanCode}`, 'success');
+        }).catch((err) => {
+          showToast(`Refund Failed: ${err.message}`, 'error');
         });
       }
     };
@@ -1185,7 +1204,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       window.removeEventListener('receipt-barcode-scanned', handleReceiptScan);
       window.removeEventListener('hardware-barcode-scan', handleRawHardwareScan);
     };
-  }, [bindingProductId, showReceivingDrawer, shiftId, processRefund, showToast, handleBindBarcode]);
+  }, [bindingProductId, showReceivingDrawer, shiftId, showToast, handleBindBarcode]);
 
 
   // Bahrain NBR Compliant Cart Calculation (Per-Item Inclusive 10% vs 0% Zero-Rated)

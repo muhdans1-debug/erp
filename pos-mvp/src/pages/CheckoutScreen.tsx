@@ -5,7 +5,6 @@ import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../ut
 import { openCashDrawer, kickCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
-import { useNfcScanner } from '../hooks/useNfcScanner';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 // --- LAZY-LOADED BACK-OFFICE PAGES (never parsed on Sunmi in cashier mode) ---
@@ -585,8 +584,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     showToast(`🖨️ Printing 58mm statement slip for ${statementCustomer.name}...`, 'info');
   };
 
-  // Native NFC Scanner Hook
-  const { scannedUid, lastDetectedUid, clearScan, isScanning, hardwareSupported, simulateScan } = useNfcScanner();
+  // Unified Single-Pipeline NFC Reader State
+  const [lastDetectedUid, setLastDetectedUid] = useState<string | null>(null);
+  const clearScan = useCallback(() => setLastDetectedUid(null), []);
+  const hardwareSupported = true;
 
   // Connect & Save Master Server IP Address
   const handleSaveMasterIp = async (targetIp: string) => {
@@ -853,31 +854,28 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
 
 
-  // React to NFC Hardware Scans
-  useEffect(() => {
-    if (!scannedUid) return;
-
-    // If Khata Hub is open, let Khata Hub handle the scan internally (enrollment or settlement)
-    if (showKhataHub) {
-      return;
+  // Bind a scanned UID to a customer
+  const handleBindCard = async (customerId: string, uidToBind: string) => {
+    clearScan();
+    try {
+      const res = await fetch(`${apiBase}/api/customers/${customerId}/bind-card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardUid: uidToBind })
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        showToast(`✅ Card [${uidToBind}] successfully bound to ${data.customer?.name || 'customer'}!`, 'success');
+        setBindingCustomerId(null);
+        loadCustomers();
+      } else {
+        showToast(`❌ Binding failed: ${data && data.error ? data.error : 'Unknown error'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("❌ Error saving card binding to backend.", 'error');
     }
-
-    // If Customer Drawer is open, attach scanned UID to new customer form
-    if (showCustomersModal) {
-      setNewCustCardUid(scannedUid);
-      showToast(`💳 NFC Card Detected: ${scannedUid}`, 'info');
-      clearScan();
-      return;
-    }
-
-    if (bindingCustomerId) {
-      // FLOW 2: ENROLLMENT - Manager is binding card to customer
-      handleBindCard(bindingCustomerId, scannedUid);
-    } else {
-      // FLOW 1: TAP-TO-PAY - Customer taps card at register
-      fetchCustomerByCard(scannedUid);
-    }
-  }, [scannedUid, showKhataHub, showCustomersModal, bindingCustomerId]);
+  };
 
   // Lookup customer by Card UID (Instant non-blocking response)
   const fetchCustomerByCard = async (uid: string) => {
@@ -910,37 +908,39 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Hardware NFC Reader Hook with AbortController lifecycle guards
+  // ✅ Unified Single Authoritative NFC Pipeline Hook (Single network call & chime per tap)
   const handleKhataLookup = useCallback((cleanUid: string) => {
-    console.log("Scanned Khata Card:", cleanUid);
-    fetchCustomerByCard(cleanUid);
+    console.log("📡 [Unified NFC Reader]:", cleanUid);
+    setLastDetectedUid(cleanUid);
+
+    // If Khata Hub is open, let Khata Hub handle the scan internally (enrollment or settlement)
+    if (showKhataHub) {
+      return;
+    }
+
+    // If Customer Drawer is open, attach scanned UID to new customer form
+    if (showCustomersModal) {
+      setNewCustCardUid(cleanUid);
+      showToast(`💳 NFC Card Detected: ${cleanUid}`, 'info');
+      return;
+    }
+
+    if (bindingCustomerId) {
+      // FLOW 2: ENROLLMENT - Manager is binding card to customer
+      handleBindCard(bindingCustomerId, cleanUid);
+    } else {
+      // FLOW 1: TAP-TO-PAY - Customer taps card at register
+      fetchCustomerByCard(cleanUid);
+    }
     stopNfcScan();
-  }, [apiBase]);
+  }, [showKhataHub, showCustomersModal, bindingCustomerId, apiBase]);
 
   const { startScan: startNfcScan, stopScan: stopNfcScan, isScanning: isNfcReaderScanning, nfcError } = useNfcReader(handleKhataLookup);
 
-  // Bind a scanned UID to a customer
-  const handleBindCard = async (customerId: string, uidToBind: string) => {
-    clearScan();
-    try {
-      const res = await fetch(`${apiBase}/api/customers/${customerId}/bind-card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardUid: uidToBind })
-      });
-      const data = await res.json();
-      if (data && data.success) {
-        showToast(`✅ Card [${uidToBind}] successfully bound to ${data.customer?.name || 'customer'}!`, 'success');
-        setBindingCustomerId(null);
-        loadCustomers();
-      } else {
-        showToast(`❌ Binding failed: ${data && data.error ? data.error : 'Unknown error'}`, 'error');
-      }
-    } catch (err) {
-      console.error(err);
-      showToast("❌ Error saving card binding to backend.", 'error');
-    }
-  };
+  const simulateScan = useCallback((mockUid?: string) => {
+    const uid = mockUid || '04A1B2C3D4';
+    handleKhataLookup(uid);
+  }, [handleKhataLookup]);
 
   const addToCart = (product: Product, quantity = 1): boolean => {
     // 1. Resolve live stock from catalog
@@ -1434,7 +1434,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           ...salePayload,
           paymentType: 'MESS_KHATA',
           messId: customer?.mess_id || customer?.messGroup?.id,
-          cardUid: customer?.tag_id || scannedUid,
+          cardUid: customer?.tag_id || customer?.cardUid || lastDetectedUid,
           shopperName: customer?.shopper?.name || customer?.name,
           shopperId: customer?.shopper?.id || customer?.id
         };
@@ -1558,7 +1558,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         groupName: customer?.group_name || customer?.messGroup?.group_name,
         shopperName: isMessCheckout ? (customer?.shopper?.name || customer?.name) : undefined,
         members: data?.splits || customer?.members,
-        cardUid: customer?.tag_id || scannedUid || undefined,
+        cardUid: customer?.tag_id || customer?.cardUid || lastDetectedUid || undefined,
         customerId: customer?.id || (customer as any)?.customerId || undefined,
         customerUuid: customer?.id || (customer as any)?.customerId || undefined,
         customerName: isMessCheckout ? (customer?.group_name || customer?.messGroup?.group_name) : (customer?.name || customerName),
@@ -3131,7 +3131,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         onOpenServerConfig={() => setShowServerConfigModal(true)}
         onOpenBenefitPayConfig={() => setShowBenefitPayConfigModal(true)}
         hardwareSupported={Boolean(hardwareSupported)}
-        isScanning={isScanning}
+        isScanning={isNfcReaderScanning}
         customerScreenReady={Boolean(customerScreenReady)}
         lastDetectedUid={lastDetectedUid}
         simulateScan={simulateScan}

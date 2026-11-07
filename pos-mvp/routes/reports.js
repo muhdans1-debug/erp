@@ -254,8 +254,8 @@ fastify.get('/api/reports/financials', { preHandler: managerAuth }, async (reque
 
 // --- EXPENSES & P&L (PROFIT & LOSS) ENGINE ---
 
-// Record Cash-Out / Expense (Shop bills, rent, owner draws)
-fastify.post('/api/expenses', async (request, reply) => {
+// Record Cash-Out / Expense (Shop bills, rent, owner draws) - Protected by Manager Auth
+fastify.post('/api/expenses', { preHandler: managerAuth }, async (request, reply) => {
   const { type, category, amount, description, recordedBy } = request.body || {};
   const numAmount = parseFloat(amount);
   if (isNaN(numAmount) || numAmount <= 0) {
@@ -274,10 +274,10 @@ fastify.post('/api/expenses', async (request, reply) => {
 
   try {
     await db.orm.Expense.create(newExpense);
-    return { success: true, expense: newExpense, message: 'Expense recorded. Cash drawer updated.' };
+    return reply.send({ success: true, expense: newExpense, message: 'Expense recorded safely.' });
   } catch (error) {
-    fastify.log.error(error);
-    return reply.status(500).send({ error: 'Failed to record expense', details: error.message });
+    request.log.error(error, 'Failed to record expense');
+    return reply.code(500).send({ error: 'Database error', details: error.message });
   }
 });
 

@@ -321,9 +321,9 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
     let computedSubtotal = 0;
     let computedTotalVat = 0;
     const lineItems = rawItems.map((item) => {
-      const price = Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0);
-      const qty = Number(item.quantity || 1);
-      const lineTotal = price * qty;
+      const safePrice = Math.max(0, Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0));
+      const safeQty = Math.max(0.001, Number(item.quantity || item.qty || 1));
+      const lineTotal = safePrice * safeQty;
       const rate = item.vatRateAtSale !== undefined ? Number(item.vatRateAtSale) : 10.0;
       let lineTax = 0;
       if (rate === 10) {
@@ -336,9 +336,10 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
       return {
         id: crypto.randomUUID(),
         productId: item.productId || item.id,
-        quantity: qty,
-        priceAtSale: price,
-        costAtSale: Number(item.costAtSale ?? item.purchasePrice ?? 0),
+        quantity: safeQty,
+        priceAtSale: safePrice,
+        costAtSale: Math.max(0, Number(item.costAtSale ?? item.purchasePrice ?? 0)),
+        total_price: Number((safeQty * safePrice).toFixed(3)),
         vatRateAtSale: rate,
         vatAmount: Number(lineTax.toFixed(3))
       };
@@ -439,9 +440,13 @@ const handleCheckout = async (request, reply) => {
     let computedFinalTotal = 0;
 
     const lineItems = rawItems.map((item) => {
-      const price = Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0);
-      const qty = Number(item.quantity || 1);
-      const lineTotal = price * qty;
+      // NEW: Strict validation to prevent negative injection tampering
+      // Quantity must be at least 0.001 (allows fractional weights, blocks negatives)
+      const safeQty = Math.max(0.001, Number(item.quantity || item.qty || 1));
+      
+      // Price cannot be negative
+      const safePrice = Math.max(0, Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0));
+      const lineTotal = safePrice * safeQty;
       computedFinalTotal += lineTotal;
 
       // Determine VAT rate (0% for basic food items, 10% standard rate)
@@ -464,17 +469,18 @@ const handleCheckout = async (request, reply) => {
       return {
         id: crypto.randomUUID(),
         productId: item.productId || item.id,
-        quantity: qty,
-        priceAtSale: price,
-        costAtSale: Number(item.costAtSale ?? item.purchasePrice ?? 0),
+        quantity: safeQty,
+        priceAtSale: safePrice,
+        costAtSale: Math.max(0, Number(item.costAtSale ?? item.purchasePrice ?? 0)),
+        total_price: Number((safeQty * safePrice).toFixed(3)),
         vatRateAtSale: rate,
         vatAmount: Number(lineTax.toFixed(3)),
       };
     });
 
-    const finalSubtotal = Number((subtotal !== undefined ? subtotal : computedSubtotal).toFixed(3));
-    const finalTotalVat = Number((totalVat !== undefined ? totalVat : (vatTotal !== undefined ? vatTotal : (vat !== undefined ? vat : computedTotalVat))).toFixed(3));
-    const finalTotal = Number((totalAmount !== undefined ? totalAmount : (total !== undefined ? total : computedFinalTotal)).toFixed(3));
+    const finalSubtotal = Math.max(0, Number((subtotal !== undefined && Number(subtotal) >= 0 ? subtotal : computedSubtotal).toFixed(3)));
+    const finalTotalVat = Math.max(0, Number((totalVat !== undefined && Number(totalVat) >= 0 ? totalVat : (vatTotal !== undefined && Number(vatTotal) >= 0 ? vatTotal : (vat !== undefined && Number(vat) >= 0 ? vat : computedTotalVat))).toFixed(3)));
+    const finalTotal = Math.max(0, Number((totalAmount !== undefined && Number(totalAmount) >= 0 ? totalAmount : (total !== undefined && Number(total) >= 0 ? total : computedFinalTotal)).toFixed(3)));
 
     // Resolve effective shift ID: always bind to active OPEN shift
     let effectiveShiftId = shiftId;
@@ -772,7 +778,7 @@ const handleGetTodaySales = async (req, reply) => {
 
     return { success: true, sales: populated };
   } catch (err) {
-    req.log.error(err, 'Failed to fetch today sales');
+    request.log.error(err, 'Failed to fetch today sales');
     return reply.status(500).send({ success: false, error: err.message });
   }
 };

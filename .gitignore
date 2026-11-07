@@ -10,6 +10,8 @@ dist/
 dist-ssr/
 build/
 **/build/
+askar-erp-build/
+**/askar-erp-build/
 android/app/build/
 **/android/app/build/
 android/.gradle/

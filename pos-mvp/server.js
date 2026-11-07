@@ -408,7 +408,14 @@ fastify.post('/webhooks/benefit-pay', handleBenefitPayWebhook);
 fastify.post('/api/webhook/benefit-pay', handleBenefitPayWebhook);
 
 // 1. Serve POS Frontend on '/' and '/pos/'
-const distPath = path.join(__dirname, 'dist');
+const distPathCandidates = [
+  path.join(__dirname, 'dist'),
+  path.resolve(__dirname, '../pos/dist'),
+  path.resolve(__dirname, '../../apps/pos/dist'),
+  path.resolve(process.cwd(), 'apps/pos/dist'),
+  path.resolve(process.cwd(), 'pos-mvp/dist')
+];
+const distPath = distPathCandidates.find((p) => fs.existsSync(p)) || path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   await fastify.register(fastifyStatic, {
     root: distPath,
@@ -427,7 +434,14 @@ if (fs.existsSync(distPath)) {
 }
 
 // 2. Serve Admin Desktop Frontend on '/admin/'
-const adminDistPath = path.resolve(__dirname, '../askar-admin-dashboard/dist');
+const adminDistPathCandidates = [
+  path.resolve(__dirname, '../askar-admin-dashboard/dist'),
+  path.resolve(__dirname, '../desktop/dist'),
+  path.resolve(__dirname, '../../apps/desktop/dist'),
+  path.resolve(process.cwd(), 'apps/desktop/dist'),
+  path.resolve(process.cwd(), 'askar-admin-dashboard/dist')
+];
+const adminDistPath = adminDistPathCandidates.find((p) => fs.existsSync(p)) || path.resolve(__dirname, '../askar-admin-dashboard/dist');
 if (fs.existsSync(adminDistPath)) {
   await fastify.register(fastifyStatic, {
     root: adminDistPath,

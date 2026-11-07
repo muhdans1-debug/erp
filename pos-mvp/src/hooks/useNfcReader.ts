@@ -1,16 +1,25 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { CapacitorNfc } from '@capgo/capacitor-nfc';
+import { playNfcChime } from '../utils/sound';
 
 /**
- * Headless Hardware NFC Reader Hook
- * Manages NDEFReader (Web NFC API) and native Sunmi hardware NFC antenna lifecycles.
- * Uses AbortController to properly release the hardware antenna on stopScan or unmount,
- * preventing hardware lockups and eliminating UI thread freezes.
+ * Unified Hardware & Web NFC Reader Hook
+ * - Native Sunmi hardware antenna support via @capgo/capacitor-nfc
+ * - Browser Web NFC (NDEFReader) support with safe permission error handling
+ * - Hardware broadcast bridge (sunmi-nfc-scan / sunmi-nfc-broadcast)
+ * - Safe fallback for desktop laptops without blocking red permission errors
  */
-export const useNfcReader = (onCardScanned: (uid: string) => void) => {
+export const useNfcReader = (
+  onCardScanned: (uid: string) => void,
+  onNfcUnavailable?: () => void
+) => {
   const [isScanning, setIsScanning] = useState(false);
   const [nfcError, setNfcError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const capacitorListenerRef = useRef<any>(null);
   const onCardScannedRef = useRef(onCardScanned);
+  const onNfcUnavailableRef = useRef(onNfcUnavailable);
   const lastScanRef = useRef<{ uid: string; time: number }>({ uid: '', time: 0 });
   const ndefRef = useRef<any>(null);
   const listenerAttached = useRef(false);
@@ -19,7 +28,11 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
     onCardScannedRef.current = onCardScanned;
   }, [onCardScanned]);
 
-  // Safe handler that suppresses duplicate continuous RF antenna triggers within 800ms
+  useEffect(() => {
+    onNfcUnavailableRef.current = onNfcUnavailable;
+  }, [onNfcUnavailable]);
+
+  // Suppress duplicate continuous RF antenna triggers within 800ms
   const handleScannedUid = useCallback((cleanUid: string) => {
     const now = Date.now();
     if (lastScanRef.current.uid === cleanUid && (now - lastScanRef.current.time) < 800) {
@@ -32,19 +45,7 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
   }, []);
 
   const stopScan = useCallback(() => {
-    if (controllerRef.current) {
-      try {
-        controllerRef.current.abort(); // Safely release the hardware antenna
-      } catch { }
-      controllerRef.current = null;
-    }
-    setIsScanning(false);
-  }, []);
-
-  const startScan = useCallback(async () => {
-    setNfcError(null);
-
-    // Guard: Abort existing controller before creating a new scan session
+    // 1. Release Web NFC AbortController
     if (controllerRef.current) {
       try {
         controllerRef.current.abort();
@@ -52,8 +53,70 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
       controllerRef.current = null;
     }
 
-    // 1. Web NFC (NDEFReader) path with AbortController lifecycle guard
-    if ('NDEFReader' in window) {
+    // 2. Release native Capacitor NFC listener & hardware antenna
+    if (capacitorListenerRef.current) {
+      try {
+        if (typeof capacitorListenerRef.current.remove === 'function') {
+          capacitorListenerRef.current.remove();
+        }
+      } catch { }
+      capacitorListenerRef.current = null;
+    }
+
+    if (Capacitor.isNativePlatform()) {
+      CapacitorNfc.stopScanning().catch(() => {});
+    }
+
+    setIsScanning(false);
+  }, []);
+
+  const startScan = useCallback(async () => {
+    setNfcError(null);
+
+    // Guard: Clean up any existing scan session
+    stopScan();
+
+    // PATH 1: Native Sunmi / Android Hardware Platform (via CapacitorNfc)
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { supported } = await CapacitorNfc.isSupported();
+        if (supported) {
+          await CapacitorNfc.startScanning({ invalidateAfterFirstRead: false });
+
+          capacitorListenerRef.current = await CapacitorNfc.addListener('nfcEvent', (event: any) => {
+            let hexString = '';
+            if (event?.tag?.id) {
+              if (Array.isArray(event.tag.id)) {
+                hexString = event.tag.id
+                  .map((byte: number) => (byte & 0xff).toString(16).padStart(2, '0').toUpperCase())
+                  .join('');
+              } else if (typeof event.tag.id === 'string') {
+                hexString = event.tag.id.replace(/[:\-]/g, '').toUpperCase();
+              }
+            }
+
+            if (hexString) {
+              console.log('📡 [Native NFC Tag Scanned]:', hexString);
+              try {
+                playNfcChime();
+              } catch { }
+              handleScannedUid(hexString);
+            }
+          });
+
+          setIsScanning(true);
+          return;
+        } else {
+          console.warn('Capacitor NFC reports hardware not supported on this device.');
+        }
+      } catch (nativeErr) {
+        console.warn('Capacitor NFC initialization error:', nativeErr);
+      }
+    }
+
+    // PATH 2: Browser Web NFC (NDEFReader)
+    // Only attempt on non-native environments if NDEFReader exists in window
+    if (!Capacitor.isNativePlatform() && 'NDEFReader' in window) {
       try {
         if (!ndefRef.current) {
           ndefRef.current = new (window as any).NDEFReader();
@@ -64,14 +127,14 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
         setIsScanning(true);
         setNfcError(null);
 
-        // NEW: Ensure the event listener is only attached once
         if (!listenerAttached.current) {
           ndefRef.current.addEventListener('reading', (event: any) => {
-            // Mifare cards return a serialNumber (UID) formatted like "04:A1:B2:C3"
-            // We strip colons to match canonical nfcCardId in the database
             const rawUid = event.serialNumber || '';
             const cleanUid = rawUid.replace(/[:\-]/g, '').toUpperCase();
             if (cleanUid) {
+              try {
+                playNfcChime();
+              } catch { }
               handleScannedUid(cleanUid);
             }
           });
@@ -83,23 +146,49 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
         }
         return;
       } catch (error: any) {
-        // If aborted by user, don't show as error
         if (error.name === 'AbortError') return;
-        setNfcError(`NFC Error: ${error.message || 'Permission denied or antenna busy'}`);
-        setIsScanning(false);
-      }
-    } else {
-      // In environments without Web NFC (e.g. standard Chrome on desktop or native Capacitor fallback)
-      setIsScanning(true);
-    }
-  }, [handleScannedUid]);
 
-  // 2. Hardware event bridge: Also capture Sunmi native hardware antenna broadcasts
+        console.info('Web NFC not permitted or unsupported on this platform (Desktop/HTTP):', error.message);
+
+        // On desktop/laptop browsers or non-secure contexts, NDEFReader throws NotAllowedError: NFC permission denied.
+        // We gracefully suppress this from blocking the cashier and invoke the fallback customer picker.
+        if (
+          error.name === 'NotAllowedError' || 
+          error.name === 'SecurityError' || 
+          (typeof error.message === 'string' && error.message.toLowerCase().includes('permission denied'))
+        ) {
+          setIsScanning(false);
+          setNfcError(null);
+          if (onNfcUnavailableRef.current) {
+            onNfcUnavailableRef.current();
+          }
+          return;
+        }
+
+        setNfcError(`NFC: ${error.message || 'Antenna unavailable'}`);
+        setIsScanning(false);
+        return;
+      }
+    }
+
+    // PATH 3: Desktop / Wedge / LAN Relay Fallback
+    // When no physical Web NFC is present (e.g. desktop Chrome), mark as listening for wedge/relay
+    setIsScanning(true);
+    setNfcError(null);
+    if (onNfcUnavailableRef.current) {
+      onNfcUnavailableRef.current();
+    }
+  }, [handleScannedUid, stopScan]);
+
+  // PATH 4: Hardware event bridge: Capture Sunmi native hardware broadcasts & WebSocket relays
   useEffect(() => {
     const handleSunmiScan = (e: any) => {
       const rawId = e?.detail?.nfcId || e?.detail?.tag_id || e?.detail;
       if (typeof rawId === 'string' && rawId.trim()) {
         const cleanUid = rawId.replace(/[:\-]/g, '').toUpperCase();
+        try {
+          playNfcChime();
+        } catch { }
         handleScannedUid(cleanUid);
       }
     };
@@ -111,9 +200,9 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
       window.removeEventListener('sunmi-nfc-scan', handleSunmiScan);
       window.removeEventListener('sunmi-nfc-broadcast', handleSunmiScan);
     };
-  }, []);
+  }, [handleScannedUid]);
 
-  // 3. Auto-cleanup: Safely release the hardware antenna when the component unmounts
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopScan();
@@ -122,4 +211,3 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
 
   return { startScan, stopScan, isScanning, nfcError };
 };
-

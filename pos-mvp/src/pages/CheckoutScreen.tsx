@@ -935,7 +935,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     stopNfcScan();
   }, [showKhataHub, showCustomersModal, bindingCustomerId, apiBase]);
 
-  const { startScan: startNfcScan, stopScan: stopNfcScan, isScanning: isNfcReaderScanning, nfcError } = useNfcReader(handleKhataLookup);
+  const handleNfcUnavailable = useCallback(() => {
+    // When NFC antenna is unavailable on this device (e.g. desktop/laptop browser),
+    // open Khata Hub so the cashier can pick the customer or scan via USB wedge scanner.
+    setShowKhataHub(true);
+    loadCustomers();
+  }, [loadCustomers]);
+
+  const { startScan: startNfcScan, stopScan: stopNfcScan, isScanning: isNfcReaderScanning, nfcError } = useNfcReader(
+    handleKhataLookup,
+    handleNfcUnavailable
+  );
 
   const simulateScan = useCallback((mockUid?: string) => {
     const uid = mockUid || '04A1B2C3D4';

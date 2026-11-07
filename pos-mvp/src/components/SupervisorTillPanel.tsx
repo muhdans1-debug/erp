@@ -3,7 +3,8 @@ import {
   ShieldCheck, Printer, Zap, ShoppingCart, LogOut, ExternalLink, 
   CheckCircle2, Server 
 } from 'lucide-react';
-import { openCashDrawer, printZReport } from '../utils/printer';
+import { printZReport } from '../utils/printer';
+import { openCashDrawer } from '../services/cashDrawerService';
 
 interface SupervisorTillPanelProps {
   apiBase: string;

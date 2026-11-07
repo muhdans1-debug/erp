@@ -12,7 +12,8 @@ import {
   Settings 
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { printFullReceipt, kickCashDrawer } from '../utils/printer';
+import { printFullReceipt } from '../utils/printer';
+import { openCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { saveSaleOffline } from '../utils/nativeDb';
 import {
@@ -238,7 +239,7 @@ export default function PaymentModal({
       // Strict hardware rule: Only trigger RJ11 solenoid kick on CASH payment!
       // BenefitPay Fawri+ keeps drawer physically locked.
       if (finalMethod === 'CASH') {
-        kickCashDrawer().catch(() => {});
+        openCashDrawer(changeDue).catch(() => {});
       }
 
       setCompletedSale(finalReceiptData);

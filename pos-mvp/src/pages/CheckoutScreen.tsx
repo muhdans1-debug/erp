@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag } from 'lucide-react';
-import { printFullReceipt, printKhataStatement, openCashDrawer, kickCashDrawer, printRefundReceipt } from '../utils/printer';
+import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
+import { openCashDrawer, kickCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
 import { useNfcScanner } from '../hooks/useNfcScanner';
@@ -1379,7 +1380,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
     // 1. If physical cash is handed over, pop the drawer immediately in background (non-blocking)
     if (paymentMethod === 'CASH') {
-      kickCashDrawer().catch(() => {});
+      openCashDrawer(changeDue).catch(() => {});
     }
 
     try {

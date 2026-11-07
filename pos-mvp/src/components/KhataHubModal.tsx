@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { useNfcScanner } from '../hooks/useNfcScanner';
-import { printKhataStatement, printKhataPaymentReceipt, kickCashDrawer } from '../utils/printer';
+import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
+import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';

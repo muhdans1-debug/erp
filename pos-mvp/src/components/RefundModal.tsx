@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
-import { kickCashDrawer } from '../utils/printer';
+import { kickCashDrawer } from '../services/cashDrawerService';
 import { 
   X, 
   Search, 

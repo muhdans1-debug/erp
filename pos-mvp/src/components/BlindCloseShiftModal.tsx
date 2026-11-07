@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Coins, CheckCircle, Calculator, Lock, AlertTriangle, Unlock } from 'lucide-react';
-import { printShiftCloseout, kickCashDrawer } from '../utils/printer';
+import { printShiftCloseout } from '../utils/printer';
+import { kickCashDrawer } from '../services/cashDrawerService';
 import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { db } from '../db';
 

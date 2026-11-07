@@ -91,3 +91,4 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
 
   return { startScan, stopScan, isScanning, nfcError };
 };
+

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { MinusCircle, X, Banknote, ShieldAlert, CheckCircle2 } from 'lucide-react';
-import { kickCashDrawer } from '../utils/printer';
+import { kickCashDrawer } from '../services/cashDrawerService';
 
 interface CashOutModalProps {
   onClose: () => void;

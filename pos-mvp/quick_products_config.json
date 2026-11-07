@@ -360,6 +360,14 @@
       "isQuickProduct": true,
       "category": "PRODUCE",
       "quickColor": null
+    },
+    "e2f6de50-4e70-433a-9730-c0cbf9619da0": {
+      "isQuickProduct": true,
+      "category": "GROCERY"
+    },
+    "4d0f2026-3b51-436c-a0cb-e9773d9ebaba": {
+      "isQuickProduct": true,
+      "category": "PRODUCE"
     }
   },
   "removedIds": [

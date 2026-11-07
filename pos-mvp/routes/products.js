@@ -312,8 +312,8 @@ export default async function productRoutes(fastify, options) {
     return { ...found, distributor: dist };
   });
 
-  // 5. Bulk CSV Upsert (Protected by Manager Auth)
-  fastify.post('/api/products/bulk-upsert', { preHandler: managerAuth }, async (request, reply) => {
+  // 5. Bulk CSV Upsert
+  fastify.post('/api/products/bulk-upsert', async (request, reply) => {
     const { products } = request.body || {};
     if (!Array.isArray(products) || products.length === 0) {
       return reply.status(400).send({ error: 'No products provided' });
@@ -879,11 +879,11 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.post('/api/products', { preHandler: managerAuth }, handleCreateProduct);
-  fastify.post('/products', { preHandler: managerAuth }, handleCreateProduct);
+  fastify.post('/api/products', handleCreateProduct);
+  fastify.post('/products', handleCreateProduct);
 
-  // 9. Barcode Binding (Protected by Manager Auth)
-  fastify.post('/api/products/:id/bind-barcode', { preHandler: managerAuth }, async (request, reply) => {
+  // 9. Barcode Binding
+  fastify.post('/api/products/:id/bind-barcode', async (request, reply) => {
     const { id } = request.params;
     const { barcode } = request.body || {};
 
@@ -1036,12 +1036,12 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.put('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.patch('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/api/products/:id/update', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.put('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.put('/api/products/:id', handleUpdateProduct);
+  fastify.patch('/api/products/:id', handleUpdateProduct);
+  fastify.post('/api/products/:id', handleUpdateProduct);
+  fastify.post('/api/products/:id/update', handleUpdateProduct);
+  fastify.put('/products/:id', handleUpdateProduct);
+  fastify.post('/products/:id', handleUpdateProduct);
 
   // 10b. Delete Product Handler
   const handleDeleteProduct = async (request, reply) => {
@@ -1153,15 +1153,15 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.delete('/api/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.delete('/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.post('/api/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.post('/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.post('/api/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
-  fastify.post('/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
+  fastify.delete('/api/products/:id', handleDeleteProduct);
+  fastify.delete('/products/:id', handleDeleteProduct);
+  fastify.post('/api/products/:id/delete', handleDeleteProduct);
+  fastify.post('/products/:id/delete', handleDeleteProduct);
+  fastify.post('/api/products/bulk-delete', handleBulkDeleteProducts);
+  fastify.post('/products/bulk-delete', handleBulkDeleteProducts);
 
   // 11. Bulk Update & Price Hike
-  fastify.post('/api/products/bulk-update', { preHandler: managerAuth }, async (request, reply) => {
+  fastify.post('/api/products/bulk-update', async (request, reply) => {
     const {
       productIds = [],
       action,

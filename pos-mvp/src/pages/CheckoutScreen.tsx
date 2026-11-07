@@ -994,7 +994,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     try {
       const res = await fetch(`${apiBase}/api/products/${productId}/bind-barcode`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'store-pos'
+        },
         body: JSON.stringify({ barcode: cleanBarcode })
       });
       const data = await res.json();
@@ -1813,6 +1817,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       // 1. F12: Open massive search modal
       if (e.key === 'F12') {
         e.preventDefault();
+        fetchCatalog();
         setShowF12SearchModal((prev) => !prev);
         return;
       }
@@ -2288,6 +2293,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           <button
             type="button"
             onClick={() => {
+              fetchCatalog();
               setShowF12SearchModal(true);
             }}
             className="h-9 flex items-center gap-1.5 px-3 bg-blue-50/90 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold rounded-xl text-xs border border-blue-200/80 transition-all cursor-pointer whitespace-nowrap shadow-xs"
@@ -3091,6 +3097,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         isOpen={showF12SearchModal}
         onClose={() => setShowF12SearchModal(false)}
         catalog={catalog}
+        apiBase={apiBase}
         onSelectItem={(item) => handleItemSelection(item)}
       />
 
@@ -3336,6 +3343,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               addToCart(prodToAdd);
             }
             setUnassignedBarcode(null);
+            setCatalog((prev) => {
+              const existingIdx = prev.findIndex(p => p.id === prodToAdd.id || (p.barcode && p.barcode === prodToAdd.barcode));
+              if (existingIdx !== -1) {
+                const next = [...prev];
+                next[existingIdx] = prodToAdd;
+                return next;
+              }
+              return [prodToAdd, ...prev];
+            });
             refreshCatalogNow();
             showToast(`✅ "${newProduct.name}" saved to catalog${andAddToCart ? ' and added to cart' : ''}!`, 'success');
           }}

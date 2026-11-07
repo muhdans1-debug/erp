@@ -272,37 +272,53 @@ export default function PosAddProductModal({
       console.warn('Local instant save notice:', localErr);
     }
 
+    // Direct localStorage cache update for 0ms lookup
+    try {
+      const raw = localStorage.getItem('askar_local_db_cache_Product');
+      const cachedList = raw ? JSON.parse(raw) : [];
+      const updated = [
+        { ...payload, price: salePrice, sellingPrice: salePrice },
+        ...cachedList.filter((p: any) => p && p.id !== payload.id && (!payload.barcode || p.barcode !== payload.barcode))
+      ];
+      localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(updated));
+    } catch {}
+
     const savedProduct = {
       ...payload,
       price: salePrice,
       sellingPrice: salePrice
     };
 
-    // ⚡ 0ms UI UNBLOCK: Trigger callbacks and dismiss modal immediately
+    // ⚡ Push to Master Server (await with 3.5s timeout so master DB receives it before catalog refresh)
+    const candidates = getCandidateUrls();
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/api/products`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'store-pos'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(3500)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success || data.id) {
+            console.log('✅ Product synced to master server successfully:', payload.name);
+            break;
+          }
+        }
+      } catch {
+        // Fall through to next candidate or leave in local DB
+      }
+    }
+
+    // ⚡ UI UNBLOCK: Trigger callbacks and dismiss modal immediately
     onProductAdded(savedProduct, andAddToCart);
     setIsSubmitting(false);
     onClose();
-
-    // ⚡ NON-BLOCKING BACKGROUND SYNC: Push to Master Server silently without stalling UI
-    (async () => {
-      const candidates = getCandidateUrls();
-      for (const url of candidates) {
-        try {
-          const res = await fetch(`${url}/api/products`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(1500)
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success || data.id) break;
-          }
-        } catch {
-          // Fall through to next candidate or leave in local DB
-        }
-      }
-    })();
   };
 
   return (

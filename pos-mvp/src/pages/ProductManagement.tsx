@@ -402,14 +402,22 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       try {
         res = await fetch(`${apiBase}/api/products/${id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          },
           body: JSON.stringify(payload)
         });
       } catch (putErr) {
         // Fallback to POST
         res = await fetch(`${apiBase}/api/products/${id}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          },
           body: JSON.stringify(payload)
         });
       }
@@ -498,14 +506,22 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       try {
         res = await fetch(`${apiBase}/api/products/${editModalProduct.id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          },
           body: JSON.stringify(payload)
         });
       } catch (putErr) {
         // Fallback to POST
         res = await fetch(`${apiBase}/api/products/${editModalProduct.id}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          },
           body: JSON.stringify(payload)
         });
       }
@@ -545,13 +561,21 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       try {
         res = await fetch(`${apiBase}/api/products/${id}`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' }
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          }
         });
       } catch (err) {
         // Fallback to POST /delete
         res = await fetch(`${apiBase}/api/products/${id}/delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          }
         });
       }
 
@@ -587,7 +611,11 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     try {
       const res = await fetch(`${apiBase}/api/products/bulk-delete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'pim-admin'
+        },
         body: JSON.stringify({ productIds: idsToDelete })
       });
 
@@ -663,7 +691,11 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       const res = await fetch(`${apiBase}/api/products/bulk-update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'pim-admin'
+        },
         body: JSON.stringify(payload)
       });
 
@@ -703,7 +735,11 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       const res = await fetch(`${apiBase}/api/products`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'pim-admin'
+        },
         body: JSON.stringify(payload)
       });
 

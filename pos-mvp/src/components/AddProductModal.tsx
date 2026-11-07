@@ -219,31 +219,33 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
       console.warn('Local instant save notice:', localErr);
     }
 
-    // ⚡ 0ms UI UNBLOCK: Dismiss modal and notify immediately
+    // ⚡ Push to Master Server (await with 3.5s timeout)
+    const candidates = getCandidateUrls();
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/api/products`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'store-pos'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(3500)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success || data.id) break;
+        }
+      } catch {
+        // Fall through to next candidate or queue offline
+      }
+    }
+
+    // ⚡ UI UNBLOCK: Dismiss modal and notify immediately
     onSuccess?.();
     setIsSubmitting(false);
     onClose();
-
-    // ⚡ NON-BLOCKING BACKGROUND SYNC: Push to Master Server silently
-    (async () => {
-      const candidates = getCandidateUrls();
-      for (const url of candidates) {
-        try {
-          const res = await fetch(`${url}/api/products`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(1500)
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success || data.id) break;
-          }
-        } catch {
-          // Fall through to next candidate or queue offline
-        }
-      }
-    })();
   };
 
   return (

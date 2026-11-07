@@ -98,6 +98,35 @@ export const db: LibsqlDatabase = {
     // 2. Browser Environment: Safe offline local cache & storage execution
     // (Arbitrary SQL execution over network is disabled for zero-trust security)
     if (sql.toUpperCase().includes('PRODUCT')) {
+      const isInsert = sql.toUpperCase().includes('INSERT') || sql.toUpperCase().includes('REPLACE');
+      if (isInsert && args && args.length >= 3) {
+        try {
+          const [id, barcode, name, sellingPrice, unitCost, purchasePrice, stockQuantity, minThreshold, maxThreshold, vatRate, taxRate, is_weighed_item, category] = args;
+          const cached = getCachedProducts();
+          const newRow = {
+            id: String(id),
+            barcode: String(barcode || id),
+            name: String(name || ''),
+            sellingPrice: Number(sellingPrice || 0),
+            price: Number(sellingPrice || 0),
+            unitCost: Number(unitCost || 0),
+            purchasePrice: Number(purchasePrice || 0),
+            stockQuantity: Number(stockQuantity || 0),
+            minThreshold: Number(minThreshold || 10),
+            maxThreshold: Number(maxThreshold || 50),
+            vatRate: Number(vatRate || 10),
+            taxRate: Number(taxRate || 0.1),
+            is_weighed_item: Boolean(is_weighed_item),
+            category: category || 'ESSENTIALS'
+          };
+          const filtered = cached.filter((p: any) => p && p.id !== String(id) && (!barcode || p.barcode !== String(barcode)));
+          setCachedProducts([newRow, ...filtered]);
+          return { columns: ['id'], rows: [newRow], rowsAffected: 1, insertedId: String(id) };
+        } catch (e) {
+          console.warn('Browser product cache insert error:', e);
+        }
+      }
+
       const cached = getCachedProducts();
       if (cached && cached.length > 0) {
         return {

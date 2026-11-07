@@ -6,6 +6,7 @@ export interface F12SearchOverlayProps {
   isOpen: boolean;
   onClose: () => void;
   catalog: Product[];
+  apiBase?: string;
   onSelectItem: (item: Product) => void;
 }
 
@@ -13,14 +14,17 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
   isOpen,
   onClose,
   catalog,
+  apiBase,
   onSelectItem,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [serverResults, setServerResults] = useState<Product[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setSearchQuery('');
+      setServerResults([]);
       const timer = setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -28,6 +32,51 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
+
+  // Live Server Fallback Search
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) {
+      setServerResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const candidates = [
+        apiBase,
+        typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
+        typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000'
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/api/products/search?q=${encodeURIComponent(q)}`, {
+            signal: AbortSignal.timeout(1800)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              setServerResults(data.map((p: any) => ({
+                id: p.id,
+                name: p.name,
+                price: Number(p.sellingPrice || p.price || 0),
+                unitCost: Number(p.purchasePrice || p.unitCost || 0),
+                barcode: p.barcode || p.id,
+                category: p.category,
+                isScaleItem: Boolean(p.is_weighed_item),
+                vatRate: Number(p.vatRate || 0),
+                stockQuantity: Number(p.stockQuantity || 0)
+              })));
+              break;
+            }
+          }
+        } catch {}
+      }
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, apiBase]);
 
   const filteredCatalog = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -40,6 +89,14 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
       );
     });
   }, [catalog, searchQuery]);
+
+  // Merge local matches with server results ensuring zero duplicates
+  const displayedProducts = useMemo(() => {
+    const localMatches = filteredCatalog;
+    const localIds = new Set(localMatches.map((p) => p.id));
+    const extraServerMatches = serverResults.filter((p) => !localIds.has(p.id));
+    return [...localMatches, ...extraServerMatches];
+  }, [filteredCatalog, serverResults]);
 
   if (!isOpen) return null;
 
@@ -66,9 +123,9 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
               if (e.key === 'Escape') {
                 onClose();
               } else if (e.key === 'Enter') {
-                if (filteredCatalog.length > 0) {
+                if (displayedProducts.length > 0) {
                   onClose();
-                  onSelectItem(filteredCatalog[0]);
+                  onSelectItem(displayedProducts[0]);
                 }
               }
             }}
@@ -88,14 +145,14 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
 
         {/* Search Results */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 scroll-zone">
-          {filteredCatalog.length === 0 ? (
+          {displayedProducts.length === 0 ? (
             <div className="text-center py-16 text-slate-400">
               <Search size={48} className="mx-auto mb-3 opacity-20" />
               <p className="text-lg font-bold text-slate-600">No products match "{searchQuery}"</p>
               <p className="text-xs text-slate-400 mt-1">Try another keyword or scan the physical barcode.</p>
             </div>
           ) : (
-            filteredCatalog.map((prod) => {
+            displayedProducts.map((prod) => {
               const stock = prod.stockQuantity !== undefined && prod.stockQuantity !== null ? Number(prod.stockQuantity) : 0;
               const isOutOfStock = stock <= 0;
               const isLowStock = stock > 0 && stock <= 5;

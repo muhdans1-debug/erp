@@ -15,12 +15,47 @@ const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefi
   : null;
 
 /**
+ * Lightweight, framework-agnostic non-blocking toast notification.
+ * Replaces thread-blocking native alert() so background barcode & NFC scanning
+ * is never paused in the Android WebView.
+ */
+export const showToast = (message: string) => {
+  if (typeof window === 'undefined') return;
+
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    backgroundColor: '#222',
+    color: '#fff',
+    padding: '12px 24px',
+    borderRadius: '8px',
+    zIndex: '9999',
+    fontSize: '16px',
+    fontWeight: 'bold',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    transition: 'opacity 0.3s'
+  });
+
+  document.body.appendChild(toast);
+
+  // Automatically remove the toast after 3 seconds without blocking the thread
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+};
+
+/**
  * Native Sunmi AIDL Cash Box / Drawer Kick
  * Triggers the RJ11/RJ12 cash drawer solenoid connected to the Sunmi terminal.
  * Combines native AIDL openDrawer() and universal ESC/POS hardware kick pulses
  * (Pin 2 standard 24V, Pin 5 reverse 12V, and DLE DC4 real-time kick).
  */
-export const kickCashDrawer = async (): Promise<boolean> => {
+export const kickCashDrawer = async (saleTotal?: number): Promise<boolean> => {
   try {
     if (typeof Printer === 'undefined') {
       console.warn('⚠️ [Sunmi Hardware] Printer plugin not available in this environment');
@@ -78,9 +113,15 @@ export const kickCashDrawer = async (): Promise<boolean> => {
       }
     }
 
+    const cashMsg = (typeof saleTotal === 'number' && saleTotal > 0)
+      ? `Cash Drawer Opened. Return ${saleTotal.toFixed(3)} BHD to customer.`
+      : `Cash Drawer Opened.`;
+    showToast(cashMsg);
+
     return triggered;
   } catch (error) {
     console.error('Cash Drawer Error: ', error);
+    showToast('⚠️ Cash Drawer error');
   }
   return false;
 };

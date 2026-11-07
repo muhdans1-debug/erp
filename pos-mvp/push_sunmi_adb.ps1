@@ -91,3 +91,4 @@ if ($installRes -match "Success") {
 } else {
     Write-Host "`n[!] Install encountered an issue: $installRes" -ForegroundColor Red
 }
+

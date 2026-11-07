@@ -31,15 +31,40 @@ export const pushOfflineSales = async (masterIp: string): Promise<number> => {
 
     let totalSynced = 0;
 
-    // 1. Check local embedded database via db.execute
+    // 1. Check local embedded database via db.execute with bundled line items
     try {
-      const offlineSales = await db.execute("SELECT * FROM Sale WHERE status = 'OFFLINE_PENDING'");
+      const offlineSales = await db.execute(`
+        SELECT s.*, json_group_array(json_object(
+          'id', i.id, 'productId', i.productId, 'quantity', i.quantity,
+          'priceAtSale', i.priceAtSale, 'total_price', i.total_price
+        )) as items
+        FROM Sale s
+        LEFT JOIN SaleItem i ON s.id = i.saleId
+        WHERE s.status = 'OFFLINE_PENDING'
+        GROUP BY s.id
+      `);
+
       if (offlineSales && offlineSales.rows && offlineSales.rows.length > 0) {
-        for (const sale of offlineSales.rows) {
+        for (const rawSale of offlineSales.rows as any[]) {
+          // SQLite returns the grouped items as a JSON string, so we must parse it back to an array
+          let parsedItems = [];
+          try {
+            parsedItems = typeof rawSale.items === 'string'
+              ? JSON.parse(rawSale.items).filter((it: any) => it && it.id !== null)
+              : (Array.isArray(rawSale.items) ? rawSale.items : []);
+          } catch {
+            parsedItems = [];
+          }
+
+          const sale = { 
+            ...rawSale, 
+            items: parsedItems
+          };
+
           const response = await fetch(targetUrl, {
             method: 'POST',
             headers,
-            body: JSON.stringify(sale)
+            body: JSON.stringify(sale) // Now correctly includes the full line item array!
           });
           
           if (response.ok) {

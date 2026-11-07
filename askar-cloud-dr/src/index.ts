@@ -53,66 +53,42 @@ export default {
 
         for (const sale of sales) {
           const invoiceNo = sale.invoiceNo || sale.invoice_number || `INV-DR-${Date.now()}`;
-          const total = Number(sale.total || sale.totalAmount || 0);
-          const timestamp = sale.timestamp || sale.createdAt || new Date().toISOString();
           const saleId = sale.id || invoiceNo;
+          const timestamp = sale.timestamp || sale.createdAt || new Date().toISOString();
 
+          // 1. Insert Sale Header (Using the schema-compliant query we patched earlier)
           await db.execute({
             sql: `INSERT OR REPLACE INTO Sale (
               id, tenantId, invoiceNo, subtotal, total, totalAmount, paymentType, status, syncStatus, createdAt
             ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 'CLOUD_SYNCED', 'SYNCED', ?)`,
             args: [
-              saleId,
-              invoiceNo,
-              Number(sale.subtotal || total),
-              total,
-              total,
-              sale.paymentType || 'CASH',
-              timestamp
+              saleId, invoiceNo, Number(sale.subtotal || sale.total), Number(sale.total || sale.totalAmount || 0), Number(sale.total || sale.totalAmount || 0), sale.paymentType || 'CASH', timestamp
             ]
           });
 
-          // Process line items and decrement physical inventory
-          let items: any[] = [];
-          if (Array.isArray(sale.items)) {
-            items = sale.items;
-          } else if (typeof sale.items === 'string') {
-            try {
-              items = JSON.parse(sale.items);
-            } catch {
-              items = [];
-            }
-          }
+          // NEW: 2. Safely Process Line Items & Update Turso Inventory
+          const items = Array.isArray(sale.items) 
+            ? sale.items 
+            : (typeof sale.items === 'string' ? (() => { try { return JSON.parse(sale.items); } catch { return []; } })() : []);
 
           for (const item of items) {
-            const itemId = item.id || `item_${saleId}_${item.productId || Math.random().toString(36).slice(2, 8)}`;
-            const productId = item.productId || item.product_id;
-            const qty = Number(item.quantity ?? item.qty ?? 1);
-            const price = Number(item.priceAtSale ?? item.price ?? 0);
-            const itemTotal = Number(item.total_price ?? item.total ?? (price * qty));
+            const itemId = item.id || `si_${crypto.randomUUID().slice(0, 8)}`;
+            const pid = item.productId || item.id;
+            const qty = Number(item.quantity || item.qty || 1);
+            const price = Number(item.priceAtSale || item.price || 0);
 
-            if (productId) {
-              await db.execute({
-                sql: `INSERT OR REPLACE INTO SaleItem (
-                  id, tenantId, saleId, productId, quantity, priceAtSale, total_price
-                ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?)`,
-                args: [
-                  itemId,
-                  saleId,
-                  productId,
-                  qty,
-                  price,
-                  itemTotal
-                ]
-              });
+            // Persist the line item
+            await db.execute({
+              sql: `INSERT OR REPLACE INTO SaleItem (id, tenantId, saleId, productId, quantity, priceAtSale, total_price)
+                    VALUES (?, 'tenant_1', ?, ?, ?, ?, ?)`,
+              args: [itemId, saleId, pid, qty, price, price * qty]
+            });
 
-              // Decrement physical stock in master Turso database
+            // Deduct the stock quantity globally
+            if (pid) {
               await db.execute({
-                sql: `UPDATE Product 
-                      SET stockQuantity = MAX(0, COALESCE(stockQuantity, 0) - ?),
-                          updatedAt = ?
-                      WHERE id = ?`,
-                args: [qty, timestamp, productId]
+                sql: `UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?`,
+                args: [qty, timestamp, pid]
               });
             }
           }

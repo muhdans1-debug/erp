@@ -225,23 +225,27 @@ await fastify.register(fastifyWebsocket, {
   }
 });
 
-// Periodic keepalive ping to eliminate dead/zombie sockets
-const wsHeartbeatInterval = setInterval(() => {
+// NEW: WebSocket Ping/Pong Keepalive Monitor
+const heartbeatInterval = setInterval(() => {
   if (!fastify.websocketServer?.clients) return;
-  fastify.websocketServer.clients.forEach((clientSocket) => {
-    if (clientSocket.isAlive === false) {
-      clientSocket.terminate();
-      return;
+  
+  fastify.websocketServer.clients.forEach((ws) => {
+    // If the client didn't respond to the last ping, terminate the zombie connection
+    if (ws.isAlive === false) {
+      return ws.terminate();
     }
-    clientSocket.isAlive = false;
+    
+    // Mark as false and send a new ping
+    ws.isAlive = false;
     try {
-      clientSocket.ping();
+      ws.ping();
     } catch {}
   });
 }, 30000);
 
+// Ensure the interval is destroyed if the Fastify server shuts down
 fastify.addHook('onClose', (_instance, done) => {
-  clearInterval(wsHeartbeatInterval);
+  clearInterval(heartbeatInterval);
   done();
 });
 

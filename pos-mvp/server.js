@@ -383,7 +383,7 @@ fastify.post('/api/webhooks/benefit-pay', handleBenefitPayWebhook);
 fastify.post('/webhooks/benefit-pay', handleBenefitPayWebhook);
 fastify.post('/api/webhook/benefit-pay', handleBenefitPayWebhook);
 
-// Serve compiled React frontend if dist exists
+// 1. Serve POS Frontend on '/' and '/pos/'
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   await fastify.register(fastifyStatic, {
@@ -395,13 +395,41 @@ if (fs.existsSync(distPath)) {
     immutable: true
   });
 
-  fastify.setNotFoundHandler((request, reply) => {
-    if (request.raw.url && !request.raw.url.startsWith('/api')) {
-      return reply.sendFile('index.html');
-    }
-    reply.status(404).send({ message: `Route ${request.method}:${request.url} not found`, error: 'Not Found', statusCode: 404 });
+  await fastify.register(fastifyStatic, {
+    root: distPath,
+    prefix: '/pos/',
+    decorateReply: false
   });
 }
+
+// 2. Serve Admin Desktop Frontend on '/admin/'
+const adminDistPath = path.resolve(__dirname, '../askar-admin-dashboard/dist');
+if (fs.existsSync(adminDistPath)) {
+  await fastify.register(fastifyStatic, {
+    root: adminDistPath,
+    prefix: '/admin/',
+    decorateReply: false
+  });
+}
+
+// 3. Client-Side Routing Fallbacks (Redirect naked path to trailing slash)
+fastify.get('/pos', (req, reply) => reply.redirect('/pos/'));
+fastify.get('/admin', (req, reply) => reply.redirect('/admin/'));
+
+fastify.setNotFoundHandler((request, reply) => {
+  const url = request.raw.url || '';
+  if (url.startsWith('/admin')) {
+    if (fs.existsSync(adminDistPath)) {
+      return reply.sendFile('index.html', adminDistPath);
+    }
+  }
+  if (!url.startsWith('/api') && !url.startsWith('/ws')) {
+    if (fs.existsSync(distPath)) {
+      return reply.sendFile('index.html', distPath);
+    }
+  }
+  reply.status(404).send({ message: `Route ${request.method}:${request.url} not found`, error: 'Not Found', statusCode: 404 });
+});
 
 // Zero-Heap Hardware Photo Uploads Directory (Feitian F100 PIM)
 const uploadsStaticDir = path.join(process.cwd(), 'public', 'uploads');

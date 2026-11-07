@@ -325,9 +325,33 @@ fastify.get('/api/bridge/status', async (_request, reply) => {
 // 🇧🇭 Bahrain BenefitPay Fawri+ Webhook Endpoint
 // Intercepts instant payment callbacks from Bahrain FinTech Bay / BenefitPay Gateway
 const handleBenefitPayWebhook = async (request, reply) => {
-  const { invoiceNo, amount, status, referenceNumber, signature } = request.body || {};
+  // 1. Enforce Cryptographic Signature Verification
+  const signature = request.headers['x-benefit-signature'];
+  const secret = process.env.BENEFITPAY_SECRET;
 
-  // In production, verify the cryptographic signature from Bahrain FinTech Bay here to prevent spoofing
+  if (!signature || !secret) {
+    request.log.error('BenefitPay Webhook Rejected: Missing signature or secret keys.');
+    return reply.code(403).send({ error: 'Unauthorized' });
+  }
+
+  // Generate the expected hash from the raw request body
+  const payloadString = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+  const expectedHash = crypto
+    .createHmac('sha256', secret)
+    .update(payloadString)
+    .digest('hex');
+
+  const sigBuffer = Buffer.from(signature);
+  const hashBuffer = Buffer.from(expectedHash);
+
+  // Prevent timing attacks while comparing the hashes
+  if (sigBuffer.length !== hashBuffer.length || !crypto.timingSafeEqual(sigBuffer, hashBuffer)) {
+    request.log.warn(`Spoofed BenefitPay Webhook Blocked for IP: ${request.ip}`);
+    return reply.code(403).send({ error: 'Invalid webhook signature' });
+  }
+
+  // 2. Process Verified Payment Data
+  const { invoiceNo, amount, status, referenceNumber } = request.body || {};
   const isSuccess = status === 'SUCCESS' || status === 'PAID' || status === 'COMPLETED' || status === 'OK';
 
   if (isSuccess) {

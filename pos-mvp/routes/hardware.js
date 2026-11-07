@@ -40,9 +40,9 @@ const resolveNfcTagDetails = async (uid) => {
     customer = allCustomers.find(c => c.id === nfcCard.customer_id);
   }
   if (!customer) {
-    // Check fallback Customer.cardUid or Customer.nfc_card_id
+    // Check fallback Customer.nfcCardId, cardUid, or nfc_card_id
     customer = allCustomers.find((c) => {
-      const cardField = c.nfc_card_id || c.cardUid;
+      const cardField = c.nfcCardId || c.cardUid || c.nfc_card_id;
       if (!cardField) return false;
       const cUid = cardField.trim().toUpperCase().replace(/^#+|#+$/g, '');
       const cUidNoColon = cUid.replace(/[:\-]/g, '');
@@ -452,8 +452,8 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
       await db.orm.Customer.where({ id: customer_id }).update({ cardUid: cleanTag });
       try {
         await db.execute({
-          sql: 'UPDATE Customer SET nfc_card_id = ?, cardUid = ? WHERE id = ?',
-          args: [cleanTag, cleanTag, customer_id]
+          sql: 'UPDATE Customer SET nfc_card_id = ?, cardUid = ?, nfcCardId = ? WHERE id = ?',
+          args: [cleanTag, cleanTag, cleanTag, customer_id]
         });
       } catch { }
 
@@ -507,8 +507,8 @@ fastify.post('/api/nfc/unlink', async (request, reply) => {
 
     try {
       await db.execute({
-        sql: `UPDATE Customer SET cardUid = NULL, nfc_card_id = NULL WHERE UPPER(cardUid) = ? OR UPPER(COALESCE(nfc_card_id, '')) = ? OR REPLACE(UPPER(cardUid), ':', '') = ?`,
-        args: [cleanTag, cleanTag, cleanTag.replace(/:/g, '')]
+        sql: `UPDATE Customer SET cardUid = NULL, nfc_card_id = NULL, nfcCardId = NULL WHERE UPPER(cardUid) = ? OR UPPER(COALESCE(nfc_card_id, '')) = ? OR UPPER(COALESCE(nfcCardId, '')) = ? OR REPLACE(UPPER(cardUid), ':', '') = ?`,
+        args: [cleanTag, cleanTag, cleanTag, cleanTag.replace(/:/g, '')]
       });
       await db.execute({
         sql: `DELETE FROM NfcCard WHERE UPPER(tag_id) = ? OR REPLACE(UPPER(tag_id), ':', '') = ?`,
@@ -519,8 +519,8 @@ fastify.post('/api/nfc/unlink', async (request, reply) => {
     if (db) {
       try {
         await db.execute({
-          sql: `UPDATE Customer SET cardUid = NULL WHERE UPPER(cardUid) = ? OR REPLACE(UPPER(cardUid), ':', '') = ?`,
-          args: [cleanTag, cleanTag.replace(/:/g, '')]
+          sql: `UPDATE Customer SET cardUid = NULL, nfc_card_id = NULL, nfcCardId = NULL WHERE UPPER(cardUid) = ? OR UPPER(COALESCE(nfc_card_id, '')) = ? OR UPPER(COALESCE(nfcCardId, '')) = ? OR REPLACE(UPPER(cardUid), ':', '') = ?`,
+          args: [cleanTag, cleanTag, cleanTag, cleanTag.replace(/:/g, '')]
         });
         await db.execute({
           sql: `DELETE FROM NfcCard WHERE UPPER(tag_id) = ? OR REPLACE(UPPER(tag_id), ':', '') = ?`,

@@ -50,20 +50,26 @@ CREATE TABLE IF NOT EXISTS "Customer" (
   "cpr" TEXT,
   "batchNo" TEXT,
   "description" TEXT,
+  "nfcCardId" TEXT UNIQUE,
   "cardUid" TEXT UNIQUE,
+  "nfc_card_id" TEXT,
   "createdAt" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  "updatedAt" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   "is_active" INTEGER NOT NULL DEFAULT 1,
   "isActive" INTEGER NOT NULL DEFAULT 1,
   "mess_id" TEXT,
   "balance" REAL DEFAULT 0.0,
+  "khataPin" TEXT DEFAULT '0000',
   "khata_pin" TEXT DEFAULT '0000',
   "pin" TEXT DEFAULT '1234',
-  "access_token" TEXT UNIQUE
+  "access_token" TEXT UNIQUE,
+  "credit_limit" REAL DEFAULT 30.0
 );
 
 CREATE INDEX IF NOT EXISTS "idx_customer_phone" ON "Customer" ("phone");
 CREATE INDEX IF NOT EXISTS "idx_customer_cpr" ON "Customer" ("cpr");
 CREATE INDEX IF NOT EXISTS "idx_customer_card" ON "Customer" ("cardUid");
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_customer_nfccardid" ON "Customer" ("nfcCardId");
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_customer_access_token" ON "Customer" ("access_token");
 
 -- Compatibility VIEW for legacy queries referencing KhataCustomer
@@ -74,9 +80,9 @@ SELECT
   name,
   balance,
   phone,
-  COALESCE(pin, khata_pin, '1234') AS pin,
+  COALESCE(khataPin, khata_pin, pin, '1234') AS pin,
   mess_id,
-  createdAt AS updatedAt
+  COALESCE(updatedAt, createdAt) AS updatedAt
 FROM Customer;
 
 CREATE TABLE IF NOT EXISTS "KhataLedger" (

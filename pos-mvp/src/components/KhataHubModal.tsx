@@ -545,7 +545,7 @@ function SettleBalanceView({
           ]
         });
         await db.execute({
-          sql: `UPDATE Customer SET currentBalance = ? WHERE id = ?`,
+          sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
           args: [newBal, selectedCustomer.id]
         });
       } catch (localDbErr) {

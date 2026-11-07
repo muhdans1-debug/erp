@@ -785,7 +785,7 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
     let customerRow = null;
     try {
       const tRes = await db.execute({
-        sql: 'SELECT id, name, khata_pin FROM Customer WHERE id = ?',
+        sql: 'SELECT id, name, khata_pin, khataPin FROM Customer WHERE id = ?',
         args: [targetId]
       });
       if (tRes.rows.length > 0) customerRow = tRes.rows[0];
@@ -795,7 +795,7 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
       return reply.status(404).send({ success: false, error: 'Customer not found' });
     }
 
-    const actualPin = String(customerRow.khata_pin || '0000').trim();
+    const actualPin = String(customerRow.khataPin || customerRow.khata_pin || '0000').trim();
     const inputPin = String(pin).trim();
 
     if (inputPin !== actualPin) {
@@ -831,8 +831,8 @@ fastify.post('/api/customers/:id/pin', async (request, reply) => {
 
     try {
       await db.execute({
-        sql: 'UPDATE Customer SET khata_pin = ? WHERE id = ?',
-        args: [cleanPin, id]
+        sql: 'UPDATE Customer SET khata_pin = ?, khataPin = ? WHERE id = ?',
+        args: [cleanPin, cleanPin, id]
       });
     } catch { }
 
@@ -879,7 +879,9 @@ fastify.post('/api/customers', async (request, reply) => {
       cpr: cpr && cpr.trim() ? cpr.trim() : null,
       batchNo: batchNo && batchNo.trim() ? batchNo.trim() : null,
       description: description && description.trim() ? description.trim() : null,
+      nfcCardId: cleanCardUid,
       cardUid: cleanCardUid,
+      khataPin: '0000',
       createdAt: new Date(),
       tenantId: 'tenant_askar_01',
       is_active: 1,
@@ -893,8 +895,8 @@ fastify.post('/api/customers', async (request, reply) => {
     await db.orm.Customer.create(customerRecord);
     try {
       await db.execute({
-        sql: 'UPDATE Customer SET balance = 0.0, credit_limit = ?, khata_pin = "0000", pin = "1234", access_token = ?, nfc_card_id = ?, cardUid = ? WHERE id = ?',
-        args: [Number(creditLimit || 30.0), id, cleanCardUid, cleanCardUid, id]
+        sql: 'UPDATE Customer SET balance = 0.0, credit_limit = ?, khata_pin = "0000", pin = "1234", khataPin = "0000", access_token = ?, nfc_card_id = ?, cardUid = ?, nfcCardId = ? WHERE id = ?',
+        args: [Number(creditLimit || 30.0), id, cleanCardUid, cleanCardUid, cleanCardUid, id]
       });
     } catch (e) {
       console.warn('Customer khata init notice:', e?.message);
@@ -961,8 +963,8 @@ const handleUpdateCustomer = async (request, reply) => {
       const cleanUid = cardUid && cardUid.trim() ? cardUid.trim().toUpperCase() : null;
       try {
         await db.execute({
-          sql: 'UPDATE Customer SET cardUid = ?, nfc_card_id = ? WHERE id = ?',
-          args: [cleanUid, cleanUid, id]
+          sql: 'UPDATE Customer SET cardUid = ?, nfc_card_id = ?, nfcCardId = ? WHERE id = ?',
+          args: [cleanUid, cleanUid, cleanUid, id]
         });
       } catch {}
     }
@@ -1117,8 +1119,8 @@ fastify.post('/api/customers/:id/bind-card', async (request, reply) => {
     await db.orm.Customer.where({ id }).update({ cardUid: cleanCardUid });
     try {
       await db.execute({
-        sql: 'UPDATE Customer SET cardUid = ?, nfc_card_id = ? WHERE id = ?',
-        args: [cleanCardUid, cleanCardUid, id]
+        sql: 'UPDATE Customer SET cardUid = ?, nfc_card_id = ?, nfcCardId = ? WHERE id = ?',
+        args: [cleanCardUid, cleanCardUid, cleanCardUid, id]
       });
     } catch {}
     const updated = await getCustomerWithBalanceById(id);
@@ -1358,5 +1360,39 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
 
   fastify.post('/api/khata/charge', handleKhataCharge);
   fastify.post('/khata/charge', handleKhataCharge);
+
+  // --------------------------------------------------------------------
+  // Canonical NFC Khata Lookup endpoint (Single source of truth)
+  // --------------------------------------------------------------------
+  fastify.get('/api/khata/nfc/:uid', async (request, reply) => {
+    try {
+      const { uid } = request.params;
+      const scannedUid = (uid || '').trim().toUpperCase();
+      const cleanHex = scannedUid.replace(/[:\-]/g, '');
+
+      const result = await db.execute({
+        sql: `SELECT id, name, balance, isActive, is_active, nfcCardId, cardUid, phone, credit_limit, mess_id 
+              FROM Customer 
+              WHERE UPPER(COALESCE(nfcCardId, '')) = ? 
+                 OR UPPER(COALESCE(cardUid, '')) = ? 
+                 OR UPPER(COALESCE(nfc_card_id, '')) = ?
+                 OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
+                 OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
+                 OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
+              LIMIT 1`,
+        args: [scannedUid, scannedUid, scannedUid, cleanHex, cleanHex, cleanHex]
+      });
+
+      if (!result.rows || result.rows.length === 0) {
+        return reply.code(404).send({ success: false, error: 'Unrecognized NFC Card. Please register this card to a Khata account.' });
+      }
+
+      const customer = result.rows[0];
+      return reply.send({ success: true, customer });
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ success: false, error: 'Failed to query NFC customer' });
+    }
+  });
 
 }

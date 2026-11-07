@@ -163,28 +163,32 @@ model PurchaseOrder {
 // 5. Customer Ledger (Khata Hub) & NFC Wallets
 // --------------------------------------------------------------------
 model Customer {
-  id          String        @id
-  tenantId    String        @default("tenant_1")
-  name        String
-  phone       String?
-  cpr         String?       // Bahrain CPR
-  batchNo     String?
-  description String?
-  cardUid     String?       @unique
-  pin         String?       @default("1234")
-  khata_pin   String?       @default("1234")
+  id           String        @id @default(uuid())
+  tenantId     String        @default("tenant_1")
+  name         String
+  phone        String?
+  cpr          String?       // Bahrain CPR
+  batchNo      String?
+  description  String?
+  nfcCardId    String?       @unique // Replaces both cardUid and nfc_card_id
+  cardUid      String?       // Deprecated alias for legacy readers
+  nfc_card_id  String?       // Deprecated alias for legacy readers
+  khataPin     String?       // Replaces pin and khata_pin
+  khata_pin    String?       @default("1234")
+  pin          String?       @default("1234")
   access_token String?
-  balance     Float         @default(0.0)
-  credit_limit Float        @default(30.0)
-  createdAt   DateTime?     @default(now())
-  is_active   Int           @default(1)
-  isActive    Int           @default(1)
-  mess_id     String?
-  messGroup   MessGroup?    @relation(fields: [mess_id], references: [id])
+  balance      Float         @default(0.0) // Single source of truth for Khata balance
+  credit_limit Float         @default(30.0)
+  createdAt    DateTime?     @default(now())
+  updatedAt    DateTime?     @updatedAt
+  is_active    Int           @default(1)
+  isActive     Int           @default(1)
+  mess_id      String?
+  messGroup    MessGroup?    @relation(fields: [mess_id], references: [id])
 
-  Sale        Sale[]
-  ledger      KhataLedger[]
-  nfcCards    NfcCard[]
+  Sale         Sale[]
+  ledger       KhataLedger[]
+  nfcCards     NfcCard[]
 }
 
 model KhataLedger {

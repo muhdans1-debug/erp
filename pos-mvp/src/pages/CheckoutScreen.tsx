@@ -40,6 +40,7 @@ import { Product, Customer, CartTab } from '../types/pos';
 export type { Product, Customer, CartTab };
 import { useCartStore, calculateCartTotals } from '../store/cartStore';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
+import { useNfcReader } from '../hooks/useNfcReader';
 import { useCheckoutProcessor } from '../hooks/useCheckoutProcessor';
 import { QuickProductGrid } from '../components/QuickProductGrid';
 import { db } from '../db.ts';
@@ -907,6 +908,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       showToast("❌ Could not reach backend server.", 'error');
     }
   };
+
+  // Hardware NFC Reader Hook with AbortController lifecycle guards
+  const handleKhataLookup = useCallback((cleanUid: string) => {
+    console.log("Scanned Khata Card:", cleanUid);
+    fetchCustomerByCard(cleanUid);
+    stopNfcScan();
+  }, [apiBase]);
+
+  const { startScan: startNfcScan, stopScan: stopNfcScan, isScanning: isNfcReaderScanning, nfcError } = useNfcReader(handleKhataLookup);
 
   // Bind a scanned UID to a customer
   const handleBindCard = async (customerId: string, uidToBind: string) => {
@@ -2757,6 +2767,25 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     </span>
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Pay with Khata (NFC Reader trigger) */}
+            {!customer && (
+              <div className="px-2.5 pb-2.5">
+                <button
+                  type="button"
+                  onClick={isNfcReaderScanning ? stopNfcScan : startNfcScan}
+                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs text-white shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${
+                    isNfcReaderScanning
+                      ? 'bg-emerald-600 animate-pulse ring-2 ring-emerald-400'
+                      : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
+                  }`}
+                  title="Tap NFC Mifare Card to load Khata customer"
+                >
+                  <span>{isNfcReaderScanning ? '📡 Tap Khata Card Now...' : '💳 Pay with Khata (NFC)'}</span>
+                </button>
+                {nfcError && <div className="text-red-500 text-[11px] font-bold mt-1 text-center">{nfcError}</div>}
               </div>
             )}
           </div>

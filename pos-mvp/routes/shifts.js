@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
+import { managerAuth } from '../middleware/auth.js';
 
 export default async function shiftRoutes(fastify, options) {
   // --- Shift Management, Blind Reconciliation, Cashier Login & Z-Reports ---
@@ -65,24 +66,16 @@ fastify.post('/api/employees/verify-pin', async (request, reply) => {
 });
 
 // Employee Management: List all employees (Manager Back-Office)
-fastify.get('/api/employees', async (request, reply) => {
+fastify.get('/api/employees', { preHandler: managerAuth }, async (request, reply) => {
   try {
-    let rows = [];
-    try {
-      rows = await queryLocalDevDb('SELECT id, tenantId, name, pin_code, role, is_active, createdAt FROM Employee ORDER BY name ASC');
-    } catch { }
-
-    if ((!rows || rows.length === 0) && db) {
-      try {
-        const res = await db.execute('SELECT id, tenantId, name, pin_code, role, is_active, createdAt FROM Employee ORDER BY name ASC');
-        rows = res.rows || [];
-      } catch { }
-    }
-
+    // pin_code is strictly removed from the SELECT statement to prevent network leakage
+    let rows = await queryLocalDevDb(
+      'SELECT id, tenantId, name, role, is_active, createdAt FROM Employee ORDER BY name ASC'
+    );
     return { success: true, employees: rows };
   } catch (err) {
-    fastify.log.error(err);
-    return reply.status(500).send({ error: 'Failed to fetch employees' });
+    request.log.error(err);
+    return reply.code(500).send({ error: 'Database error' });
   }
 });
 

@@ -14,10 +14,23 @@ export interface BackupResult {
   message: string;
 }
 
-export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', enabled: boolean = true) {
-  const [syncStatus, setSyncStatus] = useState<SyncTrafficStatus>(() => {
-    return navigator.onLine ? 'ONLINE' : 'OFFLINE';
-  });
+const getResolvedDefaultApiBase = (): string => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('master_server_url') || localStorage.getItem('server_ip');
+    if (custom && custom.trim()) {
+      return custom.startsWith('http') ? custom.replace(/\/+$/, '') : `http://${custom.trim()}:3000`;
+    }
+    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+    if (isAndroid) return 'http://192.168.8.7:3000';
+    const host = window.location.hostname || 'localhost';
+    return `http://${host}:3000`;
+  }
+  return 'http://192.168.8.7:3000';
+};
+
+export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = true) {
+  const apiBase = apiBaseProp && apiBaseProp !== 'http://localhost:3000' ? apiBaseProp : getResolvedDefaultApiBase();
+  const [syncStatus, setSyncStatus] = useState<SyncTrafficStatus>('ONLINE');
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(() => {
     const saved = localStorage.getItem('last_online_timestamp');
     return saved ? new Date(Number(saved)) : new Date();
@@ -68,10 +81,12 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
       }
 
       // 2. Secondary: If cloud handshake timed out or failed, verify if Local Wi-Fi / Master Server is reachable
+      const isAndroidClient = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
       const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
       const savedServerUrl = typeof window !== 'undefined' ? (localStorage.getItem('master_server_url') || localStorage.getItem('server_ip')) : null;
       const normalizedSaved = savedServerUrl ? (savedServerUrl.startsWith('http') ? savedServerUrl : `http://${savedServerUrl}:3000`) : null;
       const checkCandidates = [
+        isAndroidClient ? 'http://192.168.8.7:3000' : null,
         apiBase,
         normalizedSaved,
         'http://192.168.8.7:3000',
@@ -83,10 +98,18 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
 
       for (const target of checkCandidates) {
         try {
-          const pingRes = await fetch(`${target}/api/sync/status`, {
-            signal: AbortSignal.timeout(1800),
-          });
-          if (pingRes.ok) {
+          // Check lightweight health endpoint first (0ms response time), fallback to sync status
+          let pingRes = await fetch(`${target}/api/health`, {
+            signal: AbortSignal.timeout(1500),
+          }).catch(() => null);
+
+          if (!pingRes || !pingRes.ok) {
+            pingRes = await fetch(`${target}/api/sync/status`, {
+              signal: AbortSignal.timeout(1500),
+            }).catch(() => null);
+          }
+
+          if (pingRes && pingRes.ok) {
             const now = new Date();
             setSyncStatus('ONLINE');
             setLastSyncTime(now);
@@ -118,21 +141,16 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
     if (!enabled) return;
     performSync();
 
-    // Capacitor Network listener with 8s debounce to prevent Wi-Fi signal flapping storms on Android
+    // Capacitor Network listener with 4s debounce to prevent Wi-Fi signal flapping storms on Android
     let networkListenerHandle: any = null;
     let debounceTimer: any = null;
 
     try {
-      Network.addListener('networkStatusChange', (status) => {
+      Network.addListener('networkStatusChange', () => {
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
-          if (status.connected) {
-            console.log('🌐 [Network] Connection stable. Triggering auto-sync...');
-            performSync();
-          } else {
-            evaluateOfflineStatus();
-          }
-        }, 8000);
+          performSync();
+        }, 2500);
       }).then((handle) => {
         networkListenerHandle = handle;
       }).catch(() => { });
@@ -140,35 +158,28 @@ export function useDisasterRecovery(apiBase: string = 'http://localhost:3000', e
       // Ignore if not supported
     }
 
-    // Browser online/offline event listeners
-    const handleOnline = () => {
+    // Browser online/offline event listeners — always verify via real endpoint probe before declaring offline
+    const handleNetworkChange = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        console.log('🌐 [Browser] Online event detected.');
         performSync();
-      }, 5000);
-    };
-    const handleOffline = () => {
-      console.log('🔌 [Browser] Offline event detected.');
-      evaluateOfflineStatus();
+      }, 2500);
     };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleNetworkChange);
+    window.addEventListener('offline', handleNetworkChange);
 
-    // 2. The Offline Auto-Retry Loop — 15 minutes on Sunmi/Android, 5 minutes on laptop
-    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-    const retryIntervalMs = isAndroid ? 15 * 60 * 1000 : 5 * 60 * 1000;
+    // 2. Continuous Health & Sync Loop — 20 seconds for prompt auto-recovery
+    const retryIntervalMs = 20 * 1000;
     const intervalId = setInterval(() => {
-      console.log('⏱️ [Disaster Recovery] Background retry loop running...');
       performSync();
     }, retryIntervalMs);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       clearInterval(intervalId);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleNetworkChange);
+      window.removeEventListener('offline', handleNetworkChange);
       if (networkListenerHandle) {
         Promise.resolve(networkListenerHandle).then((h) => {
           if (h && typeof h.remove === 'function') {

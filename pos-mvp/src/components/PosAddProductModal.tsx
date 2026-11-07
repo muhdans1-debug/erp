@@ -140,8 +140,9 @@ export default function PosAddProductModal({
 
   // Network candidates resolution (prevents offline or IP mismatch failures)
   const getCandidateUrls = () => {
+    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
     const list = [
-      apiBase,
+      apiBase && apiBase !== 'http://localhost:3000' ? apiBase : (isAndroid ? 'http://192.168.8.7:3000' : apiBase),
       typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
       typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
       'http://192.168.8.7:3000',
@@ -281,6 +282,18 @@ export default function PosAddProductModal({
         ...cachedList.filter((p: any) => p && p.id !== payload.id && (!payload.barcode || p.barcode !== payload.barcode))
       ];
       localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(updated));
+
+      // Also update general catalog cache
+      const catRaw = localStorage.getItem('askar_catalog_cache');
+      if (catRaw) {
+        const catParsed = JSON.parse(catRaw);
+        const list = Array.isArray(catParsed) ? catParsed : (catParsed?.data || []);
+        const nextList = [
+          { ...payload, price: salePrice, sellingPrice: salePrice },
+          ...list.filter((p: any) => p && p.id !== payload.id && (!payload.barcode || p.barcode !== payload.barcode))
+        ];
+        localStorage.setItem('askar_catalog_cache', JSON.stringify({ data: nextList, ts: Date.now() }));
+      }
     } catch {}
 
     const savedProduct = {

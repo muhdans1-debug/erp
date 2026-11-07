@@ -225,20 +225,24 @@ await fastify.register(fastifyWebsocket, {
   }
 });
 
-// NEW: WebSocket Ping/Pong Keepalive Monitor
+// WebSocket Keepalive Monitor: Graceful keep-alive without aggressively killing local POS hardware
 const heartbeatInterval = setInterval(() => {
   if (!fastify.websocketServer?.clients) return;
   
   fastify.websocketServer.clients.forEach((ws) => {
-    // If the client didn't respond to the last ping, terminate the zombie connection
-    if (ws.isAlive === false) {
+    if (ws.readyState !== 1) return; // Only ping OPEN sockets
+    
+    // Only terminate after 5 consecutive missed heartbeats (2.5 minutes) of complete inactivity
+    if (ws.missedPings && ws.missedPings >= 5) {
+      fastify.log.warn('Terminating inactive WebSocket client after 5 missed heartbeats');
       return ws.terminate();
     }
     
-    // Mark as false and send a new ping
-    ws.isAlive = false;
+    ws.missedPings = (ws.missedPings || 0) + 1;
     try {
       ws.ping();
+      // Also send a lightweight JSON heartbeat for clients whose WebView handles message events better than raw control frames
+      ws.send(JSON.stringify({ type: 'PING' }));
     } catch {}
   });
 }, 30000);
@@ -257,7 +261,11 @@ fastify.register(async function (fastifyWsInstance) {
   fastifyWsInstance.get('/ws', { websocket: true }, (connection, req) => {
     const ws = connection?.socket || connection;
     ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
+    ws.missedPings = 0;
+    ws.on('pong', () => { 
+      ws.isAlive = true; 
+      ws.missedPings = 0;
+    });
     const remoteIp = req.socket?.remoteAddress || 'unknown';
     fastify.log.info(`🔌 [Unified WS Bus] Hardware/client connected from IP: ${remoteIp}`);
 
@@ -289,6 +297,7 @@ fastify.register(async function (fastifyWsInstance) {
     }
 
     ws.on('message', (message) => {
+      ws.missedPings = 0;
       const msgString = message.toString();
       let event;
 
@@ -296,6 +305,10 @@ fastify.register(async function (fastifyWsInstance) {
         event = JSON.parse(msgString);
       } catch (err) {
         return; // Ignore malformed payloads
+      }
+
+      if (event?.type === 'PONG') {
+        return; // Heartbeat handled
       }
 
       // NEW: Intercept and block unauthorized hardware actuation
@@ -1049,12 +1062,31 @@ fastify.route({
   url: '/api/db/sync',
   handler: async (request, reply) => {
     try {
-      const syncRes = await tursoDb.sync();
-      await syncKhataBalancesToTurso();
+      // Non-blocking for POS terminals: allow up to 3000ms for quick edge sync,
+      // but return success immediately if cloud WAN latency is higher, continuing in background.
+      let syncResult = null;
+      const syncTask = (async () => {
+        const res = await tursoDb.sync();
+        await syncKhataBalancesToTurso();
+        return res;
+      })();
+
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('BACKGROUND_SYNC'), 2800));
+      const raceResult = await Promise.race([syncTask, timeoutPromise]);
+
+      if (raceResult === 'BACKGROUND_SYNC') {
+        syncTask.catch((err) => fastify.log.warn('Background Turso sync notice: ' + (err?.message || err)));
+        return {
+          success: true,
+          message: 'Local embedded replica ready. Turso cloud sync processing in background.',
+          syncResult: { status: 'background' }
+        };
+      }
+
       return {
         success: true,
         message: 'Local embedded replica synced to Turso cloud successfully.',
-        syncResult: syncRes
+        syncResult: raceResult
       };
     } catch (error) {
       fastify.log.warn('Turso sync offline fallback: ' + (error?.message || error));

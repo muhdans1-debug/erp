@@ -50,29 +50,75 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
           }
         };
 
-        ws.onclose = () => {
-          if (isMounted) {
+        ws.onclose = async () => {
+          if (!isMounted) return;
+
+          // Before declaring server offline, probe local HTTP health
+          let httpHealthy = false;
+          try {
+            const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
+              signal: AbortSignal.timeout(2000),
+            });
+            if (probe.ok) httpHealthy = true;
+          } catch {}
+
+          if (httpHealthy) {
+            setIsServerOnline(true);
+            setShowDrPrompt(false);
+            if (disconnectTimer.current) {
+              clearTimeout(disconnectTimer.current);
+              disconnectTimer.current = null;
+            }
+          } else {
             setIsServerOnline(false);
 
-            // If disconnected for 60 seconds without reconnection, trigger DR prompt
+            // If disconnected for 60 seconds without reconnection AND HTTP is down, trigger DR prompt
             if (!disconnectTimer.current) {
-              disconnectTimer.current = setTimeout(() => {
-                if (isMounted) setShowDrPrompt(true);
+              disconnectTimer.current = setTimeout(async () => {
+                if (!isMounted) return;
+                try {
+                  const check = await fetch(`http://${cleanIp}:3000/api/health`, {
+                    signal: AbortSignal.timeout(2000),
+                  });
+                  if (check.ok) {
+                    setIsServerOnline(true);
+                    setShowDrPrompt(false);
+                    return;
+                  }
+                } catch {}
+                setShowDrPrompt(true);
               }, 60000);
             }
-
-            // Auto-reconnect after 5 seconds without freezing the UI
-            reconnectTimeout = setTimeout(connectWs, 5000);
           }
+
+          // Auto-reconnect after 5 seconds without freezing the UI
+          reconnectTimeout = setTimeout(connectWs, 5000);
         };
 
-        ws.onerror = () => {
-          if (isMounted) setIsServerOnline(false);
+        ws.onerror = async () => {
+          if (!isMounted) return;
+          try {
+            const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
+              signal: AbortSignal.timeout(2000),
+            });
+            if (probe.ok) {
+              setIsServerOnline(true);
+              setShowDrPrompt(false);
+              return;
+            }
+          } catch {}
+          setIsServerOnline(false);
         };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
+            if (data.type === 'PING') {
+              try {
+                ws.send(JSON.stringify({ type: 'PONG' }));
+              } catch {}
+              return;
+            }
             if (data.type === 'SALE_COMPLETED') {
               console.log('Remote sale synced:', data.payload);
             }
@@ -122,6 +168,24 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
       }
     }, 10000);
 
+    // 2b. Background HTTP Heartbeat (15 seconds) to ensure POS never shows false offline alerts
+    const httpHealthInterval = setInterval(async () => {
+      if (!isMounted) return;
+      try {
+        const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
+          signal: AbortSignal.timeout(2500)
+        });
+        if (probe.ok) {
+          setIsServerOnline(true);
+          setShowDrPrompt(false);
+          if (disconnectTimer.current) {
+            clearTimeout(disconnectTimer.current);
+            disconnectTimer.current = null;
+          }
+        }
+      } catch {}
+    }, 15000);
+
     // 3. Cleanup on unmount
     return () => {
       isMounted = false;
@@ -135,6 +199,7 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
         wsRef.current = null;
       }
       clearInterval(syncInterval);
+      clearInterval(httpHealthInterval);
     };
   }, [cleanIp, isCloudModeActive]);
 

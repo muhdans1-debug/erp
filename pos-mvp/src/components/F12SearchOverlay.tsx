@@ -41,8 +41,9 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
       return;
     }
     const timer = setTimeout(async () => {
+      const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
       const candidates = [
-        apiBase,
+        apiBase && apiBase !== 'http://localhost:3000' ? apiBase : (isAndroid ? 'http://192.168.8.7:3000' : apiBase),
         typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
         typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
         'http://192.168.8.7:3000',
@@ -52,7 +53,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
       for (const base of candidates) {
         try {
           const res = await fetch(`${base}/api/products/search?q=${encodeURIComponent(q)}`, {
-            signal: AbortSignal.timeout(1800)
+            signal: AbortSignal.timeout(3000)
           });
           if (res.ok) {
             const data = await res.json();
@@ -66,7 +67,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
                 category: p.category,
                 isScaleItem: Boolean(p.is_weighed_item),
                 vatRate: Number(p.vatRate || 0),
-                stockQuantity: Number(p.stockQuantity || 0)
+                stockQuantity: Number(p.stockQuantity !== undefined ? p.stockQuantity : 100)
               })));
               break;
             }

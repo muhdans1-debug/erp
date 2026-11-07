@@ -39,7 +39,18 @@ export const getCachedProducts = (): any[] => {
   if (!isBrowser) return [];
   try {
     const raw = localStorage.getItem('askar_local_db_cache_Product');
-    return raw ? JSON.parse(raw) : [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+    // Fallback to general catalog cache if present
+    const catRaw = localStorage.getItem('askar_catalog_cache');
+    if (catRaw) {
+      const parsedCat = JSON.parse(catRaw);
+      const data = Array.isArray(parsedCat) ? parsedCat : parsedCat?.data;
+      if (Array.isArray(data) && data.length > 0) return data;
+    }
+    return [];
   } catch {
     return [];
   }
@@ -206,8 +217,9 @@ export const db: LibsqlDatabase = {
       return await nativeNodeClient.sync();
     }
 
-    const host = (isBrowser && window.location.hostname) || 'localhost';
-    const masterBase = customBase || (isBrowser && localStorage.getItem('master_server_url')) || `http://${host}:3000`;
+    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+    const host = (isBrowser && window.location.hostname) || (isAndroid ? '192.168.8.7' : 'localhost');
+    const masterBase = customBase || (isBrowser && localStorage.getItem('master_server_url')) || (isAndroid ? 'http://192.168.8.7:3000' : `http://${host}:3000`);
     const endpoints = [
       masterBase,
       'http://192.168.8.7:3000',
@@ -223,7 +235,7 @@ export const db: LibsqlDatabase = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(6000),
         });
         if (res.ok) {
           const data = await res.json();
@@ -237,6 +249,20 @@ export const db: LibsqlDatabase = {
       } catch {
         // try next endpoint candidate
       }
+    }
+
+    // Fallback: Check if server is alive via /api/health
+    for (const base of endpoints) {
+      try {
+        const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2500) });
+        if (res.ok) {
+          return {
+            success: true,
+            message: 'Server online. Local embedded database active.',
+            offline: false
+          };
+        }
+      } catch {}
     }
 
     console.log('Device offline. Sale saved locally and will sync when Wi-Fi returns.');

@@ -70,31 +70,31 @@ export default function SyncTrafficLight({
       >
         {status === 'ONLINE' && (
           <>
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <Cloud size={15} className="text-emerald-600" />
-            <span className="hidden md:inline font-mono text-[11px]">Synced</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+            <Cloud size={15} className="text-emerald-600 shrink-0" />
+            <span className="font-mono text-[11px] whitespace-nowrap">Synced</span>
           </>
         )}
 
         {status === 'OFFLINE' && (
           <>
-            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-            <CloudOff size={15} className="text-rose-600" />
-            <span className="hidden md:inline font-mono text-[11px]">Offline</span>
+            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+            <CloudOff size={15} className="text-rose-600 shrink-0" />
+            <span className="font-mono text-[11px] whitespace-nowrap">Offline</span>
           </>
         )}
 
         {status === 'OFFLINE_WARNING' && (
           <>
-            <AlertTriangle size={15} className="text-amber-700" />
-            <span className="font-bold font-mono text-[11px]">Offline &gt;24h</span>
+            <AlertTriangle size={15} className="text-amber-700 shrink-0" />
+            <span className="font-bold font-mono text-[11px] whitespace-nowrap">Offline &gt;24h</span>
           </>
         )}
 
         {status === 'SYNCING' && (
           <>
-            <RefreshCw size={14} className="text-blue-600 animate-spin" />
-            <span className="hidden md:inline font-mono text-[11px]">Syncing...</span>
+            <RefreshCw size={14} className="text-blue-600 animate-spin shrink-0" />
+            <span className="font-mono text-[11px] whitespace-nowrap">Syncing...</span>
           </>
         )}
       </button>

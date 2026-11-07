@@ -727,7 +727,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         sellingPrice: parseFloat(newProduct.sellingPrice) || 0,
         purchasePrice: parseFloat(newProduct.purchasePrice) || 0,
         unitCost: parseFloat(newProduct.purchasePrice) || 0,
-        stockQuantity: parseInt(newProduct.stockQuantity) || 0,
+        stockQuantity: newProduct.stockQuantity !== '' ? (parseInt(newProduct.stockQuantity) || 0) : 100,
         minThreshold: parseInt(newProduct.minThreshold) || 10,
         maxThreshold: parseInt(newProduct.maxThreshold) || 100,
         distributorId: newProduct.distributorId || null

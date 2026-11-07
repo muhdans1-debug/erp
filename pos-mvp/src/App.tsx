@@ -96,7 +96,10 @@ export default function App() {
       if (custom) return custom.replace(/\/+$/, '');
       const savedIp = localStorage.getItem('server_ip');
       if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
-      const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+      const isNative = Boolean(
+        (window as any).Capacitor?.isNativePlatform?.() ||
+        (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent))
+      );
       if (isNative) return 'http://192.168.8.7:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;

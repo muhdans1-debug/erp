@@ -19,7 +19,10 @@ export function getServerIp(): string {
       .replace(/:[0-9]+.*$/, '')
       .replace(/\/.*$/, '');
   }
-  const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+  const isNative = Boolean(
+    (window as any).Capacitor?.isNativePlatform?.() ||
+    (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent))
+  );
   if (isNative) return '192.168.8.7';
   return window.location.hostname || '127.0.0.1';
 }
@@ -43,7 +46,10 @@ export function getApiBaseUrl(): string {
     }
     return clean.replace(/\/$/, '');
   }
-  const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+  const isNative = Boolean(
+    (window as any).Capacitor?.isNativePlatform?.() ||
+    (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent))
+  );
   if (isNative) return 'http://192.168.8.7:3000';
   const host = window.location.hostname || '127.0.0.1';
   return `http://${host}:3000`;

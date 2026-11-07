@@ -45,6 +45,7 @@ import { useCheckoutProcessor } from '../hooks/useCheckoutProcessor';
 import { QuickProductGrid } from '../components/QuickProductGrid';
 import { db } from '../db.ts';
 import POSGrid from '../components/POSGrid.tsx';
+import { mapDbRowToProduct } from '../services/productMapper';
 import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
 import { useOfflineSync } from '../hooks/useOfflineSync';
@@ -136,7 +137,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       if (saved && saved.trim() && !saved.includes('192.168.8.20')) return saved.trim();
       const savedIp = localStorage.getItem('server_ip');
       if (savedIp && savedIp.trim() && !savedIp.includes('192.168.8.20')) return `http://${savedIp.trim()}:3000`;
-      const isNative = (window as any).Capacitor?.isNativePlatform?.();
+      const isNative = Boolean(
+        (window as any).Capacitor?.isNativePlatform?.() ||
+        (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent))
+      );
       if (isNative) return 'http://192.168.8.7:3000';
       const host = window.location.hostname || 'localhost';
       return `http://${host}:3000`;
@@ -666,12 +670,12 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // Resolve working API base across candidates
   const resolveApiBase = useCallback(async (): Promise<string | null> => {
     const configuredTarget = localStorage.getItem('master_server_url') || apiBase;
-    const candidates = [configuredTarget, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
+    const candidates = [configuredTarget, 'http://192.168.8.7:3000', 'http://localhost:3000'].filter(
       (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
     );
     for (const url of candidates) {
       try {
-        const res = await fetch(`${url}/products`, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${url}/products`, { signal: AbortSignal.timeout(2500) });
         if (res.ok) { setApiBase(url); return url; }
       } catch { }
     }
@@ -683,12 +687,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     const url = await resolveApiBase();
     if (!url) { setCatalog(prev => prev.length > 0 ? prev : DEFAULT_PRODUCTS); return; }
     try {
-      const res = await fetch(`${url}/products`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(`${url}/products`, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          setCatalog(data);
-          writeCatalogCache(data);
+          const mapped = data.map(mapDbRowToProduct);
+          setCatalog(mapped);
+          writeCatalogCache(mapped);
+          try {
+            localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(mapped));
+          } catch {}
         }
       }
     } catch { }
@@ -696,12 +704,12 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   const fetchQuickProducts = useCallback(async () => {
     const configuredTarget = localStorage.getItem('master_server_url') || apiBase;
-    const candidates = [configuredTarget, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
+    const candidates = [configuredTarget, 'http://192.168.8.7:3000', 'http://localhost:3000'].filter(
       (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
     );
     for (const url of candidates) {
       try {
-        const res = await fetch(`${url}/api/quick-products`, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${url}/api/quick-products`, { signal: AbortSignal.timeout(2500) });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
@@ -716,12 +724,12 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   const fetchQuickCategories = useCallback(async () => {
     const configuredTarget = localStorage.getItem('master_server_url') || apiBase;
-    const candidates = [configuredTarget, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
+    const candidates = [configuredTarget, 'http://192.168.8.7:3000', 'http://localhost:3000'].filter(
       (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
     );
     for (const url of candidates) {
       try {
-        const res = await fetch(`${url}/api/quick-categories`, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${url}/api/quick-categories`, { signal: AbortSignal.timeout(2500) });
         if (res.ok) {
           const data = await res.json();
           if (data?.categories && Array.isArray(data.categories) && data.categories.length > 0) {
@@ -1246,7 +1254,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const totalSavings = cartTotals.totalSavings;
 
   // Fetch the static Master IP locked in earlier via DHCP
-  const masterIp = typeof window !== 'undefined' ? (localStorage.getItem('MASTER_IP') || '192.168.8.7') : '192.168.8.7';
+  const masterIp = typeof window !== 'undefined'
+    ? ((localStorage.getItem('server_ip') || localStorage.getItem('master_server_url') || localStorage.getItem('MASTER_IP') || '192.168.8.7')
+        .replace(/^https?:\/\//, '')
+        .replace(/:[0-9]+.*$/, '')
+        .replace(/\/.*$/, '')
+        .trim() || '192.168.8.7')
+    : '192.168.8.7';
 
   // 📡 Decoupled Network & Offline Synchronization Hook with Cloud DR Fallback:
   // Handles WebSocket connection, 10s auto-sync polling loop, 60s outage watchdog, and CRDT Khata balance sync

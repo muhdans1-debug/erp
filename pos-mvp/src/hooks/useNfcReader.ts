@@ -11,14 +11,27 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
   const [nfcError, setNfcError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const onCardScannedRef = useRef(onCardScanned);
+  const lastScanRef = useRef<{ uid: string; time: number }>({ uid: '', time: 0 });
 
   useEffect(() => {
     onCardScannedRef.current = onCardScanned;
   }, [onCardScanned]);
 
+  // Safe handler that suppresses duplicate continuous RF antenna triggers within 800ms
+  const handleScannedUid = useCallback((cleanUid: string) => {
+    const now = Date.now();
+    if (lastScanRef.current.uid === cleanUid && (now - lastScanRef.current.time) < 800) {
+      return;
+    }
+    lastScanRef.current = { uid: cleanUid, time: now };
+    onCardScannedRef.current(cleanUid);
+  }, []);
+
   const stopScan = useCallback(() => {
     if (controllerRef.current) {
-      controllerRef.current.abort(); // Safely release the hardware antenna
+      try {
+        controllerRef.current.abort(); // Safely release the hardware antenna
+      } catch { }
       controllerRef.current = null;
     }
     setIsScanning(false);
@@ -26,6 +39,14 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
 
   const startScan = useCallback(async () => {
     setNfcError(null);
+
+    // Guard: Abort existing controller before creating a new scan session
+    if (controllerRef.current) {
+      try {
+        controllerRef.current.abort();
+      } catch { }
+      controllerRef.current = null;
+    }
 
     // 1. Web NFC (NDEFReader) path with AbortController lifecycle guard
     if ('NDEFReader' in window) {
@@ -43,7 +64,7 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
           const rawUid = event.serialNumber || '';
           const cleanUid = rawUid.replace(/[:\-]/g, '').toUpperCase();
           if (cleanUid) {
-            onCardScannedRef.current(cleanUid);
+            handleScannedUid(cleanUid);
           }
         });
 
@@ -69,7 +90,7 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
       const rawId = e?.detail?.nfcId || e?.detail?.tag_id || e?.detail;
       if (typeof rawId === 'string' && rawId.trim()) {
         const cleanUid = rawId.replace(/[:\-]/g, '').toUpperCase();
-        onCardScannedRef.current(cleanUid);
+        handleScannedUid(cleanUid);
       }
     };
 

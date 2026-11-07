@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
-import { getAllCustomersWithBalances, fetchMessGroupDetails } from './khata.js';
+import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails } from './khata.js';
 import { verifyManagerPin } from '../middleware/auth.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
@@ -31,23 +31,46 @@ const resolveNfcTagDetails = async (uid) => {
     console.warn('NfcCard check note:', err?.message);
   }
 
-  // 2. Fetch all customers with their balances
-  const allCustomers = await getAllCustomersWithBalances();
-
-  // 3. Find linked customer if any
+  // 2. Resolve customer by ID directly if linked to NfcCard table
   let customer = null;
   if (nfcCard && nfcCard.customer_id) {
-    customer = allCustomers.find(c => c.id === nfcCard.customer_id);
+    customer = await getCustomerWithBalanceById(nfcCard.customer_id);
   }
+
+  // 3. If not found, look up customer by direct NFC card ID fields in Customer table via indexed SQL
   if (!customer) {
-    // Check fallback Customer.nfcCardId, cardUid, or nfc_card_id
+    try {
+      const custLookup = await db.execute({
+        sql: `
+          SELECT id FROM Customer 
+          WHERE UPPER(COALESCE(nfcCardId, '')) = ? 
+             OR UPPER(COALESCE(cardUid, '')) = ? 
+             OR UPPER(COALESCE(nfc_card_id, '')) = ?
+             OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
+             OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
+             OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
+          LIMIT 1
+        `,
+        args: [cleanUid, cleanUid, cleanUid, cleanNoColon, cleanNoColon, cleanNoColon]
+      });
+      if (custLookup.rows && custLookup.rows.length > 0) {
+        customer = await getCustomerWithBalanceById(custLookup.rows[0].id);
+      }
+    } catch (e) {
+      console.warn('Customer NFC lookup error:', e?.message);
+    }
+  }
+
+  // 4. Graceful fallback only if indexed seeks yielded nothing
+  if (!customer) {
+    const allCustomers = await getAllCustomersWithBalances();
     customer = allCustomers.find((c) => {
       const cardField = c.nfcCardId || c.cardUid || c.nfc_card_id;
       if (!cardField) return false;
       const cUid = cardField.trim().toUpperCase().replace(/^#+|#+$/g, '');
       const cUidNoColon = cUid.replace(/[:\-]/g, '');
       return cUid === cleanUid || cUidNoColon === cleanNoColon || cUid.includes(cleanNoColon) || cleanUid.includes(cUidNoColon);
-    });
+    }) || null;
   }
 
   // Look up mess_id directly from LibSQL

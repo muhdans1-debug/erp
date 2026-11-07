@@ -55,13 +55,14 @@ export default {
           const invoiceNo = sale.invoiceNo || sale.invoice_number || `INV-DR-${Date.now()}`;
           const total = Number(sale.total || sale.totalAmount || 0);
           const timestamp = sale.timestamp || sale.createdAt || new Date().toISOString();
+          const saleId = sale.id || invoiceNo;
 
           await db.execute({
             sql: `INSERT OR REPLACE INTO Sale (
               id, tenantId, invoiceNo, subtotal, total, totalAmount, paymentType, status, syncStatus, createdAt
             ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 'CLOUD_SYNCED', 'SYNCED', ?)`,
             args: [
-              sale.id || invoiceNo,
+              saleId,
               invoiceNo,
               Number(sale.subtotal || total),
               total,
@@ -70,6 +71,51 @@ export default {
               timestamp
             ]
           });
+
+          // Process line items and decrement physical inventory
+          let items: any[] = [];
+          if (Array.isArray(sale.items)) {
+            items = sale.items;
+          } else if (typeof sale.items === 'string') {
+            try {
+              items = JSON.parse(sale.items);
+            } catch {
+              items = [];
+            }
+          }
+
+          for (const item of items) {
+            const itemId = item.id || `item_${saleId}_${item.productId || Math.random().toString(36).slice(2, 8)}`;
+            const productId = item.productId || item.product_id;
+            const qty = Number(item.quantity ?? item.qty ?? 1);
+            const price = Number(item.priceAtSale ?? item.price ?? 0);
+            const itemTotal = Number(item.total_price ?? item.total ?? (price * qty));
+
+            if (productId) {
+              await db.execute({
+                sql: `INSERT OR REPLACE INTO SaleItem (
+                  id, tenantId, saleId, productId, quantity, priceAtSale, total_price
+                ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?)`,
+                args: [
+                  itemId,
+                  saleId,
+                  productId,
+                  qty,
+                  price,
+                  itemTotal
+                ]
+              });
+
+              // Decrement physical stock in master Turso database
+              await db.execute({
+                sql: `UPDATE Product 
+                      SET stockQuantity = MAX(0, COALESCE(stockQuantity, 0) - ?),
+                          updatedAt = ?
+                      WHERE id = ?`,
+                args: [qty, timestamp, productId]
+              });
+            }
+          }
         }
 
         return new Response(JSON.stringify({ success: true, processed: sales.length }), {

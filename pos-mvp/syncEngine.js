@@ -128,8 +128,12 @@ export const syncNow = async () => {
     // ==========================================
     // PART 3: PUSH & PULL KHATA LEDGER (APPEND-ONLY EVENT SOURCING)
     // ==========================================
-    const allLedger = await db.orm.KhataLedger.all();
-    const pendingLedger = allLedger.filter((l) => l.syncStatus === 'PENDING');
+    // 🟢 SAFE LIB-SQL QUERY: Fetch only pending ledger entries (bounded to avoid V8 memory exhaustion)
+    const pendingLedgerRes = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' LIMIT 500`,
+      args: []
+    });
+    const pendingLedger = pendingLedgerRes.rows || [];
 
     if (pendingLedger.length > 0) {
       const pushLedgerRes = await fetch(`${masterBaseUrl}/api/sync/khata-ledger`, {
@@ -149,12 +153,13 @@ export const syncNow = async () => {
       }
     }
 
-    // Pull append-only ledger entries from master
-    let latestLedgerTime = new Date(0);
-    allLedger.forEach((l) => {
-      const lDate = l.timestamp ? new Date(l.timestamp) : new Date(0);
-      if (lDate > latestLedgerTime) latestLedgerTime = lDate;
+    // Pull append-only ledger entries from master using native SQLite MAX aggregation
+    const maxLedgerRes = await db.execute({
+      sql: `SELECT MAX(COALESCE(timestamp, created_at)) as latestTime FROM KhataLedger`,
+      args: []
     });
+    const latestLedgerRaw = maxLedgerRes.rows?.[0]?.latestTime;
+    const latestLedgerTime = latestLedgerRaw ? new Date(latestLedgerRaw) : new Date(0);
 
     const pullLedgerUrl = `${masterBaseUrl}/api/sync/khata-ledger?lastSyncDate=${encodeURIComponent(latestLedgerTime.toISOString())}`;
     const pullLedgerRes = await fetch(pullLedgerUrl);

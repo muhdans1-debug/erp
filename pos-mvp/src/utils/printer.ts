@@ -904,6 +904,9 @@ export const printKhataStatement = async ({
 }) => {
   try {
     await Printer.initPrinter();
+    try {
+      await Printer.enterPrinterBuffer({ clean: true });
+    } catch { }
     await Printer.setPrinterAlignment({ alignment: 'center' });
     await Printer.setFontSize({ fontSize: 24 });
     await Printer.printText({ textToPrint: `${shopName}\n` });
@@ -940,6 +943,9 @@ export const printKhataStatement = async ({
     await Printer.printText({ textToPrint: "Official Store Account Ledger\n" });
     await Printer.lineWrap({ lines: 3 });
     await Printer.cutPaper();
+    try {
+      await Printer.exitPrinterBuffer({ commit: true });
+    } catch { }
     console.log("Khata statement printed successfully on thermal printer!");
   } catch (err) {
     console.warn("Thermal hardware print fallback to window.print():", err);
@@ -1046,6 +1052,9 @@ export const printKhataPaymentReceipt = async (props: KhataPaymentReceiptProps) 
     const formattedText = formatKhataReceipt(props);
     console.log("Sunmi Hardware Printing Payload:", formattedText);
     await Printer.initPrinter();
+    try {
+      await Printer.enterPrinterBuffer({ clean: true });
+    } catch { }
 
     // 1. Header (Centered)
     await Printer.setPrinterAlignment({ alignment: 'center' });
@@ -1114,6 +1123,9 @@ export const printKhataPaymentReceipt = async (props: KhataPaymentReceiptProps) 
     // Feed and cut paper
     await Printer.lineWrap({ lines: 3 });
     await Printer.cutPaper();
+    try {
+      await Printer.exitPrinterBuffer({ commit: true });
+    } catch { }
     console.log("Khata payment receipt printed successfully on Sunmi 58mm printer!");
     return true;
   } catch (error) {
@@ -1233,6 +1245,9 @@ export const printCreditNote = async (props: CreditNoteProps): Promise<boolean> 
     // Feed and cut paper
     await Printer.lineWrap({ lines: 3 });
     await Printer.cutPaper();
+    try {
+      await Printer.exitPrinterBuffer({ commit: true });
+    } catch { }
     console.log("Credit Note printed successfully on Sunmi 58mm printer!");
     return true;
   } catch (err) {

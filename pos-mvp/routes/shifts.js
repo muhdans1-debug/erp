@@ -578,21 +578,33 @@ const calculateZReport = async (shiftId = null) => {
   })();
   const endTime = shift && shift.closedAt ? new Date(shift.closedAt) : new Date();
 
-  // 1. Fetch sales for the shift period
-  let allSales = [];
-  try {
-    allSales = await db.orm.Sale.all();
-  } catch {
-    allSales = [];
+  // 1. Fetch sales for the shift period using high-performance SQL index seek
+  let shiftSales = [];
+  const startIso = startTime.toISOString();
+  const endIso = endTime.toISOString();
+
+  if (shift && shift.id) {
+    try {
+      const res = await db.execute({
+        sql: `SELECT total, paymentType, status FROM Sale WHERE shiftId = ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
+        args: [String(shift.id)]
+      });
+      shiftSales = res.rows || [];
+    } catch {
+      shiftSales = [];
+    }
   }
 
-  // Prefer sales strictly assigned to this shift ID
-  let shiftSales = shift ? allSales.filter((sale) => sale.shiftId === shift.id) : [];
   if (shiftSales.length === 0) {
-    shiftSales = allSales.filter((sale) => {
-      const d = new Date(sale.createdAt);
-      return d >= startTime && d <= endTime;
-    });
+    try {
+      const res = await db.execute({
+        sql: `SELECT total, paymentType, status FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
+        args: [startIso, endIso]
+      });
+      shiftSales = res.rows || [];
+    } catch {
+      shiftSales = [];
+    }
   }
 
   let cashSales = 0;
@@ -620,38 +632,37 @@ const calculateZReport = async (shiftId = null) => {
   });
 
   // 2. Fetch cash drawer payouts during shift (e.g., Almarai/Coca-Cola supplier invoices, petty cash)
-  let allExpenses = [];
-  try {
-    allExpenses = await db.orm.Expense.all();
-  } catch {
-    allExpenses = [];
-  }
-
-  const shiftExpenses = allExpenses.filter((exp) => {
-    const d = new Date(exp.createdAt);
-    return d >= startTime && d <= endTime;
-  });
-
+  let shiftExpenses = [];
   let supplierPayments = 0;
-  shiftExpenses.forEach((exp) => {
-    supplierPayments += Number(exp.amount) || 0;
-  });
+  try {
+    const expRes = await db.execute({
+      sql: `SELECT amount FROM Expense WHERE createdAt BETWEEN ? AND ?`,
+      args: [startIso, endIso]
+    });
+    shiftExpenses = expRes.rows || [];
+    shiftExpenses.forEach((exp) => {
+      supplierPayments += Number(exp.amount) || 0;
+    });
+  } catch (err) {
+    supplierPayments = 0;
+    shiftExpenses = [];
+  }
 
   // 2b. Fetch Khata customer cash collections deposited into till drawer during this shift
-  let allLedger = [];
+  let shiftKhataCash = 0;
   try {
-    allLedger = await db.orm.KhataLedger.all();
-  } catch {
-    allLedger = [];
+    const ledgerRes = await db.execute({
+      sql: `SELECT amount, reference FROM KhataLedger 
+            WHERE (COALESCE(timestamp, created_at) BETWEEN ? AND ?) 
+              AND (type = 'PAYMENT' OR amount < 0)`,
+      args: [startIso, endIso]
+    });
+    shiftKhataCash = (ledgerRes.rows || [])
+      .filter((entry) => !entry.reference || !String(entry.reference).toLowerCase().includes('benefit'))
+      .reduce((sum, entry) => sum + Math.abs(Number(entry.amount) || 0), 0);
+  } catch (err) {
+    shiftKhataCash = 0;
   }
-
-  const shiftKhataCash = (allLedger || []).filter((entry) => {
-    const d = new Date(entry.timestamp || entry.createdAt || entry.created_at);
-    const isWithinShift = d >= startTime && d <= endTime;
-    const isPayment = entry.type === 'PAYMENT' || Number(entry.amount) < 0;
-    const isCash = !entry.reference || !String(entry.reference).toLowerCase().includes('benefit');
-    return isWithinShift && isPayment && isCash;
-  }).reduce((sum, entry) => sum + Math.abs(Number(entry.amount) || 0), 0);
 
   // 3. THE MASTER FORMULA:
   // expectedDrawerCash = openingCash + cashSales + shiftKhataCash - refunds - supplierPayments

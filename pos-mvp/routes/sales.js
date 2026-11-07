@@ -343,22 +343,7 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
 
     const verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
 
-    // 4. Update product inventory quantities (non-blocking Turso mirror)
-    if (db) {
-      Promise.allSettled(
-        lineItems.map((item) => {
-          const pid = item.productId || item.id;
-          const q = Number(item.quantity ?? 1);
-          if (!pid) return Promise.resolve();
-          return db.execute({
-            sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?',
-            args: [q, new Date().toISOString(), pid]
-          });
-        })
-      ).catch(() => { });
-    }
-
-    // 5. Post Split Charges to each member's individual Khata ledger
+    // 4. Post Split Charges to each member's individual Khata ledger
     const memberSplits = [];
     const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
     for (let i = 0; i < memberRows.length; i++) {
@@ -501,21 +486,6 @@ const handleCheckout = async (request, reply) => {
     };
 
     const result = await SaleRepository.createSale(saleData, lineItems);
-
-    // Non-blocking background inventory mirror to Turso (0ms cashier delay)
-    if (db) {
-      Promise.allSettled(
-        lineItems.map((item) => {
-          const pid = item.productId || item.id;
-          const q = Number(item.quantity ?? 1);
-          if (!pid) return Promise.resolve();
-          return db.execute({
-            sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?',
-            args: [q, new Date().toISOString(), pid]
-          });
-        })
-      ).catch(() => { });
-    }
 
     // Broadcast atomic Khata balance delta to all connected POS registers
     if (saleData.customerId && ['CREDIT', 'NFC_CREDIT', 'MESS_KHATA'].includes(saleData.paymentType)) {

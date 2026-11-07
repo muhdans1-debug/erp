@@ -16,53 +16,41 @@ const queryLocalDevDb = async (sql, params = []) => {
   }
 };
 
-// 0. Verify Employee 4-digit PIN for Instant Sunmi Login
+// Simple in-memory rate limiter for PIN attempts
+const pinAttempts = new Map();
+
 fastify.post('/api/employees/verify-pin', async (request, reply) => {
+  const ip = request.ip;
+  const now = Date.now();
+  const attempts = pinAttempts.get(ip) || { count: 0, lockUntil: 0 };
+
+  if (now < attempts.lockUntil) {
+    return reply.code(429).send({ error: 'Too many attempts. Locked for 60 seconds.' });
+  }
+
   const { pin } = request.body || {};
-  if (!pin) {
-    return reply.status(400).send({ error: 'PIN code is required' });
+  const cleanPin = (pin || '').toString().trim();
+
+  const res = await db.execute({
+    sql: 'SELECT id, name, role, is_active FROM Employee WHERE pin_code = ? AND is_active = 1 LIMIT 1',
+    args: [cleanPin]
+  });
+
+  if (!res.rows || res.rows.length === 0) {
+    // Record failed attempt and add a mandatory 250ms anti-brute-force delay
+    attempts.count += 1;
+    if (attempts.count >= 5) {
+      attempts.lockUntil = now + 60000; // Lock for 60 seconds
+    }
+    pinAttempts.set(ip, attempts);
+    
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return reply.code(401).send({ error: 'Invalid PIN' });
   }
 
-  const cleanPin = String(pin).trim();
-
-  try {
-    // 1. Try local LibSQL replica first for instant sub-millisecond response
-    let rows = [];
-    try {
-      rows = await queryLocalDevDb(
-        'SELECT id, name, pin_code, role, is_active FROM Employee WHERE pin_code = ? AND is_active = 1 LIMIT 1',
-        [cleanPin]
-      );
-    } catch { }
-
-    // 2. Fallback to db if needed
-    if ((!rows || rows.length === 0) && db) {
-      try {
-        const res = await db.execute({
-          sql: 'SELECT id, name, pin_code, role, is_active FROM Employee WHERE pin_code = ? AND is_active = 1 LIMIT 1',
-          args: [cleanPin]
-        });
-        rows = res.rows || [];
-      } catch { }
-    }
-
-    if (!rows || rows.length === 0) {
-      return reply.status(401).send({ error: 'Invalid PIN code. Access denied.' });
-    }
-
-    const emp = rows[0];
-    return {
-      success: true,
-      employee: {
-        id: emp.id,
-        name: emp.name,
-        role: emp.role
-      }
-    };
-  } catch (err) {
-    fastify.log.error(err);
-    return reply.status(500).send({ error: 'Failed to verify PIN' });
-  }
+  // Success: reset attempts
+  pinAttempts.delete(ip);
+  return reply.send({ success: true, employee: res.rows[0] });
 });
 
 // Employee Management: List all employees (Manager Back-Office)

@@ -304,23 +304,19 @@ export default async function khataRoutes(fastify, options) {
   // High-Performance SQLite Aggregate Route: Zero-blocking Customer Balances
   fastify.get('/api/khata/customers', async (request, reply) => {
     try {
+      // NEW: Strictly whitelisted columns. CPR, PINs, and tokens are omitted.
       const sql = `
-        SELECT c.*,
-               COALESCE(SUM(l.amount), 0) AS currentBalance,
-               MAX(CASE WHEN l.amount < 0 THEN l.timestamp END) AS lastPaymentDate,
-               COUNT(l.id) AS ledgerCount
-        FROM Customer c
+        SELECT c.id, c.tenantId, c.name, c.phone, c.credit_limit, c.is_active, 
+               c.cardUid, c.mess_id, COALESCE(SUM(l.amount), 0) AS currentBalance
+        FROM Customer c 
         LEFT JOIN KhataLedger l ON c.id = l.customerId
-        GROUP BY c.id;
+        GROUP BY c.id
       `;
-      
-      // Execute the raw query using your Turso/LibSQL client
-      const result = await db.execute(sql); 
-      
-      return reply.send({ success: true, customers: result.rows });
-    } catch (error) {
-      request.log.error('Khata aggregation failed:', error);
-      return reply.code(500).send({ error: 'Internal Server Error' });
+      const result = await db.execute(sql);
+      return reply.send({ success: true, customers: result.rows || [] });
+    } catch (err) {
+      request.log.error(err, 'Failed to fetch khata customers');
+      return reply.code(500).send({ error: 'Database error' });
     }
   });
 

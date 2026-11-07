@@ -11,19 +11,30 @@ import { db } from '../db.js';
  * Compliant with Bahrain NBR VAT Regulations (Article 53).
  */
 export async function generateNextInvoiceNumber(storeId = '001', executor = db) {
-  try {
-    const clientToUse = executor || db;
-    const result = await clientToUse.execute("SELECT MAX(invoiceSeq) as maxSeq FROM Sale");
-    const currentMax = result.rows[0]?.maxSeq ? Number(result.rows[0].maxSeq) : 0;
-    const nextSeq = currentMax + 1;
-    const paddedSeq = nextSeq.toString().padStart(6, '0');
-    const invoiceNo = `INV-${storeId}-${paddedSeq}`;
-    return { invoiceNo, invoiceSeq: nextSeq };
-  } catch (err) {
-    console.error("🔴 generateNextInvoiceNumber Error:", err);
-    const seq = await getNextInvoiceSequence('Sale', executor);
-    return { invoiceNo: formatInvoiceNumber(seq, `INV-${storeId}`), invoiceSeq: seq };
-  }
+  const clientToUse = executor || db;
+
+  // Ensure InvoiceSequence table exists
+  await clientToUse.execute(`
+    CREATE TABLE IF NOT EXISTS InvoiceSequence (
+      name TEXT PRIMARY KEY,
+      current_seq INTEGER NOT NULL DEFAULT 5000
+    )
+  `).catch(() => {});
+
+  // NEW: Atomic counter that locks the row, increments, and returns the strictly sequential number
+  const result = await clientToUse.execute({
+    sql: `INSERT INTO InvoiceSequence (name, current_seq) VALUES ('Sale', 5000)
+          ON CONFLICT(name) DO UPDATE SET current_seq = current_seq + 1
+          RETURNING current_seq`
+  });
+  
+  const nextSeq = Number(result.rows[0].current_seq);
+  const paddedSeq = nextSeq.toString().padStart(6, '0');
+  
+  return { 
+    invoiceNo: `INV-${storeId}-${paddedSeq}`, 
+    invoiceSeq: nextSeq 
+  };
 }
 
 /**

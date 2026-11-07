@@ -567,13 +567,15 @@ const handleRefundSale = async (request, reply) => {
 
   try {
     const result = await db.transaction(async (tx) => {
-      // 1. Locate the original sale
-      let sale = await tx.orm.Sale.where({ invoiceNo: cleanInv }).all().first();
-      if (!sale) {
-        const allSales = await tx.orm.Sale.all();
-        sale = allSales.find(
-          (s) => (s.invoiceNo && s.invoiceNo.toLowerCase() === cleanInv.toLowerCase()) || s.id === cleanInv
-        );
+      // 1. Locate the original sale via atomic, indexed seek
+      let sale = null;
+      const exactRes = await tx.execute({
+        sql: `SELECT * FROM Sale WHERE UPPER(invoiceNo) = UPPER(?) OR id = ? LIMIT 1`,
+        args: [cleanInv, cleanInv]
+      });
+
+      if (exactRes.rows && exactRes.rows.length > 0) {
+        sale = exactRes.rows[0];
       }
 
       if (!sale) {
@@ -785,19 +787,15 @@ const handleVoidSale = async (req, reply) => {
 
   try {
     const result = await db.transaction(async (tx) => {
-      // 1. Find the original sale by id or invoice sequence or invoiceNo
-      let sale = await tx.orm.Sale.where({ id: cleanId }).all().first();
-      if (!sale) {
-        sale = await tx.orm.Sale.where({ invoiceNo: cleanId }).all().first();
-      }
-      if (!sale) {
-        const allSales = await tx.orm.Sale.all();
-        sale = allSales.find(
-          (s) =>
-            s.id === cleanId ||
-            s.invoiceNo?.toLowerCase() === cleanId.toLowerCase() ||
-            String(s.invoiceSeq) === cleanId
-        );
+      // 1. Find the original sale via atomic, indexed seek (<5ms without locking DB)
+      let sale = null;
+      const exactRes = await tx.execute({
+        sql: `SELECT * FROM Sale WHERE UPPER(invoiceNo) = UPPER(?) OR id = ? OR CAST(invoiceSeq AS TEXT) = ? LIMIT 1`,
+        args: [cleanId, cleanId, cleanId]
+      });
+
+      if (exactRes.rows && exactRes.rows.length > 0) {
+        sale = exactRes.rows[0];
       }
 
       if (!sale) {

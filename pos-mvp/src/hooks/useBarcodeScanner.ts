@@ -1,39 +1,73 @@
 import { useEffect, useRef } from 'react';
 
+/**
+ * Headless Hardware Barcode Scanner Hook
+ * Intercepts high-speed USB HID / laser barcode scanner keyboard events,
+ * buffers characters within a 100ms sliding window, and emits onScan on Enter.
+ * Decouples hardware input from the React render tree.
+ */
 export const useBarcodeScanner = (onScan: (barcode: string) => void) => {
   const buffer = useRef('');
-  const lastKeyTime = useRef(0);
+  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onScanRef = useRef(onScan);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const currentTime = Date.now();
+      // 1. Never capture keystrokes if the cashier is actively typing in an input field
+      const activeEl = document.activeElement;
+      const isInputActive =
+        activeEl &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) ||
+          activeEl.getAttribute('contenteditable') === 'true');
 
-      // If more than 50ms has passed since the last keystroke, 
-      // it's human manual typing, not the hardware scanner speed. Clear the buffer.
-      if (currentTime - lastKeyTime.current > 50) {
-        buffer.current = '';
+      if (isInputActive) {
+        return;
       }
 
-      lastKeyTime.current = currentTime;
+      // 2. Hardware Enter (carriage return) terminates the barcode string
+      if (e.key === 'Enter') {
+        const scanned = buffer.current.trim();
+        buffer.current = '';
+        if (timeout.current) clearTimeout(timeout.current);
 
-      // If the scanner hits Enter (the standard suffix), the barcode is complete
-      if (e.key === 'Enter' && buffer.current.length > 0) {
-        e.preventDefault(); // Stop the Enter key from submitting forms or activating focused elements
-        const scannedCode = buffer.current.trim();
-        buffer.current = ''; // Reset for the next item
-        if (scannedCode) {
-          onScan(scannedCode);
+        if (scanned.length >= 2) {
+          e.preventDefault();
+          onScanRef.current(scanned);
         }
         return;
       }
 
-      // Ignore special modifier keys, only capture printable characters
-      if (e.key.length === 1) {
+      // 3. Capture printable characters (alphanumeric, hyphens, colons for barcodes & NBR invoice numbers)
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         buffer.current += e.key;
+
+        // Reset buffer if typing pauses beyond 100ms (human typing threshold vs laser burst <20ms)
+        if (timeout.current) clearTimeout(timeout.current);
+        timeout.current = setTimeout(() => {
+          buffer.current = '';
+        }, 100);
+      }
+    };
+
+    // 4. Also listen for custom Sunmi Android Broadcast Receiver events
+    const handleHardwareCustomScan = (e: any) => {
+      const code = e?.detail;
+      if (typeof code === 'string' && code.trim().length >= 2) {
+        onScanRef.current(code.trim());
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onScan]);
+    window.addEventListener('hardware-barcode-scan', handleHardwareCustomScan);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('hardware-barcode-scan', handleHardwareCustomScan);
+      if (timeout.current) clearTimeout(timeout.current);
+    };
+  }, []);
 };

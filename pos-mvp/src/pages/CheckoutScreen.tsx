@@ -38,7 +38,10 @@ import BenefitPayConfigModal from '../components/BenefitPayConfigModal';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { Product, Customer, CartTab } from '../types/pos';
 export type { Product, Customer, CartTab };
-import { useCartStore } from '../store/cartStore';
+import { useCartStore, calculateCartTotals } from '../store/cartStore';
+import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
+import { useCheckoutProcessor } from '../hooks/useCheckoutProcessor';
+import { QuickProductGrid } from '../components/QuickProductGrid';
 import { db } from '../db.ts';
 import POSGrid from '../components/POSGrid.tsx';
 import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
@@ -92,11 +95,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   const [catalog, setCatalog] = useState<Product[]>(DEFAULT_PRODUCTS);
 
-  // 🛒 Decoupled Global Zustand Cart Store (Eliminates Monolithic Root Re-renders)
-  const carts = useCartStore((s) => s.carts);
-  const activeCartId = useCartStore((s) => s.activeCartId);
-  const cart = useCartStore((s) => s.items as unknown as Product[]);
-  const activeCart = useCartStore((s) => (s.carts.find((c) => c.id === s.activeCartId) || s.carts[0]) as unknown as CartTab);
+  // 🛒 Decoupled Global Zustand Cart Store via useCheckoutProcessor
+  const {
+    cart,
+    carts,
+    activeCartId,
+    activeCart,
+    cartTotals,
+    clearCart: storeClearCart,
+    addNewTab: storeAddNewTab,
+    closeTab: storeCloseTab,
+    setActiveCartId
+  } = useCheckoutProcessor();
 
   // Tab Management Functions bound to global store
   const addNewTab = () => {
@@ -104,24 +114,20 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       showToast("⚠️ Maximum 4 parked carts allowed.", "info");
       return;
     }
-    useCartStore.getState().addNewTab();
+    storeAddNewTab();
   };
 
   const closeTab = (idToClose: string, e?: React.MouseEvent) => {
     e?.stopPropagation(); // Prevent clicking tab underneath X
-    useCartStore.getState().closeTab(idToClose);
+    storeCloseTab(idToClose);
     if (carts.length <= 1) {
       setCustomer(null);
     }
   };
 
   const clearActiveCart = () => {
-    useCartStore.getState().clearActiveCart();
+    storeClearCart();
     setCustomer(null);
-  };
-
-  const setActiveCartId = (id: string) => {
-    useCartStore.getState().setActiveCartId(id);
   };
   const [apiBase, setApiBase] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -1205,54 +1211,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     };
   }, [bindingProductId, showReceivingDrawer, shiftId, showToast, handleBindBarcode]);
 
+  // Decoupled Hardware Barcode Scanner Hook: intercepts hardware input outside React render tree
+  useBarcodeScanner(handleBarcodeScan);
 
-  // Bahrain NBR Compliant Cart Calculation (Per-Item Inclusive 10% vs 0% Zero-Rated)
-  const calculateCartTotals = (cartItems: Product[]) => {
-    let subtotal = 0;
-    let totalVat = 0;
-    let finalTotal = 0;
-    let totalSavings = 0;
 
-    cartItems.forEach((item) => {
-      const qty = Number(item.quantity ?? (item as any).qty ?? 1);
-      const unitPrice = Number(item.sellingPrice ?? item.price ?? 0);
-      const origPrice = Number(item.originalPrice ?? unitPrice);
-      if (origPrice > unitPrice) {
-        totalSavings += (origPrice - unitPrice) * qty;
-      }
-      const lineTotal = Number((unitPrice * qty).toFixed(3));
-      finalTotal += lineTotal;
-
-      // In Bahrain, standard is 10%, basic food items (milk, bread, produce, meat) are 0% (Zero-Rated)
-      const rate = item.vatRate !== undefined
-        ? Number(item.vatRate)
-        : (item.taxRate !== undefined && item.taxRate === 0 ? 0 : 10);
-
-      // If item is 10% VAT, extract the tax amount from the inclusive price
-      // Formula: Price - (Price / 1.10)
-      if (rate === 10) {
-        const lineTax = lineTotal - (lineTotal / 1.10);
-        totalVat += lineTax;
-        subtotal += (lineTotal - lineTax);
-      } else {
-        // 0% VAT (Basic Foods)
-        subtotal += lineTotal;
-      }
-    });
-
-    return { 
-      subtotal: Number(subtotal.toFixed(3)), 
-      totalVat: Number(totalVat.toFixed(3)), 
-      finalTotal: Number(finalTotal.toFixed(3)),
-      totalSavings: Number(totalSavings.toFixed(3)),
-      subtotalStr: subtotal.toFixed(3),
-      totalVatStr: totalVat.toFixed(3),
-      finalTotalStr: finalTotal.toFixed(3),
-      totalSavingsStr: totalSavings.toFixed(3)
-    };
-  };
-
-  const cartTotals = useMemo(() => calculateCartTotals(cart), [cart]);
+  // Bahrain NBR Compliant Cart Totals provided directly by useCheckoutProcessor
   const subtotal = cartTotals.subtotal;
   const vat = cartTotals.totalVat;
   const total = cartTotals.finalTotal;
@@ -1728,7 +1691,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     try {
       const activeItems = useCartStore.getState().items;
       const targetItem = typeof indexOrId === 'number' ? activeItems[indexOrId] : activeItems.find(i => i.id === indexOrId);
-      const newTotals = calculateCartTotals(activeItems as unknown as Product[]);
+      const newTotals = calculateCartTotals(activeItems as any);
       if (targetItem) {
         CustomerDisplay.updateDisplay?.({
           text: `${targetItem.name}\n${discountLabel ? `[${discountLabel}] ` : ''}BD ${newUnitPrice.toFixed(3)}\n\nTOTAL: BD ${newTotals.finalTotalStr}`
@@ -2988,118 +2951,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               </div>
             )}
 
-            <div className="grid grid-cols-3 xl:grid-cols-4 gap-2.5">
-              {displayedQuickProducts.map((prod) => {
-                const theme = getCategoryTheme(prod.category);
-                const catalogItem = catalog.find(
-                  (p) => p.id === prod.id || (p.barcode && prod.barcode && p.barcode === prod.barcode)
-                );
-                const currentStock = catalogItem?.stockQuantity !== undefined 
-                  ? Number(catalogItem.stockQuantity) 
-                  : (prod.stockQuantity !== undefined ? Number(prod.stockQuantity) : null);
-                const isOutOfStock = currentStock !== null && currentStock <= 0;
-                const isLowStock = currentStock !== null && currentStock > 0 && currentStock <= (prod.minThreshold ?? 5);
-
-                const isSelectedForSwap = swapSourceProduct?.id === prod.id;
-
-                return (
-                  <button
-                    key={prod.id}
-                    type="button"
-                    onClick={() => handleQuickItemClick(prod)}
-                    className={`min-h-[85px] p-3 rounded-2xl flex flex-col justify-between border cursor-pointer active:scale-95 transition-all shadow-xs text-left relative ${
-                      isSelectedForSwap
-                        ? 'border-2 border-blue-600 ring-4 ring-blue-400 bg-blue-100 text-blue-950 shadow-lg scale-102 animate-pulse'
-                        : isEditMode
-                        ? 'border-2 border-dashed border-amber-500 ring-2 ring-amber-300/60 bg-amber-50/80 hover:bg-amber-100 text-amber-950 shadow-md'
-                        : isOutOfStock
-                        ? 'bg-slate-100 border-slate-200 text-slate-400 opacity-60'
-                        : theme.card
-                    }`}
-                  >
-                    {isEditMode && (
-                      <span className={`absolute -top-2 -right-1.5 px-2 py-0.5 text-white text-[9px] rounded-full font-black uppercase shadow-xs tracking-wider border border-white ${
-                        isSelectedForSwap
-                          ? 'bg-blue-600 animate-bounce'
-                          : isPositionSwapActive
-                          ? (swapSourceProduct ? 'bg-emerald-600' : 'bg-blue-600')
-                          : 'bg-amber-600'
-                      }`}>
-                        {isSelectedForSwap
-                          ? '1️⃣ SOURCE'
-                          : isPositionSwapActive
-                          ? (swapSourceProduct ? 'SWAP HERE ↵' : '⇄ SWAP')
-                          : '✏️ EDIT'}
-                      </span>
-                    )}
-                    <div className="flex items-center justify-between gap-1 w-full">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md uppercase tracking-wider ${theme.badge}`}>
-                        {theme.label}
-                      </span>
-                      {isOutOfStock ? (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white tracking-wider">
-                          OUT OF STOCK
-                        </span>
-                      ) : isLowStock ? (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white tracking-wider">
-                          {currentStock} LEFT
-                        </span>
-                      ) : prod.vatRate === 0 ? (
-                        <span className="text-[9px] font-mono font-semibold opacity-75 text-emerald-800">
-                          0% VAT
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="my-1">
-                      <h4 className={`font-bold text-xs sm:text-sm leading-tight line-clamp-2 ${isOutOfStock && !isEditMode ? 'line-through text-slate-400' : ''}`}>
-                        {prod.name}
-                      </h4>
-                    </div>
-                    <div className="flex items-center justify-between w-full pt-1 border-t border-black/5">
-                      <span className="font-black text-xs sm:text-sm font-mono tabular-nums">
-                        BD {Number(prod.sellingPrice).toFixed(3)}
-                      </span>
-                      <span className={`text-[10px] font-bold ${
-                        isEditMode 
-                          ? 'text-amber-800 underline' 
-                          : isOutOfStock 
-                          ? 'text-red-600 font-extrabold' 
-                          : isLowStock 
-                          ? 'text-amber-700 font-bold' 
-                          : 'opacity-60'
-                      }`}>
-                        {isEditMode ? 'Customize ⚙️' : isOutOfStock ? '0 in Stock' : currentStock !== null ? `${currentStock} in stock` : '+ Tap'}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-
-              {/* Add Quick Product Slot in Edit Mode */}
-              {isEditMode && (
-                <button
-                  type="button"
-                  onClick={() => setShowAddQuickModal(true)}
-                  className="min-h-[85px] p-3 rounded-2xl flex flex-col items-center justify-center border-2 border-dashed border-blue-400 bg-blue-50/60 hover:bg-blue-100/80 text-blue-700 cursor-pointer active:scale-95 transition-all shadow-xs"
-                >
-                  <Plus size={22} className="stroke-[3] mb-0.5" />
-                  <span className="text-xs font-bold">Add Item to Grid</span>
-                </button>
-              )}
-            </div>
-
-            {displayedQuickProducts.length === 0 && (
-              <div className="text-center py-12 text-slate-400">
-                <p className="font-bold text-sm">No items in this category</p>
-                <button
-                  type="button"
-                  onClick={() => setSelectedQuickCategory('ALL')}
-                  className="mt-2 text-xs font-bold text-blue-600 underline cursor-pointer"
-                >
-                  View All Quick Items
-                </button>
-              </div>
-            )}
+            <QuickProductGrid
+              products={displayedQuickProducts}
+              catalog={catalog}
+              onProductClick={handleQuickItemClick}
+              isEditMode={isEditMode}
+              isPositionSwapActive={isPositionSwapActive}
+              swapSourceProduct={swapSourceProduct}
+              onAddQuickProduct={() => setShowAddQuickModal(true)}
+              onSelectAllCategory={() => setSelectedQuickCategory('ALL')}
+              getCategoryTheme={getCategoryTheme}
+            />
           </div>
           )}
 

@@ -44,9 +44,10 @@ export const pushOfflineSales = async (masterIp: string): Promise<number> => {
         GROUP BY s.id
       `);
 
+      // NEW: Batched Offline Sync
       if (offlineSales && offlineSales.rows && offlineSales.rows.length > 0) {
-        for (const rawSale of offlineSales.rows as any[]) {
-          // SQLite returns the grouped items as a JSON string, so we must parse it back to an array
+        // 1. Format all offline sales into a single array payload
+        const allSalesArray = (offlineSales.rows as any[]).map((rawSale) => {
           let parsedItems = [];
           try {
             parsedItems = typeof rawSale.items === 'string'
@@ -55,48 +56,61 @@ export const pushOfflineSales = async (masterIp: string): Promise<number> => {
           } catch {
             parsedItems = [];
           }
-
-          const sale = { 
-            ...rawSale, 
+          return {
+            ...rawSale,
             items: parsedItems
           };
+        });
 
+        try {
+          // 2. Dispatch a single HTTP POST request containing all offline sales
           const response = await fetch(targetUrl, {
             method: 'POST',
             headers,
-            body: JSON.stringify(sale) // Now correctly includes the full line item array!
+            body: JSON.stringify(allSalesArray) // The backend handleSyncSales natively accepts arrays
           });
-          
+
           if (response.ok) {
-            await db.execute({
-              sql: "UPDATE Sale SET status = 'SYNCED' WHERE invoiceNo = ?",
-              args: [sale.invoiceNo]
-            });
-            totalSynced++;
+            // 3. If the batch sync is successful, mark them all as SYNCED locally in one query
+            const syncedInvoiceNos = allSalesArray.map((s) => s.invoiceNo).filter(Boolean);
+            
+            if (syncedInvoiceNos.length > 0) {
+              // Generate placeholders for the SQL IN clause (e.g., "?,?,?")
+              const placeholders = syncedInvoiceNos.map(() => '?').join(',');
+              
+              await db.execute({
+                sql: `UPDATE Sale SET status = 'SYNCED' WHERE invoiceNo IN (${placeholders})`,
+                args: syncedInvoiceNos
+              });
+            }
+            
+            console.log(`Successfully batch-synced ${syncedInvoiceNos.length} offline sales.`);
+            totalSynced += syncedInvoiceNos.length;
           }
+        } catch (error) {
+          console.error('Batch sync failed. Will retry on next interval:', error);
         }
       }
     } catch {
       // Silently continue if table schema is handled via native storage
     }
 
-    // 2. Check Native SQLite durable flash storage and localStorage queue
+    // 2. Check Native SQLite durable flash storage and localStorage queue (batched)
     try {
       const nativeQueue = await getOfflineSales();
       if (nativeQueue && nativeQueue.length > 0) {
-        for (const sale of nativeQueue) {
-          const response = await fetch(targetUrl, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(sale)
-          });
+        const response = await fetch(targetUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(nativeQueue)
+        });
 
-          if (response.ok) {
-            if (sale.id) {
-              await markOfflineSalesSynced([sale.id]);
-            }
-            totalSynced++;
+        if (response.ok) {
+          const ids = nativeQueue.map((s: any) => s.id).filter(Boolean);
+          if (ids.length > 0) {
+            await markOfflineSalesSynced(ids);
           }
+          totalSynced += nativeQueue.length;
         }
       }
     } catch {

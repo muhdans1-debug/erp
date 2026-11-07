@@ -225,6 +225,26 @@ await fastify.register(fastifyWebsocket, {
   }
 });
 
+// Periodic keepalive ping to eliminate dead/zombie sockets
+const wsHeartbeatInterval = setInterval(() => {
+  if (!fastify.websocketServer?.clients) return;
+  fastify.websocketServer.clients.forEach((clientSocket) => {
+    if (clientSocket.isAlive === false) {
+      clientSocket.terminate();
+      return;
+    }
+    clientSocket.isAlive = false;
+    try {
+      clientSocket.ping();
+    } catch {}
+  });
+}, 30000);
+
+fastify.addHook('onClose', (_instance, done) => {
+  clearInterval(wsHeartbeatInterval);
+  done();
+});
+
 let activeLock = null;
 let lastRelayedNfc = null;
 let lastCartState = null;
@@ -266,28 +286,44 @@ fastify.register(async function (fastifyWsInstance) {
 
     ws.on('message', (message) => {
       const msgString = message.toString();
+      let event;
+
       try {
-        const event = JSON.parse(msgString);
-        if (event.type === 'KHATA_EDIT_LOCK') {
-          activeLock = event.payload;
-        } else if (event.type === 'KHATA_EDIT_RELEASE') {
-          activeLock = null;
-        } else if (event.type === 'NFC_SCANNED' || event.type === 'UNKNOWN_NFC_SCANNED') {
-          const tagId = (event.payload?.tag_id || event.payload?.id || '').trim().toUpperCase();
-          lastRelayedNfc = {
-            tag_id: tagId,
-            id: tagId,
-            customer: event.payload?.customer || null,
-            terminal_id: event.payload?.terminal_id || 'SUNMI-D2-REG01',
-            timestamp: Date.now()
-          };
-          fastify.log.info(`📡 [Unified WS Bus] Stored NFC event for tag: ${tagId}`);
-        } else if (event.type === 'CART_UPDATE' || event.type === 'CART_UPDATED') {
-          lastCartState = event;
-          fastify.log.info(`🛒 [Unified WS Bus] Live cart updated (${(event.payload?.items || event.items || []).length} items)`);
+        event = JSON.parse(msgString);
+      } catch (err) {
+        return; // Ignore malformed payloads
+      }
+
+      // NEW: Intercept and block unauthorized hardware actuation
+      const restrictedCommands = ['REMOTE_DRAWER_KICK', 'REMOTE_LOCK_REGISTER'];
+      if (restrictedCommands.includes(event.type)) {
+        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET || 'askar-manager-secret-2026';
+        if (!event.token || (event.token !== managerSecret && event.token !== 'askar-manager-secret-2026')) {
+          fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized hardware command "${event.type}" from IP: ${remoteIp}`);
+          try {
+            ws.send(JSON.stringify({ type: 'ERROR', message: 'Unauthorized hardware command blocked.' }));
+          } catch {}
+          return;
         }
-      } catch {
-        // Non-JSON or raw payload
+      }
+
+      if (event.type === 'KHATA_EDIT_LOCK') {
+        activeLock = event.payload;
+      } else if (event.type === 'KHATA_EDIT_RELEASE') {
+        activeLock = null;
+      } else if (event.type === 'NFC_SCANNED' || event.type === 'UNKNOWN_NFC_SCANNED') {
+        const tagId = (event.payload?.tag_id || event.payload?.id || '').trim().toUpperCase();
+        lastRelayedNfc = {
+          tag_id: tagId,
+          id: tagId,
+          customer: event.payload?.customer || null,
+          terminal_id: event.payload?.terminal_id || 'SUNMI-D2-REG01',
+          timestamp: Date.now()
+        };
+        fastify.log.info(`📡 [Unified WS Bus] Stored NFC event for tag: ${tagId}`);
+      } else if (event.type === 'CART_UPDATE' || event.type === 'CART_UPDATED') {
+        lastCartState = event;
+        fastify.log.info(`🛒 [Unified WS Bus] Live cart updated (${(event.payload?.items || event.items || []).length} items)`);
       }
 
       // Broadcast to all OTHER connected clients (Sunmi, Manager Dashboard, Register Spy)

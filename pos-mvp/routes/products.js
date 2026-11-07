@@ -93,24 +93,23 @@ export default async function productRoutes(fastify, options) {
       const config = loadQuickConfig();
       const removedSet = new Set((config.removedIds || []).map(String));
 
-      // Tally recent 7-day sales velocity if any
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      // NEW: Offload the 7-day velocity calculation entirely to SQLite
       const salesCountByProduct = {};
       try {
-        const recentSales = await db.orm.Sale.all();
-        const recentSaleIds = new Set(
-          recentSales
-            .filter((s) => s.createdAt && new Date(s.createdAt) >= sevenDaysAgo)
-            .map((s) => s.id)
-        );
-        const allSaleItems = await db.orm.SaleItem.all();
-        for (const item of allSaleItems) {
-          if (recentSaleIds.has(item.saleId)) {
-            salesCountByProduct[item.productId] = (salesCountByProduct[item.productId] || 0) + (item.quantity || 1);
-          }
-        }
+        const velocityRes = await db.execute({
+          sql: `SELECT i.productId, SUM(i.quantity) as totalQty
+                FROM SaleItem i
+                JOIN Sale s ON i.saleId = s.id
+                WHERE s.createdAt >= datetime('now', '-7 days')
+                  AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))
+                GROUP BY i.productId`,
+          args: []
+        });
+        (velocityRes.rows || []).forEach(row => {
+          salesCountByProduct[row.productId] = Number(row.totalQty || 0);
+        });
       } catch (e) {
-        // SaleItem tally fallback
+        console.warn('Velocity query warning:', e?.message);
       }
 
       const categorize = (prod) => {

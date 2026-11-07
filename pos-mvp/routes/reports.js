@@ -541,42 +541,39 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
   }
 
   try {
-    let allSales = [];
-    try {
-      allSales = await db.orm.Sale.all();
-    } catch {
-      allSales = [];
-    }
+    const startIso = startDate.toISOString();
+    const endIso = endDate.toISOString();
 
-    let allExpenses = [];
-    try {
-      allExpenses = await db.orm.Expense.all();
-    } catch {
-      allExpenses = [];
-    }
+    // 🟢 High-Performance Parameterized SQL Queries (Zero full-table in-memory leaks)
+    const salesRes = await db.execute({
+      sql: `SELECT id, invoiceNo, total, paymentType, createdAt FROM Sale 
+            WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso]
+    });
+    const allSales = salesRes.rows || [];
 
-    let allKhata = [];
-    let allCustomers = [];
-    try {
-      allKhata = await db.orm.KhataLedger.all();
-      allCustomers = await db.orm.Customer.all();
-    } catch {
-      allKhata = [];
-      allCustomers = [];
-    }
+    const expensesRes = await db.execute({
+      sql: `SELECT id, category, description, amount, type, createdAt FROM Expense 
+            WHERE createdAt BETWEEN ? AND ?`,
+      args: [startIso, endIso]
+    });
+    const allExpenses = expensesRes.rows || [];
 
-    let allWastage = [];
-    try {
-      allWastage = await db.orm.WastageLog.all();
-    } catch {
-      allWastage = [];
-    }
-    const customerMap = new Map(allCustomers.map((c) => [c.id, c.name]));
+    const khataRes = await db.execute({
+      sql: `SELECT k.id, k.customerId, k.amount, k.type, k.timestamp, c.name as customerName 
+            FROM KhataLedger k 
+            LEFT JOIN Customer c ON k.customerId = c.id
+            WHERE k.timestamp BETWEEN ? AND ? AND (k.type = 'PAYMENT_IN' OR k.amount < 0)`,
+      args: [startIso, endIso]
+    });
+    const allKhata = khataRes.rows || [];
 
-    const inRange = (d) => {
-      const t = new Date(d).getTime();
-      return t >= startDate.getTime() && t <= endDate.getTime();
-    };
+    const wastageRes = await db.execute({
+      sql: `SELECT id, productName, quantity, reason, totalLoss, createdAt FROM WastageLog 
+            WHERE createdAt BETWEEN ? AND ?`,
+      args: [startIso, endIso]
+    });
+    const allWastage = wastageRes.rows || [];
 
     const unifiedList = [];
     let totalSales = 0;
@@ -585,7 +582,7 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
     let totalWastageLoss = 0;
 
     // Process Sales
-    allSales.filter((s) => inRange(s.createdAt)).forEach((sale) => {
+    allSales.forEach((sale) => {
       const amt = Number(sale.total) || 0;
       const isNegative = amt < 0;
       if (isNegative) {
@@ -608,7 +605,7 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
     });
 
     // Process Expenses & Owner Draws
-    allExpenses.filter((e) => inRange(e.createdAt)).forEach((exp) => {
+    allExpenses.forEach((exp) => {
       const amt = Number(exp.amount) || 0;
       totalExpenses += amt;
 
@@ -626,43 +623,39 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
     });
 
     // Process Khata Payments (Debt Collections)
-    allKhata
-      .filter((k) => (k.type === 'PAYMENT_IN' || Number(k.amount) < 0) && inRange(k.timestamp))
-      .forEach((entry) => {
-        const amt = Math.abs(Number(entry.amount) || 0);
-        totalKhataCollected += amt;
-        const custName = customerMap.get(entry.customerId) || 'Credit Customer';
+    allKhata.forEach((entry) => {
+      const amt = Math.abs(Number(entry.amount) || 0);
+      totalKhataCollected += amt;
+      const custName = entry.customerName || 'Credit Customer';
 
-        unifiedList.push({
-          id: `khata-${entry.id}`,
-          rawDate: new Date(entry.timestamp).toISOString(),
-          time: new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          dateStr: new Date(entry.timestamp).toLocaleDateString('en-GB'),
-          type: 'KHATA_PAYMENT',
-          desc: `${custName} - Debt Settle`,
-          amount: amt,
-          direction: 'IN',
-        });
+      unifiedList.push({
+        id: `khata-${entry.id}`,
+        rawDate: new Date(entry.timestamp).toISOString(),
+        time: new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        dateStr: new Date(entry.timestamp).toLocaleDateString('en-GB'),
+        type: 'KHATA_PAYMENT',
+        desc: `${custName} - Debt Settle`,
+        amount: amt,
+        direction: 'IN',
       });
+    });
 
     // Process Wastage & Write-offs (Loss of dead/expired goods)
-    allWastage
-      .filter((w) => inRange(w.createdAt))
-      .forEach((w) => {
-        const loss = Number(w.totalLoss) || 0;
-        totalWastageLoss += loss;
+    allWastage.forEach((w) => {
+      const loss = Number(w.totalLoss) || 0;
+      totalWastageLoss += loss;
 
-        unifiedList.push({
-          id: `wastage-${w.id}`,
-          rawDate: new Date(w.createdAt).toISOString(),
-          time: new Date(w.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          dateStr: new Date(w.createdAt).toLocaleDateString('en-GB'),
-          type: 'WASTAGE',
-          desc: `Write-Off: ${w.quantity}x ${w.productName} [${w.reason}]`,
-          amount: loss,
-          direction: 'OUT',
-        });
+      unifiedList.push({
+        id: `wastage-${w.id}`,
+        rawDate: new Date(w.createdAt).toISOString(),
+        time: new Date(w.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        dateStr: new Date(w.createdAt).toLocaleDateString('en-GB'),
+        type: 'WASTAGE',
+        desc: `Write-Off: ${w.quantity}x ${w.productName} [${w.reason}]`,
+        amount: loss,
+        direction: 'OUT',
       });
+    });
 
     // Sort chronologically descending (newest first)
     unifiedList.sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
@@ -686,6 +679,32 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
   } catch (error) {
     fastify.log.error(error);
     return reply.status(500).send({ error: 'Failed to generate unified ledger report', details: error.message });
+  }
+});
+
+// 5. High-Performance Unified Cash Flow Endpoint (Single Database Engine UNION ALL)
+fastify.get('/api/reports/unified-cashflow', async (request, reply) => {
+  try {
+    const start = request.query.startDate || new Date(0).toISOString();
+    const end = request.query.endDate || new Date().toISOString();
+
+    // NEW: Execute a single, highly optimized UNION ALL directly on the database engine
+    const unifiedRes = await db.execute({
+      sql: `SELECT 'SALE' as type, id, total as amount, paymentType, createdAt FROM Sale 
+            WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))
+            UNION ALL
+            SELECT 'EXPENSE' as type, id, -amount as amount, category as paymentType, createdAt FROM Expense 
+            WHERE createdAt BETWEEN ? AND ?
+            UNION ALL
+            SELECT 'KHATA_PAYMENT' as type, id, -amount as amount, 'KHATA' as paymentType, timestamp as createdAt FROM KhataLedger 
+            WHERE timestamp BETWEEN ? AND ? AND (type = 'PAYMENT' OR amount < 0)
+            ORDER BY createdAt DESC`,
+      args: [start, end, start, end, start, end]
+    });
+
+    return { success: true, ledger: unifiedRes.rows || [] };
+  } catch (err) {
+    return reply.code(500).send({ error: 'Failed to generate unified ledger' });
   }
 });
 

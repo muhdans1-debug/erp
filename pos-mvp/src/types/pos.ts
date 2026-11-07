@@ -1,30 +1,32 @@
+// pos-mvp/src/types/pos.ts
+
 export interface Product {
   id: string;
+  barcode: string;
   name: string;
-  sellingPrice: number;
-  price?: number;
-  purchasePrice?: number;
-  unitCost?: number;
-  vatRate?: number; // 10 for standard, 0 for zero-rated basic foods
-  taxRate?: number;
-  barcode?: string;
-  quantity?: number;
-  stockQuantity?: number;
-  productId?: string;
-  isScaleItem?: boolean;
-  scaleWeight?: number;
+  nameAr?: string;
+  price: number;        // REPLACES sellingPrice
+  unitCost: number;     // REPLACES purchasePrice
+  vatRate: number;      // REPLACES taxRate
+  isScaleItem: boolean; // REPLACES is_weighed_item
+  stockQuantity: number;
   category?: string;
   isQuickProduct?: boolean;
+  scaleWeight?: number;
   originalPrice?: number;
   discountNote?: string;
-  is_weighed_item?: boolean;
+  productId?: string;
   total_price?: number;
+}
+
+export interface CartItem extends Product {
+  qty: number;          // REPLACES quantity
 }
 
 export interface CartTab {
   id: string;
   name: string;
-  items: Product[];
+  items: CartItem[];
 }
 
 export interface Customer {
@@ -75,4 +77,3 @@ export interface PriceOverrideItem {
   index: number;
   product: Product;
 }
-

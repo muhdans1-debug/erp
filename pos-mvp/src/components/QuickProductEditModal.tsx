@@ -1,24 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Trash2, ArrowLeftRight, Palette, X, Check } from 'lucide-react';
 import { QuickCategory } from './EditQuickTabsModal';
+import { Product as BaseProduct } from '../types/pos';
 
-interface Product {
-  id: string;
-  name: string;
-  sellingPrice: number;
-  purchasePrice?: number;
-  unitCost?: number;
-  vatRate?: number;
-  taxRate?: number;
-  barcode?: string;
-  quantity?: number;
-  stockQuantity?: number;
-  productId?: string;
-  isScaleItem?: boolean;
-  scaleWeight?: number;
-  category?: string;
+export interface Product extends BaseProduct {
   quickColor?: string | null;
-  isQuickProduct?: boolean;
 }
 
 interface QuickProductEditModalProps {
@@ -248,7 +234,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
                 Customize Quick Button
               </h3>
               <p className="text-xs text-slate-500 font-medium">
-                {product.name} • <span className="font-mono font-bold text-slate-700">BD {product.sellingPrice.toFixed(3)}</span>
+                {product.name} • <span className="font-mono font-bold text-slate-700">BD {(product.price ?? (product as any).sellingPrice ?? 0).toFixed(3)}</span>
               </p>
             </div>
           </div>
@@ -333,7 +319,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
                     {selectedCategory}
                   </span>
                   <p className="font-bold text-xs line-clamp-1 my-1">{product.name}</p>
-                  <span className="font-black text-xs font-mono">BD {product.sellingPrice.toFixed(3)}</span>
+                  <span className="font-black text-xs font-mono">BD {(product.price ?? (product as any).sellingPrice ?? 0).toFixed(3)}</span>
                 </div>
               </div>
             </div>
@@ -373,7 +359,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
                     </div>
                     <div className="text-right">
                       <span className="font-bold text-xs font-mono text-slate-900">
-                        BD {item.sellingPrice.toFixed(3)}
+                        BD {(item.price ?? (item as any).sellingPrice ?? 0).toFixed(3)}
                       </span>
                       <span className="block text-[10px] font-bold text-blue-600 group-hover:underline">
                         Tap to Swap ↵

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Save, X, Barcode, Truck, Percent, Scale, AlertCircle, RotateCcw, Search, RefreshCw } from 'lucide-react';
 import { db } from '../db';
+import { mapDbRowToProduct } from '../services/productMapper';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -36,7 +37,7 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
     } else {
       db.execute('SELECT * FROM Product').then((res) => {
         if (res?.rows && Array.isArray(res.rows)) {
-          setAllProducts(res.rows);
+          setAllProducts(res.rows.map(mapDbRowToProduct));
         }
       }).catch(() => {});
     }

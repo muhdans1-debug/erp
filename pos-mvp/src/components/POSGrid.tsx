@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { db } from '../db.ts';
 import { Scale, RefreshCw, Search, HardDrive, Sparkles } from 'lucide-react';
 import { QuickCategory, DEFAULT_CATEGORIES } from './EditQuickTabsModal';
+import { mapDbRowToProduct } from '../services/productMapper';
 
 export interface ProductItem {
   id: string;
@@ -47,13 +48,8 @@ export const POSGrid: React.FC<POSGridProps> = ({ onSelectItem, className = '', 
       // Reads directly from the local SUNMI chip - 0ms latency
       // LIMIT 500 prevents full-table dump into Android WebView memory on large catalogs
       const result = await db.execute('SELECT id, name, sellingPrice, barcode, is_weighed_item, stockQuantity, category FROM Product LIMIT 500');
-      const rows = (result.rows || []).map((p: any) => ({
-        ...p,
-        price: p.price !== undefined ? p.price : (p.sellingPrice || 0),
-        sellingPrice: p.sellingPrice !== undefined ? p.sellingPrice : (p.price || 0),
-        is_weighed_item: Boolean(p.is_weighed_item)
-      }));
-      setProducts(rows);
+      const rows = (result.rows || []).map(mapDbRowToProduct);
+      setProducts(rows as any);
       setSyncStatus(`0ms Local Chip (${rows.length} Items Loaded)`);
     } catch (error) {
       console.error("Failed to load products from local embedded db:", error);

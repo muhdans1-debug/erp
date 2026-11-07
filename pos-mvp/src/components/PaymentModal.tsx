@@ -26,7 +26,10 @@ import BenefitPayConfigModal from './BenefitPayConfigModal';
 export interface PaymentItem {
   id: string;
   name: string;
-  sellingPrice: number;
+  price?: number;
+  qty?: number;
+  unitCost?: number;
+  sellingPrice?: number;
   purchasePrice?: number;
   quantity?: number;
   vatRate?: number;
@@ -250,7 +253,7 @@ export default function PaymentModal({
       // Print full NBR VAT receipt via printer utility / Web Worker
       printFullReceipt({
         invoiceNo: finalReceiptData.invoiceNo,
-        items: cart,
+        items: (cart || []) as any,
         subtotal,
         vat,
         total: totalAmount,
@@ -551,8 +554,9 @@ export default function PaymentModal({
                     <div style={{ width: '30%', textAlign: 'right' }}>Amt(BD)</div>
                   </div>
                   {cart.map((item, idx) => {
-                    const qty = item.quantity || 1;
-                    const lineTotal = item.sellingPrice * qty;
+                    const qty = item.qty || item.quantity || 1;
+                    const unitPrice = item.price ?? item.sellingPrice ?? 0;
+                    const lineTotal = unitPrice * qty;
                     const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
                     return (
                       <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '2px' }}>
@@ -1168,8 +1172,9 @@ export default function PaymentModal({
 
         {/* ITEMS LIST */}
         {cart.map((item, idx) => {
-          const qty = item.quantity || 1;
-          const lineTotal = item.sellingPrice * qty;
+          const qty = item.qty || item.quantity || 1;
+          const unitPrice = item.price ?? item.sellingPrice ?? 0;
+          const lineTotal = unitPrice * qty;
           const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
           return (
             <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>

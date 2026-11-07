@@ -118,7 +118,7 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
             </div>
             <div className="flex items-center justify-between w-full pt-1 border-t border-black/5">
               <span className="font-black text-xs sm:text-sm font-mono tabular-nums">
-                BD {Number(prod.sellingPrice).toFixed(3)}
+                BD {Number(prod.price ?? (prod as any).sellingPrice ?? 0).toFixed(3)}
               </span>
               <span className={`text-[10px] font-bold ${
                 isEditMode

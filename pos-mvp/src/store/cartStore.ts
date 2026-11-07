@@ -48,8 +48,8 @@ export function calculateCartTotals(cartItems: CartItem[]): CartTotals {
   let totalSavings = 0;
 
   cartItems.forEach((item) => {
-    const qty = Number(item.quantity ?? item.qty ?? 1);
-    const unitPrice = Number(item.sellingPrice ?? item.price ?? 0);
+    const qty = Number(item.qty ?? (item as any).quantity ?? 1);
+    const unitPrice = Number(item.price ?? (item as any).sellingPrice ?? 0);
     const origPrice = Number(item.originalPrice ?? unitPrice);
     if (origPrice > unitPrice) {
       totalSavings += (origPrice - unitPrice) * qty;
@@ -60,7 +60,7 @@ export function calculateCartTotals(cartItems: CartItem[]): CartTotals {
     // Bahrain NBR Tax Rules: 10% standard, basic food items are 0% (Zero-Rated)
     const rate = item.vatRate !== undefined
       ? Number(item.vatRate)
-      : (item.taxRate !== undefined && item.taxRate === 0 ? 0 : 10);
+      : ((item as any).taxRate !== undefined && (item as any).taxRate === 0 ? 0 : 10);
 
     if (rate === 10) {
       const lineTax = lineTotal - (lineTotal / 1.10);

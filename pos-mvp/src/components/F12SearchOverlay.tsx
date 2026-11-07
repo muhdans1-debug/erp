@@ -141,7 +141,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
                   </div>
                   <div className="text-right shrink-0">
                     <div className="text-2xl font-black font-mono text-slate-900 group-hover:text-blue-700 transition-colors">
-                      BD {prod.sellingPrice.toFixed(3)}
+                      BD {(prod.price ?? (prod as any).sellingPrice ?? 0).toFixed(3)}
                     </div>
                     <span className={`inline-block mt-1 text-xs font-bold ${isOutOfStock ? 'text-red-500' : 'text-blue-600 group-hover:underline'}`}>
                       {isOutOfStock ? 'Out of Stock ✕' : 'Tap to add ↵'}

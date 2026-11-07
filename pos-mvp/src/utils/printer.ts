@@ -248,18 +248,17 @@ export const SunmiPrinter = {
  */
 export const printF100ShelfTag = async (productData: {
   name?: string;
-  sellingPrice?: number | string;
   price?: number | string;
   barcode?: string;
   category?: string;
   vatRate?: number;
-  is_weighed_item?: boolean;
+  isScaleItem?: boolean;
 }): Promise<boolean> => {
   const name = (productData.name || 'ITEM').trim();
-  const rawPrice = parseFloat(String(productData.sellingPrice ?? productData.price ?? 0)) || 0;
+  const rawPrice = parseFloat(String(productData.price ?? 0)) || 0;
   const barcode = (productData.barcode || '').trim();
   const category = (productData.category || 'RETAIL').toUpperCase();
-  const isWeighed = Boolean(productData.is_weighed_item);
+  const isWeighed = Boolean(productData.isScaleItem);
   const vatRate = productData.vatRate !== undefined ? Number(productData.vatRate) : 10;
 
   try {
@@ -320,12 +319,10 @@ export const printF100ShelfTag = async (productData: {
 export interface ReceiptItem {
   id?: string;
   name: string;
-  sellingPrice: number;
-  price?: number;
-  quantity?: number;
+  price: number;
+  qty: number;
   vatRate?: number;
-  taxRate?: number;
-  is_weighed_item?: boolean;
+  isScaleItem?: boolean;
   total_price?: number;
 }
 
@@ -334,17 +331,16 @@ export interface ReceiptItem {
  */
 export const formatReceiptLineItem = (item: {
   name: string;
-  quantity: number;
+  qty: number;
   price?: number;
-  sellingPrice?: number;
   total_price?: number;
-  is_weighed_item?: boolean;
+  isScaleItem?: boolean;
 }): string => {
-  const price = item.price ?? item.sellingPrice ?? 0;
-  const totalPrice = item.total_price ?? (price * item.quantity);
-  return item.is_weighed_item
-    ? `${item.name}\n  ${item.quantity.toFixed(3)}kg x ${price.toFixed(3)}   ${totalPrice.toFixed(3)}`
-    : `${item.name}\n  ${item.quantity} x ${price.toFixed(3)}         ${totalPrice.toFixed(3)}`;
+  const price = item.price ?? 0;
+  const totalPrice = item.total_price ?? (price * item.qty);
+  return item.isScaleItem
+    ? `${item.name}\n  ${item.qty.toFixed(3)}kg x ${price.toFixed(3)}   ${totalPrice.toFixed(3)}`
+    : `${item.name}\n  ${item.qty} x ${price.toFixed(3)}         ${totalPrice.toFixed(3)}`;
 };
 
 export interface FullReceiptProps {
@@ -490,10 +486,11 @@ export const printFullReceipt = async ({
     const groupedMap = new Map<string, { item: ReceiptItem; count: number }>();
     for (const item of items) {
       const key = item.id || item.name;
+      const itemQty = (item as any).qty ?? (item as any).quantity ?? 1;
       if (groupedMap.has(key)) {
-        groupedMap.get(key)!.count += (item.quantity ?? 1);
+        groupedMap.get(key)!.count += itemQty;
       } else {
-        groupedMap.set(key, { item, count: (item.quantity ?? 1) });
+        groupedMap.set(key, { item, count: itemQty });
       }
     }
 
@@ -508,15 +505,16 @@ export const printFullReceipt = async ({
     ];
 
     for (const { item, count } of groupedMap.values()) {
-      totalQuantity += (item.is_weighed_item ? 1 : count);
-      const unitPrice = item.price ?? item.sellingPrice ?? 0;
+      const isScale = (item as any).isScaleItem ?? (item as any).is_weighed_item;
+      totalQuantity += (isScale ? 1 : count);
+      const unitPrice = item.price ?? (item as any).sellingPrice ?? 0;
       const lineTotal = item.total_price ?? (unitPrice * count);
-      const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
+      const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && (item as any).taxRate !== 0);
 
       const itemLabel = `${item.name}${isVat10 ? ' *' : ''}`;
       bodyLines.push(`${itemLabel}\n`);
 
-      const qtyLine = item.is_weighed_item
+      const qtyLine = isScale
         ? `  ${count.toFixed(3)}kg x ${unitPrice.toFixed(3)}`
         : `  ${count} x BD ${unitPrice.toFixed(3)}`;
       bodyLines.push(formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`));
@@ -729,7 +727,7 @@ export const printNBRReceipt = async (
     nameAr: itm.nameAr || itm.arabicName,
     price: Number(itm.price ?? itm.sellingPrice ?? 0),
     qty: Number(itm.qty ?? itm.quantity ?? 1),
-    taxRate: itm.taxRate !== undefined ? Number(itm.taxRate) : (itm.vatRate !== undefined ? Number(itm.vatRate) : 10)
+    vatRate: itm.vatRate !== undefined ? Number(itm.vatRate) : (itm.taxRate !== undefined ? Number(itm.taxRate) : 10)
   }));
 
   const total = payload.total !== undefined
@@ -822,7 +820,7 @@ export const printNBRReceipt = async (
   ];
 
   for (const item of normalizedItems) {
-    const isTaxable = item.taxRate === 10;
+    const isTaxable = (item.vatRate ?? (item as any).taxRate) === 10;
     const vatIndicator = isTaxable ? '*' : ' ';
     const name = (item.name + vatIndicator).substring(0, 15).padEnd(15, ' ');
     const qty = item.qty.toString().padStart(3, ' ');

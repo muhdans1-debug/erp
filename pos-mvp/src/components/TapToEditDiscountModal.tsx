@@ -29,7 +29,7 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
   // Synchronize initial values whenever target item changes
   useEffect(() => {
     if (item?.product) {
-      const curPrice = Number(item.product.sellingPrice ?? item.product.price ?? 0);
+      const curPrice = Number(item.product.price ?? (item.product as any).sellingPrice ?? 0);
       const origPrice = Number(item.product.originalPrice ?? curPrice);
       setOverridePriceInput(curPrice.toFixed(3));
       setManagerPinInput('');
@@ -52,8 +52,8 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
   if (!item) return null;
 
   const product = item.product;
-  const qty = Number(product.quantity ?? (product as any).qty ?? 1);
-  const currentPrice = Number(product.sellingPrice ?? product.price ?? 0);
+  const qty = Number((product as any).qty ?? (product as any).quantity ?? 1);
+  const currentPrice = Number(product.price ?? (product as any).sellingPrice ?? 0);
   const originalPrice = Number(product.originalPrice ?? currentPrice);
   const basePrice = originalPrice > 0 ? originalPrice : currentPrice;
   const isAlreadyDiscounted = originalPrice > currentPrice || Boolean(product.discountNote);

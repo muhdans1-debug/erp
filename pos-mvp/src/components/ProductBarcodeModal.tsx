@@ -301,7 +301,7 @@ export const ProductBarcodeModal: React.FC<ProductBarcodeModalProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontWeight: '600', fontSize: '15px', color: '#111827' }}>{p.name}</span>
                       <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: 'bold' }}>
-                        BD {p.sellingPrice.toFixed(3)}
+                        BD {(p.price ?? (p as any).sellingPrice ?? 0).toFixed(3)}
                       </span>
                     </div>
                     <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>

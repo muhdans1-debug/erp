@@ -1,24 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Search, X } from 'lucide-react';
 import { QuickCategory } from './EditQuickTabsModal';
+import { Product as BaseProduct } from '../types/pos';
 
-interface Product {
-  id: string;
-  name: string;
-  sellingPrice: number;
-  purchasePrice?: number;
-  unitCost?: number;
-  vatRate?: number;
-  taxRate?: number;
-  barcode?: string;
-  quantity?: number;
-  stockQuantity?: number;
-  productId?: string;
-  isScaleItem?: boolean;
-  scaleWeight?: number;
-  category?: string;
+export interface Product extends BaseProduct {
   quickColor?: string | null;
-  isQuickProduct?: boolean;
 }
 
 interface AddQuickProductModalProps {
@@ -213,7 +199,7 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
               </div>
               <div className="text-right">
                 <span className="font-bold text-xs font-mono text-slate-900">
-                  BD {item.sellingPrice.toFixed(3)}
+                  BD {(item.price ?? (item as any).sellingPrice ?? 0).toFixed(3)}
                 </span>
                 <span className="block text-[10px] font-bold text-emerald-600 group-hover:underline">
                   + Add to Grid ↵

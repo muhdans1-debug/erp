@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { PackagePlus, X, ScanBarcode, Truck, Percent, Scale, Tag, Layers, CheckCircle2, AlertCircle, RotateCcw, ShoppingCart, Search, RefreshCw } from 'lucide-react';
 import { db } from '../db';
+import { mapDbRowToProduct } from '../services/productMapper';
 
 export interface PosAddProductModalProps {
   onClose: () => void;
@@ -46,7 +47,7 @@ export default function PosAddProductModal({
     } else {
       db.execute('SELECT * FROM Product').then((res) => {
         if (res?.rows && Array.isArray(res.rows)) {
-          setAllProducts(res.rows);
+          setAllProducts(res.rows.map(mapDbRowToProduct));
         }
       }).catch(() => {});
     }

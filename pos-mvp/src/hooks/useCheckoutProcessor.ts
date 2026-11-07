@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useCartStore, CartItem, calculateCartTotals } from '../store/cartStore';
+import { useCartStore, CartItem } from '../store/cartStore';
 import { Product } from '../types/pos';
 
 /**
@@ -13,20 +13,41 @@ export const useCheckoutProcessor = () => {
   const cart = useCartStore((s) => s.items as unknown as (CartItem & Product)[]);
   const activeCart = useCartStore((s) => s.carts.find((c) => c.id === s.activeCartId) || s.carts[0]);
 
-  // Memoized Bahrain NBR Tax Calculations
+  // Memoized Bahrain NBR Tax Calculations using canonical .price, .qty, and .vatRate exclusively
   const cartTotals = useMemo(() => {
-    const totals = calculateCartTotals(cart as any);
+    let subtotal = 0;
+    let totalVat = 0;
+    let totalSavings = 0;
+
+    cart.forEach((item) => {
+      const lineTotal = Number(((item.price || 0) * (item.qty || 1)).toFixed(3));
+      const origPrice = Number(item.originalPrice ?? item.price ?? 0);
+      if (origPrice > (item.price || 0)) {
+        totalSavings += (origPrice - (item.price || 0)) * (item.qty || 1);
+      }
+      const rate = Number(item.vatRate ?? 0);
+      if (rate === 10) {
+        const lineTax = lineTotal - (lineTotal / 1.10);
+        totalVat += lineTax;
+        subtotal += (lineTotal - lineTax);
+      } else {
+        subtotal += lineTotal;
+      }
+    });
+
+    const finalTotal = subtotal + totalVat;
+
     return {
-      subtotal: totals.subtotal,
-      totalVat: totals.totalVat,
-      vat: totals.totalVat,
-      finalTotal: totals.finalTotal,
-      total: totals.finalTotal,
-      totalSavings: totals.totalSavings,
-      subtotalStr: totals.subtotalStr,
-      totalVatStr: totals.totalVatStr,
-      finalTotalStr: totals.finalTotalStr,
-      totalSavingsStr: totals.totalSavingsStr
+      subtotal: Number(subtotal.toFixed(3)),
+      totalVat: Number(totalVat.toFixed(3)),
+      vat: Number(totalVat.toFixed(3)),
+      finalTotal: Number(finalTotal.toFixed(3)),
+      total: Number(finalTotal.toFixed(3)),
+      totalSavings: Number(totalSavings.toFixed(3)),
+      subtotalStr: subtotal.toFixed(3),
+      totalVatStr: totalVat.toFixed(3),
+      finalTotalStr: finalTotal.toFixed(3),
+      totalSavingsStr: totalSavings.toFixed(3)
     };
   }, [cart]);
 

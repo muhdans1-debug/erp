@@ -54,17 +54,17 @@ import { saveSaleOffline } from '../utils/nativeDb';
 import { generateCompliantInvoiceNumber } from '../utils/nbrInvoice';
 
 const DEFAULT_PRODUCTS: Product[] = [
-  { id: '1', name: 'Arabian Perfume', sellingPrice: 25.500, purchasePrice: 15.0, barcode: '1', vatRate: 10, stockQuantity: 25 },
-  { id: '2', name: 'Smart Watch', sellingPrice: 45.000, purchasePrice: 30.0, barcode: '2', vatRate: 10, stockQuantity: 10 },
-  { id: '3', name: 'Wireless Earbuds', sellingPrice: 15.000, purchasePrice: 8.0, barcode: '3', vatRate: 10, stockQuantity: 15 },
-  { id: '4', name: 'USB-C Cable', sellingPrice: 3.500, purchasePrice: 1.5, barcode: '4', vatRate: 10, stockQuantity: 50 },
-  { id: '101', name: 'Fresh Australian Mutton / Lamb', sellingPrice: 3.800, purchasePrice: 2.5, barcode: '00101', vatRate: 0, stockQuantity: 40 },
-  { id: '102', name: 'Fresh Local Beef Cubes', sellingPrice: 3.200, purchasePrice: 2.0, barcode: '00102', vatRate: 0, stockQuantity: 35 },
-  { id: '103', name: 'Turkish White Feta Cheese', sellingPrice: 2.400, purchasePrice: 1.5, barcode: '00103', vatRate: 0, stockQuantity: 20 },
-  { id: '104', name: 'Almarai Fresh Milk 2L', sellingPrice: 1.100, purchasePrice: 0.850, barcode: '00104', vatRate: 0, stockQuantity: 30 },
-  { id: '105', name: 'White Sliced Bread', sellingPrice: 0.400, purchasePrice: 0.250, barcode: '00105', vatRate: 0, stockQuantity: 50 },
-  { id: '107', name: 'Loose Red Tomatoes 1kg', sellingPrice: 0.350, purchasePrice: 0.200, barcode: '00107', vatRate: 0, is_weighed_item: true, stockQuantity: 100 },
-  { id: '110', name: 'Red Onions 1kg', sellingPrice: 0.250, purchasePrice: 0.150, barcode: '00110', vatRate: 0, is_weighed_item: true, stockQuantity: 80 },
+  { id: '1', name: 'Arabian Perfume', price: 25.500, unitCost: 15.0, barcode: '1', vatRate: 10, isScaleItem: false, stockQuantity: 25 },
+  { id: '2', name: 'Smart Watch', price: 45.000, unitCost: 30.0, barcode: '2', vatRate: 10, isScaleItem: false, stockQuantity: 10 },
+  { id: '3', name: 'Wireless Earbuds', price: 15.000, unitCost: 8.0, barcode: '3', vatRate: 10, isScaleItem: false, stockQuantity: 15 },
+  { id: '4', name: 'USB-C Cable', price: 3.500, unitCost: 1.5, barcode: '4', vatRate: 10, isScaleItem: false, stockQuantity: 50 },
+  { id: '101', name: 'Fresh Australian Mutton / Lamb', price: 3.800, unitCost: 2.5, barcode: '00101', vatRate: 0, isScaleItem: false, stockQuantity: 40 },
+  { id: '102', name: 'Fresh Local Beef Cubes', price: 3.200, unitCost: 2.0, barcode: '00102', vatRate: 0, isScaleItem: false, stockQuantity: 35 },
+  { id: '103', name: 'Turkish White Feta Cheese', price: 2.400, unitCost: 1.5, barcode: '00103', vatRate: 0, isScaleItem: false, stockQuantity: 20 },
+  { id: '104', name: 'Almarai Fresh Milk 2L', price: 1.100, unitCost: 0.850, barcode: '00104', vatRate: 0, isScaleItem: false, stockQuantity: 30 },
+  { id: '105', name: 'White Sliced Bread', price: 0.400, unitCost: 0.250, barcode: '00105', vatRate: 0, isScaleItem: false, stockQuantity: 50 },
+  { id: '107', name: 'Loose Red Tomatoes 1kg', price: 0.350, unitCost: 0.200, barcode: '00107', vatRate: 0, isScaleItem: true, stockQuantity: 100 },
+  { id: '110', name: 'Red Onions 1kg', price: 0.250, unitCost: 0.150, barcode: '00110', vatRate: 0, isScaleItem: true, stockQuantity: 80 },
 ];
 
 export interface CheckoutScreenProps {
@@ -277,7 +277,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       return;
     }
 
-    if (item.is_weighed_item) {
+    if (item.isScaleItem || (item as any).is_weighed_item) {
       // Intercept and open the Numpad Modal
       setSelectedWeighedItem(item);
       setIsWeightModalOpen(true);
@@ -961,7 +961,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       // Check current quantity in active cart
       const currentItemInCart = activeCart.items.find((p) => p.id === product.id);
-      const currentCartQty = currentItemInCart ? (currentItemInCart.quantity ?? 1) : 0;
+      const currentCartQty = currentItemInCart ? (currentItemInCart.qty ?? (currentItemInCart as any).quantity ?? 1) : 0;
       const targetQty = currentCartQty + quantity;
 
       if (targetQty > availableStock) {
@@ -1072,18 +1072,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       const matchedProduct = findProductByPLU(catalog, scaleParsed);
 
       if (matchedProduct) {
-        let unitSellingPrice = matchedProduct.sellingPrice;
+        let unitSellingPrice = matchedProduct.price ?? (matchedProduct as any).sellingPrice;
         let displayName = matchedProduct.name;
         let weightKg: number | undefined;
 
         if (scaleParsed.type === 'WEIGHT') {
           // Prefix 22: Value is weight in kg (3 decimals)
           weightKg = scaleParsed.extractedValue || 0;
-          unitSellingPrice = Number(((weightKg) * (matchedProduct.sellingPrice || 1)).toFixed(3));
+          unitSellingPrice = Number(((weightKg) * (matchedProduct.price || (matchedProduct as any).sellingPrice || 1)).toFixed(3));
           displayName = `${matchedProduct.name} (${weightKg.toFixed(3)} kg)`;
         } else {
           // Prefix 20 or 21: Price-embedded barcode (fils divided by 1000)
-          unitSellingPrice = scaleParsed.extractedValue || matchedProduct.sellingPrice;
+          unitSellingPrice = scaleParsed.extractedValue || matchedProduct.price || (matchedProduct as any).sellingPrice;
           displayName = `${matchedProduct.name} (Scale Pack BD ${unitSellingPrice.toFixed(3)})`;
         }
 
@@ -1093,11 +1093,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           id: `${matchedProduct.id}_scale_${cleanCode}`,
           productId: matchedProduct.id,
           name: displayName,
-          sellingPrice: unitSellingPrice,
+          price: unitSellingPrice,
           barcode: cleanCode,
           isScaleItem: true,
           scaleWeight: weightKg,
-          quantity: 1,
         };
 
         setLastScannedProductId(scaleCartItem.id);
@@ -1132,8 +1131,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       setLastScannedProductId(product.id);
       handleItemSelection(product);
       setUnassignedBarcode(null);
-      if (!product.is_weighed_item) {
-        showToast(`🏷️ Scanned: ${product.name} (BD ${product.sellingPrice.toFixed(3)})`, 'success');
+      if (!product.isScaleItem && !(product as any).is_weighed_item) {
+        showToast(`🏷️ Scanned: ${product.name} (BD ${(product.price ?? (product as any).sellingPrice).toFixed(3)})`, 'success');
       }
     } else {
       setUnassignedBarcode(cleanCode);
@@ -1149,7 +1148,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       if (prod) {
         setLastScannedProductId(prod.id);
         setUnassignedBarcode(null);
-        showToast(`🏷️ Scanned: ${prod.name} (BD ${Number(prod.sellingPrice || prod.price || 0).toFixed(3)})`, 'success');
+        showToast(`🏷️ Scanned: ${prod.name} (BD ${Number(prod.price ?? prod.sellingPrice ?? 0).toFixed(3)})`, 'success');
       }
     };
 
@@ -1292,7 +1291,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           // Show the last scanned item and running total
           const lastItem = cart[cart.length - 1];
           await CustomerDisplay.updateDisplay({
-            text: `${lastItem.name}\nBD ${lastItem.sellingPrice.toFixed(3)}\n\nTOTAL: BD ${total.toFixed(3)}`
+            text: `${lastItem.name}\nBD ${(lastItem.price ?? (lastItem as any).sellingPrice ?? 0).toFixed(3)}\n\nTOTAL: BD ${total.toFixed(3)}`
           });
         }
       } catch {
@@ -1393,17 +1392,19 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         shiftId: shiftId || localStorage.getItem('active_shift_id') || null,
         employeeId: localStorage.getItem('active_employee_id') || 'emp_cashier_1',
         items: cart.map((item) => {
-          const qty = item.quantity ?? 1;
-          const lineTotal = item.sellingPrice * qty;
+          const qty = item.qty ?? (item as any).quantity ?? 1;
+          const unitPrice = item.price ?? (item as any).sellingPrice ?? 0;
+          const lineTotal = unitPrice * qty;
           const rate = item.vatRate !== undefined
             ? Number(item.vatRate)
-            : (item.taxRate !== undefined && item.taxRate === 0 ? 0 : 10);
+            : ((item as any).taxRate !== undefined && (item as any).taxRate === 0 ? 0 : 10);
           const lineTax = rate === 10 ? Number((lineTotal - (lineTotal / 1.10)).toFixed(3)) : 0;
           return {
             productId: item.productId || item.id,
             quantity: qty,
-            priceAtSale: item.sellingPrice,
-            costAtSale: item.purchasePrice || 0,
+            qty,
+            priceAtSale: unitPrice,
+            costAtSale: item.unitCost ?? (item as any).purchasePrice ?? 0,
             vatRateAtSale: rate,
             vatAmount: lineTax,
           };
@@ -1617,7 +1618,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
     if (!targetItem) return;
 
-    const currentQty = targetItem.quantity ?? 1;
+    const currentQty = targetItem.qty ?? (targetItem as any).quantity ?? 1;
     const newQty = currentQty + delta;
 
     if (!isReturnMode && delta > 0) {
@@ -1651,8 +1652,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     const targetItem = cart[index];
     if (!targetItem) return;
 
-    const currentQty = targetItem.quantity ?? 1;
-    const isWeighed = Boolean(targetItem.is_weighed_item);
+    const currentQty = targetItem.qty ?? (targetItem as any).quantity ?? 1;
+    const isWeighed = Boolean(targetItem.isScaleItem ?? (targetItem as any).is_weighed_item);
     const step = isWeighed ? 0.250 : 1;
     const newQty = Number((currentQty + delta * step).toFixed(3));
 
@@ -3255,12 +3256,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             const prodToAdd: Product = {
               id: newProduct.id,
               name: newProduct.name,
-              sellingPrice: price,
-              purchasePrice: cost,
+              price,
+              unitCost: cost,
               barcode: newProduct.barcode || newProduct.id,
               category: newProduct.category,
-              is_weighed_item: Boolean(newProduct.is_weighed_item),
-              vatRate: newProduct.vatRate
+              isScaleItem: Boolean(newProduct.isScaleItem ?? newProduct.is_weighed_item),
+              vatRate: Number(newProduct.vatRate ?? 0),
+              stockQuantity: Number(newProduct.stockQuantity ?? 0),
             };
             if (andAddToCart) {
               addToCart(prodToAdd);
@@ -3566,14 +3568,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* ITEMS LIST */}
         {cart.map((item) => {
-          const qty = item.quantity ?? 1;
-          const rate = item.vatRate !== undefined ? Number(item.vatRate) : (item.taxRate === 0 ? 0 : 10);
+          const qty = item.qty ?? (item as any).quantity ?? 1;
+          const rate = item.vatRate !== undefined ? Number(item.vatRate) : ((item as any).taxRate === 0 ? 0 : 10);
           const isTaxable = rate === 10;
+          const unitPrice = item.price ?? (item as any).sellingPrice ?? 0;
           return (
             <div key={item.id} className="item-row">
               <div className="item-name">{item.name} {isTaxable ? '*' : ''}</div>
-              <div className="item-qty">{item.is_weighed_item ? `${qty.toFixed(3)}kg` : qty}</div>
-              <div className="item-amt">{(item.sellingPrice * qty).toFixed(3)}</div>
+              <div className="item-qty">{item.isScaleItem || (item as any).is_weighed_item ? `${qty.toFixed(3)}kg` : qty}</div>
+              <div className="item-amt">{(unitPrice * qty).toFixed(3)}</div>
             </div>
           );
         })}

@@ -1238,9 +1238,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // Fetch the static Master IP locked in earlier via DHCP
   const masterIp = typeof window !== 'undefined' ? (localStorage.getItem('MASTER_IP') || '192.168.8.7') : '192.168.8.7';
 
-  // 📡 Decoupled Network & Offline Synchronization Hook:
-  // Handles WebSocket connection, 10s auto-sync polling loop, and CRDT Khata balance sync outside React render tree
-  const { isServerOnline } = useNetworkSync(masterIp, useCallback((data: any) => {
+  // 📡 Decoupled Network & Offline Synchronization Hook with Cloud DR Fallback:
+  // Handles WebSocket connection, 10s auto-sync polling loop, 60s outage watchdog, and CRDT Khata balance sync
+  const { 
+    isServerOnline, 
+    showDrPrompt, 
+    isCloudModeActive, 
+    setIsCloudModeActive, 
+    activeApiBase 
+  } = useNetworkSync(masterIp, useCallback((data: any) => {
     if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
       const delta = Number(data.delta) || 0;
 
@@ -1271,6 +1277,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       );
     }
   }, []));
+
+  // Dynamically synchronize active API base when cloud mode toggles
+  useEffect(() => {
+    if (isCloudModeActive && activeApiBase) {
+      setApiBase(activeApiBase);
+    } else if (!isCloudModeActive) {
+      setApiBase(`http://${masterIp}:3000`);
+    }
+  }, [isCloudModeActive, activeApiBase, masterIp]);
 
   // Secondary Customer Display Initialization & Availability Check
   useEffect(() => {
@@ -1438,11 +1453,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       let data: any = null;
       try {
+        const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (isCloudModeActive) {
+          reqHeaders['x-dr-secret'] = (typeof window !== 'undefined' ? localStorage.getItem('DR_SECRET') : null) || 'askar-dr-secret-2026';
+          checkoutEndpoint = `${activeApiBase}/api/sales/sync`;
+        }
+
         const res = await fetch(checkoutEndpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: reqHeaders,
           body: JSON.stringify(checkoutPayload),
-          signal: AbortSignal.timeout(900)
+          signal: AbortSignal.timeout(isCloudModeActive ? 4000 : 900)
         });
         if (res.ok) {
           data = await res.json();
@@ -2170,6 +2191,34 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           }`}
         >
           {toast.message}
+        </div>
+      )}
+
+      {/* Disaster Recovery 60s Outage Warning Banner */}
+      {showDrPrompt && !isCloudModeActive && (
+        <div className="bg-orange-500 text-white px-4 py-2.5 font-bold flex justify-between items-center z-50 shadow-md">
+          <span className="text-xs sm:text-sm">⚠️ CRITICAL: Local Server is unresponsive (60s+ outage). Local offline sales active.</span>
+          <button 
+            type="button"
+            onClick={() => setIsCloudModeActive(true)}
+            className="bg-red-700 hover:bg-red-800 text-white text-xs px-3 py-1.5 rounded-lg shadow-sm font-bold transition active:scale-95 cursor-pointer ml-3 shrink-0"
+          >
+            Activate Cloud Fallback Mode
+          </button>
+        </div>
+      )}
+
+      {/* Cloud Mode Active Indicator */}
+      {isCloudModeActive && (
+        <div className="bg-red-600 text-white p-2 text-center font-bold text-xs tracking-widest animate-pulse shadow-md flex items-center justify-center gap-3 z-50">
+          <span>⚡ EMERGENCY CLOUD MODE ACTIVE ⚡</span>
+          <button
+            type="button"
+            onClick={() => setIsCloudModeActive(false)}
+            className="text-[11px] underline font-normal hover:text-red-200 cursor-pointer"
+          >
+            (Switch Back to Local Server)
+          </button>
         </div>
       )}
 

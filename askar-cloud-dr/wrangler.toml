@@ -1,0 +1,8 @@
+name = "askar-emergency-api"
+main = "src/index.ts"
+compatibility_date = "2023-01-01"
+
+[env.production]
+# Add your Turso Database URL here
+vars = { TURSO_URL = "libsql://askar-supermarket-fleet.turso.io" }
+

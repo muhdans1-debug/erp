@@ -40,3 +40,4 @@ export const mapDbRowToProduct = (row: any): Product => {
     nameAr: row.nameAr
   };
 };
+

@@ -1,4 +1,11 @@
 import React, { useState } from 'react';
+import {
+  getRegisterPrefix,
+  getLocalInvoiceCounter,
+  setRegisterPrefix,
+  setLocalInvoiceCounter,
+  previewNextInvoiceNumber,
+} from '../utils/nbrInvoice';
 
 export interface ServerConfigModalProps {
   isOpen: boolean;
@@ -14,8 +21,12 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
   onSaveServerIp,
 }) => {
   const [customServerIp, setCustomServerIp] = useState(activeServerIp);
+  const [registerPrefix, setRegPrefixState] = useState(getRegisterPrefix());
+  const [invoiceCounter, setInvCounterState] = useState(getLocalInvoiceCounter().toString());
 
   if (!isOpen) return null;
+
+  const nextPreview = previewNextInvoiceNumber(registerPrefix, parseInt(invoiceCounter, 10) || 1);
 
   return (
     <div
@@ -134,6 +145,63 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           </button>
         </div>
 
+        {/* Bahrain NBR Article 53 Terminal Block Allocation */}
+        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div>
+            <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#0f172a' }}>
+              🇧🇭 NBR Article 53 VAT Sequential Sequence
+            </h4>
+            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+              Guarantees gapless sequential invoice numbers during offline outages.
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                Register Prefix:
+              </label>
+              <input
+                type="text"
+                value={registerPrefix}
+                onChange={(e) => setRegPrefixState(e.target.value)}
+                placeholder="1"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '13px',
+                  fontFamily: 'monospace',
+                }}
+              />
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>e.g. 1 (Sunmi 1), 2 (Laptop 2)</span>
+            </div>
+
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                Next Offline Counter:
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={invoiceCounter}
+                onChange={(e) => setInvCounterState(e.target.value)}
+                placeholder="1"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '13px',
+                  fontFamily: 'monospace',
+                }}
+              />
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Next: <strong>{nextPreview}</strong></span>
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
           <button
             onClick={onClose}
@@ -152,6 +220,8 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           </button>
           <button
             onClick={() => {
+              setRegisterPrefix(registerPrefix);
+              setLocalInvoiceCounter(invoiceCounter);
               onSaveServerIp(customServerIp);
               onClose();
             }}

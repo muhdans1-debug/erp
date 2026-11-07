@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getOfflineSales, markOfflineSalesSynced, getOfflineSalesCount } from '../utils/nativeDb';
 import { syncOfflineKhataEvents } from '../utils/offlineSync';
+import { generateCompliantInvoiceNumber } from '../utils/nbrInvoice';
 
 export function useOfflineSync(apiBaseUrl?: string) {
   const [pendingCount, setPendingCount] = useState<number>(0);
@@ -56,7 +57,7 @@ export function useOfflineSync(apiBaseUrl?: string) {
     // Normalize sales payloads for /api/sync/sales
     const normalizedSales = queue.map((sale: any) => ({
       id: sale.id || `sale_off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      invoiceNo: sale.invoiceNo || sale.invoice_number || `INV-OFF-${Date.now().toString().slice(-6)}`,
+      invoiceNo: sale.invoiceNo || sale.invoice_number || generateCompliantInvoiceNumber(),
       total: Number(sale.total || sale.totalAmount || 0),
       subtotal: Number(sale.subtotal || sale.total || 0),
       paymentType: sale.paymentType || sale.payment_type || 'CASH',

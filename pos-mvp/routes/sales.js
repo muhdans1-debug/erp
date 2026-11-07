@@ -21,17 +21,19 @@ export default async function salesRoutes(fastify, options) {
       for (const sale of sales) {
         if (!sale || !sale.id) continue;
 
-        // Check if sale was already synced to avoid duplicate inventory deductions
+        // Check if sale was already synced to avoid duplicate inventory deductions or collisions
+        const providedInvoiceNo = sale.invoiceNo || sale.invoice_number;
         const existing = await transaction.execute({
-          sql: 'SELECT id FROM Sale WHERE id = ? LIMIT 1',
-          args: [sale.id]
+          sql: 'SELECT id FROM Sale WHERE id = ? OR invoiceNo = ? LIMIT 1',
+          args: [sale.id, providedInvoiceNo || '']
         });
 
         if (existing.rows && existing.rows.length > 0) {
-          continue;
+          continue; // Skip, already synced
         }
 
-        const invoiceNo = sale.invoiceNo || sale.invoice_number || `INV-${Date.now()}`;
+        // Strictly preserve and enforce the terminal's sequential NBR Article 53 invoice number
+        const invoiceNo = providedInvoiceNo || `INV-${Date.now()}`;
         const total = Number(sale.total || sale.totalAmount || 0);
         const subtotal = Number(sale.subtotal || total);
         const paymentType = sale.paymentType || sale.payment_type || 'CASH';

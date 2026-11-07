@@ -1,6 +1,7 @@
 // pos-mvp/src/utils/offlineSync.ts
 import { getNativeDb, getOfflineKhataEvents, markOfflineKhataSynced } from './nativeDb';
 import { resolveMasterServer } from './network';
+import { generateCompliantInvoiceNumber } from './nbrInvoice';
 
 /**
  * ⚡ CRDT Event-Sourced Offline Khata Synchronizer
@@ -75,7 +76,7 @@ export const syncOfflineKhataEvents = async (nativeDb?: any): Promise<{ processe
         const payload = {
           customerId: event.customerId || event.customer_id,
           amount: Number(event.amount),
-          invoiceNo: event.invoiceNo || event.reference || `INV-OFF-${eventId}`
+          invoiceNo: event.invoiceNo || event.reference || generateCompliantInvoiceNumber()
         };
 
         const response = await fetch(`${masterUrl}/api/khata/charge`, {

@@ -44,6 +44,7 @@ import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
 import { useOfflineSync } from '../hooks/useOfflineSync';
 import { saveSaleOffline } from '../utils/nativeDb';
+import { generateCompliantInvoiceNumber } from '../utils/nbrInvoice';
 
 const DEFAULT_PRODUCTS: Product[] = [
   { id: '1', name: 'Arabian Perfume', sellingPrice: 25.500, purchasePrice: 15.0, barcode: '1', vatRate: 10, stockQuantity: 25 },
@@ -1496,13 +1497,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         }
       }
 
-      // ZERO-BLOCK RETAIL SAFEGUARD:
+      // ZERO-BLOCK RETAIL SAFEGUARD (Bahrain NBR Article 53 Compliant):
       // Even if master server is unreachable or reports a database error, complete the sale immediately,
-      // record it for automatic synchronization, and GUARANTEE the physical receipt prints!
+      // record it for automatic synchronization, and GUARANTEE the physical receipt prints with a strictly sequential gapless number!
       const isOnlineSuccess = Boolean(data && data.success);
       const verifiedInvoiceNo = isOnlineSuccess
         ? (data.formattedInvoice || data.invoice || data.invoiceNo || 'INV-000001')
-        : `INV-OFF-${Date.now().toString().slice(-6)}`;
+        : generateCompliantInvoiceNumber();
 
       if (!isOnlineSuccess) {
         saveSaleOffline({

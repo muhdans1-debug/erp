@@ -7,6 +7,26 @@
 import { db } from '../db.js';
 
 /**
+ * Generates the next strictly sequential invoice number from durable SQLite Sale records.
+ * Compliant with Bahrain NBR VAT Regulations (Article 53).
+ */
+export async function generateNextInvoiceNumber(storeId = '001', executor = db) {
+  try {
+    const clientToUse = executor || db;
+    const result = await clientToUse.execute("SELECT MAX(invoiceSeq) as maxSeq FROM Sale");
+    const currentMax = result.rows[0]?.maxSeq ? Number(result.rows[0].maxSeq) : 0;
+    const nextSeq = currentMax + 1;
+    const paddedSeq = nextSeq.toString().padStart(6, '0');
+    const invoiceNo = `INV-${storeId}-${paddedSeq}`;
+    return { invoiceNo, invoiceSeq: nextSeq };
+  } catch (err) {
+    console.error("🔴 generateNextInvoiceNumber Error:", err);
+    const seq = await getNextInvoiceSequence('Sale', executor);
+    return { invoiceNo: formatInvoiceNumber(seq, `INV-${storeId}`), invoiceSeq: seq };
+  }
+}
+
+/**
  * Atomically generates the next strictly sequential, gapless integer invoice number.
  * Compliant with Bahrain NBR VAT Regulations (Article 53: Simplified Tax Invoices).
  *

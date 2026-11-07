@@ -108,6 +108,45 @@ export const db: LibsqlDatabase = {
       }
     }
 
+    // Query highest invoice sequence from master SQLite or local durable store
+    if (sql.toUpperCase().includes('MAX(INVOICESEQ)')) {
+      let durableMax = 0;
+      try {
+        const stored = localStorage.getItem('DURABLE_MAX_INVOICE_SEQ') || localStorage.getItem('LOCAL_INV_COUNTER');
+        if (stored) durableMax = parseInt(stored, 10) || 0;
+      } catch {}
+
+      try {
+        const host = (window && window.location && window.location.hostname) || '192.168.8.7';
+        const candidateBases = [
+          localStorage.getItem('master_server_url'),
+          'http://192.168.8.7:3000',
+          `http://${host}:3000`,
+          'http://localhost:3000'
+        ].filter(Boolean);
+
+        for (const base of candidateBases) {
+          try {
+            const res = await fetch(`${base}/api/sales/max-seq`, { signal: AbortSignal.timeout(1200) });
+            if (res.ok) {
+              const data = await res.json();
+              if (data && typeof data.maxSeq === 'number') {
+                durableMax = Math.max(durableMax, data.maxSeq);
+                try { localStorage.setItem('DURABLE_MAX_INVOICE_SEQ', String(durableMax)); } catch {}
+                break;
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+
+      return {
+        columns: ['maxSeq'],
+        rows: [{ maxSeq: durableMax }],
+        rowsAffected: 0
+      };
+    }
+
     // If writing sale offline:
     if (sql.trim().toUpperCase().startsWith('INSERT INTO SALEITEM')) {
       const totalVal = args.length > 0 ? Number(args[0]) : 0;

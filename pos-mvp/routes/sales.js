@@ -2,6 +2,7 @@ import { SaleRepository } from '../repositories/SaleRepository.js';
 import crypto from 'crypto';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
+import { generateNextInvoiceNumber } from '../services/invoiceSequence.js';
 
 export default async function salesRoutes(fastify, options) {
 
@@ -199,6 +200,17 @@ export default async function salesRoutes(fastify, options) {
     }
   });
 
+  // 2b. Query durable highest invoice sequence for gapless NBR Article 53 compliance
+  fastify.get('/api/sales/max-seq', async (request, reply) => {
+    try {
+      const result = await db.execute("SELECT MAX(invoiceSeq) as maxSeq FROM Sale");
+      const maxSeq = result.rows[0]?.maxSeq ? Number(result.rows[0].maxSeq) : 0;
+      return { success: true, maxSeq };
+    } catch (e) {
+      return { success: false, maxSeq: 0 };
+    }
+  });
+
   // 3. Invoice Lookup by Invoice Number or ID
   fastify.get('/api/sales/invoice/:invoiceNo', async (request, reply) => {
     const { invoiceNo } = request.params;
@@ -297,7 +309,14 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
 
     // 3. Create Master Sale Record
     const saleId = crypto.randomUUID();
-    const finalInv = invoiceNo || `INV-${Date.now()}`;
+    const storeId = request.body?.storeId || '001';
+    let finalInv = invoiceNo;
+    let finalInvoiceSeq = undefined;
+    if (!finalInv || finalInv.startsWith('INV-17')) {
+      const { invoiceNo: genNo, invoiceSeq: genSeq } = await generateNextInvoiceNumber(storeId);
+      finalInv = genNo;
+      finalInvoiceSeq = genSeq;
+    }
 
     let computedSubtotal = 0;
     let computedTotalVat = 0;
@@ -331,6 +350,7 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
     const saleResult = await SaleRepository.createSale({
       id: saleId,
       invoiceNo: finalInv,
+      invoiceSeq: finalInvoiceSeq,
       customerId: null,
       subtotal: finalSub,
       vatTotal: finalVat,
@@ -470,9 +490,19 @@ const handleCheckout = async (request, reply) => {
       }
     } catch (err) { }
 
+    const storeId = request.body?.storeId || '001';
+    let assignedInvoiceNo = invoiceNo;
+    let assignedInvoiceSeq = undefined;
+    if (!assignedInvoiceNo || assignedInvoiceNo.startsWith('INV-17')) {
+      const { invoiceNo: genNo, invoiceSeq: genSeq } = await generateNextInvoiceNumber(storeId);
+      assignedInvoiceNo = genNo;
+      assignedInvoiceSeq = genSeq;
+    }
+
     const saleData = {
       id: saleId,
-      invoiceNo: invoiceNo || `INV-${Date.now()}`,
+      invoiceNo: assignedInvoiceNo,
+      invoiceSeq: assignedInvoiceSeq,
       customerId: customerId || null,
       subtotal: finalSubtotal,
       vatTotal: finalTotalVat,

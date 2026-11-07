@@ -65,7 +65,7 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
     const customLimit = khataConfig.customerLimits ? khataConfig.customerLimits[c.id] : null;
     const creditLimit = Number(customLimit) > 0 ? Number(customLimit) : (Number(c.creditLimit || c.credit_limit) > 0 ? Number(c.creditLimit || c.credit_limit) : Number(khataConfig.defaultCreditLimit || 30.0));
 
-    const currentBalance = Math.max(0, computedBalance);
+    const currentBalance = computedBalance;
     const isStale = currentBalance > 0 && daysSinceLastPayment > 45;
     const isOverLimit = currentBalance > creditLimit;
     const agingRisk = currentBalance <= 0 ? 'CLEARED' : (daysSinceLastPayment > 45 ? 'CRITICAL' : (daysSinceLastPayment > 30 ? 'WARNING' : 'HEALTHY'));
@@ -130,8 +130,11 @@ const getCustomerWithBalanceById = async (id) => {
 
   const khataConfig = loadKhataConfig();
   const nowTime = Date.now();
+  // 1. Sum all ledger entries (positive charges and negative payments)
   const ledgerSum = customerLedger.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-  const computedBalance = Math.max(ledgerSum, Number(customer.balance || 0));
+
+  // NEW: Remove the broken Math.max clamp. Trust the ledger sum completely.
+  const computedBalance = Number(ledgerSum.toFixed(3));
   const isAct = customer.is_active === 1 || customer.is_active === true || customer.is_active === undefined || customer.is_active === null;
 
   const paymentEntries = customerLedger.filter((e) => Number(e.amount) < 0 || e.type === 'PAYMENT');
@@ -145,7 +148,7 @@ const getCustomerWithBalanceById = async (id) => {
 
   const customLimit = khataConfig.customerLimits ? khataConfig.customerLimits[customer.id] : null;
   const baseCreditLimit = Number(customLimit) > 0 ? Number(customLimit) : (Number(customer.creditLimit) > 0 ? Number(customer.creditLimit) : Number(khataConfig.defaultCreditLimit || 30.0));
-  const currentBalance = Math.max(0, computedBalance);
+  const currentBalance = computedBalance;
   const referenceDate = lastPaymentDate ? new Date(lastPaymentDate) : (customer.createdAt ? new Date(customer.createdAt) : new Date(nowTime - 30 * 86400000));
   const daysSinceLastPayment = Math.max(0, Math.floor((nowTime - referenceDate.getTime()) / (1000 * 60 * 60 * 24)));
 
@@ -1151,9 +1154,8 @@ const handleCustomerSettle = async (request, reply) => {
       args: [id]
     });
     const ledgerSum = Number(sumResult.rows[0]?.balance || 0);
-    const resolvedPrev = Math.max(ledgerSum, Number(customer.balance || 0));
-    const previousBalance = Math.max(0, resolvedPrev);
-    const newBalance = Math.max(0, previousBalance - settleAmount);
+    const previousBalance = Number(ledgerSum.toFixed(3));
+    const newBalance = Number((previousBalance - settleAmount).toFixed(3));
 
     const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
 
@@ -1174,8 +1176,8 @@ const handleCustomerSettle = async (request, reply) => {
 
     // Persist running balance directly into Customer table
     await db.execute({
-      sql: 'UPDATE Customer SET balance = MAX(0, COALESCE(balance, 0) - ?) WHERE id = ?',
-      args: [settleAmount, id]
+      sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
+      args: [newBalance, id]
     }).catch((err) => console.warn('Customer balance update warning:', err));
 
     // Broadcast atomic settlement delta to all connected POS registers

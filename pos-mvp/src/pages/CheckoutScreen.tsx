@@ -50,7 +50,7 @@ import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
 import { useOfflineSync } from '../hooks/useOfflineSync';
 import { saveSaleOffline } from '../utils/nativeDb';
-import { generateCompliantInvoiceNumber } from '../utils/nbrInvoice';
+import { generateCompliantInvoiceNumber, generateNextInvoiceNumber } from '../utils/nbrInvoice';
 
 const DEFAULT_PRODUCTS: Product[] = [
   { id: '1', name: 'Arabian Perfume', price: 25.500, unitCost: 15.0, barcode: '1', vatRate: 10, isScaleItem: false, stockQuantity: 25 },
@@ -1501,9 +1501,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       // Even if master server is unreachable or reports a database error, complete the sale immediately,
       // record it for automatic synchronization, and GUARANTEE the physical receipt prints with a strictly sequential gapless number!
       const isOnlineSuccess = Boolean(data && data.success);
-      const verifiedInvoiceNo = isOnlineSuccess
-        ? (data.formattedInvoice || data.invoice || data.invoiceNo || 'INV-000001')
-        : generateCompliantInvoiceNumber();
+      let verifiedInvoiceNo = isOnlineSuccess
+        ? (data.formattedInvoice || data.invoice || data.invoiceNo || '')
+        : '';
+      if (!verifiedInvoiceNo) {
+        try {
+          const { invoiceNo: seqNo } = await generateNextInvoiceNumber('001');
+          verifiedInvoiceNo = seqNo;
+        } catch {
+          verifiedInvoiceNo = generateCompliantInvoiceNumber();
+        }
+      }
 
       if (!isOnlineSuccess) {
         saveSaleOffline({

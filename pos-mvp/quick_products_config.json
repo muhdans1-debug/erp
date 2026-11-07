@@ -1,7 +1,7 @@
 {
   "overrides": {
     "110": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "BAKERY"
     },
     "prod_onions_1kg": {
@@ -45,19 +45,19 @@
       "category": "GROCERY"
     },
     "f100_1793714524788_0qtnf": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793714690313_d7rb7": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793714792473_o8fig": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793714851269_z132r": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793714994682_qizqx": {
@@ -73,7 +73,7 @@
       "category": "GROCERY"
     },
     "f100_1793715582570_y6occ": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793715687972_ww1hq": {
@@ -81,15 +81,15 @@
       "category": "GROCERY"
     },
     "f100_1793716226022_g6vi3": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716364587_z11ik": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716423039_lxn1n": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716652997_7w9c6": {
@@ -213,7 +213,7 @@
       "category": "GROCERY"
     },
     "f100_1793725819617_0hrwx": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793727529251_yz0o6": {
@@ -355,10 +355,25 @@
     "C8376910254065664864": {
       "isQuickProduct": true,
       "category": "ESSENTIALS"
+    },
+    "f32218ef-8317-48a3-99a4-f2f6ce1ede3f": {
+      "isQuickProduct": true,
+      "category": "PRODUCE",
+      "quickColor": null
     }
   },
   "removedIds": [
-    "Authorized Manager Product"
+    "Authorized Manager Product",
+    "f100_1793725819617_0hrwx",
+    "f100_1793714524788_0qtnf",
+    "f100_1793714792473_o8fig",
+    "f100_1793714851269_z132r",
+    "f100_1793715582570_y6occ",
+    "f100_1793714690313_d7rb7",
+    "f100_1793716226022_g6vi3",
+    "f100_1793716364587_z11ik",
+    "f100_1793716423039_lxn1n",
+    "110"
   ],
   "categories": [
     {

@@ -907,40 +907,34 @@ export const printKhataStatement = async ({
     try {
       await Printer.enterPrinterBuffer({ clean: true });
     } catch { }
-    await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.setFontSize({ fontSize: 24 });
-    await Printer.printText({ textToPrint: `${shopName}\n` });
-    await Printer.setFontSize({ fontSize: 18 });
-    await Printer.printText({ textToPrint: `Customer: ${customerName}\n` });
-    if (customerPhone) await Printer.printText({ textToPrint: `Phone: ${customerPhone}\n` });
-    if (customerCpr) await Printer.printText({ textToPrint: `CPR: ${customerCpr}\n` });
-    await Printer.printText({ textToPrint: "================================\n" });
 
-    await Printer.setPrinterAlignment({ alignment: 'left' });
-    await Printer.setFontSize({ fontSize: 18 });
-    await Printer.printText({ textToPrint: formatTwoCols("DATE / DESC", "BAL (BD)") });
-    await Printer.printText({ textToPrint: "--------------------------------\n" });
+    let fullText = "";
+    fullText += `${shopName}\n`;
+    fullText += `Customer: ${customerName}\n`;
+    if (customerPhone) fullText += `Phone: ${customerPhone}\n`;
+    if (customerCpr) fullText += `CPR: ${customerCpr}\n`;
+    fullText += "================================\n";
+    fullText += formatTwoCols("DATE / DESC", "BAL (BD)") + "\n";
+    fullText += "--------------------------------\n";
 
     // Print history (oldest to newest or top entries)
     const printList = [...statement].reverse();
     for (const item of printList) {
       const typeStr = item.type === 'SALE' ? '+GROCERY' : '-PAYMENT';
       const amtStr = item.amount > 0 ? `+${item.amount.toFixed(3)}` : `${item.amount.toFixed(3)}`;
-      await Printer.printText({ textToPrint: `${item.formattedDate} ${item.formattedTime}\n` });
-      await Printer.printText({
-        textToPrint: formatTwoCols(`${typeStr} (${amtStr})`, `BD ${item.runningBalance.toFixed(3)}`)
-      });
+      fullText += `${item.formattedDate} ${item.formattedTime}\n`;
+      fullText += formatTwoCols(`${typeStr} (${amtStr})`, `BD ${item.runningBalance.toFixed(3)}`) + "\n";
     }
 
-    await Printer.printText({ textToPrint: "================================\n" });
-    await Printer.setFontSize({ fontSize: 22 });
-    await Printer.printText({
-      textToPrint: formatTwoCols("OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`)
-    });
-    await Printer.setFontSize({ fontSize: 16 });
-    await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.printText({ textToPrint: `Printed: ${new Date().toLocaleString()}\n` });
-    await Printer.printText({ textToPrint: "Official Store Account Ledger\n" });
+    fullText += "================================\n";
+    fullText += formatTwoCols("OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
+    fullText += `Printed: ${new Date().toLocaleString()}\n`;
+    fullText += "Official Store Account Ledger\n";
+    fullText += "\n\n\n";
+
+    // Execute a single IPC bridge call
+    await Printer.setFontSize({ fontSize: 18 });
+    await Printer.printText({ textToPrint: fullText });
     await Printer.lineWrap({ lines: 3 });
     await Printer.cutPaper();
     try {
@@ -1557,108 +1551,11 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
         await Printer.enterPrinterBuffer({ clean: true });
       } catch { }
 
-      // 1. Header (Centered)
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await Printer.setFontSize({ fontSize: 26 });
-      await Printer.printText({ textToPrint: `${props.shopName || "ASKAR SUPERMARKET"}\n` });
-      await Printer.setFontSize({ fontSize: 20 });
-      await Printer.printText({ textToPrint: "أسواق عسكر\n" });
-      await Printer.setFontSize({ fontSize: 16 });
-      await Printer.printText({ textToPrint: `${props.shopAddress || "Askar, Kingdom of Bahrain"}\n` });
-      await Printer.printText({ textToPrint: `VAT ID: ${props.vatNumber || "200012345678901"}\n` });
-      await Printer.printText({ textToPrint: "================================\n" });
-
-      // 2. Title
-      await Printer.setFontSize({ fontSize: 24 });
-      await Printer.printText({ textToPrint: "*** SHIFT CLOSEOUT ***\n" });
       await Printer.setFontSize({ fontSize: 18 });
-      await Printer.printText({ textToPrint: "BLIND CASH RECONCILIATION\n" });
-      await Printer.printText({ textToPrint: "تقرير إغلاق الوردية\n" });
-      await Printer.printText({ textToPrint: "================================\n" });
+      // Execute a single IPC bridge call with full concatenated slip
+      await Printer.printText({ textToPrint: formattedText + "\n\n\n" });
 
-      // 3. Shift Metadata (Left aligned)
-      await Printer.setPrinterAlignment({ alignment: 'left' });
-      await Printer.setFontSize({ fontSize: 18 });
-      await Printer.printText({ textToPrint: formatTwoCols("Shift ID:", props.shiftId ? `#${props.shiftId.slice(0, 14)}` : "CURRENT") });
-      await Printer.printText({ textToPrint: formatTwoCols("Cashier:", props.cashierName || "Cashier 1") });
-      const now = new Date();
-      await Printer.printText({ textToPrint: formatTwoCols("Date:", now.toLocaleDateString('en-GB')) });
-      await Printer.printText({ textToPrint: formatTwoCols("Time:", now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) });
-      await Printer.printText({ textToPrint: formatTwoCols("Register:", "Reg 01 (Sunmi D2)") });
-      await Printer.printText({ textToPrint: formatTwoCols("Status:", "CLOSED & AUDITED") });
-      await Printer.printText({ textToPrint: "--------------------------------\n" });
-
-      // 4. Drawer Figures
-      await Printer.printText({ textToPrint: "TILL CASH RECONCILIATION:\n" });
-      await Printer.printText({ textToPrint: formatTwoCols("Opening Float:", `BD ${Number(props.startingFloat || 0).toFixed(3)}`) });
-      await Printer.printText({ textToPrint: formatTwoCols("(+) Cash Sales:", `BD ${Number(props.cashSales || 0).toFixed(3)}`) });
-      if (Number(props.refunds || 0) > 0) {
-        await Printer.printText({ textToPrint: formatTwoCols("(-) Cash Refunds:", `BD -${Number(props.refunds).toFixed(3)}`) });
-      }
-      if (Number(props.supplierPayouts || 0) > 0) {
-        await Printer.printText({ textToPrint: formatTwoCols("(-) Cash Payouts:", `BD -${Number(props.supplierPayouts).toFixed(3)}`) });
-      }
-      await Printer.printText({ textToPrint: "--------------------------------\n" });
-
-      await Printer.setFontSize({ fontSize: 20 });
-      await Printer.printText({ textToPrint: formatTwoCols("EXPECTED IN TILL:", `BD ${Number(props.expectedCash || 0).toFixed(3)}`) });
-      await Printer.printText({ textToPrint: formatTwoCols("ACTUAL COUNTED:", `BD ${Number(props.actualCash || 0).toFixed(3)}`) });
-      await Printer.setFontSize({ fontSize: 18 });
-      await Printer.printText({ textToPrint: "================================\n" });
-
-      // 5. Verdict
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await Printer.setFontSize({ fontSize: 22 });
-      const v = Number(props.variance || 0);
-      if (Math.abs(v) < 0.005) {
-        await Printer.printText({ textToPrint: "*** PERFECT BALANCE ***\n" });
-        await Printer.printText({ textToPrint: "VARIANCE: BD 0.000\n" });
-      } else if (v < 0) {
-        await Printer.printText({ textToPrint: "*** SHORTAGE DETECTED ***\n" });
-        await Printer.printText({ textToPrint: `SHORT BY BD ${Math.abs(v).toFixed(3)}\n` });
-      } else {
-        await Printer.printText({ textToPrint: "*** OVERAGE DETECTED ***\n" });
-        await Printer.printText({ textToPrint: `OVER BY BD ${v.toFixed(3)}\n` });
-      }
-      await Printer.setFontSize({ fontSize: 18 });
-      await Printer.printText({ textToPrint: "================================\n" });
-
-      // 6. Denominations
-      if (props.denominations && Object.keys(props.denominations).length > 0) {
-        const activeDenoms = Object.entries(props.denominations).filter(([_, count]) => (count || 0) > 0);
-        if (activeDenoms.length > 0) {
-          await Printer.setPrinterAlignment({ alignment: 'left' });
-          await Printer.printText({ textToPrint: "COUNTED DENOMINATIONS:\n" });
-          for (const [denom, count] of activeDenoms) {
-            const val = (parseFloat(denom) * count).toFixed(3);
-            const label = parseFloat(denom) >= 1 ? `${denom} BD` : `${parseInt(String(parseFloat(denom) * 1000))} Fils`;
-            await Printer.printText({ textToPrint: formatTwoCols(`${label} x ${count}:`, `BD ${val}`) });
-          }
-          await Printer.printText({ textToPrint: "--------------------------------\n" });
-        }
-      }
-
-      // 7. Notes
-      if (props.notes && props.notes.trim()) {
-        await Printer.setPrinterAlignment({ alignment: 'left' });
-        await Printer.printText({ textToPrint: `Notes: ${props.notes.trim()}\n` });
-        await Printer.printText({ textToPrint: "--------------------------------\n" });
-      }
-
-      // 8. Signatures & Footer
-      await Printer.setPrinterAlignment({ alignment: 'left' });
-      await Printer.printText({ textToPrint: "Audited & Verified By:\n\n" });
-      await Printer.printText({ textToPrint: "Cashier: _______________________\n\n" });
-      await Printer.printText({ textToPrint: "Manager: _______________________\n" });
-      await Printer.printText({ textToPrint: "================================\n" });
-
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await Printer.setFontSize({ fontSize: 16 });
-      await Printer.printText({ textToPrint: "Official Cashier Shift Slip\n" });
-      await Printer.printText({ textToPrint: "Staple to Daily Cash Envelope\n" });
-      await Printer.printText({ textToPrint: "================================\n" });
-
-      // 9. Cut Paper
+      // Cut Paper
       await Printer.lineWrap({ lines: 3 });
       await Printer.cutPaper();
 

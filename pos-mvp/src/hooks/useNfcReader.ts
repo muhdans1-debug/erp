@@ -12,6 +12,8 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
   const controllerRef = useRef<AbortController | null>(null);
   const onCardScannedRef = useRef(onCardScanned);
   const lastScanRef = useRef<{ uid: string; time: number }>({ uid: '', time: 0 });
+  const ndefRef = useRef<any>(null);
+  const listenerAttached = useRef(false);
 
   useEffect(() => {
     onCardScannedRef.current = onCardScanned;
@@ -24,7 +26,9 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
       return;
     }
     lastScanRef.current = { uid: cleanUid, time: now };
-    onCardScannedRef.current(cleanUid);
+    if (onCardScannedRef.current) {
+      onCardScannedRef.current(cleanUid);
+    }
   }, []);
 
   const stopScan = useCallback(() => {
@@ -51,26 +55,32 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
     // 1. Web NFC (NDEFReader) path with AbortController lifecycle guard
     if ('NDEFReader' in window) {
       try {
-        const ndef = new (window as any).NDEFReader();
-        controllerRef.current = new AbortController();
+        if (!ndefRef.current) {
+          ndefRef.current = new (window as any).NDEFReader();
+        }
 
-        await ndef.scan({ signal: controllerRef.current.signal });
+        controllerRef.current = new AbortController();
+        await ndefRef.current.scan({ signal: controllerRef.current.signal });
         setIsScanning(true);
         setNfcError(null);
 
-        ndef.addEventListener('reading', (event: any) => {
-          // Mifare cards return a serialNumber (UID) formatted like "04:A1:B2:C3"
-          // We strip colons to match canonical nfcCardId in the database
-          const rawUid = event.serialNumber || '';
-          const cleanUid = rawUid.replace(/[:\-]/g, '').toUpperCase();
-          if (cleanUid) {
-            handleScannedUid(cleanUid);
-          }
-        });
+        // NEW: Ensure the event listener is only attached once
+        if (!listenerAttached.current) {
+          ndefRef.current.addEventListener('reading', (event: any) => {
+            // Mifare cards return a serialNumber (UID) formatted like "04:A1:B2:C3"
+            // We strip colons to match canonical nfcCardId in the database
+            const rawUid = event.serialNumber || '';
+            const cleanUid = rawUid.replace(/[:\-]/g, '').toUpperCase();
+            if (cleanUid) {
+              handleScannedUid(cleanUid);
+            }
+          });
 
-        ndef.addEventListener('readingerror', () => {
-          setNfcError('Card read failed. Please tap again.');
-        });
+          ndefRef.current.addEventListener('readingerror', () => {
+            setNfcError('Card read failed. Please tap again.');
+          });
+          listenerAttached.current = true;
+        }
         return;
       } catch (error: any) {
         // If aborted by user, don't show as error
@@ -82,7 +92,7 @@ export const useNfcReader = (onCardScanned: (uid: string) => void) => {
       // In environments without Web NFC (e.g. standard Chrome on desktop or native Capacitor fallback)
       setIsScanning(true);
     }
-  }, []);
+  }, [handleScannedUid]);
 
   // 2. Hardware event bridge: Also capture Sunmi native hardware antenna broadcasts
   useEffect(() => {

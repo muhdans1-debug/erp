@@ -31,46 +31,34 @@ const resolveNfcTagDetails = async (uid) => {
     console.warn('NfcCard check note:', err?.message);
   }
 
-  // 2. Resolve customer by ID directly if linked to NfcCard table
+  // NEW: Targeted NFC Customer Lookup
   let customer = null;
+
   if (nfcCard && nfcCard.customer_id) {
     customer = await getCustomerWithBalanceById(nfcCard.customer_id);
   }
 
-  // 3. If not found, look up customer by direct NFC card ID fields in Customer table via indexed SQL
   if (!customer) {
+    // Direct SQL lookup by card ID if the foreign key isn't mapped
     try {
-      const custLookup = await db.execute({
-        sql: `
-          SELECT id FROM Customer 
-          WHERE UPPER(COALESCE(nfcCardId, '')) = ? 
-             OR UPPER(COALESCE(cardUid, '')) = ? 
-             OR UPPER(COALESCE(nfc_card_id, '')) = ?
-             OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
-             OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
-             OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
-          LIMIT 1
-        `,
+      const cardRes = await db.execute({
+        sql: `SELECT id FROM Customer 
+              WHERE UPPER(nfcCardId) = ? 
+                 OR UPPER(cardUid) = ? 
+                 OR UPPER(nfc_card_id) = ? 
+                 OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
+                 OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
+                 OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
+              LIMIT 1`,
         args: [cleanUid, cleanUid, cleanUid, cleanNoColon, cleanNoColon, cleanNoColon]
       });
-      if (custLookup.rows && custLookup.rows.length > 0) {
-        customer = await getCustomerWithBalanceById(custLookup.rows[0].id);
+      
+      if (cardRes.rows?.[0]?.id) {
+        customer = await getCustomerWithBalanceById(cardRes.rows[0].id);
       }
     } catch (e) {
-      console.warn('Customer NFC lookup error:', e?.message);
+      console.warn('Direct NFC SQL lookup note:', e?.message);
     }
-  }
-
-  // 4. Graceful fallback only if indexed seeks yielded nothing
-  if (!customer) {
-    const allCustomers = await getAllCustomersWithBalances();
-    customer = allCustomers.find((c) => {
-      const cardField = c.nfcCardId || c.cardUid || c.nfc_card_id;
-      if (!cardField) return false;
-      const cUid = cardField.trim().toUpperCase().replace(/^#+|#+$/g, '');
-      const cUidNoColon = cUid.replace(/[:\-]/g, '');
-      return cUid === cleanUid || cUidNoColon === cleanNoColon || cUid.includes(cleanNoColon) || cleanUid.includes(cUidNoColon);
-    }) || null;
   }
 
   // Look up mess_id directly from LibSQL

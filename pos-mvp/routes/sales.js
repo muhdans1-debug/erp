@@ -372,9 +372,10 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
       const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
       const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
 
-      // Local ledger entry
+      // Local ledger entry (Single, atomic ledger charge)
+      const ledgerEntryId = crypto.randomUUID();
       await db.orm.KhataLedger.create({
-        id: crypto.randomUUID(),
+        id: ledgerEntryId,
         customerId: member.id,
         amount: memberCharge,
         type: 'CHARGE',
@@ -384,19 +385,14 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
         tenantId: 'tenant_1'
       });
 
-      // Turso cloud mirror
+      // Update customer balance once
       try {
-        await db.execute({
-          sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, syncStatus, timestamp)
-                VALUES (?, 'tenant_1', ?, ?, 'CHARGE', ?, 'SYNCED', datetime('now'))`,
-          args: [crypto.randomUUID(), member.id, memberCharge, ledgerRef]
-        });
         await db.execute({
           sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
           args: [memberCharge, member.id]
         });
       } catch (err) {
-        console.warn('Turso mirror split error:', err?.message);
+        console.warn('Customer balance update warning:', err?.message);
       }
 
       memberSplits.push({
@@ -742,43 +738,59 @@ fastify.get('/api/sales/refunds', async () => {
 
 // --- BAHRAIN NBR VAT COMPLIANT VOID & CREDIT NOTE ENGINE ---
 
-// 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer
+// 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer (Optimized Single SQL Query)
 const handleGetTodaySales = async (req, reply) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayIso = today.toISOString();
 
-    const allSales = await db.orm.Sale.all();
-    const todaySales = allSales
-      .filter((s) => s.createdAt && new Date(s.createdAt) >= today)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const salesRes = await db.execute({
+      sql: `SELECT s.*, 
+                   COALESCE(
+                     json_group_array(
+                       CASE WHEN i.id IS NOT NULL THEN
+                         json_object(
+                           'id', i.id,
+                           'saleId', i.saleId,
+                           'productId', i.productId,
+                           'quantity', i.quantity,
+                           'priceAtSale', i.priceAtSale,
+                           'name', COALESCE(p.name, 'Item #' || i.productId),
+                           'barcode', COALESCE(p.barcode, i.productId)
+                         )
+                       ELSE NULL END
+                     ), '[]'
+                   ) as items_json
+            FROM Sale s
+            LEFT JOIN SaleItem i ON s.id = i.saleId
+            LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
+            WHERE s.createdAt >= ?
+            GROUP BY s.id
+            ORDER BY s.createdAt DESC`,
+      args: [todayIso]
+    });
 
-    const allSaleItems = await db.orm.SaleItem.all();
-    const allProducts = await db.orm.Product.all();
-    const prodMap = new Map(allProducts.map((p) => [p.id, p]));
-
-    const populated = todaySales.map((sale) => {
-      const items = allSaleItems
-        .filter((i) => i.saleId === sale.id)
-        .map((i) => {
-          const prod = prodMap.get(i.productId);
-          return {
-            ...i,
-            name: prod?.name || `Item #${i.productId}`,
-            barcode: prod?.barcode || prod?.id,
-          };
-        });
-
+    const populated = (salesRes.rows || []).map((sale) => {
+      let items = [];
+      try {
+        if (sale.items_json) {
+          const parsed = JSON.parse(sale.items_json);
+          items = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        }
+      } catch {
+        items = [];
+      }
       return {
         ...sale,
         status: sale.status || 'COMPLETED',
-        items,
+        items
       };
     });
 
     return { success: true, sales: populated };
   } catch (err) {
-    request.log.error(err, 'Failed to fetch today sales');
+    req.log.error(err, 'Failed to fetch today sales');
     return reply.status(500).send({ success: false, error: err.message });
   }
 };
@@ -817,25 +829,23 @@ const handleVoidSale = async (req, reply) => {
         status: 'VOIDED',
       });
 
-      // 3. Fetch sale items and restore physical stock
+      // 3. Fetch sale items and restore physical stock without dumping all products
       const saleItems = await tx.orm.SaleItem.where({ saleId: sale.id }).all();
-      const allProducts = await tx.orm.Product.all();
-      const prodMap = new Map(allProducts.map((p) => [p.id, p]));
 
       const restoredProducts = [];
       for (const item of saleItems) {
         const qty = Number(item.quantity) || 1;
-        // Match product by id or barcode
-        let prod = prodMap.get(item.productId);
-        if (!prod) {
-          prod = allProducts.find((p) => p.barcode === item.productId || p.barcode === item.barcode);
-        }
+        const prodRes = await tx.execute({
+          sql: `SELECT id, name, barcode, stockQuantity FROM Product WHERE id = ? OR barcode = ? LIMIT 1`,
+          args: [item.productId, item.productId]
+        });
+        const prod = prodRes.rows?.[0];
 
         if (prod) {
-          const newStock = (prod.stockQuantity || 0) + qty;
-          await tx.orm.Product.where({ id: prod.id }).update({
-            stockQuantity: newStock,
-            updatedAt: new Date(),
+          const newStock = (Number(prod.stockQuantity) || 0) + qty;
+          await tx.execute({
+            sql: `UPDATE Product SET stockQuantity = ?, updatedAt = datetime('now') WHERE id = ?`,
+            args: [newStock, prod.id]
           });
           restoredProducts.push({
             id: prod.id,

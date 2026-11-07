@@ -29,7 +29,8 @@ const saveKhataConfig = (config) => {
 // With Aging Analysis (Days Since Last Payment) and Hard Credit Limit Enforcement (0ms Sub-millisecond Execution)
 const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 'highest') => {
   const sql = `
-    SELECT c.*,
+    SELECT c.id, c.tenantId, c.name, c.phone, c.credit_limit, c.credit_limit AS creditLimit, c.is_active,
+           c.cardUid, c.mess_id, c.batchNo, c.description, c.createdAt,
            COALESCE(SUM(l.amount), 0) AS currentBalance,
            MAX(CASE WHEN l.amount < 0 THEN l.timestamp END) AS lastPaymentDate,
            MAX(CASE WHEN l.amount < 0 THEN ABS(l.amount) END) AS lastPaymentAmount,
@@ -427,10 +428,13 @@ const handleGetCustomerStatement = async (request, reply) => {
 
     // Auto-reconciliation: Ensure all credit sales for this customer exist in the ledger
     try {
-      const allSales = await db.orm.Sale.all();
-      const creditSales = allSales.filter(
-        (s) => s.customerId === id && (s.paymentType === 'CREDIT' || s.paymentType === 'NFC_CREDIT')
-      );
+      const salesRes = await db.execute({
+        sql: `SELECT id, total, invoiceNo, createdAt, paymentType 
+              FROM Sale 
+              WHERE customerId = ? AND (paymentType = 'CREDIT' OR paymentType = 'NFC_CREDIT' OR paymentType = 'CREDIT_PERSONAL' OR paymentType = 'MESS_KHATA')`,
+        args: [id]
+      });
+      const creditSales = salesRes.rows || [];
       for (const s of creditSales) {
         const exists = history.some((h) => h.reference === s.invoiceNo || h.id === s.id);
         if (!exists) {
@@ -817,8 +821,8 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
   }
 });
 
-// Update or set customer 4-digit PIN
-fastify.post('/api/customers/:id/pin', async (request, reply) => {
+// Update or set customer 4-digit PIN (Protected by Manager Auth)
+fastify.post('/api/customers/:id/pin', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const { id } = request.params;
     const { pin } = request.body || {};

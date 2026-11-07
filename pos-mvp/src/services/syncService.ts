@@ -79,7 +79,7 @@ export const pushOfflineSales = async (masterIp: string): Promise<number> => {
               const placeholders = syncedInvoiceNos.map(() => '?').join(',');
               
               await db.execute({
-                sql: `UPDATE Sale SET status = 'SYNCED' WHERE invoiceNo IN (${placeholders})`,
+                sql: `UPDATE Sale SET syncStatus = 'SYNCED' WHERE invoiceNo IN (${placeholders})`,
                 args: syncedInvoiceNos
               });
             }

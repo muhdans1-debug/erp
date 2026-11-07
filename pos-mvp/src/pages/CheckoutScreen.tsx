@@ -1245,12 +1245,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   } = useNetworkSync(masterIp, useCallback((data: any) => {
     if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
       const delta = Number(data.delta) || 0;
+      const directBalance = data.balance !== undefined ? Number(data.balance) : null;
 
       // 1. Update actively linked checkout customer
       setCustomer((prev) => {
         if (prev && prev.id === data.customerId) {
           const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
-          const newBal = Number((oldBal + delta).toFixed(3));
+          const newBal = directBalance !== null ? directBalance : Number((oldBal + delta).toFixed(3));
           return {
             ...prev,
             currentBalance: newBal,
@@ -1265,7 +1266,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         prev.map((c) => {
           if (c.id === data.customerId) {
             const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
-            const newBal = Number((oldBal + delta).toFixed(3));
+            const newBal = directBalance !== null ? directBalance : Number((oldBal + delta).toFixed(3));
             return { ...c, currentBalance: newBal, balance: newBal };
           }
           return c;

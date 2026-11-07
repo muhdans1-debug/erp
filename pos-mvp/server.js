@@ -706,22 +706,35 @@ fastify.get('/api/search/global', async (request, reply) => {
   if (!query || query.length < 2) return { success: true, results: [] };
 
   try {
-    const [allProducts, allCustomers, allDistributors] = await Promise.all([
-      db.orm.Product.all(),
-      db.orm.Customer.all(),
-      db.orm.Distributor.all()
+    const searchPattern = `%${query}%`;
+    const [prodRes, custRes, distRes] = await Promise.all([
+      db.execute({
+        sql: `SELECT id, name, barcode, stockQuantity, sellingPrice, category 
+              FROM Product 
+              WHERE LOWER(name) LIKE ? OR LOWER(id) LIKE ? OR LOWER(barcode) LIKE ? 
+              LIMIT 5`,
+        args: [searchPattern, searchPattern, searchPattern]
+      }),
+      db.execute({
+        sql: `SELECT id, name, phone, cardUid, balance 
+              FROM Customer 
+              WHERE LOWER(name) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(cardUid) LIKE ? 
+              LIMIT 5`,
+        args: [searchPattern, searchPattern, searchPattern]
+      }),
+      db.execute({
+        sql: `SELECT id, name, contactEmail, minimumOrderValue 
+              FROM Distributor 
+              WHERE LOWER(name) LIKE ? OR LOWER(contactEmail) LIKE ? 
+              LIMIT 3`,
+        args: [searchPattern, searchPattern]
+      })
     ]);
 
     const results = [];
 
     // 1. Search Inventory by name or barcode
-    const matchedProducts = allProducts.filter((p) =>
-      (p.name && p.name.toLowerCase().includes(query)) ||
-      (p.id && String(p.id).toLowerCase().includes(query)) ||
-      (p.barcode && String(p.barcode).toLowerCase().includes(query))
-    ).slice(0, 5);
-
-    matchedProducts.forEach((p) => results.push({
+    (prodRes.rows || []).forEach((p) => results.push({
       id: `prod-${p.id}`,
       type: 'INVENTORY',
       title: p.name,
@@ -730,30 +743,24 @@ fastify.get('/api/search/global', async (request, reply) => {
       data: p
     }));
 
-    // 2. Search Khata Ledgers by name, phone, or CPR
-    const matchedCustomers = allCustomers.filter((c) =>
-      (c.name && c.name.toLowerCase().includes(query)) ||
-      (c.phone && String(c.phone).toLowerCase().includes(query)) ||
-      (c.cpr && String(c.cpr).toLowerCase().includes(query)) ||
-      (c.cardUid && String(c.cardUid).toLowerCase().includes(query))
-    ).slice(0, 5);
-
-    matchedCustomers.forEach((c) => results.push({
+    // 2. Search Khata Ledgers by name or phone (CPR and secret tokens strictly omitted)
+    (custRes.rows || []).forEach((c) => results.push({
       id: `cust-${c.id}`,
       type: 'KHATA',
       title: c.name,
-      subtitle: `Balance: BD ${Number(c.currentBalance || 0).toFixed(3)} • ${c.phone || c.cpr || 'No Phone'}`,
+      subtitle: `Balance: BD ${Number(c.balance || 0).toFixed(3)} • ${c.phone || 'No Phone'}`,
       action: 'VIEW_LEDGER',
-      data: c
+      data: {
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        cardUid: c.cardUid,
+        balance: c.balance
+      }
     }));
 
     // 3. Search Supply Chain
-    const matchedDistributors = allDistributors.filter((d) =>
-      (d.name && d.name.toLowerCase().includes(query)) ||
-      (d.contactEmail && d.contactEmail.toLowerCase().includes(query))
-    ).slice(0, 3);
-
-    matchedDistributors.forEach((d) => results.push({
+    (distRes.rows || []).forEach((d) => results.push({
       id: `dist-${d.id}`,
       type: 'SUPPLIER',
       title: d.name,
@@ -788,7 +795,7 @@ fastify.get('/api/config/master-url', async () => {
   return { masterUrl: getMasterBaseUrl() };
 });
 
-fastify.post('/api/config/master-url', async (request, reply) => {
+fastify.post('/api/config/master-url', { preHandler: managerAuth }, async (request, reply) => {
   const { masterUrl } = request.body || {};
   if (!masterUrl) return reply.status(400).send({ error: 'masterUrl is required' });
   setMasterBaseUrl(masterUrl);
@@ -834,7 +841,7 @@ fastify.get('/api/config/benefit-account', async () => {
   return loadBenefitPayConfig();
 });
 
-fastify.post('/api/config/benefit-account', async (request, reply) => {
+fastify.post('/api/config/benefit-account', { preHandler: managerAuth }, async (request, reply) => {
   const current = loadBenefitPayConfig();
   const updated = {
     ...current,
@@ -862,7 +869,7 @@ fastify.post('/api/config/benefit-account', async (request, reply) => {
 // --- AUTOMATED DATABASE BACKUP & SNAPSHOT ROUTES ---
 
 // 1. Download Latest Database Backup Snapshot Stream
-fastify.get('/api/system/download-backup', async (request, reply) => {
+fastify.get('/api/system/download-backup', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const latestBackup = await getLatestBackup();
     if (!latestBackup || !fs.existsSync(latestBackup.fullPath)) {
@@ -882,7 +889,7 @@ fastify.get('/api/system/download-backup', async (request, reply) => {
 });
 
 // 2. Trigger On-Demand Database Backup Snapshot
-fastify.post('/api/system/backup', async (request, reply) => {
+fastify.post('/api/system/backup', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const backup = await createDatabaseBackup();
     return {
@@ -897,7 +904,7 @@ fastify.post('/api/system/backup', async (request, reply) => {
 });
 
 // 3. List All Available Backups
-fastify.get('/api/system/backups', async (request, reply) => {
+fastify.get('/api/system/backups', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const archivesDir = path.resolve(process.cwd(), 'archives');
     if (!fs.existsSync(archivesDir)) return { backups: [] };
@@ -937,7 +944,7 @@ fastify.get('/api/system/invoice-sequence', async () => {
 });
 
 // 5. Seed / Set Starting Invoice Sequence (e.g. migrate to starting at #5000)
-fastify.post('/api/system/invoice-sequence/seed', async (request, reply) => {
+fastify.post('/api/system/invoice-sequence/seed', { preHandler: managerAuth }, async (request, reply) => {
   const { startingNumber } = request.body || {};
   const num = parseInt(startingNumber, 10);
   if (isNaN(num) || num < 1) {

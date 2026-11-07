@@ -289,7 +289,7 @@ export const SaleRepository = {
     return {
       sales: salesWithItems,
       ledger,
-      computedBalance: Math.max(0, computedBalance),
+      computedBalance: Number(computedBalance.toFixed(3)),
     };
   },
 };

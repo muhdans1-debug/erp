@@ -357,7 +357,9 @@
       "category": "ESSENTIALS"
     }
   },
-  "removedIds": [],
+  "removedIds": [
+    "Authorized Manager Product"
+  ],
   "categories": [
     {
       "id": "ALL",

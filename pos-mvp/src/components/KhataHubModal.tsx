@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
-import { useNfcScanner } from '../hooks/useNfcScanner';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
@@ -45,8 +44,16 @@ export default function KhataHubModal({
   showToast
 }: KhataHubModalProps) {
   const [activeTab, setActiveTab] = useState<'SETTLE' | 'NEW'>('SETTLE');
-  // Shared Hardware NFC Scanner Hook at Hub Level
-  const { scannedUid, lastDetectedUid, clearScan } = useNfcScanner();
+  // Unified single-pipeline state using parent-provided NFC card UID (eliminates duplicate listener collision)
+  const [scannedUid, setScannedUid] = useState<string | null>(lastScannedCardUid || null);
+  const lastDetectedUid = lastScannedCardUid || scannedUid;
+  const clearScan = useCallback(() => setScannedUid(null), []);
+
+  useEffect(() => {
+    if (lastScannedCardUid) {
+      setScannedUid(lastScannedCardUid);
+    }
+  }, [lastScannedCardUid]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">

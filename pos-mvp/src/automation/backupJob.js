@@ -72,6 +72,9 @@ export const performDailyBackup = async (dbInstance = db) => {
       `🛡️ [Database Backup] Safe WAL snapshot created successfully: ${targetFilename} (${(stats.size / 1024).toFixed(1)} KB)`
     );
 
+    // Enforce 30-day rolling retention policy to prevent host disk exhaustion
+    pruneOldBackups(30);
+
     return {
       filename: targetFilename,
       fullPath: targetPath,
@@ -81,6 +84,35 @@ export const performDailyBackup = async (dbInstance = db) => {
   } catch (error) {
     console.error('❌ Critical Backup Failure:', error);
     throw error;
+  }
+};
+
+/**
+ * 30-Day Rolling Disk Retention Pruner
+ * Automatically removes snapshots older than retentionDays to guarantee disk space safety.
+ */
+export const pruneOldBackups = (retentionDays = 30) => {
+  try {
+    ensureArchivesDir();
+    const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+    const files = fs.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith('backup_') && f.endsWith('.db'));
+    let prunedCount = 0;
+
+    for (const file of files) {
+      const fullPath = path.join(ARCHIVES_DIR, file);
+      const stat = fs.statSync(fullPath);
+      const fileTime = stat.mtimeMs || stat.birthtimeMs;
+      if (fileTime < cutoffTime) {
+        fs.unlinkSync(fullPath);
+        prunedCount++;
+        console.log(`🧹 [Backup Retention] Pruned expired snapshot (>30 days old): ${file}`);
+      }
+    }
+    if (prunedCount > 0) {
+      console.log(`✅ [Backup Retention] Safely pruned ${prunedCount} old snapshot(s).`);
+    }
+  } catch (err) {
+    console.warn('⚠️ [Backup Retention Warning]:', err?.message || err);
   }
 };
 

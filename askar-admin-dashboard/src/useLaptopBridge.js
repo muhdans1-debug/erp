@@ -219,8 +219,10 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
   const remoteDrawerKick = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) {
       console.log('⚡ [Laptop RJ45 Bridge] Sending REMOTE_DRAWER_KICK to Sunmi hardware...');
+      const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || 'askar-manager-secret-2026';
       ws.current.send(JSON.stringify({
         type: 'REMOTE_DRAWER_KICK',
+        token: managerSecret,
         sentAt: new Date().toISOString()
       }));
       return true;

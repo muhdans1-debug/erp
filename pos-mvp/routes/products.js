@@ -293,15 +293,27 @@ export default async function productRoutes(fastify, options) {
     const { barcode } = request.params;
     const clean = String(barcode || '').trim().toLowerCase();
     if (!clean) return reply.status(400).send({ error: 'Barcode is required' });
-    const allProducts = await db.orm.Product.all();
-    const found = allProducts.find(p => (p.barcode || '').trim().toLowerCase() === clean || (p.id || '').trim().toLowerCase() === clean);
+
+    const prodRes = await db.execute({
+      sql: `SELECT * FROM Product WHERE LOWER(barcode) = ? OR LOWER(id) = ? LIMIT 1`,
+      args: [clean, clean]
+    });
+    const found = prodRes.rows?.[0];
     if (!found) return reply.status(404).send({ error: 'Product not found' });
-    const dist = found.distributorId ? await db.orm.Distributor.where({ id: found.distributorId }).all().first() : null;
-    return { ...found, distributor: dist || null };
+
+    let dist = null;
+    if (found.distributorId) {
+      const distRes = await db.execute({
+        sql: `SELECT * FROM Distributor WHERE id = ? LIMIT 1`,
+        args: [found.distributorId]
+      });
+      dist = distRes.rows?.[0] || null;
+    }
+    return { ...found, distributor: dist };
   });
 
-  // 5. Bulk CSV Upsert
-  fastify.post('/api/products/bulk-upsert', async (request, reply) => {
+  // 5. Bulk CSV Upsert (Protected by Manager Auth)
+  fastify.post('/api/products/bulk-upsert', { preHandler: managerAuth }, async (request, reply) => {
     const { products } = request.body || {};
     if (!Array.isArray(products) || products.length === 0) {
       return reply.status(400).send({ error: 'No products provided' });
@@ -867,11 +879,11 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.post('/api/products', handleCreateProduct);
-  fastify.post('/products', handleCreateProduct);
+  fastify.post('/api/products', { preHandler: managerAuth }, handleCreateProduct);
+  fastify.post('/products', { preHandler: managerAuth }, handleCreateProduct);
 
-  // 9. Barcode Binding
-  fastify.post('/api/products/:id/bind-barcode', async (request, reply) => {
+  // 9. Barcode Binding (Protected by Manager Auth)
+  fastify.post('/api/products/:id/bind-barcode', { preHandler: managerAuth }, async (request, reply) => {
     const { id } = request.params;
     const { barcode } = request.body || {};
 

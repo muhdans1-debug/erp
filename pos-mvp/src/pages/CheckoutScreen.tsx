@@ -6,7 +6,6 @@ import { openCashDrawer, kickCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
 import { useNfcScanner } from '../hooks/useNfcScanner';
-import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 // --- LAZY-LOADED BACK-OFFICE PAGES (never parsed on Sunmi in cashier mode) ---
@@ -1231,9 +1230,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const vat = cartTotals.totalVat;
   const total = cartTotals.finalTotal;
   const totalSavings = cartTotals.totalSavings;
-
-  // 📡 Live WebSocket LAN Bridge: Stream active cart to Manager's Laptop (Register Spy)
-  useSunmiBridge(cart, total, customer);
 
   // Fetch the static Master IP locked in earlier via DHCP
   const masterIp = typeof window !== 'undefined' ? (localStorage.getItem('MASTER_IP') || '192.168.8.7') : '192.168.8.7';

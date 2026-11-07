@@ -45,6 +45,8 @@ scratch/
 **/scratch/
 
 # IDE & OS files
+.wrangler/
+**/.wrangler/
 .vscode/*
 !.vscode/extensions.json
 .idea/

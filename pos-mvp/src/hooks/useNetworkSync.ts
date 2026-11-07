@@ -78,6 +78,16 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
             }
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('master-ws-message', { detail: data }));
+
+              if (data.type === 'PRINT_REQUEST') {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-print', { detail: data.payload }));
+              } else if (data.type === 'PRINT_KHATA_STATEMENT') {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-print-statement', { detail: data.payload }));
+              } else if (data.type === 'NFC_ASSIGNED') {
+                window.dispatchEvent(new CustomEvent('sunmi-nfc-assigned', { detail: data.payload }));
+              } else if (data.type === 'REMOTE_LOCK_REGISTER') {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-lock'));
+              }
             }
             onMessageRef.current?.(data);
           } catch {}

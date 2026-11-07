@@ -9,9 +9,9 @@ import CorporateSponsorDashboard from './pages/CorporateSponsorDashboard';
 import F100Pim from './F100Pim';
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
-import { useSunmiBridge } from './hooks/useSunmiBridge';
 import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 import { printFullReceipt, printKhataStatement } from './utils/printer';
+import { playNfcChime } from './utils/sound';
 import { Printer } from 'capacitor-sunmi-printer';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 import { initNativeOfflineStorage } from './utils/nativeDb';
@@ -163,8 +163,88 @@ export default function App() {
     }
   }, []);
 
-  // Local RJ45 UI Bridge: Zero-latency hardware link with Manager's back-office laptop
-  const { activeLock, broadcastNfcScan, broadcastCartState, managerScanLocked, managerScanMessage } = useSunmiBridge();
+  // Single Connection State (Dispatched via useNetworkSync over WebSocket)
+  const [activeLock, setActiveLock] = useState<any>(null);
+  const [managerScanLocked, setManagerScanLocked] = useState(false);
+  const [managerScanMessage, setManagerScanMessage] = useState("");
+
+  const broadcastNfcScan = (nfcId: string, customerData?: any) => {
+    const cleanId = (nfcId || '').trim().toUpperCase();
+    if (!cleanId) return;
+    try {
+      playNfcChime();
+    } catch {}
+    const candidateBases = [
+      apiBase,
+      'http://192.168.8.7:3000',
+      'http://localhost:3000'
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+    for (const base of candidateBases) {
+      fetch(`${base}/api/nfc/relay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag_id: cleanId, id: cleanId, customer: customerData || null })
+      }).catch(() => {});
+    }
+  };
+
+  const broadcastCartState = (cart: any[], total: number, customer?: any, activeCartId: string = '1') => {
+    const cartPayload = {
+      items: (cart || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price ?? item.sellingPrice ?? 0,
+        quantity: item.quantity,
+        total: (item.price ?? item.sellingPrice ?? 0) * (item.quantity ?? 1),
+        is_weighed_item: !!item.is_weighed_item
+      })),
+      itemCount: (cart || []).reduce((sum, item) => sum + (item.quantity || 1), 0),
+      total: Number(total || 0),
+      customer: customer ? {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        balance: customer.balance,
+        card_type: customer.card_type,
+        mess_id: customer.mess_id
+      } : null,
+      activeCartId,
+      terminalId: 'SUNMI-D2-REG01',
+      updatedAt: new Date().toISOString()
+    };
+    const candidateBases = [
+      apiBase,
+      'http://192.168.8.7:3000',
+      'http://localhost:3000'
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+    for (const base of candidateBases) {
+      fetch(`${base}/api/register/cart/live`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartPayload)
+      }).catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    const handleMasterWsMessage = (e: any) => {
+      const data = e?.detail;
+      if (!data) return;
+      if (data.type === 'KHATA_EDIT_LOCK' || data.type === 'LOCK_STATE_SYNC') {
+        setActiveLock(data.payload);
+      } else if (data.type === 'KHATA_EDIT_RELEASE') {
+        setActiveLock(null);
+      } else if (data.type === 'MANAGER_CARD_SCAN_START') {
+        setManagerScanLocked(true);
+        setManagerScanMessage(data.payload?.message || '');
+      } else if (data.type === 'MANAGER_CARD_SCAN_COMPLETE' || data.type === 'MANAGER_CARD_SCAN_CANCEL') {
+        setManagerScanLocked(false);
+        setManagerScanMessage('');
+      }
+    };
+    window.addEventListener('master-ws-message', handleMasterWsMessage);
+    return () => window.removeEventListener('master-ws-message', handleMasterWsMessage);
+  }, []);
 
   useEffect(() => {
     const handleNfcBroadcast = (e: any) => {

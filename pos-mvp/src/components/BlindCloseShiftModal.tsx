@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Coins, CheckCircle, Calculator, Lock, AlertTriangle, Unlock } from 'lucide-react';
 import { printShiftCloseout } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
-import { useSunmiBridge } from '../hooks/useSunmiBridge';
 import { db } from '../db';
 
 interface BlindCloseShiftModalProps {
@@ -35,7 +34,11 @@ export default function BlindCloseShiftModal({
   };
 
   const [resolvedShiftId, setResolvedShiftId] = useState<string>(shiftId || '');
-  const { broadcastShiftClosed } = useSunmiBridge();
+  const broadcastShiftClosed = (shiftData?: any) => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('shift-closed', { detail: shiftData }));
+    }
+  };
 
   useEffect(() => {
     // Resolve true active shift from server across candidates

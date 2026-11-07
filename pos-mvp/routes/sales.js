@@ -13,8 +13,12 @@ export default async function salesRoutes(fastify, options) {
       return { success: true, processed: 0 };
     }
 
+    // Strict chronological ordering to eliminate running-balance inversion
+    sales.sort((a, b) => new Date(a.createdAt || a.created_at || a.offlineTimestamp || 0).getTime() - new Date(b.createdAt || b.created_at || b.offlineTimestamp || 0).getTime());
+
     // Open a secure transaction so partial failures roll back completely
     const transaction = await db.transaction();
+    const affectedCustomerIds = new Set();
 
     try {
       let processedCount = 0;
@@ -60,45 +64,17 @@ export default async function salesRoutes(fastify, options) {
           paymentType === 'MESS_KHATA';
 
         if (customerId && isCreditSale) {
-          const custRes = await transaction.execute({
-            sql: `SELECT COALESCE(balance, 0) as balance FROM Customer WHERE id = ? LIMIT 1`,
-            args: [customerId],
-          });
-          const balRes = await transaction.execute({
-            sql: `SELECT COALESCE(SUM(amount), 0) as balance FROM KhataLedger WHERE customerId = ?`,
-            args: [customerId],
-          });
-          const currentBal = Math.max(
-            Number(custRes.rows[0]?.balance || 0),
-            Number(balRes.rows[0]?.balance || 0)
-          );
-          const newBal = Number((currentBal + total).toFixed(3));
           const ledgerId = `tx_off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
           await transaction.execute({
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance,
               syncStatus, timestamp, created_at
-            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, ?, 'SYNCED', ?, ?)`,
-            args: [ledgerId, customerId, total, invoiceNo, newBal, createdAt, createdAt],
+            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)`,
+            args: [ledgerId, customerId, total, invoiceNo, createdAt, createdAt],
           });
 
-          await transaction.execute({
-            sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
-            args: [total, customerId],
-          });
-
-          if (fastify.websocketServer?.clients) {
-            fastify.websocketServer.clients.forEach(client => {
-              if (client.readyState === 1) {
-                client.send(JSON.stringify({
-                  type: 'KHATA_BALANCE_UPDATED',
-                  customerId,
-                  delta: total
-                }));
-              }
-            });
-          }
+          affectedCustomerIds.add(customerId);
         }
 
         // Process line items AND deduct master inventory
@@ -131,8 +107,45 @@ export default async function salesRoutes(fastify, options) {
         processedCount++;
       }
 
+      // Reconcile chronological running balances for all affected Khata customers
+      for (const custId of affectedCustomerIds) {
+        const ledgerRes = await transaction.execute({
+          sql: `SELECT id, amount FROM KhataLedger 
+                WHERE customerId = ? 
+                ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) ASC, rowid ASC`,
+          args: [custId]
+        });
+
+        let running = 0;
+        for (const entry of (ledgerRes.rows || [])) {
+          running += Number(entry.amount || 0);
+          await transaction.execute({
+            sql: `UPDATE KhataLedger SET running_balance = ? WHERE id = ?`,
+            args: [Number(running.toFixed(3)), entry.id]
+          });
+        }
+
+        const finalBalance = Number(running.toFixed(3));
+        await transaction.execute({
+          sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
+          args: [finalBalance, custId]
+        });
+
+        if (fastify.websocketServer?.clients) {
+          fastify.websocketServer.clients.forEach(client => {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({
+                type: 'KHATA_BALANCE_UPDATED',
+                customerId: custId,
+                balance: finalBalance
+              }));
+            }
+          });
+        }
+      }
+
       await transaction.commit();
-      console.log(`✅ Synced ${processedCount} sales and deducted Master inventory.`);
+      console.log(`✅ Synced ${processedCount} sales and reconciled running balances.`);
 
       // Broadcast to WebSocket bridge so Admin Dashboard on Laptop updates live
       try {

@@ -68,3 +68,4 @@ export const previewNextInvoiceNumber = (customPrefix?: string, customCounter?: 
   const c = customCounter !== undefined ? customCounter : getLocalInvoiceCounter();
   return `INV-${p}${c.toString().padStart(5, '0')}`;
 };
+

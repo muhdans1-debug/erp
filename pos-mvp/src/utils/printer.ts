@@ -4,6 +4,7 @@ import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import { db } from '../db';
 import { generateNBRReceiptHtml, ReceiptTemplateProps } from './receiptTemplate';
+import { generateNbrTlvBase64 } from './nbrQr';
 export { generateNBRReceiptHtml };
 export type { ReceiptTemplateProps };
 
@@ -413,6 +414,7 @@ export interface FullReceiptProps {
   customerUuid?: string;
   cashTendered?: number;
   changeDue?: number;
+  saleDate?: string | Date;
 }
 
 // 58mm thermal paper fits 32 characters per line in standard font
@@ -483,7 +485,8 @@ export const printFullReceipt = async ({
   customerId,
   customerUuid,
   cashTendered,
-  changeDue
+  changeDue,
+  saleDate
 }: FullReceiptProps) => {
   try {
     if (!isPrinterInitialized) {
@@ -631,12 +634,28 @@ export const printFullReceipt = async ({
       "THANK YOU FOR SHOPPING!\n",
       "Please retain invoice for returns.\n",
       "--------------------------------\n",
-      "SCAN TO RETURN ITEMS\n"
     ].join('');
     await Printer.printText({ textToPrint: footerLines });
 
-    // 4. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol - Centered)
+    // 4. BAHRAIN NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE (Official 5-Tag TLV Base64)
     try {
+      const nbrPayload = generateNbrTlvBase64({
+        sellerName: shopName,
+        vatNumber: vatNumber,
+        timestamp: saleDate || new Date(),
+        total: total,
+        vatAmount: vat
+      });
+      await Printer.setPrinterAlignment({ alignment: 'center' });
+      await printQRCode(nbrPayload, 175);
+      await Printer.printText({ textToPrint: "NBR Simplified Tax Invoice QR\n" });
+    } catch (nbrErr) {
+      console.warn("NBR QR print warning:", nbrErr);
+    }
+
+    // 5. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol - Centered)
+    try {
+      await Printer.printText({ textToPrint: "--------------------------------\nSCAN TO RETURN ITEMS\n" });
       await printBarCode128(finalInvoiceDisplay, { height: 70, width: 2, textPosition: 2 });
     } catch (bcErr) {
       console.warn("Return barcode print warning:", bcErr);

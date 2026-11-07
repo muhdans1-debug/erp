@@ -222,6 +222,13 @@ ${itemsHtml}
 
 ${paymentSectionHtml}
 
+  <!-- NBR SIMPLIFIED TAX INVOICE QR CODE (ARTICLE 53 TLV) -->
+  ${props.qrCodeDataUrl ? `
+  <div class="center" style="margin-top: 12px; margin-bottom: 6px;">
+    <img src="${props.qrCodeDataUrl}" style="width: 120px; height: 120px; display: block; margin: 0 auto;" alt="NBR VAT QR" />
+    <div style="font-size: 9px; margin-top: 3px; font-weight: 700; letter-spacing: 0.5px;">NBR SIMPLIFIED TAX INVOICE</div>
+  </div>` : ''}
+
   <!-- FOOTER & BARCODE -->
   <div class="barcode-container">
     ${barcodeImgHtml}

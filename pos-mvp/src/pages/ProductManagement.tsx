@@ -1212,7 +1212,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                   <th className="py-3.5 px-3 text-right min-w-[100px]">Stock</th>
                   <th className="py-3.5 px-3 text-right min-w-[90px]">Min</th>
                   <th className="py-3.5 px-4 min-w-[140px]">Distributor</th>
-                  <th className="py-3.5 px-3 text-center min-w-[110px]">Actions</th>
+                  <th className="py-3.5 px-3 text-center min-w-[130px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1604,7 +1604,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                         {p.supplierName || 'Direct / General'}
                       </td>
 
-                      {/* Actions: Full Edit Drawer + Price History + 3-dots Menu */}
+                      {/* Actions: Full Edit Drawer + Price History + Direct Delete + 3-dots Menu */}
                       <td className="py-2.5 px-3 text-center relative">
                         <div className="flex items-center justify-center gap-1">
                           <button
@@ -1620,6 +1620,17 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                             title="View price history audit trail"
                           >
                             <History size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProductToDelete(p);
+                            }}
+                            className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded transition cursor-pointer"
+                            title={`Delete product "${p.name}"`}
+                          >
+                            <Trash2 size={15} />
                           </button>
 
                           {/* 3 Dots Menu Button */}

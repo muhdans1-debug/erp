@@ -1003,6 +1003,20 @@ export default async function productRoutes(fastify, options) {
       await db.orm.Product.where({ id }).update(updateData);
       const updated = await db.orm.Product.where({ id }).all().first();
 
+      // Broadcast catalog update to all active POS terminals
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'CATALOG_UPDATED',
+              action: 'UPDATE',
+              payload: updated,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        });
+      }
+
       const marginPct = updated.sellingPrice > 0
         ? Number((((updated.sellingPrice - updated.purchasePrice) / updated.sellingPrice) * 100).toFixed(1))
         : 0;
@@ -1078,6 +1092,22 @@ export default async function productRoutes(fastify, options) {
         fastify.log.warn('Could not update quick config on delete:', e.message);
       }
 
+      // Broadcast deletion to all active POS terminals
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'CATALOG_UPDATED',
+              action: 'DELETE',
+              deletedId: id,
+              productId: id,
+              barcode: existing.barcode || null,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        });
+      }
+
       fastify.log.info(`[Catalog] Deleted product ${id} (${existing.name})`);
       return {
         success: true,
@@ -1128,6 +1158,20 @@ export default async function productRoutes(fastify, options) {
       }
 
       saveQuickConfig(config);
+
+      // Broadcast bulk deletion to all active POS terminals
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'CATALOG_UPDATED',
+              action: 'BULK_DELETE',
+              deletedIds: productIds,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        });
+      }
 
       return {
         success: true,

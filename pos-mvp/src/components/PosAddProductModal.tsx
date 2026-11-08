@@ -49,7 +49,7 @@ export default function PosAddProductModal({
         if (res?.rows && Array.isArray(res.rows)) {
           setAllProducts(res.rows.map(mapDbRowToProduct));
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [catalog]);
 
@@ -294,7 +294,7 @@ export default function PosAddProductModal({
         ];
         localStorage.setItem('askar_catalog_cache', JSON.stringify({ data: nextList, ts: Date.now() }));
       }
-    } catch {}
+    } catch { }
 
     const savedProduct = {
       ...payload,
@@ -335,7 +335,7 @@ export default function PosAddProductModal({
         const pending = JSON.parse(localStorage.getItem('askar_pending_products') || '[]');
         pending.push({ payload, ts: Date.now() });
         localStorage.setItem('askar_pending_products', JSON.stringify(pending));
-      } catch {}
+      } catch { }
     }
 
     // ⚡ UI UNBLOCK: Trigger callbacks and dismiss modal immediately
@@ -347,7 +347,7 @@ export default function PosAddProductModal({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[92vh]">
-        
+
         {/* Header */}
         <div className="bg-slate-950 px-6 py-4 flex justify-between items-center text-white border-b border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -359,9 +359,9 @@ export default function PosAddProductModal({
               <p className="text-xs text-slate-400 font-medium">Instantly register SKU to database & inventory</p>
             </div>
           </div>
-          <button 
+          <button
             type="button"
-            onClick={onClose} 
+            onClick={onClose}
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full active:scale-90 transition-transform cursor-pointer"
           >
             <X size={20} />
@@ -379,7 +379,7 @@ export default function PosAddProductModal({
 
         {/* Scrollable Form Body */}
         <div className="p-6 overflow-y-auto scroll-zone space-y-4 text-xs">
-          
+
           {/* EXISTING ITEM DETECTED NOTIFICATION CARD */}
           {existingProduct && (
             <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-amber-950 animate-in fade-in space-y-2.5">
@@ -452,26 +452,26 @@ export default function PosAddProductModal({
               <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                 <ScanBarcode size={14} className="text-slate-500" /> Barcode / ID
               </label>
-              <input 
-                type="text" 
-                name="barcode" 
-                value={formData.barcode} 
-                onChange={handleChange} 
-                className="w-full text-base p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono font-bold" 
-                placeholder="Scan or auto..." 
+              <input
+                type="text"
+                name="barcode"
+                value={formData.barcode}
+                onChange={handleChange}
+                className="w-full text-base p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono font-bold"
+                placeholder="Scan or auto..."
               />
             </div>
             <div className="sm:col-span-2">
               <label className="block text-slate-700 font-bold mb-1">Product Name *</label>
-              <input 
-                type="text" 
-                name="name" 
-                required 
+              <input
+                type="text"
+                name="name"
+                required
                 autoFocus
-                value={formData.name} 
-                onChange={handleChange} 
-                className="w-full text-base p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-bold" 
-                placeholder="e.g. Almarai Fresh Milk 1L" 
+                value={formData.name}
+                onChange={handleChange}
+                className="w-full text-base p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-bold"
+                placeholder="e.g. Almarai Fresh Milk 1L"
               />
               {/* Similar items recognized by partial name */}
               {similarByName.length > 0 && !existingProduct && (
@@ -508,13 +508,12 @@ export default function PosAddProductModal({
                 <Percent size={14} className="text-slate-500" /> Pricing & Profitability Engine
               </span>
               {price > 0 && cost > 0 && (
-                <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
-                  marginPercent < 0 
-                    ? 'bg-rose-100 text-rose-800' 
-                    : marginPercent < 15 
-                      ? 'bg-amber-100 text-amber-800' 
+                <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${marginPercent < 0
+                    ? 'bg-rose-100 text-rose-800'
+                    : marginPercent < 15
+                      ? 'bg-amber-100 text-amber-800'
                       : 'bg-emerald-100 text-emerald-800'
-                }`}>
+                  }`}>
                   <span>{marginPercent < 0 ? '⚠️ LOSS' : marginPercent < 15 ? '⚠️ LOW MARGIN' : '✅ HEALTHY'}</span>
                   <span>({marginPercent.toFixed(1)}%)</span>
                 </span>
@@ -524,40 +523,39 @@ export default function PosAddProductModal({
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="block text-slate-600 font-bold mb-1">Cost Price (BD)</label>
-                <input 
-                  type="number" 
-                  step="0.001" 
-                  name="purchasePrice" 
-                  value={formData.purchasePrice} 
-                  onChange={handleChange} 
-                  className="w-full text-lg font-black p-2.5 bg-white border-2 border-slate-200 text-slate-800 rounded-xl outline-none focus:border-blue-500 font-mono" 
-                  placeholder="0.000" 
+                <input
+                  type="number"
+                  step="0.001"
+                  name="purchasePrice"
+                  value={formData.purchasePrice}
+                  onChange={handleChange}
+                  className="w-full text-lg font-black p-2.5 bg-white border-2 border-slate-200 text-slate-800 rounded-xl outline-none focus:border-blue-500 font-mono"
+                  placeholder="0.000"
                 />
               </div>
 
               <div>
                 <label className="block text-emerald-800 font-bold mb-1">Sale Price (BD) *</label>
-                <input 
-                  type="number" 
-                  step="0.001" 
-                  name="sellingPrice" 
-                  required 
-                  value={formData.sellingPrice} 
-                  onChange={handleChange} 
-                  className="w-full text-lg font-black p-2.5 bg-emerald-50/70 border-2 border-emerald-300 text-emerald-950 rounded-xl outline-none focus:border-emerald-600 font-mono" 
-                  placeholder="0.000" 
+                <input
+                  type="number"
+                  step="0.001"
+                  name="sellingPrice"
+                  required
+                  value={formData.sellingPrice}
+                  onChange={handleChange}
+                  className="w-full text-lg font-black p-2.5 bg-emerald-50/70 border-2 border-emerald-300 text-emerald-950 rounded-xl outline-none focus:border-emerald-600 font-mono"
+                  placeholder="0.000"
                 />
               </div>
 
               <div>
                 <label className="block text-slate-600 font-bold mb-1">Gross Profit (BD)</label>
-                <div className={`w-full text-lg font-black p-2.5 rounded-xl border-2 flex items-center font-mono ${
-                  profit < 0 
-                    ? 'bg-rose-50 border-rose-200 text-rose-700' 
-                    : profit > 0 
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+                <div className={`w-full text-lg font-black p-2.5 rounded-xl border-2 flex items-center font-mono ${profit < 0
+                    ? 'bg-rose-50 border-rose-200 text-rose-700'
+                    : profit > 0
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
                       : 'bg-slate-100 border-slate-200 text-slate-500'
-                }`}>
+                  }`}>
                   {profit ? `BD ${profit.toFixed(3)}` : 'BD 0.000'}
                 </div>
               </div>
@@ -570,22 +568,20 @@ export default function PosAddProductModal({
                 <button
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, vatRate: '10.0' }))}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    formData.vatRate === '10.0'
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${formData.vatRate === '10.0'
                       ? 'bg-slate-800 text-white shadow-xs'
                       : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   Standard 10% VAT
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, vatRate: '0.0' }))}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    formData.vatRate === '0.0'
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${formData.vatRate === '0.0'
                       ? 'bg-emerald-700 text-white shadow-xs'
                       : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   0% Zero-Rated (Basic Food)
                 </button>
@@ -599,9 +595,9 @@ export default function PosAddProductModal({
               <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                 <Tag size={14} className="text-slate-500" /> Category Department
               </label>
-              <select 
-                name="category" 
-                value={formData.category} 
+              <select
+                name="category"
+                value={formData.category}
                 onChange={handleChange}
                 className="w-full text-sm p-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-bold text-slate-800 cursor-pointer"
               >
@@ -619,22 +615,20 @@ export default function PosAddProductModal({
                 <button
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, is_weighed_item: false }))}
-                  className={`rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer border ${
-                    !formData.is_weighed_item
+                  className={`rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer border ${!formData.is_weighed_item
                       ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   <span>📦 Unit / Piece</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, is_weighed_item: true }))}
-                  className={`rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer border ${
-                    formData.is_weighed_item
+                  className={`rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer border ${formData.is_weighed_item
                       ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   <span>⚖️ Scale Weighed</span>
                 </button>
@@ -648,32 +642,32 @@ export default function PosAddProductModal({
               <label className="block text-slate-700 font-bold mb-1 flex items-center gap-1">
                 <Layers size={13} className="text-slate-500" /> Stock on Hand
               </label>
-              <input 
-                type="number" 
-                name="stockQuantity" 
-                value={formData.stockQuantity} 
-                onChange={handleChange} 
-                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono" 
+              <input
+                type="number"
+                name="stockQuantity"
+                value={formData.stockQuantity}
+                onChange={handleChange}
+                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono"
               />
             </div>
             <div>
               <label className="block text-slate-700 font-bold mb-1">Min Reorder Par</label>
-              <input 
-                type="number" 
-                name="minThreshold" 
-                value={formData.minThreshold} 
-                onChange={handleChange} 
-                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono" 
+              <input
+                type="number"
+                name="minThreshold"
+                value={formData.minThreshold}
+                onChange={handleChange}
+                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono"
               />
             </div>
             <div>
               <label className="block text-slate-700 font-bold mb-1">Max Capacity</label>
-              <input 
-                type="number" 
-                name="maxThreshold" 
-                value={formData.maxThreshold} 
-                onChange={handleChange} 
-                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono" 
+              <input
+                type="number"
+                name="maxThreshold"
+                value={formData.maxThreshold}
+                onChange={handleChange}
+                className="w-full text-base font-bold p-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none focus:border-emerald-500 font-mono"
               />
             </div>
           </div>
@@ -686,9 +680,9 @@ export default function PosAddProductModal({
               </span>
               <span className="text-[10px] text-blue-600 font-semibold">Optional</span>
             </label>
-            <select 
-              name="distributorId" 
-              value={formData.distributorId} 
+            <select
+              name="distributorId"
+              value={formData.distributorId}
               onChange={handleChange}
               className="w-full text-sm p-2.5 bg-white border-2 border-blue-200 rounded-xl outline-none focus:border-blue-500 font-bold text-slate-800 cursor-pointer"
             >
@@ -705,7 +699,7 @@ export default function PosAddProductModal({
 
         {/* Footer Actions */}
         <div className="p-4 border-t bg-slate-50 flex items-center justify-between gap-3">
-          <button 
+          <button
             type="button"
             disabled={isSubmitting}
             onClick={() => handleSave(false)}
@@ -714,13 +708,12 @@ export default function PosAddProductModal({
             {isUpdateMode ? 'Update Catalog Only' : 'Save to Catalog Only'}
           </button>
 
-          <button 
+          <button
             type="button"
             disabled={isSubmitting}
             onClick={() => handleSave(true)}
-            className={`flex-1 py-3.5 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
-              isUpdateMode ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
-            }`}
+            className={`flex-1 py-3.5 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-p  ointer disabled:opacity-50 ${isUpdateMode ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
           >
             {isUpdateMode ? <RefreshCw size={18} /> : <CheckCircle2 size={18} />}
             <span>{isSubmitting ? 'Saving...' : isUpdateMode ? 'Update Product & Add to Cart' : 'Save & Add to Cart (Checkout)'}</span>

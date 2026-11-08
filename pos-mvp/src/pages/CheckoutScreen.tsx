@@ -833,23 +833,46 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     const handleWsCatalogUpdate = (e: any) => {
       const data = e?.detail;
       if (!data) return;
-      if (data.type === 'CATALOG_UPDATED' && data.payload) {
-        const prod = mapDbRowToProduct(data.payload);
-        setCatalog((prev) => {
-          const idx = prev.findIndex(p => p.id === prod.id || (p.barcode && prod.barcode && p.barcode === prod.barcode));
-          let nextList: Product[];
-          if (idx !== -1) {
-            nextList = [...prev];
-            nextList[idx] = prod;
-          } else {
-            nextList = [prod, ...prev];
-          }
-          writeCatalogCache(nextList);
-          try {
-            localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
-          } catch {}
-          return nextList;
-        });
+      if (data.type === 'CATALOG_UPDATED') {
+        if (data.action === 'DELETE' && (data.deletedId || data.productId)) {
+          const targetId = String(data.deletedId || data.productId);
+          const targetBarcode = data.barcode ? String(data.barcode) : null;
+          setCatalog((prev) => {
+            const nextList = prev.filter(p => String(p.id) !== targetId && (!targetBarcode || String(p.barcode) !== targetBarcode));
+            writeCatalogCache(nextList);
+            try {
+              localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+            } catch {}
+            return nextList;
+          });
+        } else if (data.action === 'BULK_DELETE' && Array.isArray(data.deletedIds)) {
+          const idSet = new Set(data.deletedIds.map(String));
+          setCatalog((prev) => {
+            const nextList = prev.filter(p => !idSet.has(String(p.id)));
+            writeCatalogCache(nextList);
+            try {
+              localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+            } catch {}
+            return nextList;
+          });
+        } else if (data.payload) {
+          const prod = mapDbRowToProduct(data.payload);
+          setCatalog((prev) => {
+            const idx = prev.findIndex(p => p.id === prod.id || (p.barcode && prod.barcode && p.barcode === prod.barcode));
+            let nextList: Product[];
+            if (idx !== -1) {
+              nextList = [...prev];
+              nextList[idx] = prod;
+            } else {
+              nextList = [prod, ...prev];
+            }
+            writeCatalogCache(nextList);
+            try {
+              localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+            } catch {}
+            return nextList;
+          });
+        }
       }
     };
     window.addEventListener('master-ws-message', handleWsCatalogUpdate);

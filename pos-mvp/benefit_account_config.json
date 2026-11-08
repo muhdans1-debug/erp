@@ -1,0 +1,11 @@
+{
+  "accountType": "MERCHANT",
+  "merchantId": "97300182",
+  "merchantName": "ASKAR SUPERMARKET",
+  "mobileNumber": "+973 39401234",
+  "iban": "BH67NBOB00000012345678",
+  "cprOrCr": "200012345678901",
+  "branchId": "POS-01",
+  "notes": "Scan with BenefitPay app to pay directly",
+  "updatedAt": "2026-11-08T18:33:39.851Z"
+}

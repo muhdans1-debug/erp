@@ -4,6 +4,7 @@ import { ShoppingBag, Sparkles, CheckCircle2, ShieldCheck, Users, ArrowRight } f
 import {
   BenefitPayConfig,
   getStoredBenefitPayConfig,
+  fetchBenefitPayConfig,
   generateBenefitPayPayload,
 } from '../utils/benefitPay';
 
@@ -118,6 +119,12 @@ export default function CustomerDisplayPage() {
 
   // BenefitPay Owner Configuration
   const [benefitConfig, setBenefitConfig] = useState<BenefitPayConfig>(getStoredBenefitPayConfig);
+
+  useEffect(() => {
+    fetchBenefitPayConfig().then((remote) => {
+      if (remote) setBenefitConfig(remote);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handleConfigUpdate = (e: any) => {
@@ -562,7 +569,7 @@ export default function CustomerDisplayPage() {
   // BIG IDEA 3: BENEFITPAY QR AUTO-CHECKOUT (Frictionless Mobile Camera Payment)
   // ════════════════════════════════════════════════════════════════════════════
   if (qrCheckoutUrl) {
-    const fawriPayload = qrCheckoutUrl.startsWith('http') || qrCheckoutUrl.startsWith('BH-')
+    const fawriPayload = qrCheckoutUrl.startsWith('000201') || qrCheckoutUrl.startsWith('http') || qrCheckoutUrl.startsWith('BH-')
       ? qrCheckoutUrl
       : generateBenefitPayPayload(total, `CHECKOUT-${Date.now().toString().slice(-4)}`, benefitConfig);
 
@@ -588,9 +595,9 @@ export default function CustomerDisplayPage() {
           <div className="bg-white p-4 rounded-3xl shadow-2xl border-4 border-white/40 flex items-center justify-center">
             <QRCodeSVG
               value={fawriPayload}
-              size={180}
-              level="H"
-              includeMargin={false}
+              size={190}
+              level="M"
+              includeMargin={true}
               fgColor="#000000"
               bgColor="#ffffff"
             />

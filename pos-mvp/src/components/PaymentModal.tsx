@@ -19,6 +19,7 @@ import { saveSaleOffline } from '../utils/nativeDb';
 import {
   BenefitPayConfig,
   getStoredBenefitPayConfig,
+  fetchBenefitPayConfig,
   generateBenefitPayPayload,
 } from '../utils/benefitPay';
 import BenefitPayConfigModal from './BenefitPayConfigModal';
@@ -76,6 +77,9 @@ export default function PaymentModal({
   const [benefitConfig, setBenefitConfig] = useState<BenefitPayConfig>(getStoredBenefitPayConfig);
   const [showBenefitConfigModal, setShowBenefitConfigModal] = useState(false);
 
+  const [copiedMobile, setCopiedMobile] = useState(false);
+  const [copiedIban, setCopiedIban] = useState(false);
+
   useEffect(() => {
     const handleConfigUpdate = (e: any) => {
       setBenefitConfig(e.detail || getStoredBenefitPayConfig());
@@ -83,6 +87,15 @@ export default function PaymentModal({
     window.addEventListener('benefitpay_config_updated', handleConfigUpdate);
     return () => window.removeEventListener('benefitpay_config_updated', handleConfigUpdate);
   }, []);
+
+  // Dynamically refresh BenefitPay owner settings from backend server when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchBenefitPayConfig(apiBase).then((remote) => {
+        if (remote) setBenefitConfig(remote);
+      }).catch(() => {});
+    }
+  }, [isOpen, apiBase]);
 
   // Stable session invoice number (persisted for the duration of this payment modal)
   const activeInvoiceNo = useMemo(() => {
@@ -293,6 +306,10 @@ export default function PaymentModal({
       ws.onmessage = async (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
+          if (data.type === 'BENEFIT_PAY_CONFIG_UPDATED' && data.config) {
+            setBenefitConfig(data.config);
+            return;
+          }
           if (data.type === 'BENEFIT_PAY_SUCCESS') {
             const matchesInvoice = data.invoiceNo && data.invoiceNo === activeInvoiceNo;
             const matchesRef = data.referenceNumber && (data.referenceNumber === transactionRef || data.referenceNumber.includes(transactionRef));
@@ -850,7 +867,7 @@ export default function PaymentModal({
                       <QRCodeSVG
                         value={qrPayload}
                         size={256}
-                        level="H"
+                        level="M"
                         includeMargin={true}
                         fgColor="#000000"
                         bgColor="#ffffff"
@@ -859,17 +876,51 @@ export default function PaymentModal({
 
                     {/* OWNER BENEFICIARY DETAILS */}
                     <div style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 800, color: '#f1f5f9' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: '#f1f5f9' }}>
                         {benefitConfig.merchantName || 'ASKAR SUPERMARKET'}
                       </div>
-                      {benefitConfig.accountType === 'MOBILE_FAWRI' && benefitConfig.mobileNumber && (
-                        <div style={{ fontSize: '12px', color: '#34d399', fontWeight: 700, fontFamily: 'monospace', marginTop: '2px' }}>
-                          Fawri+ Mobile: {benefitConfig.mobileNumber}
+                      {benefitConfig.accountType === 'MOBILE_FAWRI' ? (
+                        benefitConfig.mobileNumber && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+                            <span style={{ fontSize: '13px', color: '#34d399', fontWeight: 700, fontFamily: 'monospace' }}>
+                              Fawri+ Mobile: {benefitConfig.mobileNumber}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(benefitConfig.mobileNumber || '');
+                                setCopiedMobile(true);
+                                setTimeout(() => setCopiedMobile(false), 2000);
+                              }}
+                              style={{ background: 'none', border: 'none', color: copiedMobile ? '#34d399' : '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                              title="Copy Mobile Number"
+                            >
+                              {copiedMobile ? <Check size={13} /> : <Copy size={13} />}
+                            </button>
+                          </div>
+                        )
+                      ) : (
+                        <div style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 700, fontFamily: 'monospace', marginTop: '3px' }}>
+                          Merchant ID: {benefitConfig.merchantId || '97300182'} • Terminal: {benefitConfig.branchId || 'POS-01'}
                         </div>
                       )}
                       {benefitConfig.iban && (
-                        <div style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace', marginTop: '1px' }}>
-                          IBAN: {benefitConfig.iban}
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                          <span style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'monospace' }}>
+                            IBAN: {benefitConfig.iban}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(benefitConfig.iban || '');
+                              setCopiedIban(true);
+                              setTimeout(() => setCopiedIban(false), 2000);
+                            }}
+                            style={{ background: 'none', border: 'none', color: copiedIban ? '#34d399' : '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                            title="Copy IBAN"
+                          >
+                            {copiedIban ? <Check size={12} /> : <Copy size={12} />}
+                          </button>
                         </div>
                       )}
                     </div>

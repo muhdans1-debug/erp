@@ -8,40 +8,25 @@ import {
   AlertCircle,
   QrCode,
   RefreshCw,
-  CreditCard,
+  Copy,
+  Check,
   Radio,
+  ShieldCheck,
 } from 'lucide-react';
-
-export interface BenefitPayConfig {
-  accountType: 'MERCHANT' | 'MOBILE_FAWRI';
-  merchantId: string;
-  merchantName: string;
-  mobileNumber: string;
-  iban: string;
-  cprOrCr: string;
-  branchId: string;
-  notes: string;
-  updatedAt?: string;
-}
-
-const DEFAULT_CONFIG: BenefitPayConfig = {
-  accountType: 'MERCHANT',
-  merchantId: 'BH-BENEFIT-97300182',
-  merchantName: 'ASKAR SUPERMARKET',
-  mobileNumber: '+973 39000000',
-  iban: '',
-  cprOrCr: '200012345678901',
-  branchId: 'MAIN-01',
-  notes: 'Scan with BenefitPay app to pay directly',
-  updatedAt: new Date().toISOString(),
-};
+import {
+  BenefitPayConfig,
+  DEFAULT_BENEFIT_CONFIG,
+  generateBenefitPayPayload,
+} from './utils/benefitPay';
 
 export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }) {
-  const [config, setConfig] = useState<BenefitPayConfig>(DEFAULT_CONFIG);
+  const [config, setConfig] = useState<BenefitPayConfig>(DEFAULT_BENEFIT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [sampleAmount, setSampleAmount] = useState<number>(1.5);
+  const [copiedPayload, setCopiedPayload] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -50,11 +35,15 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
   const fetchConfig = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiBase}/api/config/benefit-account`);
+      const res = await fetch(`${apiBase}/api/config/benefit-account`, {
+        headers: {
+          'x-pos-client': 'pim-admin',
+        },
+      });
       if (res.ok) {
         const data = await res.json();
         if (data && typeof data === 'object') {
-          setConfig({ ...DEFAULT_CONFIG, ...data });
+          setConfig({ ...DEFAULT_BENEFIT_CONFIG, ...data });
         }
       }
     } catch (err: any) {
@@ -84,7 +73,11 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
     try {
       const res = await fetch(`${apiBase}/api/config/benefit-account`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'pim-admin',
+        },
         body: JSON.stringify(config),
       });
 
@@ -105,21 +98,13 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
     }
   };
 
-  const sampleAmount = 1.5;
-  const sampleInvoice = 'INV-TEST';
-  const cleanAmount = sampleAmount.toFixed(3);
-  const previewPayload =
-    config.accountType === 'MOBILE_FAWRI'
-      ? `https://benefitpay.bh/fawriplus?mobile=${encodeURIComponent(
-          (config.mobileNumber || '').replace(/[^\d+]/g, '')
-        )}&amount=${cleanAmount}&ref=${sampleInvoice}&name=${encodeURIComponent(
-          config.merchantName || 'Askar Supermarket'
-        )}${config.iban ? `&iban=${encodeURIComponent(config.iban)}` : ''}`
-      : `https://benefitpay.bh/fawriplus?merchant=${encodeURIComponent(
-          (config.merchantId || '').trim()
-        )}&amount=${cleanAmount}&ref=${sampleInvoice}&name=${encodeURIComponent(
-          config.merchantName || 'Askar Supermarket'
-        )}`;
+  const previewPayload = generateBenefitPayPayload(sampleAmount, 'INV-PREVIEW', config);
+
+  const handleCopyPayload = () => {
+    navigator.clipboard.writeText(previewPayload);
+    setCopiedPayload(true);
+    setTimeout(() => setCopiedPayload(false), 2000);
+  };
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '10px 0' }}>
@@ -179,11 +164,11 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
                   border: '1px solid rgba(16, 185, 129, 0.3)',
                 }}
               >
-                Fawri+ ⚡ Active
+                EMVCo Fawri+ ⚡ Active
               </span>
             </h1>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>
-              إعداد حساب بنفت بي لاستلام المدفوعات من الزبائن عبر الكاشير والشاشات الخارجية وسجل الآجل
+              إعداد حساب بنفت بي لاستلام المدفوعات من الزبائن عبر الكاشير والشاشات الخارجية وسجل الآجل وفق معايير بنفت البحرين
             </p>
           </div>
         </div>
@@ -230,7 +215,7 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
         >
           <CheckCircle2 size={18} color="#34d399" />
           <span>
-            BenefitPay account saved successfully! Instant sync pushed to Sunmi POS registers, customer secondary screens, and Khata PWA.
+            BenefitPay EMVCo account configuration saved successfully! Instant sync pushed to Sunmi POS registers, customer secondary screens, and Khata PWA.
           </span>
         </div>
       )}
@@ -365,7 +350,7 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
                     required
                     value={config.merchantId}
                     onChange={(e) => setConfig({ ...config, merchantId: e.target.value })}
-                    placeholder="e.g. BH-BENEFIT-97300182 or 97300182"
+                    placeholder="e.g. 97300182 or BH-BENEFIT-97300182"
                     style={{
                       width: '100%',
                       padding: '10px 14px',
@@ -414,7 +399,7 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
                       type="text"
                       value={config.branchId}
                       onChange={(e) => setConfig({ ...config, branchId: e.target.value })}
-                      placeholder="e.g. MAIN-01"
+                      placeholder="e.g. POS-01"
                       style={{
                         width: '100%',
                         padding: '10px 14px',
@@ -611,11 +596,30 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <QrCode size={18} color="#ef4444" />
-                <span>Live Dynamic QR Preview</span>
+                <span>Live EMVCo Fawri+ QR Preview</span>
               </h3>
-              <span style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'monospace' }}>
-                Sample: BD {cleanAmount}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '11px', color: '#94a3b8' }}>Test BD:</span>
+                <input
+                  type="number"
+                  step="0.100"
+                  min="0"
+                  value={sampleAmount}
+                  onChange={(e) => setSampleAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                  style={{
+                    width: '65px',
+                    padding: '3px 6px',
+                    borderRadius: '6px',
+                    border: '1px solid #475569',
+                    backgroundColor: '#0f172a',
+                    color: '#38bdf8',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textAlign: 'right',
+                  }}
+                />
+              </div>
             </div>
 
             <div
@@ -641,9 +645,9 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
               >
                 <QRCodeSVG
                   value={previewPayload}
-                  size={180}
-                  level="H"
-                  includeMargin={false}
+                  size={190}
+                  level="M"
+                  includeMargin={true}
                   fgColor="#000000"
                   bgColor="#ffffff"
                 />
@@ -658,6 +662,12 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
                   ? `Fawri+ Mobile: ${config.mobileNumber || 'Not Set'}`
                   : `Merchant ID: ${config.merchantId || 'Not Set'}`}
               </div>
+
+              {config.branchId && (
+                <div style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'monospace', marginTop: '2px' }}>
+                  Terminal ID: {config.branchId}
+                </div>
+              )}
 
               {config.iban && (
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'monospace', marginTop: '2px' }}>
@@ -679,17 +689,44 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
                 border: '1px solid #334155',
               }}
             >
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>
-                Fawri+ Scheme Payload URL
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ShieldCheck size={13} color="#10b981" />
+                  <span>EMVCo QRCPS MPM Payload (bh.benefit)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyPayload}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    backgroundColor: copiedPayload ? '#065f46' : '#1e293b',
+                    color: copiedPayload ? '#a7f3d0' : '#94a3b8',
+                    border: '1px solid #334155',
+                    padding: '3px 8px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {copiedPayload ? <Check size={12} /> : <Copy size={12} />}
+                  <span>{copiedPayload ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
               <p
                 style={{
                   margin: 0,
                   fontSize: '11px',
                   fontFamily: 'monospace',
-                  color: '#e2e8f0',
+                  color: '#38bdf8',
                   wordBreak: 'break-all',
                   lineHeight: '1.4',
+                  backgroundColor: '#090d16',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: '1px solid #1e293b',
                 }}
               >
                 {previewPayload}
@@ -719,4 +756,3 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
     </div>
   );
 }
-

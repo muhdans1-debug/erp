@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
+import { managerAuth } from '../middleware/auth.js';
 import { runReorderCheck, snoozedDistributors } from '../src/automation/reorderJob.js';
 
 export default async function procurementRoutes(fastify, options) {
@@ -280,8 +281,8 @@ fastify.get('/api/purchase-orders', async () => {
   return { success: true, orders: allOrders };
 });
 
-// Approve and Dispatch the PO via WhatsApp
-fastify.post('/api/purchase-orders/:id/approve', async (request, reply) => {
+// Approve and Dispatch the PO via WhatsApp (Protected by managerAuth)
+fastify.post('/api/purchase-orders/:id/approve', { preHandler: managerAuth }, async (request, reply) => {
   const { id } = request.params;
   const { itemsJson: customItemsJson, estimatedCost: customEstimatedCost } = request.body || {};
 

@@ -10,8 +10,8 @@ export type { ReceiptTemplateProps };
 // Initialize the printer Web Worker natively in Vite for off-main-thread receipt formatting
 const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefined'
   ? new Worker(new URL('../workers/printer.worker.ts', import.meta.url), {
-      type: 'module',
-    })
+    type: 'module',
+  })
   : null;
 
 /**

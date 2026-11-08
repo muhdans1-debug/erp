@@ -1072,9 +1072,9 @@ const handleArchiveCustomer = async (request, reply) => {
   }
 };
 
-fastify.delete('/api/customers/:id', handleArchiveCustomer);
-fastify.delete('/khata/:id', handleArchiveCustomer);
-fastify.delete('/api/khata/:id', handleArchiveCustomer);
+fastify.delete('/api/customers/:id', { preHandler: managerAuth }, handleArchiveCustomer);
+fastify.delete('/khata/:id', { preHandler: managerAuth }, handleArchiveCustomer);
+fastify.delete('/api/khata/:id', { preHandler: managerAuth }, handleArchiveCustomer);
 
 // Khata Ledger Reset Route (Secured - Fail-Closed with Manager PIN)
 fastify.post('/api/khata/reset', { preHandler: managerAuth }, async (request, reply) => {

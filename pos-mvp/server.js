@@ -212,9 +212,32 @@ const _transporter = nodemailer.createTransport({
 });
 
 await fastify.register(cors, {
-  origin: '*',
+  origin: (origin, cb) => {
+    // Allow non-browser requests (native apps, Capacitor, curl, ADB)
+    if (!origin || origin === 'null') {
+      return cb(null, true);
+    }
+    try {
+      const url = new URL(origin);
+      const hostname = url.hostname;
+      // Allow localhost, loopback, private store subnets, and trusted deployment domains
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '::1' ||
+        hostname.startsWith('192.168.') ||
+        hostname.startsWith('10.') ||
+        hostname.startsWith('172.') ||
+        origin.startsWith('capacitor://') ||
+        origin.startsWith('ionic://') ||
+        origin.includes('vercel.app')
+      ) {
+        return cb(null, true);
+      }
+    } catch {}
+    return cb(new Error('CORS Not Allowed'), false);
+  },
   methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
-  // Defaulting allowedHeaders to dynamically reflect whatever headers the client sends in preflight (e.g. x-pos-client, x-manager-pin)
 });
 
 // Tolerant JSON Body Parser: safely handles empty JSON bodies without FST_ERR_CTP_EMPTY_JSON_BODY
@@ -325,11 +348,11 @@ fastify.register(async function (fastifyWsInstance) {
         return; // Heartbeat handled
       }
 
-      // NEW: Intercept and block unauthorized hardware actuation
+      // Intercept and block unauthorized hardware actuation
       const restrictedCommands = ['REMOTE_DRAWER_KICK', 'REMOTE_LOCK_REGISTER'];
       if (restrictedCommands.includes(event.type)) {
-        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET || 'askar-manager-secret-2026';
-        if (!event.token || (event.token !== managerSecret && event.token !== 'askar-manager-secret-2026')) {
+        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET || '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06';
+        if (!event.token || event.token !== managerSecret) {
           fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized hardware command "${event.type}" from IP: ${remoteIp}`);
           try {
             ws.send(JSON.stringify({ type: 'ERROR', message: 'Unauthorized hardware command blocked.' }));

@@ -23,17 +23,31 @@ export default {
     }
 
     // 2. Secure Endpoint: Validate DR Secret
-    const expectedSecret = env.DR_SECRET || 'askar-dr-secret-2026';
+    const expectedSecret = env.DR_SECRET;
+    if (!expectedSecret) {
+      return new Response(JSON.stringify({ error: 'Server configuration error: DR_SECRET not configured.' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
     const providedSecret = request.headers.get('x-dr-secret');
-    if (providedSecret !== expectedSecret) {
+    if (!providedSecret || providedSecret !== expectedSecret) {
       return new Response(JSON.stringify({ error: 'Unauthorized: Invalid or missing x-dr-secret' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
       });
     }
 
+    if (!env.TURSO_URL || !env.TURSO_AUTH_TOKEN) {
+      return new Response(JSON.stringify({ error: 'Server configuration error: Turso credentials missing.' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
     const db = createClient({
-      url: env.TURSO_URL || 'libsql://askar-supermarket-fleet.turso.io',
+      url: env.TURSO_URL,
       authToken: env.TURSO_AUTH_TOKEN
     });
 
@@ -56,13 +70,15 @@ export default {
           const saleId = sale.id || invoiceNo;
           const timestamp = sale.timestamp || sale.createdAt || new Date().toISOString();
 
+          const tenantId = sale.tenantId || 'askar_main';
+
           // 1. Insert Sale Header (Using the schema-compliant query we patched earlier)
           await db.execute({
             sql: `INSERT OR REPLACE INTO Sale (
               id, tenantId, invoiceNo, subtotal, total, totalAmount, paymentType, status, syncStatus, createdAt
-            ) VALUES (?, 'tenant_1', ?, ?, ?, ?, ?, 'CLOUD_SYNCED', 'SYNCED', ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CLOUD_SYNCED', 'SYNCED', ?)`,
             args: [
-              saleId, invoiceNo, Number(sale.subtotal || sale.total), Number(sale.total || sale.totalAmount || 0), Number(sale.total || sale.totalAmount || 0), sale.paymentType || 'CASH', timestamp
+              saleId, tenantId, invoiceNo, Number(sale.subtotal || sale.total), Number(sale.total || sale.totalAmount || 0), Number(sale.total || sale.totalAmount || 0), sale.paymentType || 'CASH', timestamp
             ]
           });
 
@@ -80,8 +96,8 @@ export default {
             // Persist the line item
             await db.execute({
               sql: `INSERT OR REPLACE INTO SaleItem (id, tenantId, saleId, productId, quantity, priceAtSale, total_price)
-                    VALUES (?, 'tenant_1', ?, ?, ?, ?, ?)`,
-              args: [itemId, saleId, pid, qty, price, price * qty]
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              args: [itemId, tenantId, saleId, pid, qty, price, price * qty]
             });
 
             // Deduct the stock quantity globally

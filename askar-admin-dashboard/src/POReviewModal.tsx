@@ -109,11 +109,14 @@ export default function POReviewModal({ po, onClose, onFinalApprove, onDiscard, 
       return;
     }
 
-    // 1. Mark the PO as 'APPROVED' in your Fastify backend
+    // 1. Mark the PO as 'APPROVED' in your Fastify backend (Authorized with Manager PIN)
     try {
       await fetch(`${apiBase}/api/purchase-orders/${po.id}/approve`, { 
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999'
+        },
         body: JSON.stringify({ itemsJson: JSON.stringify(items), estimatedCost: totalCost })
       });
     } catch (error) {

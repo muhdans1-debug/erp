@@ -312,8 +312,8 @@ export default async function productRoutes(fastify, options) {
     return { ...found, distributor: dist };
   });
 
-  // 5. Bulk CSV Upsert
-  fastify.post('/api/products/bulk-upsert', async (request, reply) => {
+  // 5. Bulk CSV Upsert (Protected by managerAuth)
+  fastify.post('/api/products/bulk-upsert', { preHandler: managerAuth }, async (request, reply) => {
     const { products } = request.body || {};
     if (!Array.isArray(products) || products.length === 0) {
       return reply.status(400).send({ error: 'No products provided' });
@@ -1185,15 +1185,15 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.delete('/api/products/:id', handleDeleteProduct);
-  fastify.delete('/products/:id', handleDeleteProduct);
-  fastify.post('/api/products/:id/delete', handleDeleteProduct);
-  fastify.post('/products/:id/delete', handleDeleteProduct);
-  fastify.post('/api/products/bulk-delete', handleBulkDeleteProducts);
-  fastify.post('/products/bulk-delete', handleBulkDeleteProducts);
+  fastify.delete('/api/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.delete('/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/api/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
+  fastify.post('/api/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
+  fastify.post('/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
 
-  // 11. Bulk Update & Price Hike
-  fastify.post('/api/products/bulk-update', async (request, reply) => {
+  // 11. Bulk Update & Price Hike (Protected by managerAuth)
+  fastify.post('/api/products/bulk-update', { preHandler: managerAuth }, async (request, reply) => {
     const {
       productIds = [],
       action,

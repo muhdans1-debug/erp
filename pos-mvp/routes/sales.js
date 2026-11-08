@@ -1,5 +1,6 @@
 import { SaleRepository } from '../repositories/SaleRepository.js';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
 import { generateNextInvoiceNumber } from '../services/invoiceSequence.js';
@@ -467,30 +468,85 @@ const handleCheckout = async (request, reply) => {
     const saleId = id || crypto.randomUUID();
     const rawItems = items || cart || [];
 
+    // 1. Fetch catalog data to verify prices server-side
+    const productLookupIds = rawItems
+      .map(item => item.productId || item.id)
+      .filter(Boolean);
+
+    let productMap = new Map();
+    if (productLookupIds.length > 0) {
+      try {
+        const placeholders = productLookupIds.map(() => '?').join(',');
+        const dbProducts = await db.execute({
+          sql: `SELECT id, barcode, name, sellingPrice, vatRate, taxRate, purchasePrice, unitCost 
+                FROM Product 
+                WHERE id IN (${placeholders}) OR barcode IN (${placeholders})`,
+          args: [...productLookupIds, ...productLookupIds]
+        });
+        if (dbProducts.rows) {
+          for (const p of dbProducts.rows) {
+            productMap.set(String(p.id), p);
+            if (p.barcode) {
+              productMap.set(String(p.barcode), p);
+            }
+          }
+        }
+      } catch (err) {
+        fastify.log.warn(`[handleCheckout] Catalog lookup warning: ${err.message}`);
+      }
+    }
+
+    // Check manager authorization if price overrides or custom discounts are present
+    const managerPin = request.headers['x-manager-pin'] || request.body?.managerPin || request.body?.pin;
+    let isManagerAuthorized = false;
+    if (managerPin && process.env.MANAGER_PIN_HASH) {
+      isManagerAuthorized = await bcrypt.compare(String(managerPin).trim(), process.env.MANAGER_PIN_HASH.trim()).catch(() => false);
+    }
+
     // Calculate line-item VAT and extract inclusive 10% VAT vs 0% zero-rated
     let computedSubtotal = 0;
     let computedTotalVat = 0;
     let computedFinalTotal = 0;
 
     const lineItems = rawItems.map((item) => {
-      // NEW: Strict validation to prevent negative injection tampering
-      // Quantity must be at least 0.001 (allows fractional weights, blocks negatives)
+      // Strict validation to prevent negative injection tampering
       const safeQty = Math.max(0.001, Number(item.quantity || item.qty || 1));
-      
-      // Price cannot be negative
-      const safePrice = Math.max(0, Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0));
+      let safePrice = Math.max(0, Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? 0));
+
+      const rawPid = item.productId || item.id;
+      const dbProd = rawPid ? productMap.get(String(rawPid)) : null;
+
+      // Price cross-reference against catalog to prevent price tampering
+      if (dbProd && dbProd.sellingPrice !== undefined && dbProd.sellingPrice !== null) {
+        const catalogPrice = Number(dbProd.sellingPrice);
+        if (Math.abs(safePrice - catalogPrice) > 0.001) {
+          if (!isManagerAuthorized) {
+            fastify.log.warn(`[handleCheckout] Price tampering prevented for ${rawPid}: client requested BD ${safePrice}, enforced catalog BD ${catalogPrice}`);
+            safePrice = catalogPrice;
+          }
+        }
+      }
+
       const lineTotal = safePrice * safeQty;
       computedFinalTotal += lineTotal;
 
       // Determine VAT rate (0% for basic food items, 10% standard rate)
-      const rate = item.vatRateAtSale !== undefined
-        ? Number(item.vatRateAtSale)
-        : (item.vatRate !== undefined ? Number(item.vatRate) : (item.taxRate !== undefined && item.taxRate === 0 ? 0.0 : 10.0));
+      let rate = 10.0;
+      if (dbProd && (dbProd.vatRate !== null && dbProd.vatRate !== undefined)) {
+        rate = Number(dbProd.vatRate);
+      } else if (dbProd && (dbProd.taxRate !== null && dbProd.taxRate !== undefined)) {
+        rate = dbProd.taxRate === 0 ? 0.0 : 10.0;
+      } else if (item.vatRateAtSale !== undefined) {
+        rate = Number(item.vatRateAtSale);
+      } else if (item.vatRate !== undefined) {
+        rate = Number(item.vatRate);
+      } else if (item.taxRate !== undefined && item.taxRate === 0) {
+        rate = 0.0;
+      }
 
       let lineTax = 0;
       if (rate === 10) {
-        // Shelf prices in Bahrain retail are Tax-Inclusive.
-        // Extract 10% VAT: Price - (Price / 1.10)
+        // Shelf prices in Bahrain retail are Tax-Inclusive: Price - (Price / 1.10)
         lineTax = lineTotal - (lineTotal / 1.10);
         computedTotalVat += lineTax;
         computedSubtotal += (lineTotal - lineTax);
@@ -499,21 +555,25 @@ const handleCheckout = async (request, reply) => {
         computedSubtotal += lineTotal;
       }
 
+      const costPrice = dbProd
+        ? Math.max(0, Number(dbProd.purchasePrice ?? dbProd.unitCost ?? 0))
+        : Math.max(0, Number(item.costAtSale ?? item.purchasePrice ?? 0));
+
       return {
         id: crypto.randomUUID(),
-        productId: item.productId || item.id,
+        productId: rawPid || null,
         quantity: safeQty,
         priceAtSale: safePrice,
-        costAtSale: Math.max(0, Number(item.costAtSale ?? item.purchasePrice ?? 0)),
+        costAtSale: costPrice,
         total_price: Number((safeQty * safePrice).toFixed(3)),
         vatRateAtSale: rate,
         vatAmount: Number(lineTax.toFixed(3)),
       };
     });
 
-    const finalSubtotal = Math.max(0, Number((subtotal !== undefined && Number(subtotal) >= 0 ? subtotal : computedSubtotal).toFixed(3)));
-    const finalTotalVat = Math.max(0, Number((totalVat !== undefined && Number(totalVat) >= 0 ? totalVat : (vatTotal !== undefined && Number(vatTotal) >= 0 ? vatTotal : (vat !== undefined && Number(vat) >= 0 ? vat : computedTotalVat))).toFixed(3)));
-    const finalTotal = Math.max(0, Number((totalAmount !== undefined && Number(totalAmount) >= 0 ? totalAmount : (total !== undefined && Number(total) >= 0 ? total : computedFinalTotal)).toFixed(3)));
+    const finalSubtotal = Number(computedSubtotal.toFixed(3));
+    const finalTotalVat = Number(computedTotalVat.toFixed(3));
+    const finalTotal = Number(computedFinalTotal.toFixed(3));
 
     // Resolve effective shift ID: always bind to active OPEN shift
     let effectiveShiftId = shiftId;

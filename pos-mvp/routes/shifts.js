@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
 
@@ -30,13 +31,44 @@ fastify.post('/api/employees/verify-pin', async (request, reply) => {
 
   const { pin } = request.body || {};
   const cleanPin = (pin || '').toString().trim();
+  if (!cleanPin) {
+    return reply.code(400).send({ error: 'PIN required' });
+  }
 
-  const res = await db.execute({
-    sql: 'SELECT id, name, role, is_active FROM Employee WHERE pin_code = ? AND is_active = 1 LIMIT 1',
-    args: [cleanPin]
-  });
+  let rows = [];
+  try {
+    const res = await db.execute({
+      sql: 'SELECT id, name, role, is_active, pin_code FROM Employee WHERE is_active = 1',
+      args: []
+    });
+    rows = res.rows || [];
+  } catch (e) {
+    fastify.log.error('Failed to query Employee for verification:', e);
+  }
 
-  if (!res.rows || res.rows.length === 0) {
+  let matchedEmployee = null;
+  if (rows && rows.length > 0) {
+    for (const emp of rows) {
+      const storedPin = String(emp.pin_code || '');
+      let isMatch = false;
+      if (storedPin.startsWith('$2b$') || storedPin.startsWith('$2a$')) {
+        isMatch = await bcrypt.compare(cleanPin, storedPin).catch(() => false);
+      } else {
+        isMatch = (cleanPin === storedPin);
+      }
+      if (isMatch) {
+        matchedEmployee = {
+          id: emp.id,
+          name: emp.name,
+          role: emp.role,
+          is_active: emp.is_active
+        };
+        break;
+      }
+    }
+  }
+
+  if (!matchedEmployee) {
     // Record failed attempt and add a mandatory 250ms anti-brute-force delay
     attempts.count += 1;
     if (attempts.count >= 5) {
@@ -50,7 +82,7 @@ fastify.post('/api/employees/verify-pin', async (request, reply) => {
 
   // Success: reset attempts
   pinAttempts.delete(ip);
-  return reply.send({ success: true, employee: res.rows[0] });
+  return reply.send({ success: true, employee: matchedEmployee });
 });
 
 // Employee Management: List all employees (Manager Back-Office)
@@ -67,15 +99,15 @@ fastify.get('/api/employees', { preHandler: managerAuth }, async (request, reply
   }
 });
 
-// Employee Management: Create or update employee
-fastify.post('/api/employees', async (request, reply) => {
-  const { id, name, pin_code, role, is_active } = request.body || {};
+// Employee Management: Create or update employee (Protected by managerAuth)
+fastify.post('/api/employees', { preHandler: managerAuth }, async (request, reply) => {
+  const { id, name, pin_code, role, is_active, tenantId } = request.body || {};
   if (!name || !pin_code || !role) {
     return reply.status(400).send({ error: 'Name, 4-digit PIN, and role are required' });
   }
 
   const cleanPin = String(pin_code).trim();
-  if (cleanPin.length !== 4) {
+  if (cleanPin.length !== 4 && !(cleanPin.startsWith('$2b$') || cleanPin.startsWith('$2a$'))) {
     return reply.status(400).send({ error: 'PIN must be exactly 4 digits' });
   }
 
@@ -84,28 +116,34 @@ fastify.post('/api/employees', async (request, reply) => {
     const empName = String(name).trim();
     const empRole = String(role).toUpperCase();
     const activeVal = is_active !== false ? 1 : 0;
+    const resolvedTenant = tenantId || 'askar_main';
+
+    // Hash PIN if not already hashed
+    const hashedPin = (cleanPin.startsWith('$2b$') || cleanPin.startsWith('$2a$'))
+      ? cleanPin
+      : await bcrypt.hash(cleanPin, 10);
 
     await queryLocalDevDb(`
       INSERT INTO Employee (id, tenantId, name, pin_code, role, is_active)
-      VALUES (?, 'tenant_1', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         pin_code = excluded.pin_code,
         role = excluded.role,
         is_active = excluded.is_active
-    `, [empId, empName, cleanPin, empRole, activeVal]);
+    `, [empId, resolvedTenant, empName, hashedPin, empRole, activeVal]);
 
     // Mirror to db if available
     try {
       await db.execute({
         sql: `INSERT INTO Employee (id, tenantId, name, pin_code, role, is_active)
-              VALUES (?, 'tenant_1', ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 pin_code = excluded.pin_code,
                 role = excluded.role,
                 is_active = excluded.is_active;`,
-        args: [empId, empName, cleanPin, empRole, activeVal]
+        args: [empId, resolvedTenant, empName, hashedPin, empRole, activeVal]
       });
     } catch { }
 

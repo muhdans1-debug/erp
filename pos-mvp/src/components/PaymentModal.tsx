@@ -1,15 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { 
-  X, 
-  Smartphone, 
-  Banknote, 
-  CreditCard, 
-  CheckCircle2, 
-  Printer, 
-  Copy, 
-  Check, 
-  RefreshCw, 
-  Settings 
+import {
+  X,
+  Smartphone,
+  Banknote,
+  CreditCard,
+  CheckCircle2,
+  Printer,
+  Copy,
+  Check,
+  RefreshCw,
+  Settings
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt } from '../utils/printer';
@@ -94,7 +94,7 @@ export default function PaymentModal({
     if (isOpen) {
       fetchBenefitPayConfig(apiBase).then((remote) => {
         if (remote) setBenefitConfig(remote);
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [isOpen, apiBase]);
 
@@ -209,7 +209,7 @@ export default function PaymentModal({
       if (res.ok) {
         data = await res.json();
       } else {
-        try { data = await res.json(); } catch {}
+        try { data = await res.json(); } catch { }
       }
     } catch (netErr) {
       console.warn('Payment checkout network notice (initiating instant local zero-block fallback):', netErr);
@@ -234,7 +234,7 @@ export default function PaymentModal({
               break;
             }
           }
-        } catch {}
+        } catch { }
       }
     }
 
@@ -267,7 +267,7 @@ export default function PaymentModal({
       // Strict hardware rule: Only trigger RJ11 solenoid kick on CASH payment!
       // BenefitPay Fawri+ keeps drawer physically locked.
       if (finalMethod === 'CASH') {
-        openCashDrawer(changeDue).catch(() => {});
+        openCashDrawer(changeDue).catch(() => { });
       }
 
       setCompletedSale(finalReceiptData);
@@ -289,7 +289,7 @@ export default function PaymentModal({
         customerCardUid: customer?.cardUid || undefined,
         cashierName: 'Register 01',
         transactionRef: finalRef,
-      }).catch(() => {});
+      }).catch(() => { });
     } catch (err) {
       console.error('Payment checkout error:', err);
     } finally {
@@ -347,7 +347,7 @@ export default function PaymentModal({
     return () => {
       isSubscribed = false;
       if (ws) {
-        try { ws.close(); } catch {}
+        try { ws.close(); } catch { }
       }
     };
   }, [isOpen, completedSale, activeInvoiceNo, transactionRef, totalAmount, selectedMethod, apiBase]);
@@ -1094,11 +1094,10 @@ export default function PaymentModal({
                           setCashTendered(totalAmount.toFixed(3));
                           setTenderedAmount(totalAmount);
                         }}
-                        className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
-                          Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
+                        className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
                             ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                             : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
-                        }`}
+                          }`}
                       >
                         <span className="text-[10px] font-sans font-bold text-emerald-200">EXACT</span>
                         <span>BD {totalAmount.toFixed(3)}</span>
@@ -1114,11 +1113,10 @@ export default function PaymentModal({
                               setCashTendered(val.toFixed(3));
                               setTenderedAmount(val);
                             }}
-                            className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${
-                              isSelected
+                            className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${isSelected
                                 ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                                 : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
-                            }`}
+                              }`}
                           >
                             <span className="text-[10px] font-sans font-bold text-slate-400">NOTE</span>
                             <span>BD {val.toFixed(3)}</span>
@@ -1135,8 +1133,8 @@ export default function PaymentModal({
                     </label>
                     <div className="flex items-center gap-3">
                       <span className="text-xl font-black text-emerald-400 font-mono">BHD</span>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         step="0.050"
                         className="w-full text-2xl font-mono font-black p-3 bg-slate-950 border-2 border-slate-700 rounded-xl text-white focus:border-emerald-500 focus:outline-hidden"
                         value={cashTendered}
@@ -1168,7 +1166,7 @@ export default function PaymentModal({
                         BHD {changeDue.toFixed(3)}
                       </span>
                     </div>
-                    
+
                     {isShort && (
                       <p className="text-rose-400 font-bold text-xs mt-1 text-left flex items-center gap-1.5">
                         <span>⚠️ Customer is short BHD {(totalAmount - activeTendered).toFixed(3)}</span>
@@ -1214,15 +1212,14 @@ export default function PaymentModal({
                   type="button"
                   disabled={processing || (selectedMethod === 'CASH' && isShort)}
                   onClick={handleConfirmPayment}
-                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                    selectedMethod === 'BENEFIT_PAY'
+                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${selectedMethod === 'BENEFIT_PAY'
                       ? 'bg-red-600 hover:bg-red-700'
                       : selectedMethod === 'CASH'
-                      ? isShort
-                        ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                        : 'bg-emerald-600 hover:bg-emerald-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+                        ? isShort
+                          ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
                 >
                   {processing ? (
                     <>
@@ -1236,10 +1233,10 @@ export default function PaymentModal({
                         {selectedMethod === 'BENEFIT_PAY'
                           ? `Confirm BenefitPay (BD ${totalAmount.toFixed(3)})`
                           : selectedMethod === 'CASH'
-                          ? changeDue > 0
-                            ? `Complete Sale (Return BD ${changeDue.toFixed(3)} Change)`
-                            : `Complete Exact Cash (BD ${totalAmount.toFixed(3)})`
-                          : `Confirm Card Sale (BD ${totalAmount.toFixed(3)})`}
+                            ? changeDue > 0
+                              ? `Complete Sale (Return BD ${changeDue.toFixed(3)} Change)`
+                              : `Complete Exact Cash (BD ${totalAmount.toFixed(3)})`
+                            : `Confirm Card Sale (BD ${totalAmount.toFixed(3)})`}
                       </span>
                     </>
                   )}
@@ -1274,7 +1271,7 @@ export default function PaymentModal({
         <div style={{ textAlign: 'center', fontWeight: 900 }}>فاتورة ضريبية مبسطة</div>
         <div style={{ textAlign: 'center', fontWeight: 900 }}>VAT No: 200012345678901</div>
         <div style={{ textAlign: 'center' }}>Tel: +973 1700 0000</div>
-        
+
         <div style={{ borderTop: '2.5px dashed #000000', margin: '8px 0' }} />
 
         {/* META INFO (Strict Alignment) */}
@@ -1292,7 +1289,7 @@ export default function PaymentModal({
           <div style={{ width: '20%', textAlign: 'center' }}>Qty</div>
           <div style={{ width: '30%', textAlign: 'right' }}>Amt(BD)</div>
         </div>
-        
+
         <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
 
         {/* ITEMS LIST */}
@@ -1317,11 +1314,11 @@ export default function PaymentModal({
         {/* TOTALS */}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Subtotal:</span> <span>BD {subtotal.toFixed(3)}</span></div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>VAT (10%):</span> <span>BD {vat.toFixed(3)}</span></div>
-        
+
         {/* Highlighted Total */}
         <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '17px', WebkitTextStroke: '0.95px #000000' }}>
-          <span>TOTAL:</span> 
+          <span>TOTAL:</span>
           <span>BD {totalAmount.toFixed(3)}</span>
         </div>
         <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />

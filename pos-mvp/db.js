@@ -335,6 +335,26 @@ export async function initDatabase() {
       console.warn('⚠️ [LibSQL] Schema verification warning:', err.message);
     }
   }
+
+  // Schema migrations for Product table
+  try {
+    const info = await client.execute('PRAGMA table_info(Product)');
+    const colNames = new Set((info.rows || []).map(r => r.name));
+    if (!colNames.has('category')) {
+      await client.execute("ALTER TABLE Product ADD COLUMN category TEXT DEFAULT 'GROCERY'");
+      console.log('✅ [Migration] Added missing category column to Product');
+    }
+    if (!colNames.has('image_url')) {
+      await client.execute("ALTER TABLE Product ADD COLUMN image_url TEXT");
+      console.log('✅ [Migration] Added missing image_url column to Product');
+    }
+    if (!colNames.has('is_weighed_item')) {
+      await client.execute("ALTER TABLE Product ADD COLUMN is_weighed_item INTEGER DEFAULT 0");
+      console.log('✅ [Migration] Added missing is_weighed_item column to Product');
+    }
+  } catch (migErr) {
+    console.warn('⚠️ [Migration] Column check notice:', migErr.message);
+  }
 }
 
 export default db;

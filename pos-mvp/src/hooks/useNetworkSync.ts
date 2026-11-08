@@ -3,6 +3,24 @@ import { useEffect, useState, useRef } from 'react';
 import { pushOfflineSales } from '../services/syncService';
 
 /**
+ * Robust network probe that never crashes on older Android WebViews
+ */
+const fetchWithTimeout = async (url: string, timeoutMs: number = 2500): Promise<Response> => {
+  let timer: any;
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+  });
+  try {
+    const res = await Promise.race([fetch(url), timeoutPromise]);
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+};
+
+/**
  * Headless Network & Offline Synchronization Hook with Cloud DR Fallback
  * Decouples WebSocket connections, heartbeat auto-reconnects, and background
  * offline sales synchronization from the React UI render tree.
@@ -26,7 +44,30 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
     onMessageRef.current = onMessage;
   }, [onMessage]);
 
-  const cleanIp = (masterIp || '192.168.8.7').replace(/^https?:\/\//, '').replace(/:[0-9]+.*$/, '').trim() || '192.168.8.7';
+  const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+  let cleanIp = (masterIp || '').replace(/^https?:\/\//, '').replace(/:[0-9]+.*$/, '').replace(/\/.*$/, '').trim();
+  if (!cleanIp || (isAndroid && (cleanIp === 'localhost' || cleanIp === '127.0.0.1'))) {
+    cleanIp = '192.168.8.7';
+  }
+
+  const getProbeCandidates = () => {
+    return [
+      `http://${cleanIp}:3000`,
+      'http://192.168.8.7:3000',
+      'http://askar-master.local:3000'
+    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
+  };
+
+  const checkServerHealth = async (): Promise<boolean> => {
+    const bases = getProbeCandidates();
+    for (const base of bases) {
+      try {
+        const probe = await fetchWithTimeout(`${base}/api/health`, 2000);
+        if (probe.ok) return true;
+      } catch {}
+    }
+    return false;
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -53,14 +94,8 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
         ws.onclose = async () => {
           if (!isMounted) return;
 
-          // Before declaring server offline, probe local HTTP health
-          let httpHealthy = false;
-          try {
-            const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
-              signal: AbortSignal.timeout(2000),
-            });
-            if (probe.ok) httpHealthy = true;
-          } catch {}
+          // Before declaring server offline, probe local HTTP health across candidates
+          const httpHealthy = await checkServerHealth();
 
           if (httpHealthy) {
             setIsServerOnline(true);
@@ -76,16 +111,12 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
             if (!disconnectTimer.current) {
               disconnectTimer.current = setTimeout(async () => {
                 if (!isMounted) return;
-                try {
-                  const check = await fetch(`http://${cleanIp}:3000/api/health`, {
-                    signal: AbortSignal.timeout(2000),
-                  });
-                  if (check.ok) {
-                    setIsServerOnline(true);
-                    setShowDrPrompt(false);
-                    return;
-                  }
-                } catch {}
+                const checkHealthy = await checkServerHealth();
+                if (checkHealthy) {
+                  setIsServerOnline(true);
+                  setShowDrPrompt(false);
+                  return;
+                }
                 setShowDrPrompt(true);
               }, 60000);
             }
@@ -97,16 +128,12 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
 
         ws.onerror = async () => {
           if (!isMounted) return;
-          try {
-            const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
-              signal: AbortSignal.timeout(2000),
-            });
-            if (probe.ok) {
-              setIsServerOnline(true);
-              setShowDrPrompt(false);
-              return;
-            }
-          } catch {}
+          const isHealthy = await checkServerHealth();
+          if (isHealthy) {
+            setIsServerOnline(true);
+            setShowDrPrompt(false);
+            return;
+          }
           setIsServerOnline(false);
         };
 
@@ -168,23 +195,23 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
       }
     }, 10000);
 
-    // 2b. Background HTTP Heartbeat (15 seconds) to ensure POS never shows false offline alerts
-    const httpHealthInterval = setInterval(async () => {
+    // 2b. Background HTTP Heartbeat (5 seconds) to ensure POS never shows false offline alerts
+    const checkHealth = async () => {
       if (!isMounted) return;
-      try {
-        const probe = await fetch(`http://${cleanIp}:3000/api/health`, {
-          signal: AbortSignal.timeout(2500)
-        });
-        if (probe.ok) {
-          setIsServerOnline(true);
-          setShowDrPrompt(false);
-          if (disconnectTimer.current) {
-            clearTimeout(disconnectTimer.current);
-            disconnectTimer.current = null;
-          }
+      const isHealthy = await checkServerHealth();
+      if (isHealthy) {
+        setIsServerOnline(true);
+        setShowDrPrompt(false);
+        if (disconnectTimer.current) {
+          clearTimeout(disconnectTimer.current);
+          disconnectTimer.current = null;
         }
-      } catch {}
-    }, 15000);
+      } else {
+        setIsServerOnline(false);
+      }
+    };
+    checkHealth();
+    const httpHealthInterval = setInterval(checkHealth, 5000);
 
     // 3. Cleanup on unmount
     return () => {

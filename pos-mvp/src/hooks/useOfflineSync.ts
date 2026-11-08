@@ -102,6 +102,37 @@ export function useOfflineSync(apiBaseUrl?: string) {
       }
     }
 
+    // Drain any pending products added while offline
+    try {
+      const rawPending = typeof localStorage !== 'undefined' ? localStorage.getItem('askar_pending_products') : null;
+      if (rawPending) {
+        const pendingProds = JSON.parse(rawPending);
+        if (Array.isArray(pendingProds) && pendingProds.length > 0) {
+          const remaining = [];
+          for (const item of pendingProds) {
+            let sent = false;
+            for (const base of targetCandidates) {
+              try {
+                const pRes = await fetch(`${base}/api/products`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-manager-pin': '9999',
+                    'x-pos-client': 'store-pos'
+                  },
+                  body: JSON.stringify(item.payload),
+                  signal: AbortSignal.timeout(3000)
+                });
+                if (pRes.ok) { sent = true; break; }
+              } catch {}
+            }
+            if (!sent) remaining.push(item);
+          }
+          localStorage.setItem('askar_pending_products', JSON.stringify(remaining));
+        }
+      }
+    } catch {}
+
     // Also trigger asynchronous CRDT Khata offline queue synchronization
     syncOfflineKhataEvents().catch((err) => {
       console.warn('⚠️ [useOfflineSync] Background Khata sync error:', err);

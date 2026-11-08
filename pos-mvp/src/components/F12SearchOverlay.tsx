@@ -79,17 +79,47 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
     return () => clearTimeout(timer);
   }, [searchQuery, apiBase]);
 
+  const effectiveCatalog = useMemo(() => {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('askar_local_db_cache_Product') : null;
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (Array.isArray(cached) && cached.length > 0) {
+          const catalogIds = new Set(catalog.map((p) => p.id));
+          const catalogBarcodes = new Set(catalog.map((p) => p.barcode).filter(Boolean));
+          const extra = cached
+            .filter((c: any) => c && !catalogIds.has(c.id) && (!c.barcode || !catalogBarcodes.has(c.barcode)))
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              price: Number(c.sellingPrice ?? c.price ?? 0),
+              unitCost: Number(c.purchasePrice ?? c.unitCost ?? 0),
+              barcode: c.barcode || c.id,
+              category: c.category,
+              isScaleItem: Boolean(c.is_weighed_item),
+              vatRate: Number(c.vatRate ?? 0),
+              stockQuantity: Number(c.stockQuantity ?? 100)
+            }));
+          if (extra.length > 0) {
+            return [...extra, ...catalog];
+          }
+        }
+      }
+    } catch {}
+    return catalog;
+  }, [catalog, isOpen]);
+
   const filteredCatalog = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return catalog.slice(0, 30);
-    return catalog.filter((product) => {
+    if (!q) return effectiveCatalog.slice(0, 30);
+    return effectiveCatalog.filter((product) => {
       return (
         product.name.toLowerCase().includes(q) ||
         (product.barcode && product.barcode.toLowerCase().includes(q)) ||
         product.id.toLowerCase().includes(q)
       );
     });
-  }, [catalog, searchQuery]);
+  }, [effectiveCatalog, searchQuery]);
 
   // Merge local matches with server results ensuring zero duplicates
   const displayedProducts = useMemo(() => {

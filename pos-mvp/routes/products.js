@@ -808,31 +808,6 @@ export default async function productRoutes(fastify, options) {
 
       await db.orm.Product.create(newProd);
 
-      try {
-        await db.execute({
-          sql: `INSERT OR REPLACE INTO Product (id, tenantId, name, purchasePrice, unitCost, sellingPrice, stockQuantity, minThreshold, maxThreshold, supplierName, supplierEmail, distributorId, vatRate, taxRate, barcode, is_weighed_item, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [
-            newProd.id,
-            newProd.tenantId,
-            newProd.name,
-            newProd.purchasePrice,
-            newProd.unitCost,
-            newProd.sellingPrice,
-            newProd.stockQuantity,
-            newProd.minThreshold,
-            newProd.maxThreshold,
-            newProd.supplierName,
-            newProd.supplierEmail,
-            newProd.distributorId,
-            newProd.vatRate,
-            newProd.taxRate,
-            newProd.barcode,
-            newProd.is_weighed_item,
-            newProd.updatedAt.toISOString()
-          ]
-        });
-      } catch (err) {}
-
       if (category) {
         try {
           const config = loadQuickConfig();
@@ -845,6 +820,19 @@ export default async function productRoutes(fastify, options) {
         } catch (err) {
           fastify.log.warn('Could not save quick category override:', err);
         }
+      }
+
+      // Broadcast catalog update to all active POS terminals
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((client) => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'CATALOG_UPDATED',
+              payload: newProd,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        });
       }
 
       try {

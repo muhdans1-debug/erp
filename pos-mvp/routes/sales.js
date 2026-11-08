@@ -25,25 +25,38 @@ export default async function salesRoutes(fastify, options) {
     // Strict chronological ordering to eliminate running-balance inversion
     sales.sort((a, b) => new Date(a.createdAt || a.created_at || a.offlineTimestamp || 0).getTime() - new Date(b.createdAt || b.created_at || b.offlineTimestamp || 0).getTime());
 
+    // 0ms Fast-Path: Quick check to filter out sales that were already ingested
+    const salesToSync = [];
+    for (const sale of sales) {
+      if (!sale || !sale.id) continue;
+      const providedInvoiceNo = sale.invoiceNo || sale.invoice_number;
+      try {
+        const existing = await db.execute({
+          sql: 'SELECT id FROM Sale WHERE id = ? OR invoiceNo = ? LIMIT 1',
+          args: [sale.id, providedInvoiceNo || '']
+        });
+        if (!existing.rows || existing.rows.length === 0) {
+          salesToSync.push(sale);
+        }
+      } catch {
+        salesToSync.push(sale); // If check fails, keep in queue to be safe
+      }
+    }
+
+    if (salesToSync.length === 0) {
+      return { success: true, processed: 0, message: 'All sales already synced' };
+    }
+
     // Open a secure transaction so partial failures roll back completely
     const transaction = await db.transaction();
     const affectedCustomerIds = new Set();
 
     try {
       let processedCount = 0;
-      for (const sale of sales) {
+      for (const sale of salesToSync) {
         if (!sale || !sale.id) continue;
 
-        // Check if sale was already synced to avoid duplicate inventory deductions or collisions
         const providedInvoiceNo = sale.invoiceNo || sale.invoice_number;
-        const existing = await transaction.execute({
-          sql: 'SELECT id FROM Sale WHERE id = ? OR invoiceNo = ? LIMIT 1',
-          args: [sale.id, providedInvoiceNo || '']
-        });
-
-        if (existing.rows && existing.rows.length > 0) {
-          continue; // Skip, already synced
-        }
 
         // Strictly preserve and enforce the terminal's sequential NBR Article 53 invoice number
         const invoiceNo = providedInvoiceNo || `INV-${Date.now()}`;

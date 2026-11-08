@@ -641,11 +641,27 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   const readCatalogCache = (): Product[] | null => {
     try {
+      let catalogList: Product[] = [];
       const raw = localStorage.getItem(CATALOG_CACHE_KEY);
-      if (!raw) return null;
-      const { data, ts } = JSON.parse(raw);
-      if (Date.now() - ts < CATALOG_CACHE_TTL_MS && Array.isArray(data) && data.length > 0) return data;
-      return data; // return stale data anyway — background refresh will update
+      if (raw) {
+        const { data } = JSON.parse(raw);
+        if (Array.isArray(data) && data.length > 0) catalogList = data;
+      }
+      // Merge with askar_local_db_cache_Product so locally added products are never lost
+      const localDbRaw = localStorage.getItem('askar_local_db_cache_Product');
+      if (localDbRaw) {
+        const localList = JSON.parse(localDbRaw);
+        if (Array.isArray(localList) && localList.length > 0) {
+          const existingIds = new Set(catalogList.map(p => p.id));
+          const existingBarcodes = new Set(catalogList.map(p => p.barcode).filter(Boolean));
+          for (const item of localList) {
+            if (!existingIds.has(item.id) && (!item.barcode || !existingBarcodes.has(item.barcode))) {
+              catalogList.unshift(mapDbRowToProduct(item));
+            }
+          }
+        }
+      }
+      return catalogList.length > 0 ? catalogList : null;
     } catch { return null; }
   };
 
@@ -692,11 +708,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           const mapped = data.map(mapDbRowToProduct);
-          setCatalog(mapped);
-          writeCatalogCache(mapped);
-          try {
-            localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(mapped));
-          } catch {}
+          setCatalog(prev => {
+            const serverIds = new Set(mapped.map(m => m.id));
+            const serverBarcodes = new Set(mapped.map(m => m.barcode).filter(Boolean));
+            // Crucial: Retain any locally added/cached products that may not be on the server yet!
+            const localPreserved = prev.filter(p => !serverIds.has(p.id) && (!p.barcode || !serverBarcodes.has(p.barcode)));
+            const merged = [...localPreserved, ...mapped];
+            writeCatalogCache(merged);
+            try {
+              localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
       }
     } catch { }
@@ -803,6 +826,34 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       fetchQuickCategories();
     }, 3 * 60 * 1000);
     return () => clearInterval(catInterval);
+  }, []);
+
+  // Real-time catalog broadcast receiver via Master WebSocket bus
+  useEffect(() => {
+    const handleWsCatalogUpdate = (e: any) => {
+      const data = e?.detail;
+      if (!data) return;
+      if (data.type === 'CATALOG_UPDATED' && data.payload) {
+        const prod = mapDbRowToProduct(data.payload);
+        setCatalog((prev) => {
+          const idx = prev.findIndex(p => p.id === prod.id || (p.barcode && prod.barcode && p.barcode === prod.barcode));
+          let nextList: Product[];
+          if (idx !== -1) {
+            nextList = [...prev];
+            nextList[idx] = prod;
+          } else {
+            nextList = [prod, ...prev];
+          }
+          writeCatalogCache(nextList);
+          try {
+            localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+          } catch {}
+          return nextList;
+        });
+      }
+    };
+    window.addEventListener('master-ws-message', handleWsCatalogUpdate);
+    return () => window.removeEventListener('master-ws-message', handleWsCatalogUpdate);
   }, []);
 
   // Fetch all customers for enrollment list
@@ -1254,13 +1305,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const totalSavings = cartTotals.totalSavings;
 
   // Fetch the static Master IP locked in earlier via DHCP
-  const masterIp = typeof window !== 'undefined'
-    ? ((localStorage.getItem('server_ip') || localStorage.getItem('master_server_url') || localStorage.getItem('MASTER_IP') || '192.168.8.7')
+  const isAndroidClient = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+  const rawMaster = typeof window !== 'undefined'
+    ? ((localStorage.getItem('server_ip') || localStorage.getItem('master_server_url') || localStorage.getItem('MASTER_IP') || (isAndroidClient ? '192.168.8.7' : 'localhost'))
         .replace(/^https?:\/\//, '')
         .replace(/:[0-9]+.*$/, '')
         .replace(/\/.*$/, '')
-        .trim() || '192.168.8.7')
-    : '192.168.8.7';
+        .trim() || (isAndroidClient ? '192.168.8.7' : 'localhost'))
+    : (isAndroidClient ? '192.168.8.7' : 'localhost');
+  const masterIp = (isAndroidClient && (rawMaster === 'localhost' || rawMaster === '127.0.0.1')) ? '192.168.8.7' : rawMaster;
 
   // 📡 Decoupled Network & Offline Synchronization Hook with Cloud DR Fallback:
   // Handles WebSocket connection, 10s auto-sync polling loop, 60s outage watchdog, and CRDT Khata balance sync
@@ -3359,12 +3412,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             setUnassignedBarcode(null);
             setCatalog((prev) => {
               const existingIdx = prev.findIndex(p => p.id === prodToAdd.id || (p.barcode && p.barcode === prodToAdd.barcode));
+              let nextList: Product[];
               if (existingIdx !== -1) {
-                const next = [...prev];
-                next[existingIdx] = prodToAdd;
-                return next;
+                nextList = [...prev];
+                nextList[existingIdx] = prodToAdd;
+              } else {
+                nextList = [prodToAdd, ...prev];
               }
-              return [prodToAdd, ...prev];
+              writeCatalogCache(nextList);
+              try {
+                localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+              } catch {}
+              return nextList;
             });
             refreshCatalogNow();
             showToast(`✅ "${newProduct.name}" saved to catalog${andAddToCart ? ' and added to cart' : ''}!`, 'success');

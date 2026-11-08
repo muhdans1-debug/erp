@@ -368,6 +368,10 @@
     "4d0f2026-3b51-436c-a0cb-e9773d9ebaba": {
       "isQuickProduct": true,
       "category": "PRODUCE"
+    },
+    "112233445566": {
+      "isQuickProduct": true,
+      "category": "PRODUCE"
     }
   },
   "removedIds": [

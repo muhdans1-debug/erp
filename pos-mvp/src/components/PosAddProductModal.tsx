@@ -302,8 +302,9 @@ export default function PosAddProductModal({
       sellingPrice: salePrice
     };
 
-    // ⚡ Push to Master Server (await with 3.5s timeout so master DB receives it before catalog refresh)
+    // ⚡ Push to Master Server (await with 4s timeout so master DB receives it before catalog refresh)
     const candidates = getCandidateUrls();
+    let pushedToServer = false;
     for (const url of candidates) {
       try {
         const res = await fetch(`${url}/api/products`, {
@@ -314,18 +315,27 @@ export default function PosAddProductModal({
             'x-pos-client': 'store-pos'
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(4000)
         });
         if (res.ok) {
           const data = await res.json();
           if (data.success || data.id) {
             console.log('✅ Product synced to master server successfully:', payload.name);
+            pushedToServer = true;
             break;
           }
         }
       } catch {
         // Fall through to next candidate or leave in local DB
       }
+    }
+
+    if (!pushedToServer) {
+      try {
+        const pending = JSON.parse(localStorage.getItem('askar_pending_products') || '[]');
+        pending.push({ payload, ts: Date.now() });
+        localStorage.setItem('askar_pending_products', JSON.stringify(pending));
+      } catch {}
     }
 
     // ⚡ UI UNBLOCK: Trigger callbacks and dismiss modal immediately

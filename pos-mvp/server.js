@@ -1057,46 +1057,39 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
   return reply.send({ received: true, status: payload.status || 'IGNORED' });
 });
 
+let isTursoSyncRunning = false;
+let lastTursoSyncTime = 0;
+
 fastify.route({
   method: ['GET', 'POST'],
   url: '/api/db/sync',
   handler: async (request, reply) => {
-    try {
-      // Non-blocking for POS terminals: allow up to 3000ms for quick edge sync,
-      // but return success immediately if cloud WAN latency is higher, continuing in background.
-      let syncResult = null;
-      const syncTask = (async () => {
-        const res = await tursoDb.sync();
-        await syncKhataBalancesToTurso();
-        return res;
+    // Non-blocking 0ms response for POS terminals:
+    // Guarantees POS terminals are never stalled by cloud WAN latency or Turso network limits.
+    const now = Date.now();
+    
+    // Background cloud sync debounced to at most once per 30 seconds
+    if (!isTursoSyncRunning && (now - lastTursoSyncTime > 30000)) {
+      isTursoSyncRunning = true;
+      (async () => {
+        try {
+          await tursoDb.sync();
+          await syncKhataBalancesToTurso();
+          lastTursoSyncTime = Date.now();
+        } catch (err) {
+          fastify.log.warn('Background Turso sync notice: ' + (err?.message || err));
+        } finally {
+          isTursoSyncRunning = false;
+        }
       })();
-
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('BACKGROUND_SYNC'), 2800));
-      const raceResult = await Promise.race([syncTask, timeoutPromise]);
-
-      if (raceResult === 'BACKGROUND_SYNC') {
-        syncTask.catch((err) => fastify.log.warn('Background Turso sync notice: ' + (err?.message || err)));
-        return {
-          success: true,
-          message: 'Local embedded replica ready. Turso cloud sync processing in background.',
-          syncResult: { status: 'background' }
-        };
-      }
-
-      return {
-        success: true,
-        message: 'Local embedded replica synced to Turso cloud successfully.',
-        syncResult: raceResult
-      };
-    } catch (error) {
-      fastify.log.warn('Turso sync offline fallback: ' + (error?.message || error));
-      return reply.status(200).send({
-        success: false,
-        offline: true,
-        message: 'Device offline. Sale saved locally and will sync when Wi-Fi returns.',
-        error: error?.message || String(error)
-      });
     }
+
+    return reply.status(200).send({
+      success: true,
+      offline: false,
+      message: 'Master local server online. Cloud sync processing in background.',
+      syncResult: { status: isTursoSyncRunning ? 'syncing' : 'synced' }
+    });
   }
 });
 

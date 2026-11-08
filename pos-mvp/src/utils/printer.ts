@@ -391,6 +391,10 @@ export const ESC_POS = {
   FONT_BOLD: '\x1B\x21\x08',
   FONT_DOUBLE_HEIGHT: '\x1B\x21\x10',
   FONT_DOUBLE_WIDTH: '\x1B\x21\x20',
+  BOLD_ON: '\x1B\x45\x01',
+  BOLD_OFF: '\x1B\x45\x00',
+  DOUBLE_STRIKE_ON: '\x1B\x47\x01',
+  DOUBLE_STRIKE_OFF: '\x1B\x47\x00',
   LINE_FEED: '\x0A',
   CUT_FULL: '\x1D\x56\x00',
   CUT_PARTIAL: '\x1D\x56\x01',
@@ -451,9 +455,14 @@ export const printFullReceipt = async ({
       } catch { }
     }
 
+    // Option A+ Maximum Bold & High-Contrast: Emphasized Bold + Double-Strike Deep Burn
+    try {
+      await printRawEscPos('\x1B\x45\x01\x1B\x47\x01');
+    } catch { }
+
     // 1. HEADER (Centered - NBR Simplified Tax Invoice Compliant)
     await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.setFontSize({ fontSize: 24 });
+    await Printer.setFontSize({ fontSize: 26 });
     const headerBlock = [
       `${shopName}\n`,
       "أسكار سوبر ماركت\n",
@@ -462,13 +471,13 @@ export const printFullReceipt = async ({
       `VAT No: ${vatNumber}\n`,
       `${shopAddress}\n`,
       `${shopPhone}\n`,
-      "--------------------------------\n"
+      "================================\n"
     ].join('');
     await Printer.printText({ textToPrint: headerBlock });
 
     // 2. TRANSACTION METADATA (Left-aligned - Strictly formatted to 32 chars)
     await Printer.setPrinterAlignment({ alignment: 'left' });
-    await Printer.setFontSize({ fontSize: 20 });
+    await Printer.setFontSize({ fontSize: 22 });
 
     const now = new Date();
     const formattedDate = `${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -583,14 +592,14 @@ export const printFullReceipt = async ({
 
     // 3. CLOSING & FOOTER (VAT notice)
     await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.setFontSize({ fontSize: 18 });
+    await Printer.setFontSize({ fontSize: 20 });
     const footerLines = [
       `Total Items Count: ${totalQuantity}\n`,
       "* Item includes 10% VAT\n",
       `Invoice: ${finalInvoiceDisplay}\n`,
       "THANK YOU FOR SHOPPING!\n",
       "Please retain invoice for returns.\n",
-      "--------------------------------\n",
+      "================================\n",
     ].join('');
     await Printer.printText({ textToPrint: footerLines });
 

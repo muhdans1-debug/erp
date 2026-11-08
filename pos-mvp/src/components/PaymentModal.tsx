@@ -396,7 +396,7 @@ export default function PaymentModal({
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
-      {/* THERMAL RECEIPT PRINT STYLES FOR EXACT 58mm THERMAL ROLL */}
+      {/* THERMAL RECEIPT PRINT STYLES FOR EXACT 58mm THERMAL ROLL - OPTION A+ ULTRA BOLD */}
       <style>{`
         @media print {
           @page {
@@ -422,8 +422,10 @@ export default function PaymentModal({
             box-shadow: none !important;
             border: none !important;
             font-family: 'Roboto Mono', Consolas, 'Courier New', monospace !important;
-            font-size: 11px !important;
-            font-weight: 600 !important;
+            font-size: 12px !important;
+            font-weight: 900 !important;
+            -webkit-text-stroke: 0.7px #000000 !important;
+            letter-spacing: -0.2px !important;
             line-height: 1.35 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -1248,47 +1250,50 @@ export default function PaymentModal({
         </div>
       </div>
 
-      {/* DEDICATED THERMAL RECEIPT CONTAINER FOR @media print (Nesto / NBB Heavy Monospaced Style) */}
+      {/* DEDICATED THERMAL RECEIPT CONTAINER FOR @media print (Option A+ Ultra Heavy Monospaced Style) */}
       <div
         id="pos-thermal-receipt"
         className="print-receipt"
         style={{
           display: 'none',
           fontFamily: "'Roboto Mono', Consolas, 'Courier New', monospace",
-          fontWeight: 600,
+          fontWeight: 900,
+          WebkitTextStroke: '0.7px #000000',
           color: '#000000',
           width: '58mm',
           margin: '0 auto',
           fontSize: '12px',
-          lineHeight: 1.4,
+          lineHeight: 1.35,
+          letterSpacing: '-0.2px',
         }}
       >
         {/* HEADER */}
-        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: '16px' }}>ASKAR SUPERMARKET</div>
-        <div style={{ textAlign: 'center', fontWeight: 700 }}>أسكار سوبر ماركت</div>
-        <div style={{ textAlign: 'center' }}>Simplified Tax Invoice</div>
-        <div style={{ textAlign: 'center' }}>VAT No: 200012345678901</div>
+        <div style={{ textAlign: 'center', fontWeight: 900, fontSize: '15px', WebkitTextStroke: '0.9px #000000' }}>ASKAR SUPERMARKET</div>
+        <div style={{ textAlign: 'center', fontWeight: 900, fontSize: '14px', WebkitTextStroke: '0.9px #000000' }}>أسواق عسكر المركزية</div>
+        <div style={{ textAlign: 'center', fontWeight: 900 }}>Simplified Tax Invoice</div>
+        <div style={{ textAlign: 'center', fontWeight: 900 }}>فاتورة ضريبية مبسطة</div>
+        <div style={{ textAlign: 'center', fontWeight: 900 }}>VAT No: 200012345678901</div>
         <div style={{ textAlign: 'center' }}>Tel: +973 1700 0000</div>
         
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
+        <div style={{ borderTop: '2.5px dashed #000000', margin: '8px 0' }} />
 
         {/* META INFO (Strict Alignment) */}
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Inv:</span> <span>{completedSale?.invoiceNo || 'INV-005000'}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Date:</span> <span>{new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Staff:</span> <span>Register 01</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Mode:</span> <span>{selectedMethod}</span></div>
-        {customer && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Customer:</span> <span>{customer.name}</span></div>}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Inv:</span> <span>{completedSale?.invoiceNo || 'INV-005000'}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Date:</span> <span>{new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Staff:</span> <span>Register 01</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Mode:</span> <span>{selectedMethod}</span></div>
+        {customer && <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Customer:</span> <span>{customer.name}</span></div>}
 
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
+        <div style={{ borderTop: '2.5px dashed #000000', margin: '8px 0' }} />
 
         {/* ITEMS HEADER */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '12.5px' }}>
           <div style={{ width: '50%', textAlign: 'left' }}>Item</div>
           <div style={{ width: '20%', textAlign: 'center' }}>Qty</div>
           <div style={{ width: '30%', textAlign: 'right' }}>Amt(BD)</div>
         </div>
         
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
+        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
 
         {/* ITEMS LIST */}
         {cart.map((item, idx) => {
@@ -1297,39 +1302,39 @@ export default function PaymentModal({
           const lineTotal = unitPrice * qty;
           const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
           return (
-            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 900 }}>
               <div style={{ width: '50%', textAlign: 'left', wordBreak: 'break-word' }}>
                 {item.name} {isVat10 ? '*' : ''}
               </div>
               <div style={{ width: '20%', textAlign: 'center' }}>{qty}</div>
-              <div style={{ width: '30%', textAlign: 'right', fontWeight: 700 }}>{lineTotal.toFixed(3)}</div>
+              <div style={{ width: '30%', textAlign: 'right', fontWeight: 900 }}>{lineTotal.toFixed(3)}</div>
             </div>
           );
         })}
 
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
+        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
 
         {/* TOTALS */}
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal:</span> <span>BD {subtotal.toFixed(3)}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>VAT (10%):</span> <span>BD {vat.toFixed(3)}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Subtotal:</span> <span>BD {subtotal.toFixed(3)}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>VAT (10%):</span> <span>BD {vat.toFixed(3)}</span></div>
         
         {/* Highlighted Total */}
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '16px' }}>
+        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '17px', WebkitTextStroke: '0.95px #000000' }}>
           <span>TOTAL:</span> 
           <span>BD {totalAmount.toFixed(3)}</span>
         </div>
-        <div style={{ borderTop: '1px dashed #000000', margin: '8px 0' }} />
+        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
 
         {selectedMethod === 'CASH' && (
-          <div style={{ textAlign: 'center', marginTop: '8px' }}>
-            <div style={{ fontWeight: 700 }}>*** PAID VIA CASH ***</div>
+          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
+            <div style={{ fontWeight: 900 }}>*** PAID VIA CASH ***</div>
             {tenderedAmount !== undefined && Number(tenderedAmount) > 0 && (
               <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
                   <span>Cash Tendered:</span> <span>BD {Number(tenderedAmount).toFixed(3)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}>
                   <span>Change:</span> <span>BD {Number(changeDue || 0).toFixed(3)}</span>
                 </div>
               </>
@@ -1338,13 +1343,13 @@ export default function PaymentModal({
         )}
 
         {selectedMethod === 'BENEFIT_PAY' && (
-          <div style={{ textAlign: 'center', marginTop: '8px' }}>
-            <div style={{ fontWeight: 700 }}>*** PAID VIA BENEFITPAY ***</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
+            <div style={{ fontWeight: 900 }}>*** PAID VIA BENEFITPAY ***</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
               <span>Method:</span> <span>Fawri+ QR</span>
             </div>
             {(completedSale?.transactionRef || transactionRef) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}>
                 <span>Ref No:</span> <span>{completedSale?.transactionRef || transactionRef}</span>
               </div>
             )}
@@ -1352,9 +1357,9 @@ export default function PaymentModal({
         )}
 
         {selectedMethod === 'CARD' && (
-          <div style={{ textAlign: 'center', marginTop: '8px' }}>
-            <div style={{ fontWeight: 700 }}>*** PAID VIA CARD ***</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
+            <div style={{ fontWeight: 900 }}>*** PAID VIA CARD ***</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
               <span>Terminal:</span> <span>POS Contactless EMV</span>
             </div>
           </div>
@@ -1362,7 +1367,7 @@ export default function PaymentModal({
 
         {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}
         <div style={{ textAlign: 'center', marginTop: '10px', marginBottom: '8px' }}>
-          <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '1px solid #000000' }}>
+          <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '2px solid #000000' }}>
             <QRCodeSVG
               value={nbrPayload}
               size={96}
@@ -1372,22 +1377,22 @@ export default function PaymentModal({
               bgColor="#ffffff"
             />
           </div>
-          <div style={{ fontSize: '9px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.5px' }}>
+          <div style={{ fontSize: '9px', fontWeight: 900, marginTop: '2px', letterSpacing: '0.5px' }}>
             NBR SIMPLIFIED TAX INVOICE
           </div>
         </div>
 
         {/* FOOTER & BARCODE */}
-        <div style={{ textAlign: 'center', marginTop: '15px' }}>
-          <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '13px', lineHeight: 1 }}>
+        <div style={{ textAlign: 'center', marginTop: '15px', fontWeight: 900 }}>
+          <div style={{ letterSpacing: '2px', fontWeight: 900, fontSize: '13px', lineHeight: 1 }}>
             |||| | ||||| |||| || |||||||
           </div>
-          <div style={{ fontSize: '10px', marginTop: '4px', fontWeight: 700 }}>
+          <div style={{ fontSize: '10px', marginTop: '4px', fontWeight: 900 }}>
             {completedSale?.invoiceNo || 'INV-005000'}
           </div>
         </div>
 
-        <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '10px' }}>
+        <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '10px', fontWeight: 900 }}>
           * Item includes 10% VAT<br />
           Thank You For Shopping!<br />
           Please retain invoice for returns.

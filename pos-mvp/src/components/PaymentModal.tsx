@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt } from '../utils/printer';
+import { generateNbrTlvBase64 } from '../utils/nbrQr';
 import { openCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { saveSaleOffline } from '../utils/nativeDb';
@@ -113,6 +114,17 @@ export default function PaymentModal({
   const qrPayload = useMemo(() => {
     return generateBenefitPayPayload(totalAmount, activeInvoiceNo, benefitConfig);
   }, [totalAmount, activeInvoiceNo, benefitConfig]);
+
+  // Bahrain NBR Simplified Tax Invoice QR (Article 53 TLV Base64)
+  const nbrPayload = useMemo(() => {
+    return generateNbrTlvBase64({
+      sellerName: 'ASKAR SUPERMARKET',
+      vatNumber: '200012345678901',
+      timestamp: new Date(),
+      total: totalAmount,
+      vatAmount: vat,
+    });
+  }, [totalAmount, vat]);
 
   // Processing & Confirmation state
   const [processing, setProcessing] = useState(false);
@@ -340,9 +352,32 @@ export default function PaymentModal({
     };
   }, [isOpen, completedSale, activeInvoiceNo, transactionRef, totalAmount, selectedMethod, apiBase]);
 
-  // Trigger thermal receipt print via window.print()
-  const handlePrintReceipt = () => {
-    window.print();
+  // Trigger thermal receipt print via hardware printer on Sunmi or window.print() on browser
+  const handlePrintReceipt = async () => {
+    try {
+      await printFullReceipt({
+        invoiceNo: completedSale?.invoiceNo || activeInvoiceNo,
+        items: cart.map((i) => ({
+          ...i,
+          price: Number(i.price ?? i.sellingPrice ?? 0),
+          qty: Number(i.qty ?? i.quantity ?? 1),
+        })),
+        total: totalAmount,
+        subtotal,
+        vat,
+        paymentMode: completedSale?.paymentMethod || selectedMethod,
+        transactionRef: completedSale?.transactionRef || transactionRef,
+        cashTendered: completedSale?.cashTendered !== undefined ? completedSale.cashTendered : (cashTendered ? parseFloat(cashTendered) : undefined),
+        changeDue: completedSale?.changeDue !== undefined ? completedSale.changeDue : changeDue,
+        customerName: customer?.name,
+      });
+    } catch (e) {
+      console.warn('Direct printer dispatch notice:', e);
+    }
+
+    if (typeof window !== 'undefined' && !(window as any).Capacitor?.isNativePlatform?.()) {
+      window.print();
+    }
   };
 
   return (
@@ -361,9 +396,13 @@ export default function PaymentModal({
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
-      {/* THERMAL RECEIPT PRINT STYLES FOR 58mm/80mm THERMAL ROLL */}
+      {/* THERMAL RECEIPT PRINT STYLES FOR EXACT 58mm THERMAL ROLL */}
       <style>{`
         @media print {
+          @page {
+            size: 58mm auto;
+            margin: 0;
+          }
           body * {
             visibility: hidden !important;
           }
@@ -374,17 +413,20 @@ export default function PaymentModal({
             position: fixed !important;
             left: 0 !important;
             top: 0 !important;
-            width: 78mm !important;
-            max-width: 78mm !important;
+            width: 58mm !important;
+            max-width: 58mm !important;
             margin: 0 !important;
-            padding: 8px !important;
+            padding: 4px 6px !important;
             background: #ffffff !important;
             color: #000000 !important;
             box-shadow: none !important;
             border: none !important;
-            font-family: 'Courier New', Courier, monospace !important;
-            font-size: 12px !important;
+            font-family: 'Roboto Mono', Consolas, 'Courier New', monospace !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
             line-height: 1.35 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           .no-print {
             display: none !important;
@@ -631,7 +673,34 @@ export default function PaymentModal({
                   </div>
                 )}
 
-                <div style={{ textAlign: 'center', paddingTop: '10px', fontSize: '10px', color: '#000000' }}>
+                {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}
+                <div style={{ textAlign: 'center', marginTop: '10px', marginBottom: '8px' }}>
+                  <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '1px solid #000000' }}>
+                    <QRCodeSVG
+                      value={nbrPayload}
+                      size={96}
+                      level="M"
+                      includeMargin={false}
+                      fgColor="#000000"
+                      bgColor="#ffffff"
+                    />
+                  </div>
+                  <div style={{ fontSize: '9px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.5px' }}>
+                    NBR SIMPLIFIED TAX INVOICE
+                  </div>
+                </div>
+
+                {/* CODE 128 BARCODE SIMULATION */}
+                <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                  <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '12px', lineHeight: 1 }}>
+                    |||| | ||||| |||| || |||||||
+                  </div>
+                  <div style={{ fontSize: '10px', marginTop: '3px', fontWeight: 700 }}>
+                    {completedSale.invoiceNo}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', paddingTop: '8px', fontSize: '10px', color: '#000000' }}>
                   <div style={{ marginBottom: '2px' }}>* Item includes 10% VAT</div>
                   <div style={{ fontWeight: 700 }}>Thank You For Shopping!</div>
                   <div>Please retain invoice for returns.</div>
@@ -1290,6 +1359,23 @@ export default function PaymentModal({
             </div>
           </div>
         )}
+
+        {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}
+        <div style={{ textAlign: 'center', marginTop: '10px', marginBottom: '8px' }}>
+          <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '1px solid #000000' }}>
+            <QRCodeSVG
+              value={nbrPayload}
+              size={96}
+              level="M"
+              includeMargin={false}
+              fgColor="#000000"
+              bgColor="#ffffff"
+            />
+          </div>
+          <div style={{ fontSize: '9px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.5px' }}>
+            NBR SIMPLIFIED TAX INVOICE
+          </div>
+        </div>
 
         {/* FOOTER & BARCODE */}
         <div style={{ textAlign: 'center', marginTop: '15px' }}>

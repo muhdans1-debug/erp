@@ -538,28 +538,37 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     setIsDeletingProduct(true);
     const id = productToDelete.id;
     const name = productToDelete.name;
+    const base = (apiBase || '').replace(/\/+$/, '') || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:3000` : 'http://localhost:3000');
+    const encodedId = encodeURIComponent(id);
 
     try {
       let res: Response;
       try {
-        res = await fetch(`${apiBase}/api/products/${id}`, {
+        res = await fetch(`${base}/api/products/${encodedId}`, {
           method: 'DELETE',
           headers: {
-            'Content-Type': 'application/json',
             'x-manager-pin': '9999',
             'x-pos-client': 'pim-admin'
           }
         });
-      } catch (err) {
-        // Fallback to POST /delete
-        res = await fetch(`${apiBase}/api/products/${id}/delete`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
-            'x-pos-client': 'pim-admin'
-          }
-        });
+      } catch (firstErr) {
+        // Fallback 1: POST /delete with headers & body
+        try {
+          res = await fetch(`${base}/api/products/${encodedId}/delete`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-manager-pin': '9999',
+              'x-pos-client': 'pim-admin'
+            },
+            body: JSON.stringify({ pin: '9999' })
+          });
+        } catch (secondErr) {
+          // Fallback 2: Simple DELETE without custom headers
+          res = await fetch(`${base}/api/products/${encodedId}`, {
+            method: 'DELETE'
+          });
+        }
       }
 
       const data = await res.json().catch(() => ({}));
@@ -590,17 +599,28 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     setIsDeletingBulk(true);
     const count = selectedIds.size;
     const idsToDelete = Array.from(selectedIds);
+    const base = (apiBase || '').replace(/\/+$/, '') || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:3000` : 'http://localhost:3000');
 
     try {
-      const res = await fetch(`${apiBase}/api/products/bulk-delete`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-manager-pin': '9999',
-          'x-pos-client': 'pim-admin'
-        },
-        body: JSON.stringify({ productIds: idsToDelete })
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${base}/api/products/bulk-delete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': '9999',
+            'x-pos-client': 'pim-admin'
+          },
+          body: JSON.stringify({ productIds: idsToDelete })
+        });
+      } catch (firstErr) {
+        // Fallback without custom headers
+        res = await fetch(`${base}/api/products/bulk-delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productIds: idsToDelete })
+        });
+      }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || (data && data.success === false)) {

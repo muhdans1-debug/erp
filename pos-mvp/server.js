@@ -214,7 +214,21 @@ const _transporter = nodemailer.createTransport({
 await fastify.register(cors, {
   origin: '*',
   methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-manager-pin', 'Accept', 'Origin', 'X-Requested-With', 'Cache-Control', 'Pragma', 'Expires'],
+  // Defaulting allowedHeaders to dynamically reflect whatever headers the client sends in preflight (e.g. x-pos-client, x-manager-pin)
+});
+
+// Tolerant JSON Body Parser: safely handles empty JSON bodies without FST_ERR_CTP_EMPTY_JSON_BODY
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  if (!body || (typeof body === 'string' && body.trim() === '')) {
+    return done(null, {});
+  }
+  try {
+    const json = JSON.parse(body);
+    done(null, json);
+  } catch (err) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
 });
 
 // 🔌 Native WebSocket Event Bus (Consolidated on port 3000 at /ws)

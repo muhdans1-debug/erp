@@ -256,10 +256,6 @@
       "isQuickProduct": true,
       "category": "GROCERY"
     },
-    "f100_1793747451296_vrob2": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
     "f100_1793750878479_zr14p": {
       "isQuickProduct": true,
       "category": "SNACKS"
@@ -372,6 +368,14 @@
     "112233445566": {
       "isQuickProduct": true,
       "category": "PRODUCE"
+    },
+    "5f5967c5-7b1f-479c-b8aa-c76a005c58b2": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
+    },
+    "f68b9858-d7eb-48ac-b072-66ad89a0f063": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
     }
   },
   "removedIds": [
@@ -385,7 +389,9 @@
     "f100_1793716226022_g6vi3",
     "f100_1793716364587_z11ik",
     "f100_1793716423039_lxn1n",
-    "110"
+    "110",
+    "f100_1793747451296_vrob2",
+    "INV-OFF-407869"
   ],
   "categories": [
     {

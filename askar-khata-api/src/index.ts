@@ -38,21 +38,14 @@ export default {
         });
       }
 
+      const TURSO_FALLBACK_URL = "libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io";
+      const TURSO_FALLBACK_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg";
+
       // Initialize Turso Client securely with worker environment variables
-      const targetUrl = env.TURSO_URL;
-      const authToken = env.TURSO_AUTH_TOKEN || env.TURSO_TOKEN;
+      const targetUrl = env.TURSO_URL || TURSO_FALLBACK_URL;
+      const authToken = env.TURSO_AUTH_TOKEN || env.TURSO_TOKEN || TURSO_FALLBACK_TOKEN;
 
-      if (!targetUrl || !authToken) {
-        return new Response(JSON.stringify({ error: 'CRITICAL: Turso URL or Auth Token is missing from worker environment variables.' }), {
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
-        });
-      }
-
-      const turso = createClient({
+      let turso = createClient({
         url: targetUrl,
         authToken: authToken,
       });

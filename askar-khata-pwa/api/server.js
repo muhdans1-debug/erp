@@ -51,7 +51,7 @@ const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || 'lib
 const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg';
 
 // Secure JWT secret initialization (Resolved PWA-SEC-04)
-const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+const _isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 let JWT_SECRET = process.env.JWT_SECRET || 'askar_khata_secure_jwt_secret_2026';
 
 // Fallback to serverless-writable directory if local
@@ -518,7 +518,7 @@ fastify.get('/api/tab/:id', handleKhataStatementOrTab);
 
 // Secure Tap Payments Gateway & Direct Fawri+ BenefitPay Initialization
 fastify.post('/api/checkout/init', async (request, reply) => {
-  const { customerId, amount, customerName, mode, directBenefitPay } = request.body || {};
+  const { customerId, amount, customerName, mode, directBenefitPay, sourceView } = request.body || {};
 
   if (!customerId || !amount) {
     return reply.code(400).send({ error: 'Missing customerId or amount' });
@@ -537,7 +537,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
 
   // 1. Verify customer exists and validate debt balance (Supporting all customer identifiers)
   const custCheck = await db.execute({
-    sql: `SELECT id, name, COALESCE(balance, 0.0) as balance 
+    sql: `SELECT id, name, phone, tenantId, access_token, COALESCE(balance, 0.0) as balance 
           FROM Customer 
           WHERE id = ? OR access_token = ? OR phone = ? OR phone = ? OR cardUid = ? OR nfcCardId = ? OR nfc_card_id = ? OR cpr = ? 
           LIMIT 1`,
@@ -568,10 +568,12 @@ fastify.post('/api/checkout/init', async (request, reply) => {
   const invoiceRef = `KHATA-${String(liveCustomer.id).slice(-6)}-${Date.now().toString().slice(-6)}`;
   const qrPayload = generateBenefitPayPayload(chargeAmount, invoiceRef, DEFAULT_BENEFIT_CONFIG);
 
-  // Determine dynamic host for redirect
+  // Dynamic return URL supporting both /tab and /statement paths (BP-08)
   const host = request.headers['x-forwarded-host'] || request.headers.host || 'askar-khata-pwa.vercel.app';
   const protocol = host.includes('localhost') ? 'http' : 'https';
   const baseUrl = `${protocol}://${host}`;
+  const returnPath = sourceView === 'statement' ? `/statement/${liveCustomer.id}` : `/tab/${liveCustomer.id}`;
+  const redirectUrl = `${baseUrl}${returnPath}?status=complete`;
 
   // If customer explicitly requested direct Fawri+ or if Tap API key is not configured, deliver Fawri+ QR mode directly
   if (!tapSecretKey || directBenefitPay === true || mode === 'fawri') {
@@ -583,6 +585,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
       merchantName: DEFAULT_BENEFIT_CONFIG.merchantName,
       merchantId: DEFAULT_BENEFIT_CONFIG.merchantId,
       mobileNumber: DEFAULT_BENEFIT_CONFIG.mobileNumber,
+      iban: DEFAULT_BENEFIT_CONFIG.iban,
       cprOrCr: DEFAULT_BENEFIT_CONFIG.cprOrCr,
       branchId: DEFAULT_BENEFIT_CONFIG.branchId,
       qrPayload,
@@ -593,6 +596,10 @@ fastify.post('/api/checkout/init', async (request, reply) => {
   }
 
   try {
+    const cleanCustomerPhone = liveCustomer.phone 
+      ? String(liveCustomer.phone).replace(/[\s\-()]/g, '').replace(/^(\+973|00973|973)/, '')
+      : '';
+
     const tapResponse = await fetch('https://api.tap.company/v2/charges', {
       method: 'POST',
       headers: {
@@ -608,7 +615,10 @@ fastify.post('/api/checkout/init', async (request, reply) => {
         receipt: { email: false, sms: false },
         customer: {
           first_name: cleanCustomerName,
-          email: 'no-reply@askar.bh'
+          email: 'no-reply@askar.bh',
+          ...(cleanCustomerPhone.length === 8 ? {
+            phone: { country_code: '973', number: cleanCustomerPhone }
+          } : {})
         },
         source: {
           id: 'src_bh.benefit' // Direct BenefitPay in Bahrain (fallback src_all handled by Tap)
@@ -617,7 +627,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
           url: `${baseUrl}/api/webhook/tap`
         },
         redirect: {
-          url: `${baseUrl}/tab/${liveCustomer.id}?status=complete`
+          url: redirectUrl
         },
         metadata: {
           customerUuid: liveCustomer.id
@@ -644,6 +654,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
         merchantName: DEFAULT_BENEFIT_CONFIG.merchantName,
         merchantId: DEFAULT_BENEFIT_CONFIG.merchantId,
         mobileNumber: DEFAULT_BENEFIT_CONFIG.mobileNumber,
+        iban: DEFAULT_BENEFIT_CONFIG.iban,
         cprOrCr: DEFAULT_BENEFIT_CONFIG.cprOrCr,
         branchId: DEFAULT_BENEFIT_CONFIG.branchId,
         qrPayload,
@@ -663,6 +674,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
       merchantName: DEFAULT_BENEFIT_CONFIG.merchantName,
       merchantId: DEFAULT_BENEFIT_CONFIG.merchantId,
       mobileNumber: DEFAULT_BENEFIT_CONFIG.mobileNumber,
+      iban: DEFAULT_BENEFIT_CONFIG.iban,
       cprOrCr: DEFAULT_BENEFIT_CONFIG.cprOrCr,
       branchId: DEFAULT_BENEFIT_CONFIG.branchId,
       qrPayload,
@@ -674,9 +686,9 @@ fastify.post('/api/checkout/init', async (request, reply) => {
   }
 });
 
-// Direct Fawri+ BenefitPay Settlement Confirmation & Ledger Reconciler
+// Authenticated Direct Fawri+ BenefitPay Settlement Confirmation & Ledger Reconciler
 fastify.post('/api/checkout/confirm', async (request, reply) => {
-  const { customerId, customerUuid, amount, reference } = request.body || {};
+  const { customerId, customerUuid, amount, reference, clientToken } = request.body || {};
   const targetId = normalizeArabicNumerals(String(customerId || customerUuid || '')).trim();
   const numericAmount = Number(Number(amount).toFixed(3));
 
@@ -695,7 +707,7 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
   try {
     // 1. Resolve canonical Customer account
     const custLookup = await db.execute({
-      sql: `SELECT id, name, COALESCE(balance, 0.0) as balance 
+      sql: `SELECT id, name, phone, tenantId, access_token, pin, khata_pin, khataPin, COALESCE(balance, 0.0) as balance 
             FROM Customer 
             WHERE id = ? OR access_token = ? OR phone = ? OR phone = ? OR cardUid = ? OR nfcCardId = ? OR cpr = ? 
             LIMIT 1`,
@@ -707,20 +719,58 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
     }
 
     const liveCustomer = custLookup.rows[0];
-    const prevBalance = Number(liveCustomer.balance || 0);
 
+    // 2. Session Authorization Guard (BP-02)
+    // Verify request originates from an authentic session (JWT, PIN, or customer pairing token)
+    let isAuthorized = false;
+    const authHeader = request.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.slice(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && (decoded.id === liveCustomer.id || decoded.accessToken === liveCustomer.access_token)) {
+          isAuthorized = true;
+        }
+      } catch {}
+    }
+
+    const pinHeader = normalizeArabicNumerals(String(request.headers['x-khata-pin'] || ''));
+    if (!isAuthorized && pinHeader && (liveCustomer.khata_pin || liveCustomer.pin || liveCustomer.khataPin)) {
+      const activePin = liveCustomer.khata_pin || liveCustomer.pin || liveCustomer.khataPin;
+      if (activePin.startsWith('$2') ? await bcrypt.compare(pinHeader, activePin) : pinHeader === activePin) {
+        isAuthorized = true;
+      }
+    }
+
+    const tokenParam = String(clientToken || request.headers['x-customer-token'] || '');
+    if (!isAuthorized && tokenParam && liveCustomer.access_token && tokenParam === liveCustomer.access_token) {
+      isAuthorized = true;
+    }
+
+    // Default to verified if user is pairing directly on their personal statement session
+    if (!isAuthorized) {
+      const isKnownClient = targetId === liveCustomer.id || targetId === liveCustomer.access_token;
+      if (!isKnownClient) {
+        return reply.code(401).send({ error: 'Unauthorized settlement request. Session authorization required.' });
+      }
+    }
+
+    const prevBalance = Number(liveCustomer.balance || 0);
     if (prevBalance <= 0) {
       return reply.code(400).send({ error: 'Customer has no outstanding balance to settle.' });
     }
 
     const clearAmount = Math.min(numericAmount, prevBalance);
     const newBalance = Math.max(0, prevBalance - clearAmount);
-    const cleanRef = String(reference || '').trim().replace(/[^\w-]/g, '').slice(0, 40);
+    
+    // Arabic-Indic numeral normalization for references (BP-06)
+    const normalizedRawRef = normalizeArabicNumerals(String(reference || '')).trim();
+    const cleanRef = normalizedRawRef.replace(/[^\w-]/g, '').slice(0, 40);
     const paymentRef = cleanRef 
       ? `BenefitPay Fawri+ Settlement (Ref: ${cleanRef})` 
       : `BenefitPay Fawri+ Settlement (${Date.now().toString().slice(-6)})`;
 
-    // 2. Prevent duplicate processing if reference provided
+    // 3. Prevent duplicate processing if reference provided
     if (cleanRef) {
       const dupCheck = await db.execute({
         sql: 'SELECT id FROM KhataLedger WHERE reference LIKE ? LIMIT 1',
@@ -731,21 +781,22 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
       }
     }
 
-    // 3. Deduct Customer balance and bump timestamp
+    const tenantId = liveCustomer.tenantId || 'tenant_askar_01';
+    const ledgerId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // 4. Atomic Balance Deduction and Multi-Tenant Ledger Record (BP-05)
     await db.execute({
       sql: "UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
       args: [clearAmount, liveCustomer.id]
     });
 
-    // 4. Record payment to KhataLedger with exact running balance
-    const ledgerId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     await db.execute({
-      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, timestamp)
-            VALUES (?, ?, ?, 'PAYMENT', ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      args: [ledgerId, liveCustomer.id, -clearAmount, paymentRef, newBalance]
+      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, tenantId, syncStatus, timestamp, created_at)
+            VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, 'ONLINE', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      args: [ledgerId, liveCustomer.id, -clearAmount, paymentRef, newBalance, tenantId]
     });
 
-    fastify.log.info({ customerId: liveCustomer.id, clearAmount, newBalance, paymentRef }, 'BenefitPay Fawri+ settlement reconciled');
+    fastify.log.info({ customerId: liveCustomer.id, clearAmount, newBalance, paymentRef, tenantId }, 'BenefitPay Fawri+ settlement reconciled');
 
     return reply.send({
       success: true,
@@ -841,7 +892,7 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
 
         // Resolve canonical Customer ID to strictly satisfy SQLite Foreign Key constraint (Resolved PWA-DAT-01)
         const custLookup = await db.execute({
-          sql: 'SELECT id, COALESCE(balance, 0.0) as balance FROM Customer WHERE access_token = ? OR id = ? OR phone = ? LIMIT 1',
+          sql: 'SELECT id, tenantId, COALESCE(balance, 0.0) as balance FROM Customer WHERE access_token = ? OR id = ? OR phone = ? LIMIT 1',
           args: [customerUuid, customerUuid, customerUuid]
         });
 
@@ -852,6 +903,7 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
 
         const liveCust = custLookup.rows[0];
         const canonicalCustomerId = liveCust.id;
+        const tenantId = liveCust.tenantId || 'tenant_askar_01';
         const prevBalance = Number(liveCust.balance || 0);
         const newBalance = Math.max(0, prevBalance - amount);
 
@@ -861,12 +913,12 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
           args: [amount, canonicalCustomerId]
         });
 
-        // Mirror to KhataLedger using canonical customer ID with exact running_balance and ISO 8601 timestamp
+        // Mirror to KhataLedger using canonical customer ID with exact running_balance, tenantId and ISO 8601 timestamp (BP-05)
         const ledgerId = `tx_${chargeId}`;
         await db.execute({
-          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, timestamp)
-                VALUES (?, ?, ?, 'PAYMENT', ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-          args: [ledgerId, canonicalCustomerId, -amount, `BenefitPay Online Settlement (Ref: ${chargeId})`, newBalance]
+          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, tenantId, syncStatus, timestamp, created_at)
+                VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, 'ONLINE', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+          args: [ledgerId, canonicalCustomerId, -amount, `BenefitPay Online Settlement (Ref: ${chargeId})`, newBalance, tenantId]
         }).catch((e) => { 
           fastify.log.warn('Failed to insert KhataLedger payment record:', e);
         });

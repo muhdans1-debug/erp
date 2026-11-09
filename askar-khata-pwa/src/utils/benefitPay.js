@@ -5,13 +5,13 @@
  */
 
 export const DEFAULT_BENEFIT_CONFIG = {
-  accountType: 'MERCHANT',
+  accountType: 'MOBILE_FAWRI',
   merchantId: '97300182',
   merchantName: 'ASKAR SUPERMARKET',
-  mobileNumber: '+973 39000000',
-  iban: '',
+  mobileNumber: '+973 32067388',
+  iban: 'BH67NBOB00000012345678',
   cprOrCr: '200012345678901',
-  branchId: 'MAIN-01',
+  branchId: 'POS-01',
   notes: 'Scan with BenefitPay app to pay directly via Fawri+'
 };
 
@@ -151,32 +151,45 @@ export const generateBenefitPayPayload = (amount, invoiceNo, customConfig) => {
 
 /**
  * Attempts to launch the native BenefitPay mobile app or redirects to the app store
+ * Uses Android Intent URI on Android to prevent ERR_UNKNOWN_URL_SCHEME,
+ * and handles desktop environments gracefully.
  */
-export const openBenefitPayApp = () => {
+export const openBenefitPayApp = (onDesktopNotice) => {
   if (typeof window === 'undefined') return;
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  const isAndroid = /Android/.test(navigator.userAgent);
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  const isAndroid = /Android/.test(ua);
 
   const appStoreUrl = 'https://apps.apple.com/bh/app/benefitpay/id1112444984';
   const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.benefit.benefitpay';
 
-  // Primary URL scheme for BenefitPay in Bahrain
-  const deepLink = 'benefitpay://';
+  if (isAndroid) {
+    // Robust Android Intent URI: Launches BenefitPay app or falls back seamlessly to Google Play
+    const intentUrl = 'intent://#Intent;scheme=benefitpay;package=com.benefit.benefitpay;S.browser_fallback_url=' + encodeURIComponent(playStoreUrl) + ';end;';
+    window.location.href = intentUrl;
+    return;
+  }
 
-  const start = Date.now();
-  window.location.href = deepLink;
+  if (isIOS) {
+    const deepLink = 'benefitpay://';
+    const start = Date.now();
+    window.location.href = deepLink;
 
-  // Fallback to store if app is not installed (2.5s timer)
-  setTimeout(() => {
-    if (Date.now() - start < 3000) {
-      if (isIOS) {
+    setTimeout(() => {
+      if (Date.now() - start < 3000) {
         window.open(appStoreUrl, '_blank');
-      } else if (isAndroid) {
-        window.open(playStoreUrl, '_blank');
       }
-    }
-  }, 2500);
+    }, 2500);
+    return;
+  }
+
+  // Desktop environment
+  if (onDesktopNotice && typeof onDesktopNotice === 'function') {
+    onDesktopNotice();
+  } else {
+    alert('BenefitPay is a mobile application. Please scan the QR code using your smartphone.');
+  }
 };
 
 export default generateBenefitPayPayload;

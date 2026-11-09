@@ -12,6 +12,7 @@ import {
   MessageCircle 
 } from 'lucide-react';
 import BenefitPayModal from '../components/BenefitPayModal';
+import { generateBenefitPayPayload } from '../utils/benefitPay';
 
 const TAB_TEXTS = {
   en: {
@@ -38,6 +39,8 @@ const TAB_TEXTS = {
     callStore: 'Call Store Hotline',
     whatsappHelp: 'WhatsApp Support',
     settledTitle: 'Balance Settled (No Debt)',
+    custom: 'Custom',
+    payCustomBtn: 'Pay Custom Amount',
     currency: 'BHD'
   },
   ar: {
@@ -64,6 +67,8 @@ const TAB_TEXTS = {
     callStore: 'الاتصال بالفرع',
     whatsappHelp: 'دعم واتساب',
     settledTitle: 'الحساب مسدد بالكامل (لا توجد ديون)',
+    custom: 'مخصص',
+    payCustomBtn: 'دفع المبلغ المخصص',
     currency: 'د.ب'
   },
   ml: {
@@ -90,6 +95,8 @@ const TAB_TEXTS = {
     callStore: 'കടയിലേക്ക് വിളിക്കുക',
     whatsappHelp: 'വാട്ട്സ്ആപ്പ് സഹായം',
     settledTitle: 'മുഴുവൻ തുകയും അടച്ചു തീർത്തു',
+    custom: 'കസ്റ്റം',
+    payCustomBtn: 'തുക നൽകുക',
     currency: 'BHD'
   },
   bn: {
@@ -116,6 +123,8 @@ const TAB_TEXTS = {
     callStore: 'দোকানে কল করুন',
     whatsappHelp: 'হোয়াটসঅ্যাপ সাপোর্ট',
     settledTitle: 'সব হিসাব পরিশোধিত (কোনো বাকি নেই)',
+    custom: 'কাস্টম',
+    payCustomBtn: 'নির্দিষ্ট টাকা দিন',
     currency: 'BHD'
   },
   hi: {
@@ -142,6 +151,8 @@ const TAB_TEXTS = {
     callStore: 'दुकान पर कॉल करें',
     whatsappHelp: 'व्हाट्सएप सहायता',
     settledTitle: 'खाता चुकता (कोई बकाया नहीं)',
+    custom: 'कस्टम',
+    payCustomBtn: 'कस्टम राशि भरें',
     currency: 'BHD'
   }
 };
@@ -166,6 +177,17 @@ function safeSetBoundedCache(key, value, prefix = 'khata_tab_cache_') {
       }
     }
   } catch {}
+}
+
+// Adaptive Dynamic Quick Chips based on customer debt balance (BP-09)
+function getDynamicQuickChips(balance) {
+  const bal = Number(balance || 0);
+  if (bal >= 20) return [5, 10, 20];
+  if (bal >= 10) return [2, 5, 10];
+  if (bal >= 5) return [1, 2, 5];
+  if (bal >= 1) return [0.5, 1, 2].filter(a => a < bal);
+  if (bal >= 0.2) return [0.1, 0.2, 0.5].filter(a => a < bal);
+  return [];
 }
 
 export default function CustomerTab() {
@@ -322,6 +344,17 @@ export default function CustomerTab() {
     }
   }, [statusParam, fetchLedger]);
 
+  // Tab visibility listener: automatically refresh balance when user tabs back from BenefitPay app (BP-12)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLedger();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [fetchLedger]);
+
   // Real Tap Payments / BenefitPay Execution with Strict Minimum Validation (Resolved PWA-INT-03)
   const handlePay = async (specifiedAmount) => {
     if (!ledger || ledger.balance <= 0) return;
@@ -340,7 +373,8 @@ export default function CustomerTab() {
         body: JSON.stringify({
           customerId: ledger?.id || customerId,
           amount: Math.min(finalAmount, ledger.balance),
-          customerName: ledger.name
+          customerName: ledger.name,
+          sourceView: 'tab'
         })
       });
 
@@ -357,7 +391,28 @@ export default function CustomerTab() {
         setShowBenefitModal(true);
       }
     } catch (err) {
-      alert(`Payment error: ${err.message}`);
+      // Graceful offline fallback: Generate BenefitPay Fawri+ QR locally if network drops
+      if (!navigator.onLine || err.message?.includes('fetch') || err.message?.includes('network')) {
+        const fallbackAmount = Math.min(finalAmount, ledger.balance);
+        const invoiceRef = `KHATA-${String(ledger.id).slice(-6)}`;
+        const offlineQr = generateBenefitPayPayload(fallbackAmount, invoiceRef);
+        setBenefitPayData({
+          mode: 'BENEFITPAY_FAWRI',
+          amount: fallbackAmount,
+          currency: 'BHD',
+          merchantName: 'ASKAR SUPERMARKET',
+          merchantId: '97300182',
+          mobileNumber: '+973 32067388',
+          iban: 'BH67NBOB00000012345678',
+          branchId: 'POS-01',
+          qrPayload: offlineQr,
+          customerId: ledger.id,
+          customerName: ledger.name
+        });
+        setShowBenefitModal(true);
+      } else {
+        alert(`Payment error: ${err.message}`);
+      }
     } finally {
       setPaying(false);
     }
@@ -490,31 +545,33 @@ export default function CustomerTab() {
           {isDebt ? (
             <div className="space-y-3 no-print">
               {/* Quick Chip Partial Amount Selectors */}
-              <div className="grid grid-cols-4 gap-2 text-xs font-bold font-mono">
-                {[5, 10, 20].map((amt) => {
-                  if (amt >= balanceNum) return null;
-                  return (
+              {(() => {
+                const chips = getDynamicQuickChips(balanceNum);
+                return (
+                  <div className={`grid ${chips.length >= 3 ? 'grid-cols-4' : chips.length === 2 ? 'grid-cols-3' : chips.length === 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2 text-xs font-bold font-mono`}>
+                    {chips.map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => handlePay(amt)}
+                        disabled={paying}
+                        className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition"
+                      >
+                        {amt.toFixed(3)} {t.currency}
+                      </button>
+                    ))}
                     <button
-                      key={amt}
                       type="button"
-                      onClick={() => handlePay(amt)}
-                      disabled={paying}
-                      className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition"
+                      onClick={() => setShowCustomPay(!showCustomPay)}
+                      className={`py-2.5 px-1 rounded-xl border text-slate-200 transition ${
+                        showCustomPay ? 'bg-emerald-700 border-emerald-500' : 'bg-slate-800/80 border-slate-700'
+                      }`}
                     >
-                      {amt} {t.currency}
+                      {t.custom || 'Custom'}
                     </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => setShowCustomPay(!showCustomPay)}
-                  className={`py-2.5 px-1 rounded-xl border text-slate-200 transition ${
-                    showCustomPay ? 'bg-emerald-700 border-emerald-500' : 'bg-slate-800/80 border-slate-700'
-                  }`}
-                >
-                  Custom
-                </button>
-              </div>
+                  </div>
+                );
+              })()}
 
               {/* Custom Amount Input with Arabic-Indic Support */}
               {showCustomPay && (
@@ -538,7 +595,7 @@ export default function CustomerTab() {
                     disabled={paying || !payAmount || Number(payAmount) < 0.100}
                     className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 font-bold text-xs rounded-xl transition"
                   >
-                    Pay Custom Amount
+                    {t.payCustomBtn || 'Pay Custom Amount'}
                   </button>
                 </div>
               )}

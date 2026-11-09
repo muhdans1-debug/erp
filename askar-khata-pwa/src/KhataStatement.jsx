@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { 
   ShieldCheck, 
   Lock, 
@@ -20,6 +20,7 @@ import {
   Clock
 } from 'lucide-react';
 import BenefitPayModal from './components/BenefitPayModal';
+import { generateBenefitPayPayload } from './utils/benefitPay';
 
 const STATEMENT_TEXTS = {
   en: {
@@ -62,7 +63,9 @@ const STATEMENT_TEXTS = {
     writeOff: 'Debt Forgiven / Write-Off',
     paymentReceived: 'Payment Received',
     storePurchase: 'Store Purchase',
-    currency: 'BHD'
+    currency: 'BHD',
+    custom: 'Custom',
+    payCustomBtn: 'Pay Custom Amount'
   },
   ar: {
     brand: 'أسواق أسكر المركزية',
@@ -104,7 +107,9 @@ const STATEMENT_TEXTS = {
     writeOff: 'إعفاء / تسوية دين',
     paymentReceived: 'دفعة مسددة',
     storePurchase: 'مشتريات من المحل',
-    currency: 'د.ب'
+    currency: 'د.ب',
+    custom: 'مبلغ مخصص',
+    payCustomBtn: 'سداد مبلغ مخصص'
   },
   ml: {
     brand: 'അസ്കർ സൂപ്പർമാർക്കറ്റ്',
@@ -146,7 +151,9 @@ const STATEMENT_TEXTS = {
     writeOff: 'കടം ഒഴിവാക്കി',
     paymentReceived: 'പേയ്‌മെന്റ് ലഭിച്ചു',
     storePurchase: 'സാധനങ്ങൾ വാങ്ങി',
-    currency: 'BHD'
+    currency: 'BHD',
+    custom: 'മറ്റൊരു തുക',
+    payCustomBtn: 'തുക നൽകുക'
   },
   bn: {
     brand: 'আসকার সুপারমার্কেট',
@@ -188,7 +195,9 @@ const STATEMENT_TEXTS = {
     writeOff: 'মওকুফ করা হয়েছে',
     paymentReceived: 'পরিশোধ গ্রহণ করা হয়েছে',
     storePurchase: 'দোকান থেকে কেনাকাটা',
-    currency: 'BHD'
+    currency: 'BHD',
+    custom: 'অন্যান্য',
+    payCustomBtn: 'টাকা পরিশোধ করুন'
   },
   hi: {
     brand: 'अस्कर सुपरमार्केट',
@@ -230,7 +239,9 @@ const STATEMENT_TEXTS = {
     writeOff: 'ऋण माफ़ / समायोजन',
     paymentReceived: 'भुगतान प्राप्त',
     storePurchase: 'दुकान से खरीदारी',
-    currency: 'BHD'
+    currency: 'BHD',
+    custom: 'कस्टम',
+    payCustomBtn: 'राशि का भुगतान करें'
   }
 };
 
@@ -259,6 +270,17 @@ function normalizeArabicNumerals(str) {
   return str.replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
 }
 
+// Adaptive Dynamic Quick Chips based on customer debt balance (BP-09)
+function getDynamicQuickChips(balance) {
+  const bal = Number(balance || 0);
+  if (bal >= 20) return [5, 10, 20];
+  if (bal >= 10) return [2, 5, 10];
+  if (bal >= 5) return [1, 2, 5];
+  if (bal >= 1) return [0.5, 1, 2].filter(a => a < bal);
+  if (bal >= 0.2) return [0.1, 0.2, 0.5].filter(a => a < bal);
+  return [];
+}
+
 // Bounded local storage helper to prevent quota exhaustion (Resolved PWA-DAT-02)
 function safeSetBoundedCache(key, value, prefix = 'khata_stmt_cache_') {
   try {
@@ -274,6 +296,8 @@ function safeSetBoundedCache(key, value, prefix = 'khata_stmt_cache_') {
 
 export function KhataStatement() {
   const { uuid } = useParams();
+  const [searchParams] = useSearchParams();
+  const statusParam = searchParams.get('status');
   const tokenKey = `khata_token_${uuid}`;
   const pinKey = `khata_pin_${uuid}`;
   const jwtKey = `khata_jwt_${uuid}`;
@@ -297,6 +321,9 @@ export function KhataStatement() {
   const [isOffline, setIsOffline] = useState(false);
   const [showBenefitModal, setShowBenefitModal] = useState(false);
   const [benefitPayData, setBenefitPayData] = useState(null);
+  const [showSuccessBanner, setShowSuccessBanner] = useState(() => 
+    statusParam === 'complete' || statusParam === 'success' || statusParam === 'mock_demo_success'
+  );
 
   // Pagination for Multi-Year Ledgers (ADV-10)
   const [hasMore, setHasMore] = useState(false);
@@ -515,6 +542,21 @@ export function KhataStatement() {
     };
   }, [isAuthenticated, uuid, pinKey, fetchLedger]);
 
+  // Auto-refresh statement balance when returning from BenefitPay app via visibilitychange (BP-08)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const savedPin = localStorage.getItem(pinKey) || '';
+        fetchLedger(uuid, savedPin);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAuthenticated, uuid, pinKey, fetchLedger]);
+
   // Load Older Historical Ledger Records with Dynamic Token Resolution (Resolved ADV-10)
   const handleLoadMore = async () => {
     if (loadingMore || !hasMore) return;
@@ -631,7 +673,7 @@ export function KhataStatement() {
     }
   };
 
-  // Real Tap Payments / BenefitPay Execution with Strict Minimum Validation (Resolved PWA-INT-03)
+  // Real Tap Payments / BenefitPay Execution with Strict Minimum Validation (Resolved PWA-INT-03 & BP-08)
   const handlePayBenefitPay = async (specifiedAmount) => {
     if (!account || Number(account.balance) <= 0) return;
     const finalAmount = Number(Number(specifiedAmount || payAmount || account.balance).toFixed(3));
@@ -643,13 +685,22 @@ export function KhataStatement() {
 
     setPaying(true);
     try {
+      const savedJwt = (account?.id && localStorage.getItem(`khata_jwt_${account.id}`)) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
+      const savedPin = localStorage.getItem(pinKey) || '';
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(savedJwt ? { 'Authorization': `Bearer ${savedJwt}` } : {}),
+        ...(savedPin ? { 'x-khata-pin': savedPin } : {})
+      };
+
       const res = await fetch('/api/checkout/init', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           customerId: account?.id || uuid,
           amount: Math.min(finalAmount, Number(account.balance)),
-          customerName: account.name
+          customerName: account.name,
+          sourceView: 'statement'
         })
       });
       const data = await res.json();
@@ -666,7 +717,29 @@ export function KhataStatement() {
         setShowBenefitModal(true);
       }
     } catch (err) {
-      alert(`Payment connection error: ${err.message}`);
+      console.warn('Payment API unavailable, falling back to local BenefitPay generator:', err);
+      // Offline / Local CBB QR Fallback (BP-08)
+      try {
+        const fallbackAmount = Math.min(finalAmount, Number(account.balance));
+        const invoiceRef = `KHATA-${(account?.id || uuid).slice(0, 8)}`;
+        const qrString = generateBenefitPayPayload(fallbackAmount, invoiceRef);
+        setBenefitPayData({
+          mode: 'BENEFITPAY_FAWRI',
+          amount: fallbackAmount,
+          currency: 'BHD',
+          merchantName: 'ASKAR SUPERMARKET',
+          merchantId: '97300182',
+          mobileNumber: '+973 32067388',
+          iban: 'BH67NBOB00000012345678',
+          branchId: 'POS-01',
+          qrPayload: qrString,
+          customerId: account?.id || uuid,
+          customerName: account.name
+        });
+        setShowBenefitModal(true);
+      } catch (localErr) {
+        alert(`Failed to launch BenefitPay: ${localErr.message}`);
+      }
     } finally {
       setPaying(false);
     }
@@ -974,6 +1047,24 @@ export function KhataStatement() {
           </div>
         )}
 
+        {/* Success Banner when returning from BenefitPay / Payment Gateway (BP-08) */}
+        {showSuccessBanner && (
+          <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-300 text-sm font-semibold flex items-center justify-between no-print">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span>Payment received! Your statement balance has been updated.</span>
+            </div>
+            <button 
+              type="button" 
+              onClick={() => setShowSuccessBanner(false)}
+              className="text-emerald-400/70 hover:text-emerald-300 font-bold px-1"
+              aria-label="Dismiss banner"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* MAIN BALANCE SUMMARY CARD */}
         <div className="p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -1010,32 +1101,34 @@ export function KhataStatement() {
           {/* Settle / Payment Actions (Partial & Full Support) */}
           {isDebt ? (
             <div className="space-y-3 no-print">
-              {/* Quick Chip Amount Selectors */}
-              <div className="grid grid-cols-4 gap-2 text-xs font-bold font-mono">
-                {[5, 10, 20].map((amt) => {
-                  if (amt >= balanceNum) return null;
-                  return (
+              {/* Quick Chip Amount Selectors (BP-09) */}
+              {(() => {
+                const chips = getDynamicQuickChips(balanceNum);
+                return (
+                  <div className={`grid ${chips.length >= 3 ? 'grid-cols-4' : chips.length === 2 ? 'grid-cols-3' : chips.length === 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2 text-xs font-bold font-mono`}>
+                    {chips.map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => handlePayBenefitPay(amt)}
+                        disabled={paying}
+                        className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition"
+                      >
+                        {amt.toFixed(3)} {t.currency}
+                      </button>
+                    ))}
                     <button
-                      key={amt}
                       type="button"
-                      onClick={() => handlePayBenefitPay(amt)}
-                      disabled={paying}
-                      className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition"
+                      onClick={() => setShowCustomPay(!showCustomPay)}
+                      className={`py-2.5 px-1 rounded-xl border text-slate-200 transition ${
+                        showCustomPay ? 'bg-emerald-700 border-emerald-500' : 'bg-slate-800/80 border-slate-700'
+                      }`}
                     >
-                      {amt} {t.currency}
+                      {t.custom || 'Custom'}
                     </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => setShowCustomPay(!showCustomPay)}
-                  className={`py-2.5 px-1 rounded-xl border text-slate-200 transition ${
-                    showCustomPay ? 'bg-emerald-700 border-emerald-500' : 'bg-slate-800/80 border-slate-700'
-                  }`}
-                >
-                  Custom
-                </button>
-              </div>
+                  </div>
+                );
+              })()}
 
               {/* Custom Partial Amount Field */}
               {showCustomPay && (
@@ -1059,7 +1152,7 @@ export function KhataStatement() {
                     disabled={paying || !payAmount || Number(payAmount) < 0.100}
                     className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 font-bold text-xs rounded-xl transition"
                   >
-                    Pay Custom Amount
+                    {t.payCustomBtn || 'Pay Custom Amount'}
                   </button>
                 </div>
               )}

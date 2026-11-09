@@ -37,7 +37,7 @@ public class CustomerDisplayPlugin extends Plugin {
     @Override
     public void load() {
         android.util.Log.i("CustomerDisplayPlugin", "CustomerDisplayPlugin loaded, launching secondary presentation...");
-        startSecondaryDisplay("http://localhost/?view=customer-display");
+        startSecondaryDisplay("http://localhost/customer.html");
     }
 
     public void startSecondaryDisplay(String targetUrl) {
@@ -79,7 +79,7 @@ public class CustomerDisplayPlugin extends Plugin {
 
     @PluginMethod
     public void openUrl(PluginCall call) {
-        String url = call.getString("url", "http://localhost/?view=customer-display");
+        String url = call.getString("url", "http://localhost/customer.html");
         getActivity().runOnUiThread(() -> {
             if (presentation != null && presentation.getWebView() != null) {
                 presentation.getWebView().loadUrl(url);

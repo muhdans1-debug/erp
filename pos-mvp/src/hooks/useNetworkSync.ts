@@ -53,8 +53,7 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
   const getProbeCandidates = () => {
     return [
       `http://${cleanIp}:3000`,
-      'http://192.168.8.7:3000',
-      'http://askar-master.local:3000'
+      'http://192.168.8.7:3000'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
   };
 

@@ -9,7 +9,6 @@ import CorporateSponsorDashboard from './pages/CorporateSponsorDashboard';
 import F100Pim from './F100Pim';
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { initOTA } from './utils/otaUpdater';
-import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 import { printFullReceipt, printKhataStatement } from './utils/printer';
 import { playNfcChime } from './utils/sound';
 import { Printer } from 'capacitor-sunmi-printer';
@@ -19,9 +18,6 @@ import { initNativeOfflineStorage } from './utils/nativeDb';
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
 export default function App() {
-  // Headless Hardware Barcode Scanner Wedge (runs silently outside React render tree)
-  useBarcodeWedge();
-
   // Target the 4.3" SUNMI Customer Display route directly (800x480)
   const isCustomerDisplayRoute = typeof window !== 'undefined' && (
     window.location.pathname === '/customer-display' ||
@@ -158,7 +154,7 @@ export default function App() {
       }
       if (!isCustomerDisplayRoute) {
         try {
-          CustomerDisplay.openUrl({ url: 'http://localhost/?view=customer-display' }).catch(() => {});
+          CustomerDisplay.openUrl({ url: 'http://localhost/customer.html' }).catch(() => {});
         } catch (e) {
           console.warn('CustomerDisplay openUrl error', e);
         }

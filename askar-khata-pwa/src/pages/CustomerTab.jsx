@@ -9,7 +9,8 @@ import {
   WifiOff, 
   Printer, 
   PhoneCall, 
-  MessageCircle 
+  MessageCircle,
+  Clock 
 } from 'lucide-react';
 import BenefitPayModal from '../components/BenefitPayModal';
 import { generateBenefitPayPayload } from '../utils/benefitPay';
@@ -266,7 +267,8 @@ export default function CustomerTab() {
         id: data.id || customerId,
         name: data.name || 'Valued Customer',
         balance: Number(data.balance ?? data.currentBalance ?? 0),
-        credit_limit: Number(data.credit_limit ?? data.creditLimit ?? 30.0)
+        credit_limit: Number(data.credit_limit ?? data.creditLimit ?? 30.0),
+        pendingClaims: data.pendingClaims || []
       };
 
       setLedger(customerRecord);
@@ -514,6 +516,26 @@ export default function CustomerTab() {
             <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-300 text-sm font-semibold flex items-center gap-2 justify-center no-print">
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <span>Payment received! Your balance has been updated.</span>
+            </div>
+          )}
+
+          {ledger.pendingClaims && ledger.pendingClaims.length > 0 && (
+            <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs font-semibold space-y-2 no-print text-left">
+              <div className="flex items-center gap-2 font-bold text-sm text-amber-400">
+                <Clock className="w-4 h-4 shrink-0" />
+                <span>Payment Verification in Progress</span>
+              </div>
+              {ledger.pendingClaims.map((claim) => (
+                <div key={claim.id} className="flex items-center justify-between font-mono text-[11px] bg-slate-950/80 p-2.5 rounded-xl border border-amber-500/20">
+                  <span>BHD {Number(claim.amount).toFixed(3)} (Ref: #{claim.reference})</span>
+                  <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30">
+                    Awaiting Cashier
+                  </span>
+                </div>
+              ))}
+              <p className="text-[10px] text-amber-400/80">
+                Your payment was submitted to the supermarket cashier and will be verified against store bank records.
+              </p>
             </div>
           )}
 

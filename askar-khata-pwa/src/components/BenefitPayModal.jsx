@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { X, Copy, Check, ExternalLink, ShieldCheck, QrCode, Smartphone, ArrowRight } from 'lucide-react';
+import { X, Copy, Check, ExternalLink, ShieldCheck, QrCode, Smartphone, ArrowRight, Clock } from 'lucide-react';
 import { openBenefitPayApp } from '../utils/benefitPay';
 
 // Arabic-Indic Numeral Normalizer for Bahrain & GCC Accessibility (BP-06)
@@ -28,12 +28,14 @@ const MODAL_TEXTS = {
     sendInstructions: 'Send via Fawri+ using our registered Merchant ID or Mobile:',
     copy: 'Copy',
     copied: 'Copied!',
-    refLabel: 'BenefitPay Reference / Fawri+ No. (Optional)',
+    refLabel: 'BenefitPay Reference / Fawri+ No. (Required)',
     refPlaceholder: 'e.g. 10482938',
-    confirmBtn: 'I Have Paid with BenefitPay — Confirm',
-    reconciling: 'Reconciling Settlement...',
-    successTitle: 'Settlement Reconciled!',
-    newBalance: 'New Balance:',
+    confirmBtn: 'Submit Payment for Cashier Verification',
+    reconciling: 'Submitting Payment Claim...',
+    successTitle: 'Payment Submitted for Review!',
+    pendingSub: 'Your payment reference has been sent to the supermarket cashier. Your balance will be deducted once verified against store bank records.',
+    statusPending: 'Status: Awaiting Cashier Approval',
+    closeBtn: 'Done',
     crNote: 'Official Merchant CR: 200012345678901 • Askar Supermarket, Bahrain',
     desktopNotice: 'BenefitPay is a mobile application. Please scan the QR code using your smartphone camera or BenefitPay app.'
   },
@@ -54,12 +56,14 @@ const MODAL_TEXTS = {
     sendInstructions: 'أرسل المبلغ عبر فوري+ باستخدام رقم الهاتف أو معرف التاجر:',
     copy: 'نسخ',
     copied: 'تم النسخ!',
-    refLabel: 'رقم مرجع بنفت بي (اختياري)',
+    refLabel: 'رقم مرجع بنفت بي / رقم العملية (إلزامي)',
     refPlaceholder: 'مثال: ١٠٤٨٢٩٣٨',
-    confirmBtn: 'لقد قمت بالدفع - تأكيد السداد',
-    reconciling: 'جارٍ التحقق...',
-    successTitle: 'تم تسجيل السداد بنجاح!',
-    newBalance: 'الرصيد المتبقي الجديد:',
+    confirmBtn: 'إرسال إشعار السداد للمحاسب للتحقق',
+    reconciling: 'جارٍ إرسال إشعار السداد...',
+    successTitle: 'تم إرسال إشعار السداد للمراجعة!',
+    pendingSub: 'تم إرسال رقم العملية إلى كاشير السوبرماركت. سيتم خصم الرصيد تلقائياً بمجرد مطابقة الإشعار البنكي.',
+    statusPending: 'الحالة: بانتظار موافقة المحاسب',
+    closeBtn: 'تم',
     crNote: 'السجل التجاري الرسمي: 200012345678901 • أسواق أسكر، البحرين',
     desktopNotice: 'تطبيق بنفت بي متاح للهواتف الذكية. يرجى مسح رمز الاستجابة السريعة (QR) عبر هاتفك.'
   },
@@ -80,12 +84,14 @@ const MODAL_TEXTS = {
     sendInstructions: 'മർച്ചന്റ് ഐഡിയോ ഫോൺ നമ്പറോ ഉപയോഗിച്ച് പണം നൽകുക:',
     copy: 'കോപ്പി',
     copied: 'കോപ്പി ചെയ്തു!',
-    refLabel: 'ബെനിഫിറ്റ് പേ റഫറൻസ് നമ്പർ (നിർബന്ധമില്ല)',
+    refLabel: 'ബെനിഫിറ്റ് പേ റഫറൻസ് നമ്പർ (നിർബന്ധം)',
     refPlaceholder: 'ഉദാ: 10482938',
-    confirmBtn: 'ഞാൻ പണമടച്ചു — സ്ഥിരീകരിക്കുക',
-    reconciling: 'പരിശോധിച്ച് ഉറപ്പാക്കുന്നു...',
-    successTitle: 'പണം വിജയകരമായി ലഭിച്ചു!',
-    newBalance: 'പുതിയ ബാക്കി:',
+    confirmBtn: 'പേയ്‌മെന്റ് വിവരങ്ങൾ കാഷ്യർക്ക് സമർപ്പിക്കുക',
+    reconciling: 'സമർപ്പിക്കുന്നു...',
+    successTitle: 'പേയ്‌മെന്റ് വിവരങ്ങൾ സമർപ്പിച്ചു!',
+    pendingSub: 'വിവരങ്ങൾ സൂപ്പർമാർക്കറ്റ് കാഷ്യർക്ക് ലഭിച്ചു. ബാങ്ക് രേഖകളുമായി ഒത്തുനോക്കിയ ശേഷം ബാക്കി തുക കുറയും.',
+    statusPending: 'സ്റ്റാറ്റസ്: കാഷ്യറുടെ അനുമതിക്കായി കാത്തിരിക്കുന്നു',
+    closeBtn: 'ശരി',
     crNote: 'സി.ആർ: 200012345678901 • അസ്കർ സൂപ്പർമാർക്കറ്റ്, ബഹ്‌റൈൻ',
     desktopNotice: 'ബെനിഫിറ്റ് പേ മൊബൈൽ ആപ്പിൽ ലഭ്യമാണ്. ദയവായി നിങ്ങളുടെ ഫോൺ ഉപയോഗിച്ച് QR സ്കാൻ ചെയ്യുക.'
   },
@@ -106,12 +112,14 @@ const MODAL_TEXTS = {
     sendInstructions: 'মার্চেন্ট আইডি বা মোবাইল নম্বর দিয়ে টাকা পাঠান:',
     copy: 'কপি',
     copied: 'কপি হয়েছে!',
-    refLabel: 'রেফারেন্স নম্বর (ঐচ্ছিক)',
+    refLabel: 'রেফারেন্স নম্বর (বাধ্যতামূলক)',
     refPlaceholder: 'যেমন: 10482938',
-    confirmBtn: 'আমি টাকা দিয়েছি — নিশ্চিত করুন',
-    reconciling: 'যাচাই করা হচ্ছে...',
-    successTitle: 'সফলভাবে নিষ্পত্তি হয়েছে!',
-    newBalance: 'নতুন ব্যালেন্স:',
+    confirmBtn: 'যাচাইয়ের জন্য ক্যাশিয়ারের কাছে পাঠান',
+    reconciling: 'পাঠানো হচ্ছে...',
+    successTitle: 'পেমেন্ট পর্যালোচনার জন্য জমা হয়েছে!',
+    pendingSub: 'আপনার পেমেন্ট রেফারেন্স ক্যাশিয়ারের কাছে পাঠানো হয়েছে। ব্যাংক রেকর্ডের সাথে যাচাই করার পর ব্যালেন্স আপডেট হবে।',
+    statusPending: 'স্ট্যাটাস: ক্যাশিয়ারের অনুমোদনের অপেক্ষায়',
+    closeBtn: 'সম্পন্ন',
     crNote: 'অফিসিয়াল সিআর: 200012345678901 • আস্কার সুপারমার্কেট, বাহরাইন',
     desktopNotice: 'বেনিফিট পে মোবাইল অ্যাপ। আপনার স্মার্টফোন দিয়ে QR কোডটি স্ক্যান করুন।'
   },
@@ -132,12 +140,14 @@ const MODAL_TEXTS = {
     sendInstructions: 'मर्चेंट आईडी या मोबाइल नंबर का उपयोग करके भुगतान करें:',
     copy: 'कॉपी',
     copied: 'कॉपी हो गया!',
-    refLabel: 'रेफरेंस नंबर (वैकल्पिक)',
+    refLabel: 'रेफरेंस नंबर (अनिवार्य)',
     refPlaceholder: 'उदा: 10482938',
-    confirmBtn: 'मैंने भुगतान कर दिया — पुष्टि करें',
-    reconciling: 'जांच की जा रही है...',
-    successTitle: 'भुगतान सफलतापूर्वक दर्ज!',
-    newBalance: 'नया शेष:',
+    confirmBtn: 'कैशियर सत्यापन के लिए भुगतान सबमिट करें',
+    reconciling: 'सबमिट किया जा रहा है...',
+    successTitle: 'भुगतान समीक्षा के लिए सबमिट हो गया!',
+    pendingSub: 'आपका भुगतान रेफरेंस कैशियर को भेज दिया गया है। बैंक रिकॉर्ड से पुष्टि होने के बाद शेष राशि अपडेट हो जाएगी।',
+    statusPending: 'स्थिति: कैशियर की मंजूरी प्रतीक्षित है',
+    closeBtn: 'पूर्ण',
     crNote: 'सीआर नंबर: 200012345678901 • असकर सुपरमार्केट, बहरीन',
     desktopNotice: 'बेनिफिट पे एक मोबाइल ऐप है। कृपया अपने स्मार्टफोन से QR कोड स्कैन करें।'
   }
@@ -208,6 +218,11 @@ export default function BenefitPayModal({
 
     // Normalize Arabic-Indic numerals for reference before API dispatch (BP-06)
     const normalizedRef = normalizeArabicNumerals(referenceInput).trim();
+    if (!normalizedRef || normalizedRef.length < 4) {
+      setErrorMsg('Please enter your 4+ digit BenefitPay reference number (e.g. 10482938)');
+      setConfirming(false);
+      return;
+    }
 
     try {
       const savedJwt = localStorage.getItem(`khata_jwt_${data.customerId}`) || '';
@@ -225,25 +240,22 @@ export default function BenefitPayModal({
         body: JSON.stringify({
           customerId: data.customerId,
           amount: data.amount,
-          reference: normalizedRef || undefined,
+          reference: normalizedRef,
           clientToken: savedJwt
         })
       });
 
       const result = await res.json();
       if (!res.ok || result.error) {
-        throw new Error(result.error || 'Failed to record settlement');
+        throw new Error(result.error || 'Failed to submit payment claim');
       }
 
       setSuccessResult(result);
       if (onSuccess) {
         onSuccess(result);
       }
-      setTimeout(() => {
-        onClose();
-      }, 2500);
     } catch (err) {
-      setErrorMsg(err.message || 'Error confirming payment');
+      setErrorMsg(err.message || 'Error submitting payment claim');
     } finally {
       setConfirming(false);
     }
@@ -353,20 +365,31 @@ export default function BenefitPayModal({
         {/* Scrollable Modal Content */}
         <div className="p-5 overflow-y-auto space-y-4">
           {successResult ? (
-            <div className="py-8 flex flex-col items-center justify-center text-center space-y-3">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center text-emerald-400 animate-bounce">
-                <Check className="w-8 h-8 stroke-[3]" />
+            <div className="py-6 flex flex-col items-center justify-center text-center space-y-3">
+              <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500 flex items-center justify-center text-amber-400">
+                <Clock className="w-8 h-8 stroke-[2.5]" />
               </div>
               <h4 className="text-lg font-bold text-white">
                 {t.successTitle}
               </h4>
-              <p className="text-xs text-slate-300 max-w-xs font-mono">
-                {successResult.reference || 'BenefitPay Fawri+ Payment Confirmed'}
+              <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
+                {t.pendingSub}
               </p>
-              <div className="text-sm font-bold text-emerald-400">
-                {t.newBalance}{' '}
-                {Number(successResult.newBalance || 0).toFixed(3)} BHD
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl w-full text-center space-y-1">
+                <div className="text-[11px] text-slate-400 font-mono">
+                  Ref: #{successResult.reference} • BHD {Number(successResult.claimedAmount || data.amount).toFixed(3)}
+                </div>
+                <div className="text-xs font-bold text-amber-400">
+                  {t.statusPending}
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 mt-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                {t.closeBtn || 'Done'}
+              </button>
             </div>
           ) : activeTab === 'qr' ? (
             /* QR Code Mode */
@@ -500,6 +523,9 @@ export default function BenefitPayModal({
                   placeholder={t.refPlaceholder}
                   className="w-full py-2 px-3 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-red-500 outline-none"
                 />
+                <p className="text-[10px] text-slate-400">
+                  Enter the 4+ digit reference number from your BenefitPay confirmation screen.
+                </p>
               </div>
 
               {errorMsg && (
@@ -511,8 +537,8 @@ export default function BenefitPayModal({
               <button
                 type="button"
                 onClick={handleConfirmPayment}
-                disabled={confirming}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 transition cursor-pointer"
+                disabled={confirming || referenceInput.trim().length < 4}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 {confirming ? (
                   <>

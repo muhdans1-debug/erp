@@ -31,9 +31,9 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
   const sql = `
     SELECT c.id, c.tenantId, c.name, c.phone, c.credit_limit, c.credit_limit AS creditLimit, c.is_active,
            c.cardUid, c.mess_id, c.batchNo, c.description, c.createdAt,
-           COALESCE(SUM(l.amount), 0) AS currentBalance,
+           ROUND(COALESCE(SUM(l.amount), 0), 3) AS currentBalance,
            MAX(CASE WHEN l.amount < 0 THEN l.timestamp END) AS lastPaymentDate,
-           MAX(CASE WHEN l.amount < 0 THEN ABS(l.amount) END) AS lastPaymentAmount,
+           (SELECT ABS(amount) FROM KhataLedger WHERE customerId = c.id AND amount < 0 ORDER BY timestamp DESC LIMIT 1) AS lastPaymentAmount,
            MAX(l.timestamp) AS lastActivityDate,
            COUNT(l.id) AS ledgerCount
     FROM Customer c
@@ -450,12 +450,7 @@ const handleGetCustomerStatement = async (request, reply) => {
             created_at: s.createdAt || new Date(),
             tenantId: 'tenant_askar_01',
           };
-          try {
-            await db.orm.KhataLedger.create(newLedgerItem);
-            history.push(newLedgerItem);
-          } catch {
-            history.push(newLedgerItem);
-          }
+          history.push(newLedgerItem);
         }
       }
     } catch (err) {
@@ -772,8 +767,10 @@ fastify.post('/api/sponsor/:id/settle-all', async (request, reply) => {
 });
 
 // -------------------------------------------------------------
-// KHATA SECURITY & AUTH GATEWAY: 4-DIGIT PIN & TRUSTED DEVICE TOKEN
+// KHATA SECURITY & AUTH GATEWAY: 4-DIGIT PIN & RATE-LIMITED TOKENS
 // -------------------------------------------------------------
+const khataPinAttempts = new Map();
+
 fastify.post('/api/khata/verify-pin', async (request, reply) => {
   try {
     const { uuid, customerId, id, pin } = request.body || {};
@@ -785,10 +782,21 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
       return reply.status(400).send({ success: false, error: 'Please enter a valid 4-digit PIN' });
     }
 
+    // Rate limiting: 5 failed attempts locks for 15 minutes
+    const now = Date.now();
+    const attemptRecord = khataPinAttempts.get(targetId) || { count: 0, lockedUntil: 0 };
+    if (attemptRecord.lockedUntil > now) {
+      const remainingSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
+      return reply.status(429).send({ success: false, error: `Account temporarily locked due to failed attempts. Try again in ${remainingSec}s.` });
+    }
+
+    // Enforce artificial delay against timing attacks
+    await new Promise(r => setTimeout(r, 200));
+
     let customerRow = null;
     try {
       const tRes = await db.execute({
-        sql: 'SELECT id, name, khata_pin, khataPin FROM Customer WHERE id = ?',
+        sql: 'SELECT id, name, khata_pin, khataPin, pin FROM Customer WHERE id = ?',
         args: [targetId]
       });
       if (tRes.rows.length > 0) customerRow = tRes.rows[0];
@@ -798,12 +806,37 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
       return reply.status(404).send({ success: false, error: 'Customer not found' });
     }
 
-    const actualPin = String(customerRow.khataPin || customerRow.khata_pin || '0000').trim();
+    const storedPin = String(customerRow.khataPin || customerRow.khata_pin || customerRow.pin || '').trim();
     const inputPin = String(pin).trim();
 
-    if (inputPin !== actualPin) {
+    let isMatch = false;
+    if (storedPin.startsWith('$2')) {
+      isMatch = await bcrypt.compare(inputPin, storedPin).catch(() => false);
+    } else {
+      isMatch = (inputPin === storedPin);
+      // Auto-migrate plaintext to bcrypt hash upon successful login
+      if (isMatch && storedPin) {
+        try {
+          const hashed = await bcrypt.hash(inputPin, 10);
+          await db.execute({
+            sql: 'UPDATE Customer SET khata_pin = ?, khataPin = ?, pin = ? WHERE id = ?',
+            args: [hashed, hashed, hashed, targetId]
+          });
+        } catch {}
+      }
+    }
+
+    if (!isMatch) {
+      attemptRecord.count += 1;
+      if (attemptRecord.count >= 5) {
+        attemptRecord.lockedUntil = now + (15 * 60 * 1000);
+      }
+      khataPinAttempts.set(targetId, attemptRecord);
       return reply.status(401).send({ success: false, error: 'Incorrect PIN. Please try again.' });
     }
+
+    // Success: clear failed attempts
+    khataPinAttempts.delete(targetId);
 
     // Issue a 90-day trusted device token
     const deviceToken = `khata_tok_${targetId}_${Date.now()}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
@@ -831,11 +864,12 @@ fastify.post('/api/customers/:id/pin', { preHandler: managerAuth }, async (reque
     }
 
     const cleanPin = String(pin).trim();
+    const hashedPin = await bcrypt.hash(cleanPin, 10);
 
     try {
       await db.execute({
-        sql: 'UPDATE Customer SET khata_pin = ?, khataPin = ? WHERE id = ?',
-        args: [cleanPin, cleanPin, id]
+        sql: 'UPDATE Customer SET khata_pin = ?, khataPin = ?, pin = ? WHERE id = ?',
+        args: [hashedPin, hashedPin, hashedPin, id]
       });
     } catch { }
 
@@ -846,9 +880,9 @@ fastify.post('/api/customers/:id/pin', { preHandler: managerAuth }, async (reque
   }
 });
 
-// Create customer (balance is 0 by definition since no ledger entries exist yet)
-fastify.post('/api/customers', async (request, reply) => {
-  const { name, phone, cpr, batchNo, description, cardUid } = request.body || {};
+// Create customer (balance is 0 by definition since no ledger entries exist yet) - Secured with Manager Auth
+fastify.post('/api/customers', { preHandler: managerAuth }, async (request, reply) => {
+  const { name, phone, cpr, batchNo, description, cardUid, creditLimit, pin } = request.body || {};
   if (!name || !name.trim()) {
     return reply.status(400).send({ success: false, error: 'Customer name is required' });
   }
@@ -875,6 +909,9 @@ fastify.post('/api/customers', async (request, reply) => {
 
   try {
     const id = crypto.randomUUID();
+    const rawPin = (pin && String(pin).trim().length === 4) ? String(pin).trim() : '0000';
+    const hashedPin = await bcrypt.hash(rawPin, 10);
+
     const customerRecord = {
       id,
       name: name.trim(),
@@ -884,22 +921,22 @@ fastify.post('/api/customers', async (request, reply) => {
       description: description && description.trim() ? description.trim() : null,
       nfcCardId: cleanCardUid,
       cardUid: cleanCardUid,
-      khataPin: '0000',
+      khataPin: hashedPin,
       createdAt: new Date(),
       tenantId: 'tenant_askar_01',
       is_active: 1,
       isActive: 1,
       balance: 0.0,
-      khata_pin: '0000',
-      pin: '1234',
+      khata_pin: hashedPin,
+      pin: hashedPin,
       access_token: id,
     };
 
     await db.orm.Customer.create(customerRecord);
     try {
       await db.execute({
-        sql: 'UPDATE Customer SET balance = 0.0, credit_limit = ?, khata_pin = "0000", pin = "1234", khataPin = "0000", access_token = ?, nfc_card_id = ?, cardUid = ?, nfcCardId = ? WHERE id = ?',
-        args: [Number(creditLimit || 30.0), id, cleanCardUid, cleanCardUid, cleanCardUid, id]
+        sql: 'UPDATE Customer SET balance = 0.0, credit_limit = ?, khata_pin = ?, pin = ?, khataPin = ?, access_token = ?, nfc_card_id = ?, cardUid = ?, nfcCardId = ? WHERE id = ?',
+        args: [Number(creditLimit || 30.0), hashedPin, hashedPin, hashedPin, id, cleanCardUid, cleanCardUid, cleanCardUid, id]
       });
     } catch (e) {
       console.warn('Customer khata init notice:', e?.message);
@@ -916,10 +953,7 @@ fastify.post('/api/customers', async (request, reply) => {
     };
   } catch (err) {
     fastify.log.error(err);
-    return reply.status(500).send({
-      success: false,
-      error: err.message || 'Failed to create customer',
-    });
+    return reply.status(500).send({ success: false, error: 'Failed to create customer', details: err.message });
   }
 });
 
@@ -980,9 +1014,9 @@ const handleUpdateCustomer = async (request, reply) => {
   }
 };
 
-fastify.put('/api/customers/:id', handleUpdateCustomer);
-fastify.put('/khata/:id', handleUpdateCustomer);
-fastify.put('/api/khata/:id', handleUpdateCustomer);
+fastify.put('/api/customers/:id', { preHandler: managerAuth }, handleUpdateCustomer);
+fastify.put('/khata/:id', { preHandler: managerAuth }, handleUpdateCustomer);
+fastify.put('/api/khata/:id', { preHandler: managerAuth }, handleUpdateCustomer);
 
 // 1d. Bad Debt Write-Off (Settles balance as WRITE_OFF and logs business expense)
 fastify.post('/api/khata/write-off', { preHandler: managerAuth }, async (request, reply) => {
@@ -1262,6 +1296,135 @@ fastify.post('/api/khata/pay', async (request, reply) => {
   request.params = { id: targetId };
   return await handleCustomerSettle(request, reply);
 });
+
+  // --- Khata BenefitPay Settlement Claims (Option 3: Cashier Approval Workflow) ---
+  fastify.get('/api/khata/claims/pending', async (request, reply) => {
+    try {
+      const claims = await db.execute(`
+        SELECT c.id, c.customerId, c.customerName, c.amount, c.reference, c.channel, c.status, c.createdAt,
+               cust.phone, cust.balance AS currentBalance
+        FROM KhataSettlementClaim c
+        LEFT JOIN Customer cust ON cust.id = c.customerId
+        WHERE c.status = 'PENDING'
+        ORDER BY c.createdAt ASC
+      `);
+      return reply.send({ success: true, claims: claims.rows || [] });
+    } catch (err) {
+      fastify.log.error('Fetch pending claims error:', err);
+      return reply.code(500).send({ error: 'Failed to fetch pending claims' });
+    }
+  });
+
+  fastify.post('/api/khata/claims/:claimId/approve', async (request, reply) => {
+    const { claimId } = request.params;
+    const { reviewer = 'Cashier' } = request.body || {};
+
+    try {
+      const claimRes = await db.execute({
+        sql: "SELECT * FROM KhataSettlementClaim WHERE id = ? AND status = 'PENDING' LIMIT 1",
+        args: [claimId]
+      });
+
+      if (!claimRes.rows || claimRes.rows.length === 0) {
+        return reply.code(404).send({ success: false, error: 'Pending settlement claim not found or already processed' });
+      }
+
+      const claim = claimRes.rows[0];
+      const customer = await db.orm.Customer.where({ id: claim.customerId }).all().first();
+      if (!customer) {
+        return reply.code(404).send({ success: false, error: 'Customer account not found' });
+      }
+
+      const prevBalance = Number(customer.balance || 0);
+      const clearAmount = Math.min(Number(claim.amount), prevBalance);
+      const newBalance = Math.max(0, prevBalance - clearAmount);
+      const paymentRef = `BenefitPay Fawri+ Verified (Ref: ${claim.reference})`;
+      const ledgerId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+      await db.transaction(async (tx) => {
+        // 1. Mark claim approved
+        await tx.execute({
+          sql: "UPDATE KhataSettlementClaim SET status = 'APPROVED', reviewedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), reviewedBy = ? WHERE id = ?",
+          args: [reviewer, claimId]
+        });
+
+        // 2. Insert payment into KhataLedger
+        await tx.orm.KhataLedger.create({
+          id: ledgerId,
+          customerId: customer.id,
+          amount: -clearAmount,
+          type: 'PAYMENT',
+          reference: paymentRef,
+          running_balance: newBalance,
+          syncStatus: 'PENDING',
+          timestamp: new Date(),
+          created_at: new Date(),
+          tenantId: 'tenant_askar_01'
+        });
+
+        // 3. Update customer balance
+        await tx.execute({
+          sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
+          args: [newBalance.toFixed(3), customer.id]
+        });
+      });
+
+      // Broadcast settlement delta to all connected registers
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach(client => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'KHATA_BALANCE_UPDATED',
+              customerId: customer.id,
+              delta: -clearAmount
+            }));
+          }
+        });
+      }
+
+      return reply.send({
+        success: true,
+        message: 'Settlement claim approved and balance deducted successfully',
+        clearedAmount: clearAmount,
+        newBalance: newBalance.toFixed(3),
+        reference: paymentRef,
+        customerId: customer.id,
+        customerName: customer.name
+      });
+    } catch (err) {
+      fastify.log.error('Approve Claim Error:', err);
+      return reply.code(500).send({ success: false, error: 'Failed to approve claim: ' + err.message });
+    }
+  });
+
+  fastify.post('/api/khata/claims/:claimId/reject', async (request, reply) => {
+    const { claimId } = request.params;
+    const { reviewer = 'Cashier', reason = 'Unverified payment reference' } = request.body || {};
+
+    try {
+      const claimRes = await db.execute({
+        sql: "SELECT * FROM KhataSettlementClaim WHERE id = ? AND status = 'PENDING' LIMIT 1",
+        args: [claimId]
+      });
+
+      if (!claimRes.rows || claimRes.rows.length === 0) {
+        return reply.code(404).send({ success: false, error: 'Pending settlement claim not found or already processed' });
+      }
+
+      await db.execute({
+        sql: "UPDATE KhataSettlementClaim SET status = 'REJECTED', reviewedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), reviewedBy = ?, notes = ? WHERE id = ?",
+        args: [reviewer, reason, claimId]
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Settlement claim rejected. Customer balance remains unchanged.'
+      });
+    } catch (err) {
+      fastify.log.error('Reject Claim Error:', err);
+      return reply.code(500).send({ success: false, error: 'Failed to reject claim: ' + err.message });
+    }
+  });
 
 
 

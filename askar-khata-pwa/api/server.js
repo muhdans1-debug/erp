@@ -433,6 +433,14 @@ const handleKhataStatementOrTab = async (request, reply) => {
 
       // Safe Public Tab View (No valid JWT and no PIN provided)
       if (!isJwtAuthenticated && !providedPin) {
+        const pendingClaims = await db.execute({
+          sql: `SELECT id, amount, reference, channel, status, createdAt 
+                FROM KhataSettlementClaim 
+                WHERE customerId = ? AND status = 'PENDING' 
+                ORDER BY createdAt DESC LIMIT 5`,
+          args: [customer.id]
+        }).catch(() => ({ rows: [] }));
+
         return reply.send({
           success: true,
           id: customer.id,
@@ -440,6 +448,7 @@ const handleKhataStatementOrTab = async (request, reply) => {
           balance: Number(customer.balance ?? 0),
           credit_limit: Number(customer.credit_limit ?? 30.0),
           isLocked: true,
+          pendingClaims: pendingClaims.rows || [],
           message: 'PIN or Pairing Token required for detailed line-item statement'
         });
       }
@@ -489,6 +498,14 @@ const handleKhataStatementOrTab = async (request, reply) => {
       // Mask sensitive Bahrain National ID (CPR)
       const maskedCpr = customer.cpr ? `******${String(customer.cpr).slice(-3)}` : null;
 
+      const pendingClaims = await db.execute({
+        sql: `SELECT id, amount, reference, channel, status, createdAt 
+              FROM KhataSettlementClaim 
+              WHERE customerId = ? AND status = 'PENDING' 
+              ORDER BY createdAt DESC LIMIT 5`,
+        args: [customer.id]
+      }).catch(() => ({ rows: [] }));
+
       return reply.send({
         success: true,
         id: customer.id,
@@ -498,6 +515,7 @@ const handleKhataStatementOrTab = async (request, reply) => {
         phone: customer.phone,
         cpr: maskedCpr,
         token,
+        pendingClaims: pendingClaims.rows || [],
         ledger: ledgerQuery.rows || []
       });
     }
@@ -761,54 +779,189 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
     }
 
     const clearAmount = Math.min(numericAmount, prevBalance);
-    const newBalance = Math.max(0, prevBalance - clearAmount);
-    
+
     // Arabic-Indic numeral normalization for references (BP-06)
     const normalizedRawRef = normalizeArabicNumerals(String(reference || '')).trim();
     const cleanRef = normalizedRawRef.replace(/[^\w-]/g, '').slice(0, 40);
-    const paymentRef = cleanRef 
-      ? `BenefitPay Fawri+ Settlement (Ref: ${cleanRef})` 
-      : `BenefitPay Fawri+ Settlement (${Date.now().toString().slice(-6)})`;
 
-    // 3. Prevent duplicate processing if reference provided
-    if (cleanRef) {
-      const dupCheck = await db.execute({
-        sql: 'SELECT id FROM KhataLedger WHERE reference LIKE ? LIMIT 1',
-        args: [`%${cleanRef}%`]
+    if (!cleanRef || cleanRef.length < 4) {
+      return reply.code(400).send({
+        error: 'Please enter your authentic BenefitPay transaction reference number (minimum 4 characters) found on your payment confirmation screen.'
       });
-      if (dupCheck.rows && dupCheck.rows.length > 0) {
-        return reply.code(400).send({ error: 'This payment reference has already been reconciled.' });
-      }
+    }
+
+    // 3. Prevent duplicate processing across KhataLedger and pending KhataSettlementClaim
+    const dupCheck = await db.execute({
+      sql: 'SELECT id FROM KhataLedger WHERE reference LIKE ? LIMIT 1',
+      args: [`%${cleanRef}%`]
+    });
+    if (dupCheck.rows && dupCheck.rows.length > 0) {
+      return reply.code(400).send({ error: 'This payment reference has already been reconciled.' });
+    }
+
+    const dupClaim = await db.execute({
+      sql: "SELECT id FROM KhataSettlementClaim WHERE reference = ? AND status != 'REJECTED' LIMIT 1",
+      args: [cleanRef]
+    });
+    if (dupClaim.rows && dupClaim.rows.length > 0) {
+      return reply.code(400).send({ error: 'This payment reference has already been submitted and is awaiting cashier verification.' });
     }
 
     const tenantId = liveCustomer.tenantId || 'tenant_askar_01';
-    const ledgerId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const claimId = `claim_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // 4. Atomic Balance Deduction and Multi-Tenant Ledger Record (BP-05)
+    // 4. OPTION 3 FRAUD-PROOF CLAIM SUBMISSION: Record pending claim without deducting balance
     await db.execute({
-      sql: "UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
-      args: [clearAmount, liveCustomer.id]
+      sql: `INSERT INTO KhataSettlementClaim (id, customerId, customerName, amount, reference, channel, status, tenantId, createdAt)
+            VALUES (?, ?, ?, ?, ?, 'FAWRI_PLUS', 'PENDING', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      args: [claimId, liveCustomer.id, liveCustomer.name, clearAmount, cleanRef, tenantId]
     });
 
-    await db.execute({
-      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, tenantId, syncStatus, timestamp, created_at)
-            VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, 'ONLINE', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      args: [ledgerId, liveCustomer.id, -clearAmount, paymentRef, newBalance, tenantId]
-    });
-
-    fastify.log.info({ customerId: liveCustomer.id, clearAmount, newBalance, paymentRef, tenantId }, 'BenefitPay Fawri+ settlement reconciled');
+    fastify.log.info({ claimId, customerId: liveCustomer.id, clearAmount, cleanRef, tenantId }, 'BenefitPay Fawri+ claim submitted for cashier review');
 
     return reply.send({
       success: true,
-      message: 'BenefitPay Fawri+ payment reconciled successfully',
-      clearedAmount: clearAmount,
-      newBalance,
-      reference: paymentRef,
+      status: 'PENDING_VERIFICATION',
+      claimId,
+      message: 'Payment claim submitted successfully! The supermarket cashier will verify your Fawri+ transfer and confirm your settlement.',
+      claimedAmount: clearAmount,
+      reference: cleanRef,
+      currentBalance: prevBalance,
       customerId: liveCustomer.id
     });
   } catch (err) {
     fastify.log.error('Confirm Settlement Error:', err);
-    return reply.code(500).send({ error: 'Failed to confirm settlement', message: err.message });
+    return reply.code(500).send({ error: 'Failed to submit settlement claim', message: err.message });
+  }
+});
+
+// Step 3b: Customer & Cashier Claim Management Endpoints (Option 3)
+fastify.get('/api/khata/:uuid/claims', async (request, reply) => {
+  const { uuid } = request.params;
+  try {
+    const claims = await db.execute({
+      sql: `SELECT id, amount, reference, channel, status, createdAt, reviewedAt 
+            FROM KhataSettlementClaim 
+            WHERE customerId = ? OR customerId IN (SELECT id FROM Customer WHERE access_token = ?)
+            ORDER BY createdAt DESC LIMIT 10`,
+      args: [uuid, uuid]
+    });
+    return reply.send({ success: true, claims: claims.rows || [] });
+  } catch (err) {
+    fastify.log.warn('Failed to fetch customer claims:', err?.message);
+    return reply.code(500).send({ error: 'Failed to fetch customer claims' });
+  }
+});
+
+fastify.get('/api/khata/claims/pending', async (request, reply) => {
+  try {
+    const claims = await db.execute(`
+      SELECT c.id, c.customerId, c.customerName, c.amount, c.reference, c.channel, c.status, c.createdAt,
+             cust.phone, cust.balance AS currentBalance
+      FROM KhataSettlementClaim c
+      LEFT JOIN Customer cust ON cust.id = c.customerId
+      WHERE c.status = 'PENDING'
+      ORDER BY c.createdAt ASC
+    `);
+    return reply.send({ success: true, claims: claims.rows || [] });
+  } catch (err) {
+    fastify.log.error('Fetch pending claims error:', err);
+    return reply.code(500).send({ error: 'Failed to fetch pending claims' });
+  }
+});
+
+fastify.post('/api/khata/claims/:claimId/approve', async (request, reply) => {
+  const { claimId } = request.params;
+  const { reviewer = 'Cashier' } = request.body || {};
+
+  try {
+    const claimRes = await db.execute({
+      sql: "SELECT * FROM KhataSettlementClaim WHERE id = ? AND status = 'PENDING' LIMIT 1",
+      args: [claimId]
+    });
+
+    if (!claimRes.rows || claimRes.rows.length === 0) {
+      return reply.code(404).send({ success: false, error: 'Pending settlement claim not found or already processed' });
+    }
+
+    const claim = claimRes.rows[0];
+    const custRes = await db.execute({
+      sql: 'SELECT id, name, tenantId, COALESCE(balance, 0.0) as balance FROM Customer WHERE id = ? LIMIT 1',
+      args: [claim.customerId]
+    });
+
+    if (!custRes.rows || custRes.rows.length === 0) {
+      return reply.code(404).send({ success: false, error: 'Customer account not found' });
+    }
+
+    const customer = custRes.rows[0];
+    const prevBalance = Number(customer.balance || 0);
+    const clearAmount = Math.min(Number(claim.amount), prevBalance);
+    const newBalance = Math.max(0, prevBalance - clearAmount);
+    const tenantId = claim.tenantId || customer.tenantId || 'tenant_askar_01';
+    const ledgerId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const paymentRef = `BenefitPay Fawri+ Verified (Ref: ${claim.reference})`;
+
+    // 1. Mark claim approved
+    await db.execute({
+      sql: "UPDATE KhataSettlementClaim SET status = 'APPROVED', reviewedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), reviewedBy = ? WHERE id = ?",
+      args: [reviewer, claimId]
+    });
+
+    // 2. Deduct customer balance atomically
+    await db.execute({
+      sql: "UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [clearAmount, customer.id]
+    });
+
+    // 3. Append to KhataLedger
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, tenantId, syncStatus, timestamp, created_at)
+            VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, 'ONLINE', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      args: [ledgerId, customer.id, -clearAmount, paymentRef, newBalance, tenantId]
+    });
+
+    return reply.send({
+      success: true,
+      message: 'Settlement claim approved and balance deducted successfully',
+      clearedAmount: clearAmount,
+      newBalance,
+      reference: paymentRef,
+      customerId: customer.id,
+      customerName: customer.name
+    });
+  } catch (err) {
+    fastify.log.error('Approve Claim Error:', err);
+    return reply.code(500).send({ success: false, error: 'Failed to approve claim: ' + err.message });
+  }
+});
+
+fastify.post('/api/khata/claims/:claimId/reject', async (request, reply) => {
+  const { claimId } = request.params;
+  const { reviewer = 'Cashier', reason = 'Unverified payment reference' } = request.body || {};
+
+  try {
+    const claimRes = await db.execute({
+      sql: "SELECT * FROM KhataSettlementClaim WHERE id = ? AND status = 'PENDING' LIMIT 1",
+      args: [claimId]
+    });
+
+    if (!claimRes.rows || claimRes.rows.length === 0) {
+      return reply.code(404).send({ success: false, error: 'Pending settlement claim not found or already processed' });
+    }
+
+    await db.execute({
+      sql: "UPDATE KhataSettlementClaim SET status = 'REJECTED', reviewedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), reviewedBy = ?, notes = ? WHERE id = ?",
+      args: [reviewer, reason, claimId]
+    });
+
+    return reply.send({
+      success: true,
+      message: 'Settlement claim rejected. Customer balance remains unchanged.'
+    });
+  } catch (err) {
+    fastify.log.error('Reject Claim Error:', err);
+    return reply.code(500).send({ success: false, error: 'Failed to reject claim: ' + err.message });
   }
 });
 

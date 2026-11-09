@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown } from 'lucide-react';
+import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown, Check, ShieldCheck, RefreshCw } from 'lucide-react';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
+import { getManagerPin } from '../utils/authUtils';
 
 interface Customer {
   id: string;
@@ -43,17 +44,98 @@ export default function KhataHubModal({
   lastScannedCardUid,
   showToast
 }: KhataHubModalProps) {
-  const [activeTab, setActiveTab] = useState<'SETTLE' | 'NEW'>('SETTLE');
+  const [activeTab, setActiveTab] = useState<'SETTLE' | 'CLAIMS' | 'NEW'>('SETTLE');
   // Unified single-pipeline state using parent-provided NFC card UID (eliminates duplicate listener collision)
   const [scannedUid, setScannedUid] = useState<string | null>(lastScannedCardUid || null);
   const lastDetectedUid = lastScannedCardUid || scannedUid;
   const clearScan = useCallback(() => setScannedUid(null), []);
+
+  const [pendingClaims, setPendingClaims] = useState<any[]>([]);
+  const [loadingClaims, setLoadingClaims] = useState(false);
+  const [actioningClaimId, setActioningClaimId] = useState<string | null>(null);
+
+  const fetchPendingClaims = useCallback(async () => {
+    try {
+      setLoadingClaims(true);
+      const res = await fetch(`${apiBase}/api/khata/claims/pending`);
+      if (res.ok) {
+        const data = await res.json();
+        setPendingClaims(data.claims || []);
+      }
+    } catch (err) {
+      console.warn('Failed to load pending claims:', err);
+    } finally {
+      setLoadingClaims(false);
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    fetchPendingClaims();
+    const timer = setInterval(fetchPendingClaims, 10000);
+    return () => clearInterval(timer);
+  }, [fetchPendingClaims]);
 
   useEffect(() => {
     if (lastScannedCardUid) {
       setScannedUid(lastScannedCardUid);
     }
   }, [lastScannedCardUid]);
+
+  const handleApproveClaim = async (claim: any) => {
+    if (actioningClaimId) return;
+    setActioningClaimId(claim.id);
+    try {
+      const res = await fetch(`${apiBase}/api/khata/claims/${claim.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer: 'POS Cashier' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast ? showToast(`Approved BD ${Number(data.clearedAmount).toFixed(3)} for ${claim.customerName || 'customer'}!`, 'success') : alert('Approved!');
+        try {
+          kickCashDrawer();
+          playThankYouVoice();
+        } catch {}
+        setPendingClaims((prev) => prev.filter((c) => c.id !== claim.id));
+        onCustomerUpdated?.();
+      } else {
+        const err = data.error || 'Failed to approve claim';
+        showToast ? showToast(err, 'error') : alert(err);
+      }
+    } catch (err: any) {
+      showToast ? showToast(err.message || 'Network error', 'error') : alert('Network error');
+    } finally {
+      setActioningClaimId(null);
+    }
+  };
+
+  const handleRejectClaim = async (claim: any) => {
+    if (actioningClaimId) return;
+    if (!window.confirm(`Are you sure you want to REJECT the BD ${Number(claim.amount).toFixed(3)} payment claim for ${claim.customerName || 'customer'}? Debt balance will remain unpaid.`)) {
+      return;
+    }
+    setActioningClaimId(claim.id);
+    try {
+      const res = await fetch(`${apiBase}/api/khata/claims/${claim.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer: 'POS Cashier', reason: 'Unverified on BenefitPay device' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast ? showToast(`Claim rejected for ${claim.customerName}`, 'info') : alert('Claim rejected');
+        setPendingClaims((prev) => prev.filter((c) => c.id !== claim.id));
+      } else {
+        const err = data.error || 'Failed to reject claim';
+        showToast ? showToast(err, 'error') : alert(err);
+      }
+    } catch (err: any) {
+      showToast ? showToast(err.message || 'Network error', 'error') : alert('Network error');
+    } finally {
+      setActioningClaimId(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
@@ -69,26 +151,44 @@ export default function KhataHubModal({
               <X size={24} />
             </button>
           </div>
-          <div className="flex grid-cols-2 w-full text-lg font-bold">
+          <div className="flex grid-cols-3 w-full text-base font-bold">
             <button
               onClick={() => setActiveTab('SETTLE')}
-              className={`flex-1 py-4 border-b-4 transition-colors cursor-pointer ${
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${
                 activeTab === 'SETTLE'
                   ? 'border-emerald-500 text-emerald-600 bg-emerald-50'
                   : 'border-transparent text-slate-500 hover:bg-slate-100'
               }`}
             >
-              Receive Payment (Settle)
+              Receive Payment
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('CLAIMS');
+                fetchPendingClaims();
+              }}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                activeTab === 'CLAIMS'
+                  ? 'border-amber-500 text-amber-600 bg-amber-50'
+                  : 'border-transparent text-slate-500 hover:bg-slate-100'
+              }`}
+            >
+              <span>BenefitPay Claims</span>
+              {pendingClaims.length > 0 && (
+                <span className="px-2 py-0.5 text-xs bg-amber-500 text-white font-black rounded-full animate-pulse">
+                  {pendingClaims.length}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('NEW')}
-              className={`flex-1 py-4 border-b-4 transition-colors cursor-pointer ${
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${
                 activeTab === 'NEW'
                   ? 'border-blue-500 text-blue-600 bg-blue-50'
                   : 'border-transparent text-slate-500 hover:bg-slate-100'
               }`}
             >
-              <UserPlus className="inline mr-2" size={20} /> New Customer
+              <UserPlus className="inline mr-1" size={18} /> New Customer
             </button>
           </div>
         </div>
@@ -106,6 +206,86 @@ export default function KhataHubModal({
               scannedCardUid={scannedUid}
               clearScan={clearScan}
             />
+          ) : activeTab === 'CLAIMS' ? (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border">
+                <div>
+                  <h4 className="font-extrabold text-slate-800 text-lg">BenefitPay Fawri+ Claims</h4>
+                  <p className="text-xs text-slate-500">
+                    Verify customer's reference against the store BenefitPay phone before approving.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchPendingClaims}
+                  disabled={loadingClaims}
+                  className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw size={14} className={loadingClaims ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {loadingClaims && pendingClaims.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">Loading claims...</div>
+              ) : pendingClaims.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 mx-auto flex items-center justify-center text-slate-400">
+                    <ShieldCheck size={24} />
+                  </div>
+                  <p className="text-sm font-bold text-slate-600">No Pending BenefitPay Claims</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    When customers submit a Fawri+ transfer reference on their PWA, it will appear here for cashier review.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingClaims.map((claim) => (
+                    <div
+                      key={claim.id}
+                      className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-amber-400 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-slate-900 text-base">
+                            {claim.customerName || 'Customer'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            Ref: {claim.reference}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 font-mono">
+                          Current Debt: BD {Number(claim.currentBalance ?? 0).toFixed(3)} • Claimed: <strong className="text-emerald-700 font-extrabold text-sm">BD {Number(claim.amount).toFixed(3)}</strong>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Submitted {new Date(claim.createdAt || Date.now()).toLocaleTimeString()}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleApproveClaim(claim)}
+                          disabled={actioningClaimId === claim.id}
+                          className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check size={16} />
+                          <span>Approve & Clear</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectClaim(claim)}
+                          disabled={actioningClaimId === claim.id}
+                          className="flex-1 sm:flex-none px-3 py-2.5 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <X size={16} />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <NewCustomerView
               apiBase={apiBase}
@@ -1468,8 +1648,9 @@ function KhataEditModal({
   };
 
   const handleVerifyPinAndDelete = async (pinToVerify: string) => {
-    // Protected by Manager 9999 PIN
-    if (pinToVerify !== '9999') {
+    // Protected by Manager PIN
+    const managerPin = getManagerPin();
+    if (pinToVerify !== managerPin) {
       setPinError('Unauthorized - Incorrect Manager PIN');
       return;
     }
@@ -1478,6 +1659,10 @@ function KhataEditModal({
     try {
       const res = await fetch(`${apiBase}/khata/${customer.id}`, {
         method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': pinToVerify
+        }
       });
       const data = await res.json();
 
@@ -1628,7 +1813,7 @@ function KhataEditModal({
               </div>
               <h4 className="text-2xl font-black text-slate-800">Manager Authorization</h4>
               <p className="text-xs text-slate-500 mt-1 mb-4 leading-relaxed">
-                Enter Manager PIN (<strong>9999</strong>) to authorize soft-deletion of account <strong>{customer.name}</strong>.
+                Enter Manager PIN to authorize soft-deletion of account <strong>{customer.name}</strong>.
               </p>
 
               {/* Masked PIN Display */}

@@ -1,0 +1,72 @@
+{
+  "id": "/",
+  "name": "Askar Supermarket — Customer Khata",
+  "short_name": "Askar Khata",
+  "description": "Official digital grocery credit ledger and BenefitPay settlement portal for Askar Supermarket patrons.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#022c22",
+  "theme_color": "#059669",
+  "orientation": "portrait-primary",
+  "categories": ["finance", "shopping", "business"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scan Receipt QR",
+      "short_name": "Scan QR",
+      "description": "Scan Askar Supermarket receipt QR code to view live bill",
+      "url": "/?action=scan",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Lookup My Khata",
+      "short_name": "Lookup",
+      "description": "Search by phone number or Bahrain CPR",
+      "url": "/",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

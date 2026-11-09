@@ -1,0 +1,15 @@
+# Askar Khata Customer Portal — Search Engine Crawler Policy
+User-agent: *
+Disallow: /api/
+Disallow: /statement/
+Disallow: /tab/
+Disallow: /khata/
+Disallow: /customer/
+Disallow: /pay/
+
+# Allow indexing of public landing page only
+Allow: /$
+Allow: /favicon.svg
+Allow: /manifest.json
+Allow: /pwa-*.png
+

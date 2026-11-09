@@ -2,12 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#dc2626" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
+    <!-- WCAG 1.4.4 Compliant: Pinch-to-zoom allowed for low-vision/elderly patrons (Resolved PWA-ACC-01) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#059669" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#022c22" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Askar Khata" />
     <title>Askar Supermarket — Customer Khata</title>
+
+    <!-- OpenGraph & Social Metadata for WhatsApp Rich Previews -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Askar Supermarket" />
+    <meta property="og:title" content="Askar Supermarket — Customer Khata Portal" />
+    <meta property="og:description" content="View your digital grocery tab, itemized receipts, and settle online securely via BenefitPay & Fawri+." />
+    <meta property="og:image" content="https://askar-khata-pwa.vercel.app/pwa-512x512.png" />
+    <meta property="og:url" content="https://askar-khata-pwa.vercel.app" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Askar Supermarket — Customer Khata Portal" />
+    <meta name="twitter:description" content="Official digital grocery ledger and BenefitPay settlement portal." />
+    <meta name="twitter:image" content="https://askar-khata-pwa.vercel.app/pwa-512x512.png" />
   </head>
-  <body class="bg-gray-100 antialiased">
+  <body class="bg-slate-950 antialiased selection:bg-emerald-500 selection:text-white">
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center; color: #ffffff; background: #022c22; min-height: 100vh;">
+        <h1 style="color: #34d198; font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">Askar Supermarket — Customer Khata</h1>
+        <p style="color: #cbd5e1; font-size: 0.9rem; max-width: 400px; margin: 0 auto; line-height: 1.5;">
+          Please enable JavaScript in your browser settings to access your digital Khata statement and BenefitPay checkout.
+        </p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

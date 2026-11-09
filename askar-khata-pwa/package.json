@@ -1,20 +1,25 @@
 {
   "name": "askar-khata-pwa",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:host": "vite --port 5174 --host 0.0.0.0",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node api/server.js",
+    "server": "node api/server.js"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
     "@tailwindcss/vite": "^4.3.3",
+    "bcryptjs": "^3.0.3",
     "fastify": "^5.12.7",
     "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.70.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",

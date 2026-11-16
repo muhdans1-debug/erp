@@ -185,7 +185,7 @@ await fastify.register(cors, {
       if (isRfc1918 || isTrustedOrigin) {
         return cb(null, true);
       }
-    } catch {}
+    } catch { }
     return cb(new Error('CORS Not Allowed'), false);
   },
   methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -225,22 +225,22 @@ fastify.register(procurementRoutes);
 // WebSocket Keepalive Monitor: Graceful keep-alive without aggressively killing local POS hardware
 const heartbeatInterval = setInterval(() => {
   if (!fastify.websocketServer?.clients) return;
-  
+
   fastify.websocketServer.clients.forEach((ws) => {
     if (ws.readyState !== 1) return; // Only ping OPEN sockets
-    
+
     // Only terminate after 5 consecutive missed heartbeats (2.5 minutes) of complete inactivity
     if (ws.missedPings && ws.missedPings >= 5) {
       fastify.log.warn('Terminating inactive WebSocket client after 5 missed heartbeats');
       return ws.terminate();
     }
-    
+
     ws.missedPings = (ws.missedPings || 0) + 1;
     try {
       ws.ping();
       // Also send a lightweight JSON heartbeat for clients whose WebView handles message events better than raw control frames
       ws.send(JSON.stringify({ type: 'PING', serverEpoch: Date.now() }));
-    } catch {}
+    } catch { }
   });
 }, 30000);
 
@@ -259,8 +259,8 @@ fastify.register(async function (fastifyWsInstance) {
     const ws = connection?.socket || connection;
     ws.isAlive = true;
     ws.missedPings = 0;
-    ws.on('pong', () => { 
-      ws.isAlive = true; 
+    ws.on('pong', () => {
+      ws.isAlive = true;
       ws.missedPings = 0;
     });
     const remoteIp = req.socket?.remoteAddress || 'unknown';
@@ -314,14 +314,14 @@ fastify.register(async function (fastifyWsInstance) {
 
       // Allow local store POS terminals (LAN / localhost / authorized) to trigger drawer kick freely
       if (event.type === 'REMOTE_DRAWER_KICK' || event.type === 'DRAWER_KICK') {
-        const isLocalOrStore = remoteIp.includes('127.0.0.1') || 
-                               remoteIp.includes('::1') || 
-                               remoteIp.startsWith('192.168.') || 
-                               remoteIp.startsWith('10.') || 
-                               remoteIp.startsWith('172.') ||
-                               event.source === 'LAPTOP_POS' ||
-                               event.source === 'STORE_POS' ||
-                               event.authorized === true;
+        const isLocalOrStore = remoteIp.includes('127.0.0.1') ||
+          remoteIp.includes('::1') ||
+          remoteIp.startsWith('192.168.') ||
+          remoteIp.startsWith('10.') ||
+          remoteIp.startsWith('172.') ||
+          event.source === 'LAPTOP_POS' ||
+          event.source === 'STORE_POS' ||
+          event.authorized === true;
         if (!isLocalOrStore) {
           const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
           if (!managerSecret || !event.token || typeof event.token !== 'string') {
@@ -336,7 +336,7 @@ fastify.register(async function (fastifyWsInstance) {
           fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized command "${event.type}" from IP: ${remoteIp}`);
           try {
             ws.send(JSON.stringify({ type: 'ERROR', message: 'Unauthorized WebSocket command blocked.' }));
-          } catch {}
+          } catch { }
           return;
         }
         const bufA = Buffer.from(event.token);
@@ -345,7 +345,7 @@ fastify.register(async function (fastifyWsInstance) {
           fastify.log.warn(`🚨 [Unified WS Bus] Invalid credentials for "${event.type}" from IP: ${remoteIp}`);
           try {
             ws.send(JSON.stringify({ type: 'ERROR', message: 'Invalid manager credentials.' }));
-          } catch {}
+          } catch { }
           return;
         }
       }
@@ -588,7 +588,7 @@ const seedDistributors = async () => {
 
   try {
     await db.execute("UPDATE Product SET distributorId = 'dist_local' WHERE distributorId IS NULL OR distributorId = ''");
-  } catch {}
+  } catch { }
 };
 
 // Helper: Seed sample products if missing (with Bahrain VAT compliance: 0% basic food, 10% standard)
@@ -1097,7 +1097,7 @@ fastify.route({
     // Non-blocking 0ms response for POS terminals:
     // Guarantees POS terminals are never stalled by cloud WAN latency or Turso network limits.
     const now = Date.now();
-    
+
     // Background cloud sync debounced to at most once per 30 seconds
     if (!isTursoSyncRunning && (now - lastTursoSyncTime > 30000)) {
       isTursoSyncRunning = true;
@@ -1278,7 +1278,7 @@ const loadRolloutConfig = () => {
     if (fs.existsSync(rolloutConfigFile)) {
       return JSON.parse(fs.readFileSync(rolloutConfigFile, 'utf-8'));
     }
-  } catch {}
+  } catch { }
   return defaultRolloutConfig;
 };
 

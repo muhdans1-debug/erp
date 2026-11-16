@@ -61,8 +61,8 @@ export default async function procurementRoutes(fastify, options) {
   fastify.get('/api/distributors', handleGetDistributorMetrics);
   fastify.get('/api/distributors/metrics', handleGetDistributorMetrics);
 
-  // 2. Register new distributor
-  fastify.post('/api/distributors', async (request, reply) => {
+  // 2. Register new distributor - Protected by Manager Auth
+  fastify.post('/api/distributors', { preHandler: managerAuth }, async (request, reply) => {
     const { name, whatsappNumber, contactEmail, minimumOrderValue, deliveryDays } = request.body || {};
     if (!name || !name.trim()) {
       return reply.status(400).send({ error: 'Distributor name is required' });
@@ -89,8 +89,8 @@ export default async function procurementRoutes(fastify, options) {
     return { success: true, distributor: newDist };
   });
 
-  // 3. Update distributor details & Minimum Order Value (MOV)
-  fastify.put('/api/distributors/:id', async (request, reply) => {
+  // 3. Update distributor details & Minimum Order Value (MOV) - Protected by Manager Auth
+  fastify.put('/api/distributors/:id', { preHandler: managerAuth }, async (request, reply) => {
     const { id } = request.params;
     const { name, whatsappNumber, contactEmail, minimumOrderValue, deliveryDays } = request.body || {};
 
@@ -111,8 +111,8 @@ export default async function procurementRoutes(fastify, options) {
     return { success: true, distributor: updated };
   });
 
-  // 4. Delete distributor
-  fastify.delete('/api/distributors/:id', async (request, reply) => {
+  // 4. Delete distributor - Protected by Manager Auth
+  fastify.delete('/api/distributors/:id', { preHandler: managerAuth }, async (request, reply) => {
     const { id } = request.params;
     const existing = await db.orm.Distributor.where({ id }).all().first();
     if (!existing) {
@@ -133,8 +133,8 @@ export default async function procurementRoutes(fastify, options) {
 
 
   // --- Inventory Wastage, Purchase Orders, and Automated Restock ---
-// 5b. Wastage & Spoilage Write-Off Engine
-fastify.post('/api/inventory/wastage', async (request, reply) => {
+// 5b. Wastage & Spoilage Write-Off Engine - Protected by Manager Auth
+fastify.post('/api/inventory/wastage', { preHandler: managerAuth }, async (request, reply) => {
   const { barcode, quantity, reason, loggedBy } = request.body || {};
 
   try {
@@ -164,14 +164,11 @@ fastify.post('/api/inventory/wastage', async (request, reply) => {
     const unitCost = Number(product.purchasePrice ?? product.unitCost ?? 0.0);
     const totalLoss = unitCost * qty;
 
-    // 2. Execute transaction (Deduct stock and log financial loss)
+    // 2. Execute transaction (Atomically deduct stock and log financial loss)
     await db.transaction(async (tx) => {
-      const currentStock = Number(product.stockQuantity || 0);
-      const newStock = Math.max(0, currentStock - qty);
-
-      await tx.orm.Product.where({ id: product.id }).update({
-        stockQuantity: newStock,
-        updatedAt: new Date(),
+      await tx.execute({
+        sql: `UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?), updatedAt = ? WHERE id = ?`,
+        args: [qty, new Date().toISOString(), product.id]
       });
 
       await tx.orm.WastageLog.create({
@@ -370,9 +367,9 @@ const handleDiscardPO = async (request, reply) => {
   }
 };
 
-fastify.delete('/api/purchase-orders/:id', handleDiscardPO);
-fastify.post('/api/purchase-orders/:id/discard', handleDiscardPO);
-fastify.post('/api/purchase-orders/:id/cancel', handleDiscardPO);
+fastify.delete('/api/purchase-orders/:id', { preHandler: managerAuth }, handleDiscardPO);
+fastify.post('/api/purchase-orders/:id/discard', { preHandler: managerAuth }, handleDiscardPO);
+fastify.post('/api/purchase-orders/:id/cancel', { preHandler: managerAuth }, handleDiscardPO);
 
 // Clear All Draft Purchase Orders at once (Batch Dismissal)
 const handleClearAllDrafts = async (request, reply) => {
@@ -394,9 +391,9 @@ const handleClearAllDrafts = async (request, reply) => {
   }
 };
 
-fastify.delete('/api/purchase-orders/drafts/clear-all', handleClearAllDrafts);
-fastify.post('/api/purchase-orders/drafts/clear-all', handleClearAllDrafts);
-fastify.delete('/api/purchase-orders/drafts', handleClearAllDrafts);
+fastify.delete('/api/purchase-orders/drafts/clear-all', { preHandler: managerAuth }, handleClearAllDrafts);
+fastify.post('/api/purchase-orders/drafts/clear-all', { preHandler: managerAuth }, handleClearAllDrafts);
+fastify.delete('/api/purchase-orders/drafts', { preHandler: managerAuth }, handleClearAllDrafts);
 
 // Fetch all orders in transit (IN_TRANSIT, APPROVED or SENT, awaiting delivery)
 const handleGetTransitOrders = async () => {
@@ -408,7 +405,7 @@ const handleGetTransitOrders = async () => {
 fastify.get('/api/purchase-orders/transit', handleGetTransitOrders);
 fastify.get('/po/transit', handleGetTransitOrders);
 
-// Mark a Purchase Order as Received and restock the shelves with barcode auditing
+// Mark a Purchase Order as Received and restock the shelves with barcode auditing - Protected by Manager Auth
 const handleReceivePO = async (request, reply) => {
   const { id } = request.params;
   const { receivedItems } = request.body || {};
@@ -424,7 +421,7 @@ const handleReceivePO = async (request, reply) => {
       ? receivedItems
       : (typeof po.itemsJson === 'string' ? JSON.parse(po.itemsJson) : (po.itemsJson || []));
 
-    // 2. Perform the restock inside a SQLite transaction
+    // 2. Perform the restock inside a SQLite transaction with atomic increments
     await db.transaction(async (tx) => {
       for (const item of itemsToProcess) {
         let liveProduct = null;
@@ -438,12 +435,11 @@ const handleReceivePO = async (request, reply) => {
         if (liveProduct) {
           const qtyToAdd = Number(item.qty !== undefined ? item.qty : (item.received_qty !== undefined ? item.received_qty : (item.reorderQuantity || 0)));
           if (qtyToAdd > 0) {
-            const newQty = (liveProduct.stockQuantity || 0) + qtyToAdd;
-            await tx.orm.Product.where({ id: liveProduct.id }).update({
-              stockQuantity: newQty,
-              updatedAt: new Date(),
+            await tx.execute({
+              sql: `UPDATE Product SET stockQuantity = stockQuantity + ?, updatedAt = ? WHERE id = ?`,
+              args: [qtyToAdd, new Date().toISOString(), liveProduct.id]
             });
-            console.log(`📦 Restocked ${liveProduct.name} (${liveProduct.id}): ${liveProduct.stockQuantity} -> ${newQty} (+${qtyToAdd})`);
+            console.log(`📦 Restocked ${liveProduct.name} (${liveProduct.id}): +${qtyToAdd}`);
           }
         }
       }
@@ -462,8 +458,8 @@ const handleReceivePO = async (request, reply) => {
     return reply.status(500).send({ error: 'Failed to receive delivery', details: error.message });
   }
 };
-fastify.post('/api/purchase-orders/:id/receive', handleReceivePO);
-fastify.post('/po/:id/receive', handleReceivePO);
+fastify.post('/api/purchase-orders/:id/receive', { preHandler: managerAuth }, handleReceivePO);
+fastify.post('/po/:id/receive', { preHandler: managerAuth }, handleReceivePO);
 
 // Seed helper for instant front-counter receiving testing
 fastify.post('/api/purchase-orders/seed-transit', async (request, reply) => {
@@ -666,8 +662,8 @@ fastify.post('/api/purchase-orders/seed-transit', async (request, reply) => {
     }
   });
 
-  // Convert auto-reorder supplier draft into official PurchaseOrder in DB
-  fastify.post('/api/procurement/auto-reorder/create-po', async (request, reply) => {
+  // Convert auto-reorder supplier draft into official PurchaseOrder in DB - Protected by Manager Auth
+  fastify.post('/api/procurement/auto-reorder/create-po', { preHandler: managerAuth }, async (request, reply) => {
     const { distributorId } = request.body || {};
     try {
       const autoRes = await fastify.inject({

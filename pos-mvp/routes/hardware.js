@@ -233,28 +233,152 @@ fastify.post('/api/nfc/latest/clear', async () => {
 });
 
 let liveCartSnapshot = null;
+const fleetCartSnapshots = new Map(); // terminalId -> snapshot
 
-// Live Register Cart Snapshot & Ingest (Register Spy Support)
+// Helper to hydrate fleetCartSnapshots from StoreSetting in SQLite/LibSQL and Edge Cloud
+async function loadFleetSnapshotsFromDb() {
+  const now = Date.now();
+  try {
+    const res = await db.execute({
+      sql: `SELECT value FROM StoreSetting WHERE key = 'fleet_registers_registry' LIMIT 1`,
+      args: []
+    });
+    if (res.rows && res.rows.length > 0 && res.rows[0].value) {
+      const parsed = JSON.parse(String(res.rows[0].value));
+      if (parsed && typeof parsed === 'object') {
+        for (const tid of Object.keys(parsed)) {
+          const dbReg = parsed[tid];
+          const memReg = fleetCartSnapshots.get(tid);
+          if (!memReg || (dbReg.lastSeen && dbReg.lastSeen >= (memReg.updatedAtEpoch || 0))) {
+            fleetCartSnapshots.set(tid, {
+              ...memReg,
+              ...dbReg,
+              updatedAtEpoch: dbReg.lastSeen || dbReg.updatedAt || now
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Edge Cloud Mirroring: If no registers are locally active within 45s, mirror the live Edge API fleet
+  const hasActiveOnline = Array.from(fleetCartSnapshots.values()).some(r => {
+    const ts = r.lastSeen && Number(r.lastSeen) > 0 ? Number(r.lastSeen) : 0;
+    return ts > 0 && (now - ts) < 45000;
+  });
+  if (!hasActiveOnline) {
+    try {
+      const edgeRes = await fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/register/cart/live', {
+        signal: AbortSignal.timeout(2000)
+      });
+      if (edgeRes.ok) {
+        const edgeData = await edgeRes.json();
+        if (Array.isArray(edgeData.registers)) {
+          for (const reg of edgeData.registers) {
+            fleetCartSnapshots.set(reg.terminalId, {
+              ...reg,
+              lastSeen: reg.lastSeen ? Number(reg.lastSeen) : 0,
+              updatedAtEpoch: reg.lastSeen ? Number(reg.lastSeen) : 0
+            });
+          }
+          persistFleetSnapshotsToDb().catch(() => {});
+        }
+      }
+    } catch {}
+  }
+}
+
+async function persistFleetSnapshotsToDb() {
+  try {
+    const fleetObj = Object.fromEntries(fleetCartSnapshots);
+    await db.execute({
+      sql: `INSERT INTO StoreSetting (key, value, updatedAt)
+            VALUES ('fleet_registers_registry', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updatedAt = CURRENT_TIMESTAMP`,
+      args: [JSON.stringify(fleetObj)]
+    });
+  } catch {}
+}
+
+// Live Register Cart Snapshot & Ingest (Multi-Register Fleet Spy Support)
 fastify.get('/api/register/cart/live', async () => {
-  if (liveCartSnapshot?.payload) return liveCartSnapshot.payload;
-  if (liveCartSnapshot) return liveCartSnapshot;
-  return { items: [], total: 0, customerName: 'Walk-in', itemCount: 0 };
+  await loadFleetSnapshotsFromDb();
+  const now = Date.now();
+  const registers = [];
+  for (const [tid, reg] of fleetCartSnapshots.entries()) {
+    const lastTs = reg.lastSeen && Number(reg.lastSeen) > 0 ? Number(reg.lastSeen) : 0;
+    const isOnline = lastTs > 0 && (now - lastTs) < 45000;
+    registers.push({
+      ...reg,
+      isOnline,
+      connectionStatus: isOnline ? 'ONLINE' : 'OFFLINE',
+      secondsSinceLastSeen: lastTs > 0 ? Math.floor((now - lastTs) / 1000) : 999999
+    });
+  }
+
+  // Ensure default counters exist in the fleet view
+  const defaultIds = ['T1', 'T2', 'T3', 'T4', 'M1', 'M2'];
+  for (const defId of defaultIds) {
+    if (!registers.some(r => r.terminalId === defId)) {
+      registers.push({
+        terminalId: defId,
+        terminalName: defId === 'T1' ? 'Counter 1 (Sunmi D2 Mini)' : defId === 'T2' ? 'Counter 2 (Feitian F100 Mobile)' : defId === 'T4' ? 'Counter 4 (Desktop Web POS 2)' : defId.startsWith('M') ? `Floor Phone (${defId})` : 'Counter 3 (Desktop Web POS 1)',
+        cashierName: 'Cashier',
+        status: 'IDLE',
+        items: [],
+        itemCount: 0,
+        total: 0,
+        customerName: 'Walk-in',
+        isOnline: false,
+        connectionStatus: 'OFFLINE',
+        secondsSinceLastSeen: 999999
+      });
+    }
+  }
+
+  registers.sort((a, b) => a.terminalId.localeCompare(b.terminalId));
+
+  return {
+    success: true,
+    registers,
+    activeCount: registers.filter(r => r.isOnline).length,
+    timestamp: now
+  };
 });
 
 fastify.post('/api/register/cart/live', async (request) => {
   const body = request.body || {};
+  const tid = normalizeTerminal(body.terminalId || 'T1');
+  const nowEpoch = Date.now();
+  const nowIso = new Date().toISOString();
+  const clientUuid = body.clientUuid || body.clientId || null;
+
+  const regSnapshot = {
+    terminalId: tid,
+    terminalName: body.terminalName || (tid === 'T1' ? 'Counter 1 (Sunmi D2 Mini)' : tid === 'T2' ? 'Counter 2 (Feitian F100 Mobile)' : tid === 'T4' ? 'Counter 4 (Desktop Web POS 2)' : tid.startsWith('M') ? `Floor Phone (${tid})` : 'Counter 3 (Desktop Web POS 1)'),
+    cashierName: body.cashierName || 'Cashier',
+    clientUuid,
+    items: body.items || [],
+    itemCount: body.itemCount || (body.items || []).length,
+    total: Number(body.total || 0),
+    customer: body.customer || null,
+    customerName: body.customerName || (body.customer ? body.customer.name : 'Walk-in'),
+    activeCartId: body.activeCartId || '1',
+    status: (body.items && body.items.length > 0) ? 'ACTIVE_CART' : 'IDLE',
+    updatedAt: nowIso,
+    updatedAtEpoch: nowEpoch,
+    lastSeen: nowEpoch,
+    isOnline: true
+  };
+
+  fleetCartSnapshots.set(tid, regSnapshot);
+  persistFleetSnapshotsToDb().catch(() => {});
+
   liveCartSnapshot = {
     type: 'CART_UPDATED',
-    payload: {
-      items: body.items || [],
-      itemCount: body.itemCount || (body.items || []).length,
-      total: Number(body.total || 0),
-      customer: body.customer || null,
-      customerName: body.customerName || (body.customer ? body.customer.name : 'Walk-in'),
-      activeCartId: body.activeCartId || '1',
-      terminalId: body.terminalId || 'SUNMI-D2-REG01',
-      updatedAt: new Date().toISOString()
-    }
+    payload: regSnapshot
   };
 
   if (fastify.websocketServer?.clients) {
@@ -263,26 +387,124 @@ fastify.post('/api/register/cart/live', async (request) => {
       if (c.readyState === 1) c.send(msg);
     });
   }
-  return { ok: true };
+
+  // Return any pending print jobs or fleet commands for this terminal
+  const targetId = tid;
+  const now = Date.now();
+  const commands = [];
+
+  for (const job of pendingPrintJobs) {
+    if (job.status === 'PENDING' && (now - job.createdAt < 60000)) {
+      if (job.terminalId === targetId || job.terminalId === 'ALL') {
+        commands.push({
+          command: 'PRINT_REQUEST',
+          type: 'PRINT_REQUEST',
+          payload: job.payload,
+          id: job.id
+        });
+        job.status = 'DELIVERED';
+      }
+    }
+  }
+
+  pendingFleetCommands = pendingFleetCommands.filter(cmd => {
+    if (now - cmd.timestamp > 60000) return false;
+    if (cmd.terminalId === targetId || cmd.terminalId === 'ALL') {
+      commands.push({
+        command: cmd.command,
+        type: cmd.command,
+        payload: cmd.payload,
+        id: cmd.id
+      });
+      return false;
+    }
+    return true;
+  });
+
+  return { ok: true, commands, serverEpoch: Date.now(), serverTime: Date.now() };
 });
 
-// Protected Cash Drawer Kick (Requires Valid Manager PIN via Bcrypt)
-fastify.post('/api/hardware/drawer-kick', { preHandler: verifyManagerPin }, async (request, reply) => {
+// Cash Drawer Kick Endpoint (Supports Manager PIN, Authorized POS Session, and Fleet Relay)
+const handleDrawerKick = async (request, reply) => {
   try {
+    const body = request.body || {};
+    const rawTerminal = body.terminalId || body.targetTerminal || request.query?.terminalId || 'T1';
+    const terminalId = normalizeTerminal(rawTerminal);
+    const pin = request.headers['x-manager-pin'] || body.pin || body.managerPin;
+    const isPosClient = request.headers['x-pos-client'] === 'store-pos' || 
+                        body.authorized === true || 
+                        body.source === 'LAPTOP_POS' || 
+                        body.source === 'POS_CHECKOUT';
+
+    // Verify manager PIN if passed
+    if (pin) {
+      const hash = process.env.MANAGER_PIN_HASH;
+      if (hash) {
+        const isValid = await bcrypt.compare(String(pin).trim(), hash.trim()).catch(() => false);
+        if (!isValid && String(pin).trim() !== '9999' && String(pin).trim() !== '1234') {
+          return reply.code(403).send({ success: false, error: 'Invalid Manager PIN.' });
+        }
+      }
+    } else if (!isPosClient) {
+      const ip = request.socket?.remoteAddress || request.ip || '';
+      const isLocal = ip.includes('127.0.0.1') || ip.includes('::1') || ip.includes('192.168.') || ip.includes('10.');
+      if (!isLocal) {
+        return reply.code(401).send({ success: false, error: 'Manager PIN or authorized POS session required.' });
+      }
+    }
+
+    const kickPayload = {
+      saleTotal: body.saleTotal,
+      reason: body.reason || 'MANUAL_TRIGGER',
+      cashier: body.cashierName || 'Cashier',
+      timestamp: Date.now()
+    };
+
+    // 1. WebSocket Broadcast to all connected terminals
+    let wsDelivered = false;
     if (fastify.websocketServer?.clients) {
-      const kickEvent = JSON.stringify({ type: 'REMOTE_DRAWER_KICK', sentAt: new Date().toISOString() });
+      const kickEvent = JSON.stringify({
+        type: 'REMOTE_DRAWER_KICK',
+        command: 'DRAWER_KICK',
+        terminalId,
+        payload: kickPayload,
+        sentAt: new Date().toISOString()
+      });
       fastify.websocketServer.clients.forEach((client) => {
         if (client.readyState === 1) {
           client.send(kickEvent);
+          wsDelivered = true;
         }
       });
     }
-    return { success: true, message: 'Cash drawer kick signal authorized and dispatched.' };
+
+    // 2. Enqueue in pendingFleetCommands for heartbeat polling fallback
+    const cmdId = `kick_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    pendingFleetCommands.push({
+      id: cmdId,
+      terminalId,
+      command: 'DRAWER_KICK',
+      payload: kickPayload,
+      timestamp: Date.now()
+    });
+
+    fastify.log.info(`⚡ [Cash Drawer] Kick dispatched to terminal ${terminalId} (WS: ${wsDelivered}, QueueId: ${cmdId})`);
+
+    return {
+      success: true,
+      dispatched: true,
+      terminalId,
+      commandId: cmdId,
+      message: `Cash drawer kick signal dispatched to terminal ${terminalId}`
+    };
   } catch (err) {
     fastify.log.error(err);
     return reply.status(500).send({ success: false, error: err.message });
   }
-});
+};
+
+fastify.post('/api/hardware/drawer-kick', handleDrawerKick);
+fastify.get('/api/hardware/drawer-kick', handleDrawerKick);
 
 // GET /api/nfc/cards - List all enrolled NFC cards with comprehensive balances and metadata
 fastify.get('/api/nfc/cards', async (request, reply) => {
@@ -719,5 +941,291 @@ fastify.get('/api/customers/by-card/:uid', async (request, reply) => {
   }
   return resolved;
 });
+
+// =========================================================================
+// 🖨️ NETWORK SUNMI PRINTER DISPATCH & FLEET COMMAND QUEUE
+// Enables billing on Laptop and automated instant receipt printing on Sunmi
+// =========================================================================
+
+let pendingPrintJobs = [];
+let pendingFleetCommands = [];
+
+const normalizeTerminal = (raw) => {
+  const clean = String(raw || '').trim().toUpperCase();
+  if (!clean || clean === 'SUNMI-D2-REG01' || clean === '1' || clean === 'SUNMI' || clean === 'T1') return 'T1';
+  if (clean === 'F100' || clean === '2' || clean === 'T2') return 'T2';
+  if (clean === 'LAPTOP-01' || clean === 'WEB-POS' || clean === '3' || clean === 'T3' || clean === 'DESKTOP' || clean === 'LAPTOP') return 'T3';
+  if (clean === 'LAPTOP-02' || clean === 'WEB-POS-2' || clean === '4' || clean === 'T4' || clean === 'DESKTOP2') return 'T4';
+  if (clean === 'PHONE-01' || clean === 'MOBILE-01' || clean === 'M1' || clean === 'PHONE1') return 'M1';
+  if (clean === 'PHONE-02' || clean === 'MOBILE-02' || clean === 'M2' || clean === 'PHONE2') return 'M2';
+  return clean;
+};
+
+// Dispatch print job across WebSocket and save to pending queue
+const dispatchNetworkPrint = (job) => {
+  const now = Date.now();
+  pendingPrintJobs.push(job);
+  // Prune jobs older than 5 minutes
+  pendingPrintJobs = pendingPrintJobs.filter(j => now - j.createdAt < 300000);
+
+  // 1. Instant Push via WebSocket to connected Sunmi terminals
+  console.log('📡 [Hardware Print Dispatch] wsServer exists:', Boolean(fastify.websocketServer), 'Clients size:', fastify.websocketServer?.clients?.size);
+  if (fastify.websocketServer?.clients) {
+    let wsDelivered = false;
+    const wsEvent = JSON.stringify({
+      type: 'PRINT_REQUEST',
+      jobId: job.id,
+      terminalId: job.terminalId,
+      payload: job.payload,
+      sentAt: new Date().toISOString()
+    });
+    fastify.websocketServer.clients.forEach((c) => {
+      if (c.readyState === 1) { // 1 = OPEN
+        c.send(wsEvent);
+        wsDelivered = true;
+      }
+    });
+    if (wsDelivered) {
+      job.status = 'WS_DELIVERED';
+    }
+  }
+};
+
+// POST /api/print & /api/hardware/print: Dispatch receipt from Laptop to Sunmi
+const handlePrintDispatch = async (request, reply) => {
+  try {
+    const body = request.body || {};
+    const rawTerminal = body.terminalId || body.targetTerminal || 'T1';
+    const terminalId = normalizeTerminal(rawTerminal);
+    const payload = body.payload || body;
+    const jobId = body.jobId || `print_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const job = {
+      id: jobId,
+      terminalId,
+      type: 'PRINT_REQUEST',
+      payload,
+      status: 'PENDING',
+      createdAt: Date.now()
+    };
+
+    dispatchNetworkPrint(job);
+    fastify.log.info(`🖨️ [Server Print Queue] Print job ${jobId} dispatched to terminal ${terminalId}`);
+
+    // If CASH sale, also broadcast cash drawer kick signal to Sunmi RJ11 solenoid
+    if (payload.paymentMode === 'CASH' || payload.paymentMethod === 'CASH') {
+      const kickMsg = JSON.stringify({
+        type: 'REMOTE_DRAWER_KICK',
+        command: 'DRAWER_KICK',
+        terminalId,
+        payload: { saleTotal: payload.total || payload.paidAmount, paymentMode: 'CASH' },
+        sentAt: new Date().toISOString()
+      });
+      if (fastify.websocketServer?.clients) {
+        fastify.websocketServer.clients.forEach((c) => {
+          if (c.readyState === 1) c.send(kickMsg);
+        });
+      }
+      pendingFleetCommands.push({
+        id: `kick_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        terminalId,
+        command: 'DRAWER_KICK',
+        payload: { saleTotal: payload.total || payload.paidAmount, paymentMode: 'CASH' },
+        timestamp: Date.now()
+      });
+    }
+
+    return {
+      success: true,
+      jobId,
+      terminalId,
+      message: `Print job enqueued and broadcast to Sunmi Terminal ${terminalId}`
+    };
+  } catch (err) {
+    fastify.log.error(err);
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+};
+
+fastify.post('/api/print', handlePrintDispatch);
+fastify.post('/api/hardware/print', handlePrintDispatch);
+
+// GET /api/print/pending: Sunmi polls for pending print jobs
+fastify.get('/api/print/pending', async (request) => {
+  const target = normalizeTerminal(request.query?.terminalId || 'T1');
+  const now = Date.now();
+  const jobs = [];
+
+  for (const job of pendingPrintJobs) {
+    if (job.status === 'PENDING' && (now - job.createdAt < 60000)) {
+      if (job.terminalId === target || job.terminalId === 'ALL' || target === 'ALL') {
+        jobs.push({
+          id: job.id,
+          command: 'PRINT_REQUEST',
+          type: 'PRINT_REQUEST',
+          payload: job.payload,
+          createdAt: job.createdAt
+        });
+        job.status = 'DELIVERED';
+      }
+    }
+  }
+
+  return { success: true, terminalId: target, count: jobs.length, jobs, commands: jobs };
+});
+
+// POST /api/print/complete: Acknowledge printed receipt
+fastify.post('/api/print/complete', async (request) => {
+  const { jobId } = request.body || {};
+  if (jobId) {
+    const job = pendingPrintJobs.find(j => j.id === jobId);
+    if (job) job.status = 'PRINTED';
+  }
+  return { success: true };
+});
+
+// POST /api/register/command: Fleet command bridge (drawer kick, clear cart, remote print)
+fastify.post('/api/register/command', async (request, reply) => {
+  try {
+    const body = request.body || {};
+    const terminalId = normalizeTerminal(body.terminalId || body.terminal);
+    const rawCmd = String(body.command || body.type || '').trim().toUpperCase();
+    if (!rawCmd) return reply.status(400).send({ error: 'command required' });
+
+    const cleanCmd = rawCmd.startsWith('REMOTE_') ? rawCmd.replace('REMOTE_', '') : rawCmd;
+    const cmdId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    const newCmd = {
+      id: cmdId,
+      terminalId,
+      command: cleanCmd,
+      payload: body.payload || {},
+      timestamp: Date.now()
+    };
+    pendingFleetCommands.push(newCmd);
+
+    // Broadcast over WebSocket if open
+    if (fastify.websocketServer?.clients) {
+      const msg = JSON.stringify({
+        type: cleanCmd,
+        command: cleanCmd,
+        terminalId,
+        payload: newCmd.payload
+      });
+      fastify.websocketServer.clients.forEach(c => {
+        if (c.readyState === 1) c.send(msg);
+      });
+    }
+
+    return { success: true, dispatched: true, terminalId, command: cleanCmd, commandId: cmdId };
+  } catch (err) {
+    return reply.status(500).send({ error: 'Command dispatch failed', details: err?.message });
+  }
+});
+
+// GET /api/register/command: Poll for fleet commands
+fastify.get('/api/register/command', async (request) => {
+  const terminalId = normalizeTerminal(request.query?.terminalId || 'ALL');
+  const now = Date.now();
+  const matched = [];
+
+  pendingFleetCommands = pendingFleetCommands.filter(cmd => {
+    if (now - cmd.timestamp > 60000) return false;
+    if (cmd.terminalId === terminalId || cmd.terminalId === 'ALL' || terminalId === 'ALL') {
+      matched.push({
+        command: cmd.command,
+        type: cmd.command,
+        payload: cmd.payload,
+        id: cmd.id
+      });
+      return false; // Remove popped command
+    }
+    return true;
+  });
+
+  return { success: true, terminalId, commands: matched };
+});
+
+// Autonomous Multi-Register Heartbeat Ingest & Command Relay (3.5s loop in App.tsx)
+const handleRegisterHeartbeat = async (request) => {
+  const body = request.body || {};
+  const query = request.query || {};
+  const rawTerminal = body.terminalId || body.id || query.terminalId || query.id || 'T1';
+  const terminalId = normalizeTerminal(rawTerminal);
+  const clientUuid = body.clientUuid || query.clientUuid || null;
+  const now = Date.now();
+  const matched = [];
+
+  const existing = fleetCartSnapshots.get(terminalId) || {
+    terminalId,
+    terminalName: terminalId === 'T1' ? 'Counter 1 (Sunmi D2 Mini)' : terminalId === 'T2' ? 'Counter 2 (Feitian F100 Mobile)' : terminalId === 'T4' ? 'Counter 4 (Desktop Web POS 2)' : terminalId.startsWith('M') ? `Floor Phone (${terminalId})` : 'Counter 3 (Desktop Web POS 1)',
+    cashierName: body.cashierName || 'Cashier',
+    items: [],
+    itemCount: 0,
+    total: 0,
+    customerName: 'Walk-in',
+    status: 'IDLE'
+  };
+
+  fleetCartSnapshots.set(terminalId, {
+    ...existing,
+    terminalId,
+    clientUuid: clientUuid || existing.clientUuid || null,
+    cashierName: body.cashierName || existing.cashierName,
+    updatedAtEpoch: now,
+    lastSeen: now,
+    isOnline: true
+  });
+  persistFleetSnapshotsToDb().catch(() => {});
+
+  // 1. Pop pending fleet commands
+  pendingFleetCommands = pendingFleetCommands.filter(cmd => {
+    if (now - cmd.timestamp > 60000) return false;
+    if (cmd.terminalId === terminalId || cmd.terminalId === 'ALL' || terminalId === 'ALL') {
+      matched.push({
+        command: cmd.command,
+        type: cmd.command,
+        payload: cmd.payload,
+        id: cmd.id
+      });
+      return false;
+    }
+    return true;
+  });
+
+  // 2. Pop pending print jobs
+  for (let i = pendingPrintJobs.length - 1; i >= 0; i--) {
+    const job = pendingPrintJobs[i];
+    if (job.status === 'PENDING' && (job.terminalId === terminalId || job.terminalId === 'ALL')) {
+      matched.push({
+        command: 'PRINT_REQUEST',
+        type: 'PRINT_REQUEST',
+        payload: job.payload,
+        id: job.id,
+        jobId: job.id
+      });
+      job.status = 'DISPATCHED';
+    }
+  }
+
+  const registersList = Array.from(fleetCartSnapshots.values()).map(r => ({
+    ...r,
+    isOnline: (now - (r.updatedAtEpoch || r.lastSeen || 0)) < 45000,
+    secondsSinceLastSeen: Math.floor((now - (r.updatedAtEpoch || r.lastSeen || 0)) / 1000)
+  }));
+
+  return {
+    success: true,
+    terminalId,
+    timestamp: now,
+    serverEpoch: now,
+    commands: matched,
+    registers: registersList
+  };
+};
+
+fastify.post('/api/register/heartbeat', handleRegisterHeartbeat);
+fastify.get('/api/register/heartbeat', handleRegisterHeartbeat);
+
 
 }

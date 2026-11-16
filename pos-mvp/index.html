@@ -5,9 +5,9 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Askar Supermarket POS</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <!-- Ultra-Low-Latency Cloudflare Edge Preconnect -->
+    <link rel="dns-prefetch" href="https://askar-edge-api.layali-askar-pos.workers.dev">
+    <link rel="preconnect" href="https://askar-edge-api.layali-askar-pos.workers.dev" crossorigin>
     <script>
       window.addEventListener('error', function(e) {
         var errDiv = document.createElement('div');
@@ -19,10 +19,7 @@
         document.body.appendChild(errDiv);
       });
       window.addEventListener('unhandledrejection', function(e) {
-        var errDiv = document.createElement('div');
-        errDiv.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;background:#fef3c7;color:#92400e;padding:16px;font-family:monospace;font-size:14px;z-index:999999;border-top:2px solid #f59e0b;';
-        errDiv.innerHTML = '<strong>Unhandled Promise:</strong> ' + (e.reason ? (e.reason.stack || e.reason.message || e.reason) : 'Unknown');
-        document.body.appendChild(errDiv);
+        console.warn('Unhandled rejection:', e.reason);
       });
     </script>
   </head>

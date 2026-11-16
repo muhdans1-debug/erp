@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Customer } from '../types/pos';
 
 export interface CustomerEnrollmentModalProps {
@@ -6,7 +6,7 @@ export interface CustomerEnrollmentModalProps {
   onClose: () => void;
   customersList: Customer[];
   onSelectCustomer: (customer: Customer) => void;
-  onCreateCustomer: (name: string, cardUid?: string) => void;
+  onCreateCustomer: (name: string, cardUid?: string, previousBalance?: number) => void;
   onBindCard: (customerId: string, cardUid: string) => void;
   lastDetectedUid: string | null;
   bindingCustomerId: string | null;
@@ -29,13 +29,31 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
   setNewCustCardUid,
 }) => {
   const [newCustName, setNewCustName] = useState('');
+  const [newCustPrevBalance, setNewCustPrevBalance] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Auto-listen to NFC taps while modal is active
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleNfc = (e: any) => {
+      const uid = e?.detail?.tag_id || e?.detail?.nfcId || (typeof e?.detail === 'string' ? e.detail : '');
+      if (uid) {
+        const clean = uid.trim().toUpperCase();
+        setNewCustCardUid(clean);
+      }
+    };
+    window.addEventListener('sunmi-nfc-scan', handleNfc);
+    return () => window.removeEventListener('sunmi-nfc-scan', handleNfc);
+  }, [isOpen, setNewCustCardUid]);
 
   if (!isOpen) return null;
 
   const handleCreate = () => {
     if (!newCustName.trim()) return;
-    onCreateCustomer(newCustName.trim(), newCustCardUid);
+    const prevBal = parseFloat(newCustPrevBalance);
+    onCreateCustomer(newCustName.trim(), newCustCardUid, !isNaN(prevBal) && prevBal > 0 ? prevBal : 0);
     setNewCustName('');
+    setNewCustPrevBalance('');
   };
 
   return (
@@ -106,24 +124,64 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                 <span><strong>NFC Ready:</strong> Tap card on terminal to auto-attach to this new customer</span>
               </div>
             )}
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
               <input
                 type="text"
-                placeholder="New customer name..."
+                placeholder="Card UID (auto-filled on tap, or type manually)"
+                value={newCustCardUid}
+                onChange={(e) => setNewCustCardUid(e.target.value.toUpperCase())}
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '13px', fontFamily: 'monospace' }}
+              />
+              {lastDetectedUid && newCustCardUid !== lastDetectedUid && (
+                <button
+                  type="button"
+                  onClick={() => setNewCustCardUid(lastDetectedUid)}
+                  style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Use Last Tap ({lastDetectedUid})
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <input
+                type="text"
+                placeholder="New customer name *..."
                 value={newCustName}
                 onChange={(e) => setNewCustName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleCreate();
                 }}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '14px' }}
+                style={{ flex: 1.5, padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '14px', fontWeight: '500' }}
               />
+              <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <span style={{ position: 'absolute', left: '10px', fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>BD</span>
+                <input
+                  type="number"
+                  step="0.005"
+                  min="0"
+                  placeholder="0.000 (Book Balance)"
+                  value={newCustPrevBalance}
+                  onChange={(e) => setNewCustPrevBalance(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreate();
+                  }}
+                  title="Previous balance owed from physical paper notebook"
+                  style={{ width: '100%', padding: '10px 14px 10px 32px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '14px', fontWeight: 'bold', color: '#dc2626' }}
+                />
+              </div>
               <button
                 onClick={handleCreate}
-                style={{ backgroundColor: '#2563eb', color: '#ffffff', padding: '10px 18px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
+                disabled={!newCustName.trim()}
+                style={{ backgroundColor: newCustName.trim() ? '#2563eb' : '#94a3b8', color: '#ffffff', padding: '10px 18px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: newCustName.trim() ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}
               >
                 Add Customer
               </button>
             </div>
+            {newCustPrevBalance && parseFloat(newCustPrevBalance) > 0 && (
+              <div style={{ fontSize: '11px', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '4px 8px', borderRadius: '6px', border: '1px solid #fecaca', marginBottom: '8px' }}>
+                📖 <strong>Opening Balance:</strong> BD {parseFloat(newCustPrevBalance).toFixed(3)} will be posted immediately as an initial debit to this customer's Khata ledger.
+              </div>
+            )}
           </div>
 
           {/* Binding in Progress Banner */}
@@ -139,9 +197,48 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
             </div>
           )}
 
+          {/* Customer Search Bar */}
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="text"
+              placeholder="🔍 Search customers by name, phone, or card UID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: '8px',
+                border: '1px solid #d1d5db',
+                fontSize: '13px',
+                boxSizing: 'border-box',
+                backgroundColor: '#f8fafc'
+              }}
+            />
+          </div>
+
           {/* Customer List Table */}
           <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
-            {customersList.map((c) => (
+            {(() => {
+              const q = searchQuery.toLowerCase().trim();
+              const filteredList = (customersList || []).filter(c => {
+                if (!q) return true;
+                return (
+                  (c.name && c.name.toLowerCase().includes(q)) ||
+                  (c.phone && c.phone.includes(q)) ||
+                  (c.cardUid && c.cardUid.toLowerCase().includes(q)) ||
+                  (c.nfcCardId && c.nfcCardId.toLowerCase().includes(q))
+                );
+              });
+
+              if (filteredList.length === 0) {
+                return (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+                    {searchQuery ? `No customers matching "${searchQuery}"` : 'No customers enrolled yet'}
+                  </div>
+                );
+              }
+
+              return filteredList.map((c) => (
               <div
                 key={c.id}
                 style={{
@@ -156,10 +253,10 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                 <div>
                   <div style={{ fontWeight: '600', fontSize: '16px', color: '#111827' }}>{c.name}</div>
                   <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                    Card UID: <strong style={{ color: c.cardUid ? '#1d4ed8' : '#9ca3af' }}>{c.cardUid || 'None'}</strong>
+                    Card UID: <strong style={{ color: c.cardUid ? '#1d4ed8' : '#9ca3af' }}>{c.cardUid || c.nfcCardId || 'None'}</strong>
                   </div>
                   <div style={{ fontSize: '13px', color: '#059669', fontWeight: 'bold' }}>
-                    Khata Balance: BD {(c.currentBalance ?? c.balance ?? 0).toFixed(3)}
+                    Khata Balance: BD {Number(c.currentBalance ?? c.balance ?? 0).toFixed(3)}
                   </div>
                 </div>
 
@@ -170,12 +267,13 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                       onClose();
                     }}
                     style={{
-                      backgroundColor: '#f3f4f6',
-                      color: '#374151',
-                      padding: '6px 12px',
+                      backgroundColor: '#10b981',
+                      color: '#ffffff',
+                      padding: '8px 14px',
                       borderRadius: '6px',
-                      border: '1px solid #d1d5db',
+                      border: 'none',
                       fontSize: '13px',
+                      fontWeight: 'bold',
                       cursor: 'pointer',
                     }}
                   >
@@ -218,7 +316,8 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                   </button>
                 </div>
               </div>
-            ))}
+            ));
+          })()}
           </div>
         </div>
       </div>

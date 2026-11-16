@@ -11,6 +11,11 @@ const config: CapacitorConfig = {
   },
   android: {
     webContentsDebuggingEnabled: true
+  },
+  plugins: {
+    CapacitorUpdater: {
+      autoUpdate: false
+    }
   }
 };
 

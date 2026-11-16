@@ -1,0 +1,728 @@
+// ====================================================================
+// ASKAR SUPERMARKET ERP - RESILIENT CLOUD MIRRORING & RECONCILIATION
+// Asynchronous, Non-Blocking Zero-SPOF Synchronization between Local SQLite & Turso Cloud
+// ====================================================================
+
+import { db, tursoCloudClient } from '../db.js';
+
+let isReconciling = false;
+
+/**
+ * Safely format argument for SQL queries
+ */
+function toSqlArg(val) {
+  if (val === undefined || val === null) return null;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === 'boolean') return val ? 1 : 0;
+  return val;
+}
+
+/**
+ * 1. Asynchronously mirror a local sale and its line items to Turso Cloud
+ * Fire-and-forget: Never blocks local checkout or crashes cashier operations.
+ */
+export async function mirrorSaleToCloud(saleId) {
+  if (!tursoCloudClient || !saleId) return false;
+
+  try {
+    // 1. Fetch sale from local database
+    const saleRes = await db.execute({
+      sql: `SELECT * FROM Sale WHERE id = ? LIMIT 1`,
+      args: [saleId]
+    });
+    if (!saleRes.rows || saleRes.rows.length === 0) return false;
+    const s = saleRes.rows[0];
+
+    // 2. Fetch items for this sale
+    const itemsRes = await db.execute({
+      sql: `SELECT * FROM SaleItem WHERE saleId = ?`,
+      args: [saleId]
+    });
+    const items = itemsRes.rows || [];
+
+    // 3. Batch insert into Turso Cloud
+    const statements = [
+      {
+        sql: `INSERT INTO Sale (
+          id, tenantId, invoiceNo, invoiceSeq, customerId, shiftId, employeeId,
+          subtotal, vatTotal, totalVat, total, totalAmount, paymentType,
+          status, syncStatus, createdAt, storeId, terminalId
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          syncStatus = 'SYNCED',
+          status = excluded.status,
+          total = excluded.total,
+          totalAmount = excluded.totalAmount,
+          storeId = excluded.storeId,
+          terminalId = excluded.terminalId`,
+        args: [
+          s.id,
+          s.tenantId || 'tenant_askar_01',
+          s.invoiceNo,
+          s.invoiceSeq || 0,
+          s.customerId || null,
+          s.shiftId || null,
+          s.employeeId || null,
+          s.subtotal,
+          s.vatTotal || s.totalVat || 0,
+          s.totalVat || s.vatTotal || 0,
+          s.total,
+          s.totalAmount || s.total,
+          s.paymentType || 'CASH',
+          s.status || 'COMPLETED',
+          s.createdAt,
+          s.storeId || 'store_askar_01',
+          s.terminalId || 'T1'
+        ]
+      }
+    ];
+
+    for (const item of items) {
+      statements.push({
+        sql: `INSERT INTO SaleItem (
+          id, tenantId, saleId, productId, quantity, priceAtSale, costAtSale,
+          vatRateAtSale, vatAmount, total_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          quantity = excluded.quantity,
+          priceAtSale = excluded.priceAtSale,
+          total_price = excluded.total_price`,
+        args: [
+          item.id,
+          item.tenantId || s.tenantId || 'tenant_askar_01',
+          item.saleId,
+          item.productId,
+          item.quantity,
+          item.priceAtSale,
+          item.costAtSale || 0,
+          item.vatRateAtSale || 10.0,
+          item.vatAmount || 0,
+          item.total_price
+        ]
+      });
+    }
+
+    await tursoCloudClient.batch(statements, 'write');
+
+    // 4. Mark local sale as SYNCED
+    await db.execute({
+      sql: `UPDATE Sale SET syncStatus = 'SYNCED' WHERE id = ?`,
+      args: [saleId]
+    });
+
+    console.log(`☁️ [CloudSync] Sale ${s.invoiceNo} (${saleId}) mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror sale ${saleId} to cloud (will retry in background):`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 2. Asynchronously mirror a product create or update to Turso Cloud
+ */
+export async function mirrorProductToCloud(prod) {
+  if (!tursoCloudClient || !prod) return false;
+
+  try {
+    const updatedAt = prod.updatedAt ? new Date(prod.updatedAt).toISOString() : new Date().toISOString();
+    await tursoCloudClient.execute({
+      sql: `INSERT INTO Product (
+        id, tenantId, name, purchasePrice, unitCost, sellingPrice,
+        stockQuantity, minThreshold, maxThreshold, supplierName,
+        distributorId, taxRate, vatRate, barcode, category,
+        is_weighed_item, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        purchasePrice = excluded.purchasePrice,
+        unitCost = excluded.unitCost,
+        sellingPrice = excluded.sellingPrice,
+        stockQuantity = excluded.stockQuantity,
+        minThreshold = excluded.minThreshold,
+        maxThreshold = excluded.maxThreshold,
+        supplierName = excluded.supplierName,
+        distributorId = excluded.distributorId,
+        barcode = excluded.barcode,
+        category = excluded.category,
+        is_weighed_item = excluded.is_weighed_item,
+        updatedAt = excluded.updatedAt`,
+      args: [
+        prod.id,
+        prod.tenantId || 'tenant_askar_01',
+        prod.name,
+        prod.purchasePrice ?? prod.costPrice ?? prod.unitCost ?? 0,
+        prod.unitCost ?? prod.purchasePrice ?? 0,
+        prod.sellingPrice ?? prod.price ?? 0,
+        prod.stockQuantity ?? 0,
+        prod.minThreshold ?? 10,
+        prod.maxThreshold ?? 100,
+        prod.supplierName || 'General',
+        prod.distributorId || null,
+        prod.taxRate ?? 0.10,
+        prod.vatRate ?? 10.0,
+        prod.barcode || null,
+        prod.category || 'GROCERY',
+        prod.is_weighed_item ? 1 : 0,
+        updatedAt
+      ]
+    });
+
+    console.log(`☁️ [CloudSync] Product '${prod.name}' (${prod.barcode || prod.id}) mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror product ${prod.id} to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 3. Mirror product deletion tombstone to Turso Cloud
+ */
+export async function mirrorProductTombstoneToCloud(id, barcode, name) {
+  if (!tursoCloudClient || !id) return false;
+
+  try {
+    await tursoCloudClient.batch([
+      {
+        sql: `INSERT INTO DeletedProduct (id, barcode, name, tenantId, deletedAt)
+              VALUES (?, ?, ?, 'tenant_askar_01', CURRENT_TIMESTAMP)
+              ON CONFLICT(id) DO NOTHING`,
+        args: [id, barcode || null, name || 'Deleted Item']
+      },
+      {
+        sql: `DELETE FROM Product WHERE id = ?`,
+        args: [id]
+      }
+    ], 'write');
+    console.log(`☁️ [CloudSync] Product tombstone ${id} mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror product deletion to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 4. Asynchronously mirror a customer create or update to Turso Cloud
+ */
+export async function mirrorCustomerToCloud(customer) {
+  if (!tursoCloudClient || !customer || !customer.id) return false;
+
+  try {
+    const updatedAt = customer.updatedAt ? new Date(customer.updatedAt).toISOString() : new Date().toISOString();
+    const pin = customer.khataPin || customer.khata_pin || customer.pin || '1234';
+
+    await tursoCloudClient.execute({
+      sql: `INSERT INTO Customer (
+        id, tenantId, name, phone, cpr, batchNo, description,
+        nfcCardId, cardUid, nfc_card_id, balance, khataPin, khata_pin,
+        pin, access_token, credit_limit, is_active, isActive, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        phone = excluded.phone,
+        cpr = excluded.cpr,
+        description = excluded.description,
+        nfcCardId = excluded.nfcCardId,
+        cardUid = excluded.cardUid,
+        nfc_card_id = excluded.nfc_card_id,
+        balance = excluded.balance,
+        khataPin = excluded.khataPin,
+        khata_pin = excluded.khata_pin,
+        pin = excluded.pin,
+        credit_limit = excluded.credit_limit,
+        updatedAt = excluded.updatedAt`,
+      args: [
+        customer.id,
+        customer.tenantId || 'tenant_askar_01',
+        customer.name,
+        customer.phone || null,
+        customer.cpr || null,
+        customer.batchNo || null,
+        customer.description || null,
+        customer.cardUid || customer.nfcCardId || null,
+        customer.cardUid || customer.nfcCardId || null,
+        customer.cardUid || customer.nfcCardId || null,
+        customer.balance ?? 0.0,
+        pin,
+        pin,
+        pin,
+        customer.access_token || customer.id,
+        customer.credit_limit ?? 30.0,
+        customer.createdAt ? new Date(customer.createdAt).toISOString() : updatedAt,
+        updatedAt
+      ]
+    });
+
+    console.log(`☁️ [CloudSync] Customer '${customer.name}' (${customer.id}) mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror customer ${customer.id} to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 5. Mirror customer deletion to Turso Cloud
+ */
+export async function mirrorCustomerDeleteToCloud(customerId) {
+  if (!tursoCloudClient || !customerId) return false;
+
+  try {
+    await tursoCloudClient.execute({
+      sql: `DELETE FROM Customer WHERE id = ?`,
+      args: [customerId]
+    });
+    console.log(`☁️ [CloudSync] Customer ${customerId} deleted from Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror customer deletion to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 6. Asynchronously mirror a Khata ledger entry and update customer balance on Turso Cloud
+ */
+export async function mirrorLedgerEntryToCloud(entry) {
+  if (!tursoCloudClient || !entry || !entry.id) return false;
+
+  try {
+    const timestamp = entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString();
+    const customerId = entry.customerId;
+
+    const statements = [
+      {
+        sql: `INSERT INTO KhataLedger (
+          id, tenantId, customerId, amount, type, reference,
+          running_balance, syncStatus, timestamp, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          syncStatus = 'SYNCED',
+          running_balance = excluded.running_balance`,
+        args: [
+          entry.id,
+          entry.tenantId || 'tenant_askar_01',
+          customerId,
+          entry.amount,
+          entry.type || 'CHARGE',
+          entry.reference || null,
+          entry.running_balance ?? 0,
+          timestamp,
+          timestamp
+        ]
+      }
+    ];
+
+    if (customerId) {
+      statements.push({
+        sql: `UPDATE Customer SET
+          balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+          updatedAt = datetime('now')
+        WHERE id = ?`,
+        args: [customerId, customerId]
+      });
+    }
+
+    await tursoCloudClient.batch(statements, 'write');
+
+    // Mark local ledger as SYNCED
+    await db.execute({
+      sql: `UPDATE KhataLedger SET syncStatus = 'SYNCED' WHERE id = ?`,
+      args: [entry.id]
+    });
+
+    console.log(`☁️ [CloudSync] Ledger entry ${entry.id} (${entry.type} ${entry.amount}) mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror ledger entry ${entry.id} to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 7. Push all pending local sales & ledger events to Turso Cloud (Batch Outbox Drain)
+ */
+export async function syncAllPendingToCloud() {
+  if (!tursoCloudClient) return { pushedSales: 0, pushedLedger: 0 };
+
+  let pushedSales = 0;
+  let pushedLedger = 0;
+
+  try {
+    // A. Pending Sales
+    const pendingSalesRes = await db.execute({
+      sql: `SELECT id FROM Sale WHERE syncStatus = 'PENDING' LIMIT 100`,
+      args: []
+    });
+
+    const pendingSaleIds = (pendingSalesRes.rows || []).map(r => r.id);
+    for (const sid of pendingSaleIds) {
+      const ok = await mirrorSaleToCloud(sid);
+      if (ok) pushedSales++;
+    }
+
+    // B. Pending Khata Ledger
+    const pendingLedgerRes = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' LIMIT 100`,
+      args: []
+    });
+
+    const pendingLedgers = pendingLedgerRes.rows || [];
+    for (const l of pendingLedgers) {
+      const ok = await mirrorLedgerEntryToCloud(l);
+      if (ok) pushedLedger++;
+    }
+
+    if (pushedSales > 0 || pushedLedger > 0) {
+      console.log(`☁️ [CloudSync] Outbox drain completed: ${pushedSales} sales, ${pushedLedger} ledger entries synced to cloud.`);
+    }
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Outbox push notice:`, err.message);
+  }
+
+  return { pushedSales, pushedLedger };
+}
+
+/**
+ * Safely upsert a customer locally without triggering unique constraint violations
+ */
+async function upsertLocalCustomer(c) {
+  if (!c || !c.id) return false;
+  const cardVal = c.cardUid || c.nfcCardId || null;
+
+  // Check if a DIFFERENT customer already owns this cardVal
+  let safeCardVal = cardVal;
+  if (safeCardVal) {
+    const cardHolder = await db.execute({
+      sql: `SELECT id FROM Customer WHERE (nfcCardId = ? OR cardUid = ?) AND id != ? LIMIT 1`,
+      args: [safeCardVal, safeCardVal, c.id]
+    });
+    if (cardHolder.rows && cardHolder.rows.length > 0) {
+      safeCardVal = null; // Prevent UNIQUE constraint violation
+    }
+  }
+
+  const existing = await db.execute({
+    sql: `SELECT id, name, phone, balance, nfcCardId, cardUid FROM Customer WHERE id = ? LIMIT 1`,
+    args: [c.id]
+  });
+
+  const pin = c.khataPin || c.khata_pin || c.pin || '1234';
+  const token = c.access_token || c.id;
+
+  try {
+    if (!existing.rows || existing.rows.length === 0) {
+      await db.execute({
+        sql: `INSERT OR REPLACE INTO Customer (
+          id, tenantId, name, phone, cpr, batchNo, description,
+          nfcCardId, cardUid, nfc_card_id, balance, khataPin, khata_pin,
+          pin, access_token, credit_limit, is_active, isActive, createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          c.id,
+          c.tenantId || 'tenant_askar_01',
+          c.name,
+          c.phone || null,
+          c.cpr || null,
+          c.batchNo || null,
+          c.description || null,
+          safeCardVal,
+          safeCardVal,
+          safeCardVal,
+          c.balance ?? 0.0,
+          pin,
+          pin,
+          pin,
+          token,
+          c.credit_limit ?? 30.0,
+          c.is_active ?? 1,
+          c.isActive ?? 1,
+          c.createdAt || new Date().toISOString(),
+          c.updatedAt || new Date().toISOString()
+        ]
+      });
+      return true;
+    } else {
+      const local = existing.rows[0];
+      const hasDiff =
+        Math.abs(Number(local.balance || 0) - Number(c.balance || 0)) > 0.001 ||
+        local.name !== c.name ||
+        (local.phone || '') !== (c.phone || '') ||
+        (local.nfcCardId || '') !== (safeCardVal || '');
+
+      if (hasDiff) {
+        await db.execute({
+          sql: `UPDATE Customer SET
+            name = ?, phone = ?, cpr = ?, description = ?, balance = ?,
+            nfcCardId = ?, cardUid = ?, nfc_card_id = ?, updatedAt = ?
+          WHERE id = ?`,
+          args: [
+            c.name,
+            c.phone || null,
+            c.cpr || null,
+            c.description || null,
+            c.balance ?? 0.0,
+            safeCardVal,
+            safeCardVal,
+            safeCardVal,
+            c.updatedAt || new Date().toISOString(),
+            c.id
+          ]
+        });
+        return true;
+      }
+      return false;
+    }
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Error upserting local customer ${c.id}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * 8. Reconcile Cloud Deltas Down to Local SQLite (e.g. Sales, Customers, or Payments processed on Edge API while laptop was asleep)
+ */
+export async function pullCloudDeltas() {
+  if (!tursoCloudClient) return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0 };
+
+  let pulledCustomers = 0;
+  let pulledSales = 0;
+  let pulledLedger = 0;
+
+  try {
+    // A. Reconcile Customers FIRST to satisfy foreign key constraints
+    const cloudCustRes = await tursoCloudClient.execute({
+      sql: `SELECT * FROM Customer LIMIT 150`,
+      args: []
+    });
+
+    for (const cc of (cloudCustRes.rows || [])) {
+      const ok = await upsertLocalCustomer(cc);
+      if (ok) pulledCustomers++;
+    }
+
+    // B. Reconcile Sales & SaleItems
+    const maxSaleRes = await db.execute({
+      sql: `SELECT MAX(createdAt) as maxDate FROM Sale`,
+      args: []
+    });
+    const latestLocalSaleDate = maxSaleRes.rows?.[0]?.maxDate || '1970-01-01T00:00:00.000Z';
+
+    const cloudSalesRes = await tursoCloudClient.execute({
+      sql: `SELECT * FROM Sale WHERE createdAt > ? ORDER BY createdAt ASC LIMIT 100`,
+      args: [latestLocalSaleDate]
+    });
+
+    const newCloudSales = cloudSalesRes.rows || [];
+    for (const cs of newCloudSales) {
+      // Check if this sale already exists locally
+      const localCheck = await db.execute({
+        sql: `SELECT id FROM Sale WHERE id = ? OR invoiceNo = ? LIMIT 1`,
+        args: [cs.id, cs.invoiceNo]
+      });
+
+      if (!localCheck.rows || localCheck.rows.length === 0) {
+        // Validate customerId foreign key
+        let validCustomerId = null;
+        if (cs.customerId) {
+          const custCheck = await db.execute({
+            sql: `SELECT id FROM Customer WHERE id = ? LIMIT 1`,
+            args: [cs.customerId]
+          });
+          if (custCheck.rows && custCheck.rows.length > 0) {
+            validCustomerId = cs.customerId;
+          } else {
+            // Customer not yet local, fetch customer directly from Turso Cloud
+            const cloudSingleCust = await tursoCloudClient.execute({
+              sql: `SELECT * FROM Customer WHERE id = ? LIMIT 1`,
+              args: [cs.customerId]
+            });
+            if (cloudSingleCust.rows && cloudSingleCust.rows.length > 0) {
+              await upsertLocalCustomer(cloudSingleCust.rows[0]);
+              validCustomerId = cs.customerId;
+            }
+          }
+        }
+
+        // Fetch items from Turso Cloud
+        const cloudItemsRes = await tursoCloudClient.execute({
+          sql: `SELECT * FROM SaleItem WHERE saleId = ?`,
+          args: [cs.id]
+        });
+        const cloudItems = cloudItemsRes.rows || [];
+
+        // Insert into local SQLite
+        await db.transaction(async (tx) => {
+          await tx.execute({
+            sql: `INSERT INTO Sale (
+              id, tenantId, invoiceNo, invoiceSeq, customerId, shiftId, employeeId,
+              subtotal, vatTotal, totalVat, total, totalAmount, paymentType,
+              status, syncStatus, createdAt, storeId, terminalId
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?)`,
+            args: [
+              cs.id,
+              cs.tenantId || 'tenant_askar_01',
+              cs.invoiceNo,
+              cs.invoiceSeq || 0,
+              validCustomerId,
+              cs.shiftId || null,
+              cs.employeeId || null,
+              cs.subtotal,
+              cs.vatTotal || cs.totalVat || 0,
+              cs.totalVat || cs.vatTotal || 0,
+              cs.total,
+              cs.totalAmount || cs.total,
+              cs.paymentType || 'CASH',
+              cs.status || 'COMPLETED',
+              cs.createdAt,
+              cs.storeId || 'store_askar_01',
+              cs.terminalId || 'T1'
+            ]
+          });
+
+          for (const item of cloudItems) {
+            await tx.execute({
+              sql: `INSERT INTO SaleItem (
+                id, tenantId, saleId, productId, quantity, priceAtSale, costAtSale,
+                vatRateAtSale, vatAmount, total_price
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              args: [
+                item.id,
+                item.tenantId || cs.tenantId || 'tenant_askar_01',
+                item.saleId,
+                item.productId,
+                item.quantity,
+                item.priceAtSale,
+                item.costAtSale || 0,
+                item.vatRateAtSale || 10.0,
+                item.vatAmount || 0,
+                item.total_price
+              ]
+            });
+          }
+        });
+        pulledSales++;
+      }
+    }
+
+    // C. Reconcile Khata Ledger from Cloud
+    const maxLedgerRes = await db.execute({
+      sql: `SELECT MAX(COALESCE(timestamp, created_at)) as maxDate FROM KhataLedger`,
+      args: []
+    });
+    const latestLocalLedgerDate = maxLedgerRes.rows?.[0]?.maxDate || '1970-01-01T00:00:00.000Z';
+
+    const cloudLedgerRes = await tursoCloudClient.execute({
+      sql: `SELECT * FROM KhataLedger WHERE COALESCE(timestamp, created_at) > ? ORDER BY COALESCE(timestamp, created_at) ASC LIMIT 200`,
+      args: [latestLocalLedgerDate]
+    });
+
+    const newCloudLedgers = cloudLedgerRes.rows || [];
+    const touchedCustomerIds = new Set();
+
+    for (const cl of newCloudLedgers) {
+      const localCheck = await db.execute({
+        sql: `SELECT id FROM KhataLedger WHERE id = ? LIMIT 1`,
+        args: [cl.id]
+      });
+
+      if (!localCheck.rows || localCheck.rows.length === 0) {
+        // Validate customer existence
+        const custCheck = await db.execute({
+          sql: `SELECT id FROM Customer WHERE id = ? LIMIT 1`,
+          args: [cl.customerId]
+        });
+        if (!custCheck.rows || custCheck.rows.length === 0) {
+          // Fetch customer from cloud
+          const singleCust = await tursoCloudClient.execute({
+            sql: `SELECT * FROM Customer WHERE id = ? LIMIT 1`,
+            args: [cl.customerId]
+          });
+          if (singleCust.rows && singleCust.rows.length > 0) {
+            await upsertLocalCustomer(singleCust.rows[0]);
+          }
+        }
+
+        await db.execute({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference,
+            running_balance, syncStatus, timestamp, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)`,
+          args: [
+            cl.id,
+            cl.tenantId || 'tenant_askar_01',
+            cl.customerId,
+            cl.amount,
+            cl.type,
+            cl.reference,
+            cl.running_balance,
+            cl.timestamp,
+            cl.created_at || cl.timestamp
+          ]
+        });
+        if (cl.customerId) touchedCustomerIds.add(cl.customerId);
+        pulledLedger++;
+      }
+    }
+
+    // Recalculate local customer balances for touched customers
+    for (const custId of touchedCustomerIds) {
+      await db.execute({
+        sql: `UPDATE Customer SET
+          balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+          updatedAt = datetime('now')
+        WHERE id = ?`,
+        args: [custId, custId]
+      });
+    }
+
+    if (pulledCustomers > 0 || pulledSales > 0 || pulledLedger > 0) {
+      console.log(`☁️ [CloudSync] Pulled from Turso Cloud: ${pulledCustomers} customers, ${pulledSales} sales, ${pulledLedger} ledger events.`);
+    }
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Cloud deltas pull notice:`, err.message);
+  }
+
+  return { pulledCustomers, pulledSales, pulledLedger };
+}
+
+/**
+ * 9. Master Reconciliation Routine
+ */
+export async function syncAllWithCloud() {
+  if (!tursoCloudClient || isReconciling) return;
+  isReconciling = true;
+
+  try {
+    await syncAllPendingToCloud();
+    await pullCloudDeltas();
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Sync cycle notice:`, err.message);
+  } finally {
+    isReconciling = false;
+  }
+}
+
+/**
+ * 10. Start the Background Cloud Sync Daemon
+ */
+export function startCloudSyncDaemon() {
+  if (!tursoCloudClient) {
+    console.log('ℹ️ [CloudSync] Turso Cloud credentials not active; cloud sync daemon idle.');
+    return;
+  }
+
+  console.log('🚀 [CloudSync] Zero-SPOF Cloud Sync Daemon activated (Reconciliation every 30s).');
+
+  // Initial reconciliation after 3 seconds
+  setTimeout(() => {
+    syncAllWithCloud().catch(() => { });
+  }, 3000);
+
+  // Periodic interval
+  setInterval(() => {
+    syncAllWithCloud().catch(() => { });
+  }, 30000);
+}

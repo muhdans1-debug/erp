@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "askar-edge-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-23",
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true,
+  "vars": {
+    "ENVIRONMENT": "production",
+    "DEFAULT_TENANT_ID": "tenant_askar_01",
+    "DEFAULT_STORE_ID": "store_askar_01",
+    "MANAGER_PIN": "9999"
+  }
+}
+

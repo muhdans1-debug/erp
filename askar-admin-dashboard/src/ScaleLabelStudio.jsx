@@ -25,7 +25,7 @@ function calculateEan13CheckDigit(twelveDigits) {
 export default function ScaleLabelStudio() {
   const [selectedItem, setSelectedItem] = useState(COMMON_WEIGHED_ITEMS[0]);
   const [weightKg, setWeightKg] = useState('1.250');
-  const [prefix, setPrefix] = useState('20'); // 20 or 21 standard for weight-embedded barcodes
+  const [prefix, setPrefix] = useState('22'); // 22 standard for weight-embedded barcodes in POS
   const [customStoreName, setCustomStoreName] = useState('Askar Supermarket');
   const [labelFormat, setLabelFormat] = useState('scale'); // 'scale' | 'shelftalker'
 

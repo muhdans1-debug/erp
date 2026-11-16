@@ -212,7 +212,7 @@ export default function CustomerDisplayPage() {
           }
 
           if (data.isBenefitPay) {
-            setQrCheckoutUrl(data.qrPayload || `BH-BENEFIT-FAWRI:TOTAL=${data.total}`);
+            setQrCheckoutUrl(data.qrPayload || generateBenefitPayPayload(data.total, 'CHECKOUT', benefitConfig));
           } else if (!data.isBenefitPay && !qrCheckoutUrl) {
             setQrCheckoutUrl(null);
           }
@@ -245,7 +245,7 @@ export default function CustomerDisplayPage() {
           setTotalSavings(Number(parsed.totalSavings || 0));
           setCart(parsed.recentItems || []);
           if (parsed.isBenefitPay) {
-            setQrCheckoutUrl(parsed.qrPayload || `BH-BENEFIT-FAWRI:TOTAL=${parsed.total}`);
+            setQrCheckoutUrl(parsed.qrPayload || generateBenefitPayPayload(parsed.total, 'CHECKOUT', benefitConfig));
           }
           if (parsed.customerName) {
             setCustomer({ id: 'active', name: parsed.customerName, balance: parsed.customerBalance || 0 });
@@ -569,9 +569,7 @@ export default function CustomerDisplayPage() {
   // BIG IDEA 3: BENEFITPAY QR AUTO-CHECKOUT (Frictionless Mobile Camera Payment)
   // ════════════════════════════════════════════════════════════════════════════
   if (qrCheckoutUrl) {
-    const fawriPayload = qrCheckoutUrl.startsWith('000201') || qrCheckoutUrl.startsWith('http') || qrCheckoutUrl.startsWith('BH-')
-      ? qrCheckoutUrl
-      : generateBenefitPayPayload(total, `CHECKOUT-${Date.now().toString().slice(-4)}`, benefitConfig);
+    const fawriPayload = qrCheckoutUrl;
 
     return (
       <div className="w-full h-full min-h-screen bg-gradient-to-br from-red-600 via-rose-700 to-red-900 text-white flex flex-col items-center justify-between p-4 sm:p-6 select-none animate-in zoom-in-95 duration-200">
@@ -707,12 +705,12 @@ export default function CustomerDisplayPage() {
                 <span className="text-xs font-medium">Scanning items...</span>
               </div>
             ) : (
-              cart.slice(-4).map((item, idx) => {
+              cart.slice(0, 4).map((item, idx) => {
                 const qty = Number(item.qty ?? item.quantity ?? 1);
                 const unitPrice = Number(item.price ?? item.sellingPrice ?? 0);
                 const origPrice = Number(item.originalPrice ?? unitPrice);
                 const hasDiscount = origPrice > unitPrice || Boolean(item.discountNote);
-                const isLatest = idx === Math.min(cart.length, 4) - 1;
+                const isLatest = idx === 0;
 
                 return (
                   <div

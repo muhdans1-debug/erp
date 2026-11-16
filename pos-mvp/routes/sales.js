@@ -4,6 +4,8 @@ import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
 import { generateNextInvoiceNumber } from '../services/invoiceSequence.js';
+import { ensureRegionalIso, getRegionalIsoString, getRegionalDayRange } from '../utils/time.js';
+import { mirrorSaleToCloud } from '../services/cloudSync.js';
 
 export default async function salesRoutes(fastify, options) {
 
@@ -63,19 +65,46 @@ export default async function salesRoutes(fastify, options) {
         const invoiceNo = providedInvoiceNo || `INV-${Date.now()}`;
         const total = Number(sale.total || sale.totalAmount || 0);
         const subtotal = Number(sale.subtotal || total);
+
+        // Process line items AND deduct master inventory
+        const items = (Array.isArray(sale.items) && sale.items.length > 0)
+          ? sale.items
+          : (Array.isArray(sale.cart) && sale.cart.length > 0 ? sale.cart : []);
+
+        // Guard against corrupted mock / zero-price dummy records
+        if (total <= 0 && items.length === 0) {
+          fastify.log.warn(`[Sync Sales] Skipping empty phantom sale: ${sale.id} (${invoiceNo})`);
+          continue;
+        }
+
         const paymentType = sale.paymentType || sale.payment_type || 'CASH';
         const status = sale.status || 'COMPLETED';
-        const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
+        let rawTimestamp = sale.createdAt || sale.created_at || sale.offlineTimestamp;
+        const serverNow = Date.now();
+        const incomingEpoch = rawTimestamp ? new Date(rawTimestamp).getTime() : serverNow;
+        if (!isNaN(incomingEpoch)) {
+          // If sale timestamp is in the future (> 2 minutes) or from a dead CMOS battery (> 30 days old):
+          if (incomingEpoch > serverNow + 120000) {
+            fastify.log.warn(`⚠️ [Clock Skew Guard] Sale ${sale.id} (${invoiceNo}) timestamp is in the future (${rawTimestamp}). Clamping to server time.`);
+            rawTimestamp = getRegionalIsoString(serverNow);
+          } else if (serverNow - incomingEpoch > 30 * 86400000) {
+            fastify.log.warn(`⚠️ [Clock Skew Guard] Sale ${sale.id} (${invoiceNo}) timestamp has ancient clock drift (${rawTimestamp}). Re-anchoring to server time.`);
+            rawTimestamp = getRegionalIsoString(serverNow);
+          }
+        }
+        const createdAt = ensureRegionalIso(rawTimestamp);
         const customerId = sale.customerId || sale.khata_id || null;
         const employeeId = sale.employeeId || sale.employee_id || null;
         const shiftId = sale.shiftId || sale.shift_id || null;
+        const terminalId = sale.terminalId || sale.terminal_id || 'T1';
+        const storeId = sale.storeId || sale.store_id || 'store_askar_01';
 
         // Insert the main receipt header
         await transaction.execute({
-          sql: `INSERT INTO Sale (id, invoiceNo, total, subtotal, paymentType, status, syncStatus, customerId, employeeId, shiftId, createdAt) 
-                VALUES (?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?)
+          sql: `INSERT INTO Sale (id, invoiceNo, total, subtotal, paymentType, status, syncStatus, customerId, employeeId, shiftId, createdAt, terminalId, storeId) 
+                VALUES (?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING`,
-          args: [sale.id, invoiceNo, total, subtotal, paymentType, status, customerId, employeeId, shiftId, createdAt]
+          args: [sale.id, invoiceNo, total, subtotal, paymentType, status, customerId, employeeId, shiftId, createdAt, terminalId, storeId]
         });
 
         // Record Khata ledger and update customer balance if offline credit transaction
@@ -86,28 +115,118 @@ export default async function salesRoutes(fastify, options) {
           paymentType === 'NFC_CREDIT' ||
           paymentType === 'MESS_KHATA';
 
-        if (customerId && isCreditSale) {
-          const ledgerId = `tx_off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const isMessSync =
+          paymentType === 'MESS_KHATA' ||
+          paymentType === 'CREDIT_MESS' ||
+          Boolean(sale.messId || sale.mess_id);
+
+        if (isMessSync) {
+          // Resolve Mess Group and split across registered members
+          let targetMessId = sale.messId || sale.mess_id;
+          if (!targetMessId && customerId) {
+            try {
+              const cCheck = await transaction.execute({
+                sql: 'SELECT mess_id FROM Customer WHERE id = ? LIMIT 1',
+                args: [customerId]
+              });
+              if (cCheck.rows && cCheck.rows.length > 0 && cCheck.rows[0].mess_id) {
+                targetMessId = cCheck.rows[0].mess_id;
+              }
+            } catch {}
+          }
+
+          let groupName = 'Mess Group';
+          let memberRows = [];
+          if (targetMessId) {
+            try {
+              const gRes = await transaction.execute({
+                sql: 'SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1',
+                args: [targetMessId]
+              });
+              if (gRes.rows && gRes.rows.length > 0) {
+                groupName = gRes.rows[0].group_name || groupName;
+              }
+              const mRes = await transaction.execute({
+                sql: 'SELECT id, name FROM Customer WHERE mess_id = ? AND (is_active = 1 OR is_active IS NULL)',
+                args: [targetMessId]
+              });
+              memberRows = mRes.rows || [];
+            } catch {}
+          }
+
+          if (memberRows.length > 0) {
+            const splitAmount = parseFloat((total / memberRows.length).toFixed(3));
+            const remainder = parseFloat((total - (splitAmount * memberRows.length)).toFixed(3));
+            const shopperTag = sale.shopperName ? ` (Shopper: ${sale.shopperName})` : '';
+
+            for (let i = 0; i < memberRows.length; i++) {
+              const member = memberRows[i];
+              const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
+              const ledgerId = `khata_${invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_')}_${member.id}`;
+              const ledgerRef = `Mess Split: ${groupName} (${memberRows.length} members)${shopperTag} - ${invoiceNo}`;
+
+              await transaction.execute({
+                sql: `INSERT INTO KhataLedger (
+                  id, tenantId, customerId, amount, type, reference, running_balance,
+                  syncStatus, timestamp, created_at
+                ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+                ON CONFLICT(id) DO NOTHING`,
+                args: [ledgerId, member.id, memberCharge, ledgerRef, createdAt, createdAt],
+              });
+
+              affectedCustomerIds.add(member.id);
+            }
+          } else if (customerId) {
+            // Fallback to single customer if group has no registered members
+            const deterministicLedgerId = `tx_inv_${invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+            await transaction.execute({
+              sql: `INSERT INTO KhataLedger (
+                id, tenantId, customerId, amount, type, reference, running_balance,
+                syncStatus, timestamp, created_at
+              ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+              ON CONFLICT(id) DO NOTHING`,
+              args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt],
+            });
+            affectedCustomerIds.add(customerId);
+          }
+        } else if (customerId && isCreditSale) {
+          const deterministicLedgerId = `tx_inv_${invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
           await transaction.execute({
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance,
               syncStatus, timestamp, created_at
-            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)`,
-            args: [ledgerId, customerId, total, invoiceNo, createdAt, createdAt],
+            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+            ON CONFLICT(id) DO NOTHING`,
+            args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt],
           });
 
           affectedCustomerIds.add(customerId);
         }
 
-        // Process line items AND deduct master inventory
-        const items = Array.isArray(sale.items) ? sale.items : [];
         for (const item of items) {
           const itemId = item.id || crypto.randomUUID();
-          const prodId = item.productId || item.product_id;
-          const qty = Number(item.qty || item.quantity || 1);
-          const price = Number(item.price || item.priceAtSale || 0);
-          const totalPrice = Number(item.total_price || (qty * price));
+          const prodId = item.productId || item.product_id || item.id;
+          const qty = Number(item.qty ?? item.quantity ?? 1);
+          let price = Number(item.priceAtSale ?? item.sellingPrice ?? item.price ?? item.unitPrice ?? 0);
+
+          // If price was omitted from client payload, recover catalog price from Product table
+          if (price <= 0 && prodId) {
+            try {
+              const pLookup = await transaction.execute({
+                sql: 'SELECT sellingPrice, purchasePrice, unitCost, vatRate, taxRate FROM Product WHERE id = ? OR barcode = ? LIMIT 1',
+                args: [prodId, prodId]
+              });
+              if (pLookup.rows && pLookup.rows.length > 0 && pLookup.rows[0].sellingPrice) {
+                price = Number(pLookup.rows[0].sellingPrice);
+              }
+            } catch {}
+          }
+
+          const totalPrice = Number((item.total_price ?? (qty * price)).toFixed(3));
+          const vatRate = item.vatRateAtSale !== undefined ? Number(item.vatRateAtSale) : (item.vatRate !== undefined ? Number(item.vatRate) : 10.0);
+          const vatAmount = Number((item.vatAmount ?? (vatRate === 10 ? (totalPrice - (totalPrice / 1.10)) : 0)).toFixed(3));
+          const costPrice = Number(item.costAtSale ?? item.unitCost ?? item.purchasePrice ?? 0);
 
           // Auto-register missing product from offline sales to satisfy Foreign Key constraint
           if (prodId) {
@@ -133,12 +252,18 @@ export default async function salesRoutes(fastify, options) {
             }
           }
 
-          // Insert the line item
+          // Insert or update the line item with complete normalized financial columns
           await transaction.execute({
-            sql: `INSERT INTO SaleItem (id, saleId, productId, quantity, priceAtSale, total_price) 
-                  VALUES (?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(id) DO NOTHING`,
-            args: [itemId, sale.id, prodId, qty, price, totalPrice]
+            sql: `INSERT INTO SaleItem (id, saleId, productId, quantity, priceAtSale, costAtSale, vatRateAtSale, vatAmount, total_price, tenantId) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tenant_askar_01')
+                  ON CONFLICT(id) DO UPDATE SET 
+                    quantity = excluded.quantity,
+                    priceAtSale = excluded.priceAtSale,
+                    costAtSale = excluded.costAtSale,
+                    vatRateAtSale = excluded.vatRateAtSale,
+                    vatAmount = excluded.vatAmount,
+                    total_price = excluded.total_price`,
+            args: [itemId, sale.id, prodId, qty, price, costPrice, vatRate, vatAmount, totalPrice]
           });
 
           // Actively deduct stock from the Master database
@@ -194,6 +319,11 @@ export default async function salesRoutes(fastify, options) {
       await transaction.commit();
       console.log(`✅ Synced ${processedCount} sales and reconciled running balances.`);
 
+      // Asynchronously mirror synced sales to Turso Cloud (Zero-SPOF)
+      for (const s of salesToSync) {
+        if (s?.id) mirrorSaleToCloud(s.id).catch(() => {});
+      }
+
       // Broadcast to active Fastify WebSocket clients
       if (fastify.websocketServer?.clients) {
         fastify.websocketServer.clients.forEach((client) => {
@@ -218,20 +348,37 @@ export default async function salesRoutes(fastify, options) {
   fastify.post('/api/sync/sales', handleSyncSales);
   fastify.post('/api/sales/sync', handleSyncSales);
 
-  // 2. Manager Secured Sales Reporting Endpoint
+  // 2. Manager Secured Sales Reporting Endpoint (Supports Date-to-Date Filtering)
   fastify.get('/api/reports/sales', { preHandler: managerAuth }, async (request, reply) => {
     try {
-      const { limit = 100, offset = 0 } = request.query || {};
-      const salesResult = await db.execute({
-        sql: `SELECT s.*, c.name as customerName 
-              FROM Sale s 
-              LEFT JOIN Customer c ON s.customerId = c.id 
-              ORDER BY s.createdAt DESC 
-              LIMIT ? OFFSET ?`,
-        args: [Number(limit), Number(offset)]
-      });
+      const { limit = 200, offset = 0, from, startDate, to, endDate } = request.query || {};
+      const fromParam = from || startDate;
+      const toParam = to || endDate;
 
-      return salesResult.rows || [];
+      let sql = `SELECT s.*, c.name as customerName 
+                 FROM Sale s 
+                 LEFT JOIN Customer c ON s.customerId = c.id 
+                 WHERE 1=1`;
+      const args = [];
+
+      if (fromParam) {
+        const fromIso = fromParam.length === 10 ? `${fromParam}T00:00:00.000+03:00` : fromParam;
+        sql += ` AND (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;
+        args.push(fromIso, fromIso);
+      }
+      if (toParam) {
+        const toIso = toParam.length === 10 ? `${toParam}T23:59:59.999+03:00` : toParam;
+        sql += ` AND (s.createdAt <= ? OR datetime(s.createdAt) <= datetime(?))`;
+        args.push(toIso, toIso);
+      }
+
+      sql += ` ORDER BY s.createdAt DESC LIMIT ? OFFSET ?`;
+      args.push(Number(limit), Number(offset));
+
+      const salesResult = await db.execute({ sql, args });
+      const rows = salesResult.rows || [];
+
+      return { success: true, count: rows.length, sales: rows };
     } catch (err) {
       fastify.log.error('Failed to query sales report:', err);
       return reply.status(500).send({ error: 'Failed to retrieve sales report', message: err.message });
@@ -274,11 +421,23 @@ export default async function salesRoutes(fastify, options) {
 
       const items = allSaleItems.map((item) => {
         const prod = prodMap.get(item.productId);
+        const price = Number(item.priceAtSale ?? item.unitPrice ?? item.price ?? item.sellingPrice ?? prod?.sellingPrice ?? 0);
+        const qty = Number(item.quantity ?? item.qty ?? 1);
+        const lineTotal = Number(item.total_price ?? (price * qty));
         return {
           ...item,
-          productName: prod?.name || `Item #${item.productId}`,
+          price,
+          unitPrice: price,
+          sellingPrice: price,
+          priceAtSale: price,
+          quantity: qty,
+          qty,
+          total_price: lineTotal,
+          total: lineTotal,
+          productName: prod?.name || item.name || `Item #${item.productId}`,
+          name: prod?.name || item.name || `Item #${item.productId}`,
           barcode: prod?.barcode || prod?.id,
-          unitCost: Number(prod?.purchasePrice || prod?.unitCost || 0),
+          unitCost: Number(item.costAtSale ?? prod?.purchasePrice ?? prod?.unitCost ?? 0),
         };
       });
 
@@ -386,59 +545,57 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
     const finalSub = Number((subtotal !== undefined ? subtotal : computedSubtotal).toFixed(3));
     const finalVat = Number((totalVat !== undefined ? totalVat : computedTotalVat).toFixed(3));
 
-    const saleResult = await SaleRepository.createSale({
-      id: saleId,
-      invoiceNo: finalInv,
-      invoiceSeq: finalInvoiceSeq,
-      customerId: null,
-      subtotal: finalSub,
-      vatTotal: finalVat,
-      totalVat: finalVat,
-      total: finalTotal,
-      totalAmount: finalTotal,
-      paymentType: 'MESS_KHATA',
-      createdAt: new Date()
-    }, lineItems);
-
-    const verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
-
-    // 4. Post Split Charges to each member's individual Khata ledger
+    // 4. Atomically Create Master Sale AND Post Split Charges inside a Single Transaction
     const memberSplits = [];
-    const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
-    for (let i = 0; i < memberRows.length; i++) {
-      const member = memberRows[i];
-      const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
-      const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
+    let verifiedInvoiceNo = finalInv;
 
-      // Local ledger entry (Single, atomic ledger charge)
-      const ledgerEntryId = crypto.randomUUID();
-      await db.orm.KhataLedger.create({
-        id: ledgerEntryId,
-        customerId: member.id,
-        amount: memberCharge,
-        type: 'CHARGE',
-        reference: ledgerRef,
-        syncStatus: 'SYNCED',
-        timestamp: new Date(),
-        tenantId: 'tenant_1'
-      });
+    await db.transaction(async (tx) => {
+      const saleResult = await SaleRepository.createSale({
+        id: saleId,
+        invoiceNo: finalInv,
+        invoiceSeq: finalInvoiceSeq,
+        customerId: null,
+        subtotal: finalSub,
+        vatTotal: finalVat,
+        totalVat: finalVat,
+        total: finalTotal,
+        totalAmount: finalTotal,
+        paymentType: 'MESS_KHATA',
+        createdAt: getRegionalIsoString()
+      }, lineItems);
 
-      // Update customer balance once
-      try {
-        await db.execute({
-          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
+      verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
+      const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
+
+      for (let i = 0; i < memberRows.length; i++) {
+        const member = memberRows[i];
+        const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
+        const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
+
+        const ledgerEntryId = crypto.randomUUID();
+        await tx.orm.KhataLedger.create({
+          id: ledgerEntryId,
+          customerId: member.id,
+          amount: memberCharge,
+          type: 'CHARGE',
+          reference: ledgerRef,
+          syncStatus: 'SYNCED',
+          timestamp: getRegionalIsoString(),
+          tenantId: 'tenant_1'
+        });
+
+        await tx.execute({
+          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ?, updatedAt = datetime('now') WHERE id = ?`,
           args: [memberCharge, member.id]
         });
-      } catch (err) {
-        console.warn('Customer balance update warning:', err?.message);
-      }
 
-      memberSplits.push({
-        id: member.id,
-        name: member.name,
-        amount: memberCharge
-      });
-    }
+        memberSplits.push({
+          id: member.id,
+          name: member.name,
+          amount: memberCharge
+        });
+      }
+    });
 
     return {
       success: true,
@@ -525,6 +682,10 @@ const handleCheckout = async (request, reply) => {
             safePrice = catalogPrice;
           }
         }
+      } else if (!dbProd && !isManagerAuthorized) {
+        if (safePrice <= 0) {
+          throw new Error(`Custom line item "${item.name || 'Custom Item'}" requires manager PIN authorization.`);
+        }
       }
 
       const lineTotal = safePrice * safeQty;
@@ -592,10 +753,9 @@ const handleCheckout = async (request, reply) => {
     const storeId = request.body?.storeId || '001';
     let assignedInvoiceNo = invoiceNo;
     let assignedInvoiceSeq = undefined;
-    if (!assignedInvoiceNo || assignedInvoiceNo.startsWith('INV-17')) {
-      const { invoiceNo: genNo, invoiceSeq: genSeq } = await generateNextInvoiceNumber(storeId);
-      assignedInvoiceNo = genNo;
-      assignedInvoiceSeq = genSeq;
+    // If no valid client-assigned invoice, let SaleRepository.createSale atomically assign gapless sequence inside transaction (NBR Article 53)
+    if (assignedInvoiceNo && (assignedInvoiceNo.startsWith('INV-17') || assignedInvoiceNo.includes('NaN') || assignedInvoiceNo === '0')) {
+      assignedInvoiceNo = undefined;
     }
 
     const saleData = {
@@ -611,12 +771,33 @@ const handleCheckout = async (request, reply) => {
       paymentType: paymentType || 'CASH',
       employeeId: employeeId || null,
       shiftId: effectiveShiftId || shiftId || null,
-      createdAt: new Date(),
+      terminalId: request.body?.terminalId || request.body?.terminal_id || 'T1',
+      storeId: request.body?.storeId || request.body?.store_id || 'store_askar_01',
+      createdAt: getRegionalIsoString(),
     };
 
     const result = await SaleRepository.createSale(saleData, lineItems);
 
-    // Broadcast atomic Khata balance delta to all connected POS registers
+    // 1. Broadcast SALE_COMPLETED to all active Fastify WebSocket clients (Manager Dashboard, secondary POS)
+    if (fastify.websocketServer?.clients) {
+      fastify.websocketServer.clients.forEach(client => {
+        if (client.readyState === 1) {
+          client.send(JSON.stringify({
+            type: 'SALE_COMPLETED',
+            payload: {
+              id: result.id,
+              invoiceNo: result.invoiceNo,
+              total: finalTotal,
+              paymentType: saleData.paymentType || 'CASH',
+              customerId: saleData.customerId || null
+            },
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+    }
+
+    // 2. Broadcast atomic Khata balance delta to all connected POS registers
     if (saleData.customerId && ['CREDIT', 'NFC_CREDIT', 'MESS_KHATA'].includes(saleData.paymentType)) {
       if (fastify.websocketServer?.clients) {
         fastify.websocketServer.clients.forEach(client => {
@@ -630,6 +811,11 @@ const handleCheckout = async (request, reply) => {
         });
       }
     }
+
+    // 3. Asynchronous background mirror to Turso Cloud (Zero-SPOF, non-blocking)
+    mirrorSaleToCloud(result.id).catch((err) => {
+      fastify.log.warn(`[CloudSync] Mirror sale deferred: ${err.message}`);
+    });
 
     return {
       success: true,
@@ -722,12 +908,11 @@ const handleRefundSale = async (request, reply) => {
             createdAt: new Date(),
           });
         } else {
-          // Routed back to physical stock
+          // Routed back to physical stock (Atomic relative update)
           if (prod) {
-            const updatedStock = (prod.stockQuantity || 0) + qty;
-            await tx.orm.Product.where({ id: prod.id }).update({
-              stockQuantity: updatedStock,
-              updatedAt: new Date(),
+            await tx.execute({
+              sql: `UPDATE Product SET stockQuantity = stockQuantity + ?, updatedAt = datetime('now') WHERE id = ?`,
+              args: [qty, prod.id]
             });
           }
         }
@@ -780,6 +965,10 @@ const handleRefundSale = async (request, reply) => {
           type: 'PAYMENT_IN',
           syncStatus: 'PENDING',
           timestamp: new Date(),
+        });
+        await tx.execute({
+          sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
+          args: [totalRefundAmount, sale.customerId]
         });
       } else {
         // Cash refund: deduct from drawer by logging cash payout expense
@@ -838,9 +1027,7 @@ fastify.get('/api/sales/refunds', async () => {
 // 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer (Optimized Single SQL Query)
 const handleGetTodaySales = async (req, reply) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayIso = today.toISOString();
+    const { startIso } = getRegionalDayRange();
 
     const salesRes = await db.execute({
       sql: `SELECT s.*, 
@@ -852,8 +1039,16 @@ const handleGetTodaySales = async (req, reply) => {
                            'saleId', i.saleId,
                            'productId', i.productId,
                            'quantity', i.quantity,
+                           'qty', i.quantity,
                            'priceAtSale', i.priceAtSale,
+                           'price', i.priceAtSale,
+                           'sellingPrice', i.priceAtSale,
+                           'unitPrice', i.priceAtSale,
+                           'total_price', i.total_price,
+                           'costAtSale', i.costAtSale,
+                           'unitCost', i.costAtSale,
                            'name', COALESCE(p.name, 'Item #' || i.productId),
+                           'productName', COALESCE(p.name, 'Item #' || i.productId),
                            'barcode', COALESCE(p.barcode, i.productId)
                          )
                        ELSE NULL END
@@ -862,10 +1057,10 @@ const handleGetTodaySales = async (req, reply) => {
             FROM Sale s
             LEFT JOIN SaleItem i ON s.id = i.saleId
             LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
-            WHERE s.createdAt >= ?
+            WHERE (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))
             GROUP BY s.id
             ORDER BY s.createdAt DESC`,
-      args: [todayIso]
+      args: [startIso, startIso]
     });
 
     const populated = (salesRes.rows || []).map((sale) => {
@@ -939,11 +1134,11 @@ const handleVoidSale = async (req, reply) => {
         const prod = prodRes.rows?.[0];
 
         if (prod) {
-          const newStock = (Number(prod.stockQuantity) || 0) + qty;
           await tx.execute({
-            sql: `UPDATE Product SET stockQuantity = ?, updatedAt = datetime('now') WHERE id = ?`,
-            args: [newStock, prod.id]
+            sql: `UPDATE Product SET stockQuantity = stockQuantity + ?, updatedAt = datetime('now') WHERE id = ?`,
+            args: [qty, prod.id]
           });
+          const newStock = (Number(prod.stockQuantity) || 0) + qty;
           restoredProducts.push({
             id: prod.id,
             name: prod.name,
@@ -956,14 +1151,19 @@ const handleVoidSale = async (req, reply) => {
 
       // 4. Reverse Customer Khata debt if charged to credit
       if (sale.customerId && (sale.paymentType === 'CREDIT' || sale.paymentType === 'NFC_CREDIT')) {
+        const debtReversal = Number(sale.total) || 0;
         await tx.orm.KhataLedger.create({
           id: crypto.randomUUID(),
           tenantId: sale.tenantId || 'tenant_1',
           customerId: sale.customerId,
-          amount: -(Number(sale.total) || 0),
+          amount: -debtReversal,
           type: 'PAYMENT_IN',
           syncStatus: 'PENDING',
           timestamp: new Date(),
+        });
+        await tx.execute({
+          sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
+          args: [debtReversal, sale.customerId]
         });
       }
 
@@ -978,7 +1178,7 @@ const handleVoidSale = async (req, reply) => {
         reason: 'VOID_AND_RE_RING',
         destination: sale.paymentType || 'CASH',
         itemsJson: JSON.stringify(saleItems),
-        processedBy: 'Manager 9999 (Void & Re-ring)',
+        processedBy: 'Authorized Manager (Void & Re-ring)',
         createdAt: new Date(),
       });
 

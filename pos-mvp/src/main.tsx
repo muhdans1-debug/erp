@@ -36,6 +36,44 @@ if (typeof window !== 'undefined') {
       return controller.signal;
     };
   }
+
+  // ⚡ Auto-inject POS Terminal Handshake header for Sovereign Edge Gateway authentication
+  if (window.fetch) {
+    const originalFetch = window.fetch;
+    window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      try {
+        const urlStr = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || '');
+        if (urlStr.includes('/api/') || urlStr.includes('/khata') || urlStr.includes('workers.dev')) {
+          const customInit: RequestInit = init ? { ...init } : {};
+          const managerPin = (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('manager_pin') || localStorage.getItem('askar_admin_pin'))) || '';
+          if (customInit.headers instanceof Headers) {
+            if (!customInit.headers.has('x-pos-client')) {
+              customInit.headers.set('x-pos-client', 'store-pos');
+            }
+            if (managerPin && !customInit.headers.has('x-manager-pin')) {
+              customInit.headers.set('x-manager-pin', managerPin);
+            }
+          } else if (Array.isArray(customInit.headers)) {
+            const hasIt = customInit.headers.some(([k]) => k.toLowerCase() === 'x-pos-client');
+            if (!hasIt) {
+              customInit.headers.push(['x-pos-client', 'store-pos']);
+            }
+            if (managerPin && !customInit.headers.some(([k]) => k.toLowerCase() === 'x-manager-pin')) {
+              customInit.headers.push(['x-manager-pin', managerPin]);
+            }
+          } else {
+            customInit.headers = {
+              'x-pos-client': 'store-pos',
+              ...(managerPin ? { 'x-manager-pin': managerPin } : {}),
+              ...(customInit.headers as Record<string, string> || {})
+            };
+          }
+          return originalFetch.call(this, input, customInit);
+        }
+      } catch {}
+      return originalFetch.call(this, input, init);
+    };
+  }
 }
 
 import React from "react";

@@ -49,7 +49,7 @@ export default function SupervisorTillPanel({
         date: now.toLocaleDateString('en-GB'),
         time: now.toLocaleTimeString(),
         shiftId: data?.shift?.id || 'SHIFT-' + Date.now().toString().slice(-6),
-        cashierName: 'Supervisor (9999)',
+        cashierName: 'Supervisor',
         totalSales,
         cashSales,
         cardSales,
@@ -103,7 +103,7 @@ export default function SupervisorTillPanel({
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-black text-white tracking-tight">Supervisor Counter Hub</h1>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 font-bold border border-red-500/30">
-                  PIN 9999
+                  Manager Auth
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">Physical Counter &amp; Till Operations • SUNMI-D2-REG01</p>

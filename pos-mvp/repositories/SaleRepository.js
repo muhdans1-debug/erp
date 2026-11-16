@@ -4,7 +4,8 @@
 // ====================================================================
 
 import { db } from '../db.js';
-import { getNextInvoiceSequence, formatInvoiceNumber } from '../services/invoiceSequence.js';
+import { getNextInvoiceSequence, formatInvoiceNumber, normalizeTerminalId } from '../services/invoiceSequence.js';
+import { ensureRegionalIso, getRegionalIsoString } from '../utils/time.js';
 
 const CURRENT_TENANT = 'tenant_askar_01';
 
@@ -24,29 +25,41 @@ export const SaleRepository = {
                 'saleId', i.saleId,
                 'productId', i.productId,
                 'quantity', i.quantity,
+                'qty', i.quantity,
                 'priceAtSale', i.priceAtSale,
+                'price', i.priceAtSale,
+                'sellingPrice', i.priceAtSale,
+                'unitPrice', i.priceAtSale,
                 'costAtSale', i.costAtSale,
+                'unitCost', i.costAtSale,
                 'total_price', i.total_price,
+                'totalAmount', i.total_price,
                 'vatRateAtSale', i.vatRateAtSale,
-                'vatAmount', i.vatAmount
+                'vatAmount', i.vatAmount,
+                'name', COALESCE(p.name, 'Item #' || i.productId),
+                'productName', COALESCE(p.name, 'Item #' || i.productId),
+                'barcode', COALESCE(p.barcode, i.productId)
               )
             ELSE NULL END
           ), '[]'
         ) as items_json
       FROM Sale s
       LEFT JOIN SaleItem i ON s.id = i.saleId
+      LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
       WHERE (s.status IS NULL OR (s.status != 'VOIDED' AND s.status != 'CANCELLED'))
     `;
 
     const args = [];
 
     if (startDate) {
-      sql += ` AND s.createdAt >= ?`;
-      args.push(startDate instanceof Date ? startDate.toISOString() : String(startDate));
+      const startStr = ensureRegionalIso(startDate);
+      sql += ` AND (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;
+      args.push(startStr, startStr);
     }
     if (endDate) {
-      sql += ` AND s.createdAt <= ?`;
-      args.push(endDate instanceof Date ? endDate.toISOString() : String(endDate));
+      const endStr = ensureRegionalIso(endDate);
+      sql += ` AND (s.createdAt <= ? OR datetime(s.createdAt) <= datetime(?))`;
+      args.push(endStr, endStr);
     }
 
     sql += ` GROUP BY s.id ORDER BY s.createdAt DESC`;
@@ -76,16 +89,18 @@ export const SaleRepository = {
    */
   createSale: async (saleData, lineItems = []) => {
     return await db.transaction(async (tx) => {
-      const createdAt = saleData.createdAt
-        ? (saleData.createdAt instanceof Date ? saleData.createdAt.toISOString() : String(saleData.createdAt))
-        : new Date().toISOString();
+      const createdAt = ensureRegionalIso(saleData.createdAt);
 
       const totalVal = Number(saleData.totalAmount ?? saleData.total ?? 0);
       const vatVal = Number(saleData.totalVat ?? saleData.vatTotal ?? 0);
       const subtotalVal = Number(saleData.subtotal ?? (totalVal - vatVal));
 
+      // Terminal namespacing & concurrency control
+      const terminalId = normalizeTerminalId(saleData.terminalId || saleData.terminal_id || 'T1');
+      const storeId = saleData.storeId || saleData.store_id || 'store_askar_01';
+
       // Strictly sequential, gapless invoice numbering for Bahrain NBR VAT compliance
-      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence('Sale', tx);
+      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence(terminalId, tx);
       const invoiceNo =
         saleData.invoiceNo &&
           !saleData.invoiceNo.includes('NaN') &&
@@ -93,7 +108,7 @@ export const SaleRepository = {
           saleData.invoiceNo !== '0' &&
           saleData.invoiceNo !== 'INV-0'
           ? saleData.invoiceNo
-          : formatInvoiceNumber(seq);
+          : formatInvoiceNumber(seq, terminalId);
 
       // Validate customerId to prevent foreign key errors
       let validCustomerId = null;
@@ -128,8 +143,8 @@ export const SaleRepository = {
         sql: `INSERT INTO Sale (
           id, tenantId, invoiceNo, invoiceSeq, customerId, shiftId, employeeId,
           subtotal, vatTotal, totalVat, total, totalAmount, paymentType,
-          status, syncStatus, createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          status, syncStatus, createdAt, storeId, terminalId
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           saleId,
           saleData.tenantId || CURRENT_TENANT,
@@ -147,6 +162,8 @@ export const SaleRepository = {
           saleData.status || 'COMPLETED',
           saleData.syncStatus || 'PENDING',
           createdAt,
+          storeId,
+          terminalId,
         ],
       });
 
@@ -234,6 +251,8 @@ export const SaleRepository = {
         id: saleId,
         invoiceNo,
         invoiceSeq: seq,
+        terminalId,
+        storeId,
         subtotal: subtotalVal,
         total: totalVal,
         totalAmount: totalVal,

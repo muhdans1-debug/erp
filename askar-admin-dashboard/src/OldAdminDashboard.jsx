@@ -16,8 +16,8 @@ import FinancialsVatReturn from './FinancialsVatReturn';
 import ProcurementLogistics from './ProcurementLogistics';
 import ScaleLabelStudio from './ScaleLabelStudio';
 import ManagerDashboard from './pages/ManagerDashboard';
-
-const MANAGER_PIN = import.meta.env.VITE_MANAGER_PIN || '9999';
+import { getAdminPin } from './utils/auth';
+import { getApiBaseUrl } from './utils/apiConfig';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -127,9 +127,10 @@ export default function App() {
   // Authentication Handler
   const handlePinSubmit = (e) => {
     e?.preventDefault();
-    if (pinInput === MANAGER_PIN) {
+    if (pinInput === getAdminPin()) {
       setIsAuthenticated(true);
       sessionStorage.setItem('askar_admin_auth', 'true');
+      sessionStorage.setItem('askar_admin_pin', pinInput);
       setAuthError(false);
       setPinInput('');
     } else {
@@ -144,33 +145,35 @@ export default function App() {
     setPinInput('');
   };
 
-  // Master Data Fetcher from Turso Cloud
+  // Master Data Fetcher from Sovereign Edge API / Turso Cloud
   const fetchAllData = async () => {
     try {
       setRefreshing(true);
       setDbError(null);
 
-      // 1. Fetch Khata KPI & Customer Master (Unified Customer Table)
-      const khataSumResult = await adminDb.execute(
-        'SELECT COALESCE(SUM(balance), 0) as totalDebt, COUNT(*) as totalCustomers FROM Customer'
-      );
-      const totalDebt = Number(khataSumResult.rows[0]?.totalDebt || 0);
-      const totalCustomers = Number(khataSumResult.rows[0]?.totalCustomers || 0);
+      const apiBase = getApiBaseUrl();
+      const headers = { 'x-manager-pin': getAdminPin() };
 
-      const customerRows = await adminDb.execute(
-        'SELECT id, access_token, name, COALESCE(balance, 0) as balance, phone, createdAt as updatedAt FROM Customer ORDER BY balance DESC'
-      );
-      setCustomers(customerRows.rows);
+      const [custRes, prodRes] = await Promise.all([
+        fetch(`${apiBase}/api/customers`, { headers }).then(r => r.json()).catch(() => ({ customers: [] })),
+        fetch(`${apiBase}/api/products`, { headers }).then(r => r.json()).catch(() => ({ products: [] }))
+      ]);
 
-      // 2. Fetch Products
-      const productRows = await adminDb.execute(
-        'SELECT id, name, sellingPrice, purchasePrice, stockQuantity, barcode, updatedAt FROM Product ORDER BY name ASC'
-      );
-      setProducts(productRows.rows);
+      const customerRows = Array.isArray(custRes) ? custRes : (custRes.customers || []);
+      const productRows = Array.isArray(prodRes) ? prodRes : (prodRes.products || []);
 
-      // 3. Compute Product Inventory Valuation
+      setCustomers(customerRows);
+      setProducts(productRows);
+
+      // 1. Fetch Khata KPI & Customer Master
+      let totalDebt = 0;
+      customerRows.forEach(c => {
+        totalDebt += Number(c.balance || 0);
+      });
+
+      // 2. Compute Product Inventory Valuation
       let inventoryVal = 0;
-      for (const p of productRows.rows) {
+      for (const p of productRows) {
         const qty = Number(p.stockQuantity) || 0;
         const price = Number(p.sellingPrice) || 0;
         inventoryVal += qty * price;
@@ -178,15 +181,15 @@ export default function App() {
 
       setKpiData({
         totalDebt,
-        totalCustomers,
-        totalProducts: productRows.rows.length,
+        totalCustomers: customerRows.length,
+        totalProducts: productRows.length,
         totalInventoryValue: inventoryVal,
       });
 
       setRefreshing(false);
     } catch (err) {
-      console.error('Turso Cloud Query Failed:', err);
-      setDbError(err.message || 'Failed to connect to Turso Cloud');
+      console.error('Edge Cloud Query Failed:', err);
+      setDbError(err.message || 'Failed to connect to Edge Cloud');
       setRefreshing(false);
     }
   };
@@ -280,6 +283,19 @@ export default function App() {
               VALUES (?, ?, ?, ?, ?, datetime('now'), 1, 1)`,
         args: [id, accessToken, newCustomer.name, initialBalance, newCustomer.phone || '']
       });
+
+      if (initialBalance > 0) {
+        const ledgerId = `OB-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        try {
+          await adminDb.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, tenantId)
+                  VALUES (?, ?, ?, 'OPENING_BALANCE', 'Opening Balance (Previous Physical Book)', ?, 'SYNCED', datetime('now'), datetime('now'), 'tenant_askar_01')`,
+            args: [ledgerId, id, initialBalance, initialBalance]
+          });
+        } catch (lErr) {
+          console.warn('KhataLedger initial balance insert notice:', lErr?.message);
+        }
+      }
 
       setShowAddCustomerModal(false);
       setNewCustomer({ name: '', phone: '', balance: '0.000' });
@@ -420,7 +436,7 @@ export default function App() {
             {authError && (
               <p className="text-red-400 text-sm mt-3 flex items-center justify-center gap-1.5 font-medium animate-pulse">
                 <AlertTriangle className="w-4 h-4" />
-                Invalid PIN. Default manager PIN is 9999.
+                Invalid PIN. Please enter authorized manager PIN.
               </p>
             )}
 

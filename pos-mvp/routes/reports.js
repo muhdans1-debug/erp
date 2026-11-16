@@ -2,6 +2,14 @@ import crypto from 'crypto';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
 import { SaleRepository } from '../repositories/SaleRepository.js';
+import { 
+  getRegionalPeriodRange, 
+  getRegionalDayRange, 
+  getRegionalIsoString, 
+  getRegionalFormattedDate, 
+  getRegionalFormattedTime, 
+  REGIONAL_TIMEZONE 
+} from '../utils/time.js';
 
 export default async function reportRoutes(fastify, options) {
 
@@ -10,67 +18,19 @@ export default async function reportRoutes(fastify, options) {
 // Resolves the critical "Final Day Midnight" bug by explicitly setting endDate to 23:59:59.999
 const getFinancialReportData = async (query = {}) => {
   const { startDate, endDate, period } = query;
-  const now = new Date();
-
-  let start;
-  let end;
-
-  if (startDate && endDate) {
-    const sParts = String(startDate).split('-').map(Number);
-    if (sParts.length === 3 && !sParts.some(isNaN)) {
-      start = new Date(sParts[0], sParts[1] - 1, sParts[2], 0, 0, 0, 0);
-    } else {
-      start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-    }
-
-    const eParts = String(endDate).split('-').map(Number);
-    if (eParts.length === 3 && !eParts.some(isNaN)) {
-      end = new Date(eParts[0], eParts[1] - 1, eParts[2], 23, 59, 59, 999);
-    } else {
-      end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-    }
-  } else if (period === 'day' || period === 'today') {
-    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  } else if (period === 'yesterday') {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    start = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0, 0);
-    end = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59, 999);
-  } else if (period === 'week') {
-    start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    start.setHours(0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  } else if (period === 'month') {
-    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  } else if (period === 'quarter' || period === 'q1' || period === 'q2' || period === 'q3' || period === 'q4') {
-    const q = period === 'quarter' ? Math.floor(now.getMonth() / 3) : parseInt(period.replace('q', ''), 10) - 1;
-    const year = now.getFullYear();
-    start = new Date(year, q * 3, 1, 0, 0, 0, 0);
-    end = new Date(year, (q + 1) * 3, 0, 23, 59, 59, 999);
-  } else if (period === 'year') {
-    start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
-  } else {
-    // Default to today with 00:00:00 to 23:59:59.999
-    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  }
+  const { startIso, endIso, startDateStr, endDateStr } = getRegionalPeriodRange(period, startDate, endDate);
 
   // NEW: Optimized SQL Date-Range Fetch
   let allSales = [];
   let allSaleItems = [];
 
-  const startIso = start instanceof Date ? start.toISOString() : new Date(start).toISOString();
-  const endIso = end instanceof Date ? end.toISOString() : new Date(end).toISOString();
-
   try {
     const salesResult = await db.execute({
-      sql: `SELECT * FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) ORDER BY createdAt ASC`,
-      args: [startIso, endIso]
+      sql: `SELECT * FROM Sale 
+            WHERE ((createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?))) 
+              AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) 
+            ORDER BY createdAt ASC`,
+      args: [startIso, endIso, startIso, endIso]
     });
     allSales = salesResult.rows || [];
 
@@ -78,8 +38,9 @@ const getFinancialReportData = async (query = {}) => {
     const itemsResult = await db.execute({
       sql: `SELECT i.* FROM SaleItem i 
             JOIN Sale s ON i.saleId = s.id 
-            WHERE s.createdAt BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
-      args: [startIso, endIso]
+            WHERE ((s.createdAt BETWEEN ? AND ?) OR (datetime(s.createdAt) BETWEEN datetime(?) AND datetime(?))) 
+              AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso, startIso, endIso]
     });
     allSaleItems = itemsResult.rows || [];
   } catch (err) {
@@ -112,7 +73,18 @@ const getFinancialReportData = async (query = {}) => {
     totalRevenue += saleAmount;
     totalVat += saleVat;
 
-    const pType = String(sale.paymentType || sale.paymentMethod || 'CASH').toUpperCase();
+    const rawPType = String(sale.paymentType || sale.paymentMethod || 'CASH').toUpperCase();
+    let pType = 'CASH';
+    if (['CREDIT', 'NFC_CREDIT', 'MESS_KHATA', 'KHATA', 'KHATA_CREDIT'].includes(rawPType)) {
+      pType = 'CREDIT';
+    } else if (['CARD', 'DEBIT_CARD', 'CREDIT_CARD'].includes(rawPType)) {
+      pType = 'CARD';
+    } else if (['BENEFIT_PAY', 'BENEFITPAY', 'BENEFIT'].includes(rawPType)) {
+      pType = 'BENEFIT_PAY';
+    } else if (rawPType === 'CASH') {
+      pType = 'CASH';
+    }
+
     if (paymentBreakdown[pType] !== undefined) {
       paymentBreakdown[pType] += saleAmount;
     } else {
@@ -148,10 +120,10 @@ const getFinancialReportData = async (query = {}) => {
   return {
     success: true,
     dateRange: {
-      startDate: start.toISOString().split('T')[0],
-      endDate: end.toISOString().split('T')[0],
-      startBoundary: start.toISOString(),
-      endBoundary: end.toISOString(),
+      startDate: startDateStr,
+      endDate: endDateStr,
+      startBoundary: startIso,
+      endBoundary: endIso,
       inclusiveEndDay: true,
     },
     transactionCount: filteredSales.length,
@@ -201,46 +173,119 @@ fastify.get('/api/reports/financial', { preHandler: managerAuth }, async (reques
 
 // 4. Financial Reporting Route for the Back-Office Manager
 fastify.get('/api/reports/financials', { preHandler: managerAuth }, async (request) => {
-  const { period, startDate: queryStartDate, endDate } = request.query || {};
-  if (queryStartDate && endDate) {
+  const { period, startDate: queryStartDate, endDate: queryEndDate } = request.query || {};
+  if (queryStartDate && queryEndDate) {
     return await getFinancialReportData(request.query);
   }
-  const now = new Date();
-  let startDate = queryStartDate ? new Date(queryStartDate) : new Date(0);
 
-  if (period === 'day') {
-    startDate = new Date(now.setHours(0, 0, 0, 0));
-  } else if (period === 'month') {
-    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-  } else if (period === 'year') {
-    startDate = new Date(now.getFullYear(), 0, 1);
-  }
-
-  const sales = await SaleRepository.getSalesByDateRange(startDate);
+  const { startIso, endIso } = getRegionalPeriodRange(period || 'day', queryStartDate, queryEndDate);
+  const sales = await SaleRepository.getSalesByDateRange(startIso, endIso);
 
   let totalRevenue = 0;
   let totalCost = 0;
   let netProfit = 0;
 
   sales.forEach((sale) => {
-    totalRevenue += sale.total;
+    const saleTot = Number(sale.total ?? sale.totalAmount ?? 0);
+    totalRevenue += saleTot;
+
+    let saleCost = 0;
     (sale.items || []).forEach((item) => {
-      const itemCost = item.costAtSale * item.quantity;
-      const itemRevenue = item.priceAtSale * item.quantity;
+      const qty = Number(item.quantity) || 1;
+      const itemCost = Number(item.costAtSale || item.unitCost || 0) * qty;
+      const itemRevenue = Number(item.priceAtSale || item.sellingPrice || 0) * qty;
+      saleCost += itemCost;
       totalCost += itemCost;
       netProfit += (itemRevenue - itemCost);
     });
+
+    if (saleCost === 0 && saleTot > 0 && (sale.items || []).length === 0) {
+      // Fallback for sales where line items were not joined
+      const estCost = saleTot * 0.78;
+      totalCost += estCost;
+      netProfit += (saleTot - estCost);
+    }
   });
 
-  const chartData = [
-    { name: 'Week 1', profit: Number((netProfit * 0.2).toFixed(3)) || 120.500 },
-    { name: 'Week 2', profit: Number((netProfit * 0.25).toFixed(3)) || 210.250 },
-    { name: 'Week 3', profit: Number((netProfit * 0.25).toFixed(3)) || 180.000 },
-    { name: 'Week 4', profit: Number((netProfit * 0.3).toFixed(3)) || 240.750 },
-  ];
+  // Fetch business expenses for this period to calculate actual net profit
+  try {
+    const expRes = await db.execute({
+      sql: `SELECT amount FROM Expense WHERE createdAt >= ? AND createdAt <= ? AND (type IS NULL OR type != 'PERSONAL')`,
+      args: [startIso, endIso]
+    });
+    (expRes.rows || []).forEach((e) => {
+      netProfit = Math.max(0, netProfit - Number(e.amount || 0));
+    });
+  } catch (expErr) {
+    fastify.log.warn('Financials expense fetch notice:', expErr);
+  }
+
+  const p = (period || 'day').toLowerCase();
+  const marginRatio = totalRevenue > 0 ? (netProfit / totalRevenue) : 0.22;
+  let chartData = [];
+
+  if (p === 'day' || p === 'today') {
+    const daySlots = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+    const slotMap = {};
+    daySlots.forEach(s => { slotMap[s] = 0; });
+
+    sales.forEach((s) => {
+      const hStr = new Date(s.createdAt).toLocaleTimeString('en-US', { timeZone: REGIONAL_TIMEZONE, hour: '2-digit', hour12: false });
+      const h = parseInt(hStr, 10) || 0;
+      let slot = '08:00';
+      if (h >= 22) slot = '22:00';
+      else if (h >= 20) slot = '20:00';
+      else if (h >= 18) slot = '18:00';
+      else if (h >= 16) slot = '16:00';
+      else if (h >= 14) slot = '14:00';
+      else if (h >= 12) slot = '12:00';
+      else if (h >= 10) slot = '10:00';
+      slotMap[slot] += Number(s.total ?? s.totalAmount ?? 0) * marginRatio;
+    });
+
+    chartData = daySlots.map(name => ({
+      name,
+      profit: Number((slotMap[name] || 0).toFixed(3))
+    }));
+  } else if (p === 'year') {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthMap = {};
+    months.forEach(m => { monthMap[m] = 0; });
+
+    sales.forEach((s) => {
+      const m = new Date(s.createdAt).getMonth();
+      const mName = months[m] || 'Jan';
+      monthMap[mName] += Number(s.total ?? s.totalAmount ?? 0) * marginRatio;
+    });
+
+    chartData = months.map(name => ({
+      name,
+      profit: Number((monthMap[name] || 0).toFixed(3))
+    }));
+  } else {
+    // Default: month -> Week 1 to Week 5
+    const weekSlots = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'];
+    const weekMap = {};
+    weekSlots.forEach(w => { weekMap[w] = 0; });
+
+    sales.forEach((s) => {
+      const day = new Date(s.createdAt).getDate();
+      let slot = 'Week 1';
+      if (day > 28) slot = 'Week 5';
+      else if (day > 21) slot = 'Week 4';
+      else if (day > 14) slot = 'Week 3';
+      else if (day > 7) slot = 'Week 2';
+      weekMap[slot] += Number(s.total ?? s.totalAmount ?? 0) * marginRatio;
+    });
+
+    chartData = weekSlots.map(name => ({
+      name,
+      profit: Number((weekMap[name] || 0).toFixed(3))
+    }));
+  }
 
   return {
-    period: period || 'all',
+    period: p,
     transactions: sales.length,
     metrics: {
       revenue: totalRevenue.toFixed(3),
@@ -281,8 +326,8 @@ fastify.post('/api/expenses', { preHandler: managerAuth }, async (request, reply
   }
 });
 
-// List all expenses
-fastify.get('/api/expenses', async (request, reply) => {
+// List all expenses - Protected by Manager Auth
+fastify.get('/api/expenses', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const { type, limit } = request.query || {};
     let all = await db.orm.Expense.all();
@@ -386,27 +431,26 @@ fastify.get('/api/reports/vat-return', { preHandler: managerAuth }, async (reque
   const { startDate, endDate } = request.query || {};
 
   try {
-    const start = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1);
-    start.setHours(0, 0, 0, 0);
-
-    const end = endDate ? new Date(endDate) : new Date();
-    end.setHours(23, 59, 59, 999);
+    const { startIso, endIso } = getRegionalPeriodRange('quarter', startDate, endDate);
+    const start = new Date(startIso);
+    const end = new Date(endIso);
 
     // 1. Calculate Output VAT (Tax collected from customers - strictly excluding VOIDED sales)
-    const startIso = start.toISOString();
-    const endIso = end.toISOString();
-
     const salesRes = await db.execute({
-      sql: `SELECT * FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) ORDER BY createdAt ASC`,
-      args: [startIso, endIso]
+      sql: `SELECT * FROM Sale 
+            WHERE ((createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?))) 
+              AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED')) 
+            ORDER BY createdAt ASC`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const salesInPeriod = salesRes.rows || [];
 
     const itemsRes = await db.execute({
       sql: `SELECT i.* FROM SaleItem i 
             JOIN Sale s ON i.saleId = s.id 
-            WHERE s.createdAt BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
-      args: [startIso, endIso]
+            WHERE ((s.createdAt BETWEEN ? AND ?) OR (datetime(s.createdAt) BETWEEN datetime(?) AND datetime(?))) 
+              AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const saleItemMap = new Map();
     (itemsRes.rows || []).forEach((it) => {
@@ -505,57 +549,24 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
   const { range, customDate, startDate: qStartDate, endDate: qEndDate } = request.query || {};
   const selectedRange = String(range || 'TODAY').toUpperCase();
 
-  const now = new Date();
-  let startDate = new Date();
-  let endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-  if (qStartDate && qEndDate) {
-    const s = new Date(qStartDate);
-    s.setHours(0, 0, 0, 0);
-    const e = new Date(qEndDate);
-    e.setHours(23, 59, 59, 999);
-    startDate = s;
-    endDate = e;
-  } else if (selectedRange === 'CUSTOM' && customDate) {
-    const parts = String(customDate).split('-').map(Number);
-    if (parts.length === 3 && !parts.some(isNaN)) {
-      startDate = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
-      endDate = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
-    }
-  } else if (selectedRange === 'TODAY') {
-    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  } else if (selectedRange === 'YESTERDAY') {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    startDate = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0, 0);
-    endDate = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59, 999);
-  } else if (selectedRange === 'WEEK') {
-    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    startDate.setHours(0, 0, 0, 0);
-  } else if (selectedRange === 'MONTH') {
-    startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-  } else if (selectedRange === 'ALL') {
-    startDate = new Date(0);
-  } else {
-    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  }
+  const startParam = qStartDate || (selectedRange === 'CUSTOM' ? customDate : undefined);
+  const endParam = qEndDate || (selectedRange === 'CUSTOM' ? customDate : undefined);
+  const { startIso, endIso } = getRegionalPeriodRange(selectedRange, startParam, endParam);
 
   try {
-    const startIso = startDate.toISOString();
-    const endIso = endDate.toISOString();
-
     // 🟢 High-Performance Parameterized SQL Queries (Zero full-table in-memory leaks)
     const salesRes = await db.execute({
       sql: `SELECT id, invoiceNo, total, paymentType, createdAt FROM Sale 
-            WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
-      args: [startIso, endIso]
+            WHERE ((createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?)))
+              AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const allSales = salesRes.rows || [];
 
     const expensesRes = await db.execute({
       sql: `SELECT id, category, description, amount, type, createdAt FROM Expense 
-            WHERE createdAt BETWEEN ? AND ?`,
-      args: [startIso, endIso]
+            WHERE (createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?))`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const allExpenses = expensesRes.rows || [];
 
@@ -563,20 +574,22 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
       sql: `SELECT k.id, k.customerId, k.amount, k.type, k.timestamp, c.name as customerName 
             FROM KhataLedger k 
             LEFT JOIN Customer c ON k.customerId = c.id
-            WHERE k.timestamp BETWEEN ? AND ? AND (k.type = 'PAYMENT_IN' OR k.amount < 0)`,
-      args: [startIso, endIso]
+            WHERE ((k.timestamp BETWEEN ? AND ?) OR (datetime(k.timestamp) BETWEEN datetime(?) AND datetime(?)))
+              AND (k.type = 'PAYMENT_IN' OR k.amount < 0)`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const allKhata = khataRes.rows || [];
 
     const wastageRes = await db.execute({
       sql: `SELECT id, productName, quantity, reason, totalLoss, createdAt FROM WastageLog 
-            WHERE createdAt BETWEEN ? AND ?`,
-      args: [startIso, endIso]
+            WHERE (createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?))`,
+      args: [startIso, endIso, startIso, endIso]
     });
     const allWastage = wastageRes.rows || [];
 
     const unifiedList = [];
     let totalSales = 0;
+    let totalImmediateCashIn = 0;
     let totalExpenses = 0;
     let totalKhataCollected = 0;
     let totalWastageLoss = 0;
@@ -589,14 +602,19 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
         totalExpenses += Math.abs(amt);
       } else {
         totalSales += amt;
+        const rawPt = String(sale.paymentType || '').toUpperCase();
+        const isCreditSale = ['CREDIT', 'NFC_CREDIT', 'MESS_KHATA', 'KHATA', 'KHATA_CREDIT'].includes(rawPt);
+        if (!isCreditSale) {
+          totalImmediateCashIn += amt;
+        }
       }
 
       const pType = sale.paymentType ? ` (${sale.paymentType})` : '';
       unifiedList.push({
         id: `sale-${sale.id}`,
-        rawDate: new Date(sale.createdAt).toISOString(),
-        time: new Date(sale.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dateStr: new Date(sale.createdAt).toLocaleDateString('en-GB'),
+        rawDate: sale.createdAt,
+        time: new Date(sale.createdAt).toLocaleTimeString('en-US', { timeZone: REGIONAL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: true }),
+        dateStr: new Date(sale.createdAt).toLocaleDateString('en-GB', { timeZone: REGIONAL_TIMEZONE }),
         type: isNegative ? 'REFUND' : 'SALE',
         desc: `Invoice #${sale.invoiceNo}${pType}`,
         amount: Math.abs(amt),
@@ -612,9 +630,9 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
       const typeLabel = exp.type === 'PERSONAL' ? ' [Personal Draw]' : '';
       unifiedList.push({
         id: `exp-${exp.id}`,
-        rawDate: new Date(exp.createdAt).toISOString(),
-        time: new Date(exp.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dateStr: new Date(exp.createdAt).toLocaleDateString('en-GB'),
+        rawDate: exp.createdAt,
+        time: new Date(exp.createdAt).toLocaleTimeString('en-US', { timeZone: REGIONAL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: true }),
+        dateStr: new Date(exp.createdAt).toLocaleDateString('en-GB', { timeZone: REGIONAL_TIMEZONE }),
         type: 'EXPENSE',
         desc: `${exp.category}${exp.description ? ` - ${exp.description}` : ''}${typeLabel}`,
         amount: amt,
@@ -630,9 +648,9 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
 
       unifiedList.push({
         id: `khata-${entry.id}`,
-        rawDate: new Date(entry.timestamp).toISOString(),
-        time: new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dateStr: new Date(entry.timestamp).toLocaleDateString('en-GB'),
+        rawDate: entry.timestamp,
+        time: new Date(entry.timestamp).toLocaleTimeString('en-US', { timeZone: REGIONAL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: true }),
+        dateStr: new Date(entry.timestamp).toLocaleDateString('en-GB', { timeZone: REGIONAL_TIMEZONE }),
         type: 'KHATA_PAYMENT',
         desc: `${custName} - Debt Settle`,
         amount: amt,
@@ -647,9 +665,9 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
 
       unifiedList.push({
         id: `wastage-${w.id}`,
-        rawDate: new Date(w.createdAt).toISOString(),
-        time: new Date(w.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dateStr: new Date(w.createdAt).toLocaleDateString('en-GB'),
+        rawDate: w.createdAt,
+        time: new Date(w.createdAt).toLocaleTimeString('en-US', { timeZone: REGIONAL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: true }),
+        dateStr: new Date(w.createdAt).toLocaleDateString('en-GB', { timeZone: REGIONAL_TIMEZONE }),
         type: 'WASTAGE',
         desc: `Write-Off: ${w.quantity}x ${w.productName} [${w.reason}]`,
         amount: loss,
@@ -661,7 +679,7 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
     unifiedList.sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
 
     const grossProfit = Math.max(0, totalSales - totalWastageLoss);
-    const netCash = (totalSales + totalKhataCollected) - totalExpenses;
+    const netCash = (totalImmediateCashIn + totalKhataCollected) - totalExpenses;
 
     return {
       success: true,
@@ -682,13 +700,13 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
   }
 });
 
-// 5. High-Performance Unified Cash Flow Endpoint (Single Database Engine UNION ALL)
-fastify.get('/api/reports/unified-cashflow', async (request, reply) => {
+// 5. High-Performance Unified Cash Flow Endpoint (Single Database Engine UNION ALL) - Protected by Manager Auth
+fastify.get('/api/reports/unified-cashflow', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const start = request.query.startDate || new Date(0).toISOString();
     const end = request.query.endDate || new Date().toISOString();
 
-    // NEW: Execute a single, highly optimized UNION ALL directly on the database engine
+    // Execute a single, highly optimized UNION ALL directly on the database engine
     const unifiedRes = await db.execute({
       sql: `SELECT 'SALE' as type, id, total as amount, paymentType, createdAt FROM Sale 
             WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))
@@ -696,8 +714,8 @@ fastify.get('/api/reports/unified-cashflow', async (request, reply) => {
             SELECT 'EXPENSE' as type, id, -amount as amount, category as paymentType, createdAt FROM Expense 
             WHERE createdAt BETWEEN ? AND ?
             UNION ALL
-            SELECT 'KHATA_PAYMENT' as type, id, -amount as amount, 'KHATA' as paymentType, timestamp as createdAt FROM KhataLedger 
-            WHERE timestamp BETWEEN ? AND ? AND (type = 'PAYMENT' OR amount < 0)
+            SELECT 'KHATA_PAYMENT' as type, id, ABS(amount) as amount, 'KHATA' as paymentType, timestamp as createdAt FROM KhataLedger 
+            WHERE timestamp BETWEEN ? AND ? AND (type IN ('PAYMENT', 'PAYMENT_IN') OR amount < 0)
             ORDER BY createdAt DESC`,
       args: [start, end, start, end, start, end]
     });

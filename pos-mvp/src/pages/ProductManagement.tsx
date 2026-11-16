@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import RawBarcode from 'react-barcode';
 const Barcode = RawBarcode as any;
+import { getManagerPin } from '../utils/authUtils';
+import { CLOUD_GATEWAY_URL } from '../utils/apiConfig';
 import {
   Search,
   ArrowUpDown,
@@ -28,7 +30,10 @@ import {
 export interface ProductItem {
   id: string;
   name: string;
+  name_ar?: string | null;
   barcode: string | null;
+  plu_code?: string | null;
+  image_url?: string | null;
   sellingPrice: number;
   purchasePrice: number;
   unitCost?: number;
@@ -40,6 +45,7 @@ export interface ProductItem {
   vatRate?: number;
   taxRate?: number;
   category?: string;
+  is_weighed_item?: boolean | number;
   updatedAt?: string;
 }
 
@@ -63,19 +69,25 @@ interface ProductManagementProps {
 export default function ProductManagement({ apiBase: propApiBase }: ProductManagementProps) {
   // Dynamic API Base resolution (vital for Sunmi terminal & LAN IP access)
   const resolveApiBase = () => {
-    if (typeof window === 'undefined') return propApiBase || 'http://localhost:3000';
-    const stored = localStorage.getItem('master_server_url');
-    if (stored && stored.trim()) return stored.trim();
+    if (typeof window === 'undefined') return propApiBase || CLOUD_GATEWAY_URL;
+    const stored = localStorage.getItem('master_server_url') || localStorage.getItem('server_ip');
+    if (stored && stored.trim() && !stored.includes('askar-edge-api.layali-askar-pos.workers.dev')) {
+      let clean = stored.trim();
+      if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+        clean = clean.includes('.') ? `https://${clean}` : `http://${clean}:3000`;
+      }
+      return clean;
+    }
 
-    const { protocol, hostname } = window.location;
-    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `${protocol}//${hostname}:3000`;
+    const { hostname } = window.location;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3000';
     }
 
     if (propApiBase && propApiBase.trim() && propApiBase !== 'http://localhost:3000') {
       return propApiBase.trim();
     }
-    return `${protocol}//${hostname || 'localhost'}:3000`;
+    return CLOUD_GATEWAY_URL;
   };
 
   const apiBase = resolveApiBase();
@@ -102,13 +114,18 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
   const [editModalProduct, setEditModalProduct] = useState<ProductItem | null>(null);
   const [editForm, setEditForm] = useState({
     name: '',
+    name_ar: '',
     barcode: '',
+    plu_code: '',
+    image_url: '',
     purchasePrice: '0',
     sellingPrice: '0',
     stockQuantity: '0',
     minThreshold: '10',
     maxThreshold: '100',
-    distributorId: ''
+    distributorId: '',
+    category: 'GROCERY',
+    is_weighed_item: false
   });
   const [isSavingEditModal, setIsSavingEditModal] = useState<boolean>(false);
 
@@ -147,13 +164,18 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
   // Add Product form state
   const [newProduct, setNewProduct] = useState({
     name: '',
+    name_ar: '',
     barcode: '',
+    plu_code: '',
+    image_url: '',
     sellingPrice: '1.000',
     purchasePrice: '0.800',
     stockQuantity: '50',
     minThreshold: '10',
     maxThreshold: '100',
-    distributorId: ''
+    distributorId: '',
+    category: 'GROCERY',
+    is_weighed_item: false
   });
 
   const cellInputRef = useRef<HTMLInputElement>(null);
@@ -404,7 +426,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           },
           body: JSON.stringify(payload)
@@ -415,7 +437,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           },
           body: JSON.stringify(payload)
@@ -471,13 +493,18 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     const cost = p.purchasePrice ?? p.unitCost ?? 0;
     setEditForm({
       name: p.name || '',
+      name_ar: p.name_ar || '',
       barcode: p.barcode || '',
+      plu_code: p.plu_code || '',
+      image_url: p.image_url || '',
       purchasePrice: String(cost),
       sellingPrice: String(p.sellingPrice || 0),
       stockQuantity: String(p.stockQuantity || 0),
       minThreshold: String(p.minThreshold ?? 10),
       maxThreshold: String(p.maxThreshold ?? 100),
-      distributorId: p.distributorId || ''
+      distributorId: p.distributorId || '',
+      category: p.category || 'GROCERY',
+      is_weighed_item: Boolean(p.is_weighed_item)
     });
   };
 
@@ -488,9 +515,13 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     setIsSavingEditModal(true);
 
     try {
+      const isVeggie = editForm.category === 'PRODUCE' || editForm.is_weighed_item;
       const payload = {
         name: editForm.name.trim() || editModalProduct.name,
+        name_ar: editForm.name_ar.trim() || null,
         barcode: editForm.barcode.trim() || null,
+        plu_code: editForm.plu_code.trim() || null,
+        image_url: editForm.image_url.trim() || null,
         purchasePrice: parseFloat(editForm.purchasePrice) || 0,
         unitCost: parseFloat(editForm.purchasePrice) || 0,
         sellingPrice: parseFloat(editForm.sellingPrice) || 0,
@@ -498,6 +529,9 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         minThreshold: parseInt(editForm.minThreshold) || 0,
         maxThreshold: parseInt(editForm.maxThreshold) || 0,
         distributorId: editForm.distributorId || null,
+        category: editForm.category,
+        is_weighed_item: editForm.is_weighed_item,
+        vatRate: isVeggie ? 0.0 : undefined,
         reason: 'Full product edit via PIM Edit Drawer',
         changedBy: 'Manager'
       };
@@ -508,7 +542,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           },
           body: JSON.stringify(payload)
@@ -519,7 +553,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           },
           body: JSON.stringify(payload)
@@ -564,7 +598,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         res = await fetch(`${base}/api/products/${encodedId}`, {
           method: 'DELETE',
           headers: {
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           }
         });
@@ -575,10 +609,10 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-manager-pin': '9999',
+              'x-manager-pin': getManagerPin(),
               'x-pos-client': 'pim-admin'
             },
-            body: JSON.stringify({ pin: '9999' })
+            body: JSON.stringify({ pin: getManagerPin() })
           });
         } catch (secondErr) {
           // Fallback 2: Simple DELETE without custom headers
@@ -590,7 +624,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || (data && data.success === false)) {
-        throw new Error(data.error || 'Server failed to delete product');
+        throw new Error(data.details || data.error || 'Server failed to delete product');
       }
 
       setProducts((prev) => prev.filter((p) => p.id !== id));
@@ -625,7 +659,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'pim-admin'
           },
           body: JSON.stringify({ productIds: idsToDelete })
@@ -641,7 +675,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || (data && data.success === false)) {
-        throw new Error(data.error || 'Failed to delete selected products');
+        throw new Error(data.details || data.error || 'Failed to delete selected products');
       }
 
       setProducts((prev) => prev.filter((p) => !selectedIds.has(p.id)));
@@ -713,7 +747,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': '9999',
+          'x-manager-pin': getManagerPin(),
           'x-pos-client': 'pim-admin'
         },
         body: JSON.stringify(payload)
@@ -741,23 +775,30 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
     if (!newProduct.name.trim()) return;
 
     try {
+      const isVeggie = newProduct.category === 'PRODUCE' || newProduct.is_weighed_item;
       const payload = {
         name: newProduct.name.trim(),
+        name_ar: newProduct.name_ar.trim() || null,
         barcode: newProduct.barcode.trim() || null,
+        plu_code: newProduct.plu_code.trim() || null,
+        image_url: newProduct.image_url.trim() || null,
         sellingPrice: parseFloat(newProduct.sellingPrice) || 0,
         purchasePrice: parseFloat(newProduct.purchasePrice) || 0,
         unitCost: parseFloat(newProduct.purchasePrice) || 0,
         stockQuantity: newProduct.stockQuantity !== '' ? (parseInt(newProduct.stockQuantity) || 0) : 100,
         minThreshold: parseInt(newProduct.minThreshold) || 10,
         maxThreshold: parseInt(newProduct.maxThreshold) || 100,
-        distributorId: newProduct.distributorId || null
+        distributorId: newProduct.distributorId || null,
+        category: newProduct.category,
+        is_weighed_item: newProduct.is_weighed_item,
+        vatRate: isVeggie ? 0.0 : 10.0
       };
 
       const res = await fetch(`${apiBase}/api/products`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': '9999',
+          'x-manager-pin': getManagerPin(),
           'x-pos-client': 'pim-admin'
         },
         body: JSON.stringify(payload)
@@ -767,13 +808,18 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         setShowAddProductModal(false);
         setNewProduct({
           name: '',
+          name_ar: '',
           barcode: '',
+          plu_code: '',
+          image_url: '',
           sellingPrice: '1.000',
           purchasePrice: '0.800',
           stockQuantity: '50',
           minThreshold: '10',
           maxThreshold: '100',
-          distributorId: ''
+          distributorId: '',
+          category: 'GROCERY',
+          is_weighed_item: false
         });
         showToast(`Added new product "${payload.name}"!`);
         await fetchProducts();
@@ -835,11 +881,10 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       {/* --- TOAST NOTIFICATION --- */}
       {toastMessage && (
         <div
-          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-bold transition-all animate-in slide-in-from-bottom-3 ${
-            toastMessage.type === 'error'
-              ? 'bg-rose-600 text-white border border-rose-500'
-              : 'bg-emerald-600 text-white border border-emerald-500'
-          }`}
+          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-bold transition-all animate-in slide-in-from-bottom-3 ${toastMessage.type === 'error'
+            ? 'bg-rose-600 text-white border border-rose-500'
+            : 'bg-emerald-600 text-white border border-emerald-500'
+            }`}
         >
           {toastMessage.type === 'error' ? <AlertTriangle size={16} /> : <Check size={16} />}
           <span>{toastMessage.text}</span>
@@ -1016,11 +1061,10 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           {/* Negative Margin Risk Card */}
           <button
             onClick={() => setFilterType(filterType === 'negative' ? 'all' : 'negative')}
-            className={`text-left p-3 rounded-xl border transition cursor-pointer ${
-              filterType === 'negative'
-                ? 'bg-rose-500/20 border-rose-500 shadow-md ring-2 ring-rose-500/30'
-                : 'bg-slate-900 border-rose-900/40 hover:border-rose-700'
-            }`}
+            className={`text-left p-3 rounded-xl border transition cursor-pointer ${filterType === 'negative'
+              ? 'bg-rose-500/20 border-rose-500 shadow-md ring-2 ring-rose-500/30'
+              : 'bg-slate-900 border-rose-900/40 hover:border-rose-700'
+              }`}
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1">
@@ -1039,11 +1083,10 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
           {/* Low Margin Risk Card */}
           <button
             onClick={() => setFilterType(filterType === 'low_margin' ? 'all' : 'low_margin')}
-            className={`text-left p-3 rounded-xl border transition cursor-pointer ${
-              filterType === 'low_margin'
-                ? 'bg-amber-500/20 border-amber-500 shadow-md ring-2 ring-amber-500/30'
-                : 'bg-slate-900 border-amber-900/40 hover:border-amber-700'
-            }`}
+            className={`text-left p-3 rounded-xl border transition cursor-pointer ${filterType === 'low_margin'
+              ? 'bg-amber-500/20 border-amber-500 shadow-md ring-2 ring-amber-500/30'
+              : 'bg-slate-900 border-amber-900/40 hover:border-amber-700'
+              }`}
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
@@ -1094,22 +1137,20 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={() => setFilterType('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              filterType === 'all'
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${filterType === 'all'
+              ? 'bg-slate-700 text-white shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
           >
             All ({products.length})
           </button>
 
           <button
             onClick={() => setFilterType('negative')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              filterType === 'negative'
-                ? 'bg-rose-600 text-white'
-                : 'text-rose-400 hover:bg-rose-950/40'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${filterType === 'negative'
+              ? 'bg-rose-600 text-white'
+              : 'text-rose-400 hover:bg-rose-950/40'
+              }`}
           >
             <AlertTriangle size={13} />
             <span>Loss ({kpis.negMarginCount})</span>
@@ -1117,33 +1158,30 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
           <button
             onClick={() => setFilterType('low_margin')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              filterType === 'low_margin'
-                ? 'bg-amber-600 text-slate-950'
-                : 'text-amber-400 hover:bg-amber-950/40'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${filterType === 'low_margin'
+              ? 'bg-amber-600 text-slate-950'
+              : 'text-amber-400 hover:bg-amber-950/40'
+              }`}
           >
             <span>Low Margin ({kpis.lowMarginCount})</span>
           </button>
 
           <button
             onClick={() => setFilterType('healthy')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              filterType === 'healthy'
-                ? 'bg-emerald-600 text-white'
-                : 'text-emerald-400 hover:bg-emerald-950/40'
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${filterType === 'healthy'
+              ? 'bg-emerald-600 text-white'
+              : 'text-emerald-400 hover:bg-emerald-950/40'
+              }`}
           >
             Healthy (&ge; 5%)
           </button>
 
           <button
             onClick={() => setFilterType('low_stock')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              filterType === 'low_stock'
-                ? 'bg-sky-600 text-white'
-                : 'text-sky-400 hover:bg-sky-950/40'
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${filterType === 'low_stock'
+              ? 'bg-sky-600 text-white'
+              : 'text-sky-400 hover:bg-sky-950/40'
+              }`}
           >
             Low Stock
           </button>
@@ -1246,9 +1284,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                   return (
                     <tr
                       key={p.id}
-                      className={`transition-colors group hover:bg-slate-800/40 ${
-                        isSelected ? 'bg-slate-800/60' : ''
-                      } ${marginStyling.bg}`}
+                      className={`transition-colors group hover:bg-slate-800/40 ${isSelected ? 'bg-slate-800/60' : ''
+                        } ${marginStyling.bg}`}
                     >
                       {/* Checkbox Column */}
                       <td className="py-2.5 px-3 text-center">
@@ -1306,7 +1343,36 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                           </div>
                         ) : (
                           <div className="flex items-center justify-between">
-                            <span className="truncate max-w-[240px] font-semibold">{p.name}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              {p.image_url && (
+                                <img
+                                  src={p.image_url}
+                                  alt=""
+                                  className="w-7 h-7 rounded-lg object-cover shrink-0 border border-slate-700"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {p.plu_code && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-black bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                      #{p.plu_code}
+                                    </span>
+                                  )}
+                                  <span className="truncate max-w-[240px] font-semibold">{p.name}</span>
+                                  {(p.category === 'PRODUCE' || Boolean(p.is_weighed_item)) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex-shrink-0" title="Active in Daily Produce & Veggies Commander">
+                                      🥦 Scale
+                                    </span>
+                                  )}
+                                </div>
+                                {p.name_ar && (
+                                  <span className="text-[10px] text-slate-400 block font-normal truncate max-w-[240px]">
+                                    {p.name_ar}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                             <div className="flex items-center gap-1 ml-2">
                               {status === 'saving' && (
                                 <span className="text-[10px] text-amber-400 font-sans animate-pulse">Saving...</span>
@@ -1439,9 +1505,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                             startEditing(p, 'sellingPrice');
                           }
                         }}
-                        className={`py-2.5 px-3 text-right font-black hover:bg-slate-700/40 cursor-pointer bg-slate-950/30 group/cell ${
-                          margin < 0 ? 'text-rose-400' : margin < 5 ? 'text-amber-400' : 'text-emerald-400'
-                        }`}
+                        className={`py-2.5 px-3 text-right font-black hover:bg-slate-700/40 cursor-pointer bg-slate-950/30 group/cell ${margin < 0 ? 'text-rose-400' : margin < 5 ? 'text-amber-400' : 'text-emerald-400'
+                          }`}
                         title="Click to edit retail selling price"
                       >
                         {editingCell?.id === p.id && editingCell.field === 'sellingPrice' ? (
@@ -1490,13 +1555,12 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                       <td className="py-2.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <span
-                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                              margin < 0
-                                ? 'bg-rose-600 text-white font-black animate-pulse'
-                                : margin < 5
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${margin < 0
+                              ? 'bg-rose-600 text-white font-black animate-pulse'
+                              : margin < 5
                                 ? 'bg-amber-500 text-slate-950 font-bold'
                                 : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            }`}
+                              }`}
                           >
                             {margin.toFixed(1)}%
                           </span>
@@ -1510,9 +1574,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
                       {/* Profit BD */}
                       <td
-                        className={`py-2.5 px-3 text-right font-semibold ${
-                          p.sellingPrice - cost < 0 ? 'text-rose-400' : 'text-slate-300'
-                        }`}
+                        className={`py-2.5 px-3 text-right font-semibold ${p.sellingPrice - cost < 0 ? 'text-rose-400' : 'text-slate-300'
+                          }`}
                       >
                         {(p.sellingPrice - cost).toFixed(3)}
                       </td>
@@ -1524,9 +1587,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                             startEditing(p, 'stockQuantity');
                           }
                         }}
-                        className={`py-2.5 px-3 text-right hover:bg-slate-700/40 cursor-pointer group/cell ${
-                          p.stockQuantity <= p.minThreshold ? 'text-rose-400 font-bold' : 'text-slate-200'
-                        }`}
+                        className={`py-2.5 px-3 text-right hover:bg-slate-700/40 cursor-pointer group/cell ${p.stockQuantity <= p.minThreshold ? 'text-rose-400 font-bold' : 'text-slate-200'
+                          }`}
                         title="Click to edit current stock"
                       >
                         {editingCell?.id === p.id && editingCell.field === 'stockQuantity' ? (
@@ -1661,11 +1723,10 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                                 e.stopPropagation();
                                 setActiveMenuId(activeMenuId === p.id ? null : p.id);
                               }}
-                              className={`p-1.5 rounded transition cursor-pointer ${
-                                activeMenuId === p.id
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'hover:bg-slate-700/60 text-slate-400 hover:text-slate-200'
-                              }`}
+                              className={`p-1.5 rounded transition cursor-pointer ${activeMenuId === p.id
+                                ? 'bg-indigo-600 text-white'
+                                : 'hover:bg-slate-700/60 text-slate-400 hover:text-slate-200'
+                                }`}
                               title="Product actions & delete"
                             >
                               <MoreVertical size={15} />
@@ -1675,9 +1736,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                             {activeMenuId === p.id && (
                               <div
                                 onClick={(e) => e.stopPropagation()}
-                                className={`absolute right-0 ${
-                                  idx > filteredProducts.length - 4 ? 'bottom-full mb-1' : 'top-full mt-1'
-                                } w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 py-1.5 text-left font-sans animate-in fade-in zoom-in-95`}
+                                className={`absolute right-0 ${idx > filteredProducts.length - 4 ? 'bottom-full mb-1' : 'top-full mt-1'
+                                  } w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 py-1.5 text-left font-sans animate-in fade-in zoom-in-95`}
                               >
                                 <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
                                   Actions
@@ -1783,15 +1843,51 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
             </div>
 
             <form onSubmit={handleSaveEditModal} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-bold text-slate-300 mb-1">Product Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Product Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Arabic Name</label>
+                  <input
+                    type="text"
+                    placeholder="الاسم بالعربية"
+                    value={editForm.name_ar}
+                    onChange={(e) => setEditForm({ ...editForm, name_ar: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Omni-Pad Short Code (#)</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="e.g. 14, 15, 18"
+                    value={editForm.plu_code}
+                    onChange={(e) => setEditForm({ ...editForm, plu_code: e.target.value.replace(/\D/g, '') })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-blue-300 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Picture Image URL</label>
+                  <input
+                    type="url"
+                    placeholder="https://images.unsplash..."
+                    value={editForm.image_url}
+                    onChange={(e) => setEditForm({ ...editForm, image_url: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1856,13 +1952,12 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                 const p = s - c;
                 return (
                   <div
-                    className={`p-2.5 rounded-xl border text-xs flex items-center justify-between font-mono ${
-                      m < 0
-                        ? 'bg-rose-950/40 border-rose-800 text-rose-300'
-                        : m < 5
+                    className={`p-2.5 rounded-xl border text-xs flex items-center justify-between font-mono ${m < 0
+                      ? 'bg-rose-950/40 border-rose-800 text-rose-300'
+                      : m < 5
                         ? 'bg-amber-950/40 border-amber-800 text-amber-300'
                         : 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
-                    }`}
+                      }`}
                   >
                     <span>
                       Live Margin: <strong>{m.toFixed(1)}%</strong> ({m < 0 ? 'LOSS' : m < 5 ? 'LOW' : 'HEALTHY'})
@@ -2065,13 +2160,13 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                   <strong className="text-emerald-400">
                     {bulkAction === 'PERCENT_INCREASE'
                       ? (
-                          bulkRoundToFils > 0
-                            ? (Math.ceil((1.0 * (1 + parseFloat(bulkValue || '0') / 100)) / (bulkRoundToFils / 1000)) * (bulkRoundToFils / 1000)).toFixed(3)
-                            : (1.0 * (1 + parseFloat(bulkValue || '0') / 100)).toFixed(3)
-                        )
+                        bulkRoundToFils > 0
+                          ? (Math.ceil((1.0 * (1 + parseFloat(bulkValue || '0') / 100)) / (bulkRoundToFils / 1000)) * (bulkRoundToFils / 1000)).toFixed(3)
+                          : (1.0 * (1 + parseFloat(bulkValue || '0') / 100)).toFixed(3)
+                      )
                       : bulkAction === 'PERCENT_DECREASE'
-                      ? (1.0 * (1 - parseFloat(bulkValue || '0') / 100)).toFixed(3)
-                      : (1.0 + parseFloat(bulkValue || '0')).toFixed(3)}{' '}
+                        ? (1.0 * (1 - parseFloat(bulkValue || '0') / 100)).toFixed(3)
+                        : (1.0 + parseFloat(bulkValue || '0')).toFixed(3)}{' '}
                     BHD
                   </strong>
                   . Every update is atomically saved with an immutable audit entry in ProductPriceHistory.
@@ -2274,9 +2369,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
                       <div key={item.id} className="relative text-xs">
                         {/* Dot indicator */}
                         <div
-                          className={`absolute -left-[27px] top-1 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${
-                            isIncrease ? 'bg-emerald-500' : priceDiff < 0 ? 'bg-rose-500' : 'bg-slate-500'
-                          }`}
+                          className={`absolute -left-[27px] top-1 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${isIncrease ? 'bg-emerald-500' : priceDiff < 0 ? 'bg-rose-500' : 'bg-slate-500'
+                            }`}
                         />
 
                         <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl">
@@ -2300,9 +2394,8 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
                             {priceDiff !== 0 && (
                               <span
-                                className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                                  isIncrease ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
-                                }`}
+                                className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${isIncrease ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                                  }`}
                               >
                                 {isIncrease ? `+${priceDiff.toFixed(3)}` : priceDiff.toFixed(3)} BD
                               </span>
@@ -2367,16 +2460,52 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
             </div>
 
             <form onSubmit={handleCreateProduct} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-bold text-slate-300 mb-1">Product Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Almarai UHT Milk Full Fat 1L"
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Product Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Almarai UHT Milk Full Fat 1L"
+                    value={newProduct.name}
+                    onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Arabic Name</label>
+                  <input
+                    type="text"
+                    placeholder="الاسم بالعربية"
+                    value={newProduct.name_ar}
+                    onChange={(e) => setNewProduct({ ...newProduct, name_ar: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Omni-Pad Short Code (#)</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="e.g. 14, 15, 18"
+                    value={newProduct.plu_code}
+                    onChange={(e) => setNewProduct({ ...newProduct, plu_code: e.target.value.replace(/\D/g, '') })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-blue-300 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Picture Image URL</label>
+                  <input
+                    type="url"
+                    placeholder="https://images.unsplash..."
+                    value={newProduct.image_url}
+                    onChange={(e) => setNewProduct({ ...newProduct, image_url: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

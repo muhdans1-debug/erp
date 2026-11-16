@@ -16,14 +16,14 @@ export interface BenefitPayConfig {
 }
 
 export const DEFAULT_BENEFIT_CONFIG: BenefitPayConfig = {
-  accountType: 'MERCHANT',
+  accountType: 'MOBILE_FAWRI',
   merchantId: '97300182',
-  merchantName: 'ASKAR SUPERMARKET',
-  mobileNumber: '+973 39000000',
-  iban: '',
-  cprOrCr: '200012345678901',
+  merchantName: 'layali sbi',
+  mobileNumber: '+973 33843855',
+  iban: 'BH77SBIN02740045310001',
+  cprOrCr: '790614189',
   branchId: 'MAIN-01',
-  notes: 'Scan with BenefitPay app to pay directly',
+  notes: 'Scan with BenefitPay app to pay directly via Fawri+',
   updatedAt: new Date().toISOString(),
 };
 
@@ -51,12 +51,35 @@ export const calculateEMVCoCRC16 = (payload: string): string => {
 export const generateBenefitPayPayload = (
   amount: number,
   invoiceNo: string,
-  config: BenefitPayConfig
+  config: BenefitPayConfig,
+  formatOverride?: 'BENEFIT_JSON' | 'RAW_IBAN' | 'EMV_MERCHANT'
 ): string => {
   const isDynamic = typeof amount === 'number' && amount > 0;
   const formattedAmount = isDynamic ? Number(amount).toFixed(3) : '0.000';
   const cleanInvoice = (invoiceNo || `INV-${Date.now().toString().slice(-6)}`).trim();
 
+  const cleanIban = (config.iban || '').replace(/\s+/g, '').toUpperCase();
+
+  // 1. Raw IBAN requested
+  if (formatOverride === 'RAW_IBAN') {
+    return cleanIban || 'BH77SBIN02740045310001';
+  }
+
+  // 2. Mobile Fawri+ / IBAN Mode: Authentic BenefitPay scanner JSON payload {"iban": "BH..."}
+  if (formatOverride === 'BENEFIT_JSON' || (config.accountType === 'MOBILE_FAWRI' && formatOverride !== 'EMV_MERCHANT')) {
+    if (cleanIban && cleanIban.startsWith('BH')) {
+      return JSON.stringify({ iban: cleanIban });
+    }
+    let cleanMobile = (config.mobileNumber || '').replace(/[^\d]/g, '');
+    if (cleanMobile.length === 8 && !cleanMobile.startsWith('973')) {
+      cleanMobile = `973${cleanMobile}`;
+    }
+    if (cleanMobile) {
+      return JSON.stringify({ mobile: cleanMobile });
+    }
+  }
+
+  // 3. Official Corporate/Commercial Merchant Account Mode (EMVCo MPM QRCPS)
   // 1. Tag 00: Format Indicator (01)
   let emv = formatEMVCoTag('00', '01');
 
@@ -67,27 +90,16 @@ export const generateBenefitPayPayload = (
   let sub26 = '';
   sub26 += formatEMVCoTag('00', 'bh.benefit');
 
-  if (config.accountType === 'MOBILE_FAWRI') {
-    let cleanMobile = (config.mobileNumber || '').replace(/[^\d]/g, '');
-    if (cleanMobile.length === 8 && !cleanMobile.startsWith('973')) {
-      cleanMobile = `973${cleanMobile}`;
-    }
-    sub26 += formatEMVCoTag('01', cleanMobile || '97339000000');
-  } else {
-    const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
-    sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
-  }
+  const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
+  sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
 
   const branch = (config.branchId || 'POS-01').trim();
   if (branch) {
     sub26 += formatEMVCoTag('02', branch);
   }
 
-  if (config.iban) {
-    const cleanIban = config.iban.replace(/\s+/g, '').toUpperCase();
-    if (cleanIban) {
-      sub26 += formatEMVCoTag('03', cleanIban);
-    }
+  if (cleanIban) {
+    sub26 += formatEMVCoTag('03', cleanIban);
   }
 
   emv += formatEMVCoTag('26', sub26);
@@ -107,7 +119,7 @@ export const generateBenefitPayPayload = (
   emv += formatEMVCoTag('58', 'BH');
 
   // 8. Tag 59: Merchant Name
-  const rawName = (config.merchantName || 'ASKAR SUPERMARKET').trim();
+  const rawName = (config.merchantName || 'layali sbi').trim();
   const safeName = rawName.replace(/[^\x20-\x7E]/g, '').trim() || 'ASKAR SUPERMARKET';
   emv += formatEMVCoTag('59', safeName.slice(0, 25));
 

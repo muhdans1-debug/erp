@@ -1,11 +1,11 @@
 {
-  "accountType": "MERCHANT",
+  "accountType": "MOBILE_FAWRI",
   "merchantId": "97300182",
-  "merchantName": "ASKAR SUPERMARKET",
-  "mobileNumber": "+973 39401234",
-  "iban": "BH67NBOB00000012345678",
-  "cprOrCr": "200012345678901",
-  "branchId": "POS-01",
-  "notes": "Scan with BenefitPay app to pay directly",
-  "updatedAt": "2026-11-08T18:33:39.851Z"
+  "merchantName": "layali sbi",
+  "mobileNumber": "+973 33843855",
+  "iban": "BH77SBIN02740045310001",
+  "cprOrCr": "790614189",
+  "branchId": "MAIN-01",
+  "notes": "Scan with BenefitPay app to pay directly via Fawri+",
+  "updatedAt": "2026-11-13T06:52:53.030Z"
 }

@@ -3,8 +3,11 @@ import {
   DollarSign, TrendingUp, TrendingDown, Receipt, 
   RefreshCw, ShieldCheck, FileText, CheckCircle2, AlertTriangle, Percent 
 } from 'lucide-react';
+import { getManagerPin } from '../utils/authUtils';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
-export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' }: { apiBase?: string }) {
+export default function FinancialsVatReturn({ apiBase: propApiBase }: { apiBase?: string }) {
+  const apiBase = (propApiBase && propApiBase !== 'http://localhost:3000') ? propApiBase : getApiBaseUrl();
   const [period, setPeriod] = useState('month');
   const [pnlData, setPnlData] = useState<any>(null);
   const [vatData, setVatData] = useState<any>(null);
@@ -17,21 +20,23 @@ export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' 
     setError(null);
     try {
       const pnlRes = await fetch(`${apiBase}/api/reports/pnl?period=${period}`, {
-        headers: { 'x-manager-pin': '9999' }
+        headers: { 'x-manager-pin': getManagerPin() }
       });
       const pnlJson = await pnlRes.json();
       if (pnlJson.success && pnlJson.data) {
         setPnlData(pnlJson.data);
       }
 
-      const vatRes = await fetch(`${apiBase}/api/reports/vat-return`);
+      const vatRes = await fetch(`${apiBase}/api/reports/vat-return`, {
+        headers: { 'x-manager-pin': getManagerPin() }
+      });
       const vatJson = await vatRes.json();
       if (vatJson.success) {
         setVatData(vatJson);
       }
 
       const unifiedRes = await fetch(`${apiBase}/api/reports/unified?range=TODAY`, {
-        headers: { 'x-manager-pin': '9999' }
+        headers: { 'x-manager-pin': getManagerPin() }
       });
       const unifiedJson = await unifiedRes.json();
       if (unifiedJson.success && Array.isArray(unifiedJson.transactions)) {

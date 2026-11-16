@@ -25,6 +25,14 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
+const getAdminPin = () => {
+  return (
+    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('askar_admin_pin')) ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('askar_admin_pin')) ||
+    ''
+  );
+};
+
 export default function SuperAdminFleet() {
   const [activeSubTab, setActiveSubTab] = useState('fleet'); // 'fleet' | 'query' | 'provision' | 'audit'
   const [fleet, setFleet] = useState([]);
@@ -117,7 +125,7 @@ export default function SuperAdminFleet() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          'x-manager-pin': getAdminPin()
         },
         body: JSON.stringify({
           databaseName: selectedDb,
@@ -152,7 +160,7 @@ export default function SuperAdminFleet() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          'x-manager-pin': getAdminPin()
         },
         body: JSON.stringify({
           slug: newStoreSlug.trim().toLowerCase(),
@@ -176,35 +184,25 @@ export default function SuperAdminFleet() {
     }
   };
 
-  // Step 1: The Remote Kill Switch (Invalidate Tokens via Turso Platform API)
+  // Step 1: Remote Kill Switch (Handled exclusively server-side)
   const handleLockPOS = async (dbName) => {
-    const orgName = import.meta.env.VITE_TURSO_ORG || import.meta.env.VITE_TURSO_ORG_NAME || 'muhdans1';
-    const token = import.meta.env.VITE_TURSO_PLATFORM_TOKEN || import.meta.env.VITE_TURSO_PLATFORM_API_TOKEN;
-
     if (window.confirm(`Are you sure you want to lock ${dbName}? This will freeze their POS terminals.`)) {
       try {
-        // 1. Invalidate tokens on Turso Platform
-        if (orgName && token) {
-          await fetch(`https://api.turso.tech/v1/organizations/${orgName}/databases/${dbName}/auth/tokens/invalidate`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          }).catch((err) => console.warn('Direct Turso invalidation note:', err));
-        }
-
-        // 2. Inform local backend fleet registry
-        await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
+        const res = await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+            'x-manager-pin': getAdminPin()
           },
           body: JSON.stringify({ terminalId: dbName, licensed: false })
-        }).catch(() => {});
-
-        alert(`${dbName} has been successfully locked.`);
-        loadFleetData();
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`${dbName} has been successfully locked.`);
+          loadFleetData();
+        } else {
+          alert(`Failed to lock database: ${data.error || 'Server rejected request'}`);
+        }
       } catch (error) {
         console.error("Failed to lock database:", error);
         alert(`Failed to lock database: ${error.message}`);
@@ -212,46 +210,28 @@ export default function SuperAdminFleet() {
     }
   };
 
-  // Step 2: The Remote Unlock (Re-Mint Tokens via Turso Platform API)
+  // Step 2: Remote Unlock (Handled exclusively server-side)
   const handleUnlockPOS = async (dbName, terminalId) => {
-    const orgName = import.meta.env.VITE_TURSO_ORG || import.meta.env.VITE_TURSO_ORG_NAME || 'muhdans1';
-    const token = import.meta.env.VITE_TURSO_PLATFORM_TOKEN || import.meta.env.VITE_TURSO_PLATFORM_API_TOKEN;
-
-    if (window.confirm(`Are you sure you want to UNLOCK ${dbName}? This will generate a fresh token and restore terminal access.`)) {
+    if (window.confirm(`Are you sure you want to UNLOCK ${dbName}? This will restore terminal access.`)) {
       try {
-        // 1. Re-mint fresh full-access database token
-        let newJwt = null;
-        if (orgName && token) {
-          const res = await fetch(`https://api.turso.tech/v1/organizations/${orgName}/databases/${dbName}/auth/tokens`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ expiration: 'never', authorization: 'full-access' })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            newJwt = data.jwt;
-          }
-        }
-
-        // 2. Inform backend fleet registry
-        await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
+        const res = await fetch(`${API_BASE}/api/super-admin/kill-switch`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+            'x-manager-pin': getAdminPin()
           },
           body: JSON.stringify({
             terminalId: terminalId || dbName,
-            licensed: true,
-            newToken: newJwt
+            licensed: true
           })
-        }).catch(() => {});
-
-        alert(`✅ ${dbName} has been successfully UNLOCKED!\nNew database token generated and terminal restored.`);
-        loadFleetData();
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ ${dbName} has been successfully UNLOCKED! Terminal restored.`);
+          loadFleetData();
+        } else {
+          alert(`Failed to unlock database: ${data.error || 'Server rejected request'}`);
+        }
       } catch (error) {
         console.error("Failed to unlock database:", error);
         alert(`Failed to unlock database: ${error.message}`);
@@ -267,7 +247,7 @@ export default function SuperAdminFleet() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          'x-manager-pin': getAdminPin()
         },
         body: JSON.stringify({
           terminalId: terminal.id,
@@ -296,7 +276,7 @@ export default function SuperAdminFleet() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999'
+          'x-manager-pin': getAdminPin()
         },
         body: JSON.stringify({ stage, paused })
       });

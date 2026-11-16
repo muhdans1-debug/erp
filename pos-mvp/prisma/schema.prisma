@@ -19,6 +19,8 @@ datasource db {
 model Shift {
   id               String    @id @default(uuid())
   tenantId         String    @default("tenant_1")
+  storeId          String?
+  terminalId       String?   @default("R01")
   cashierName      String?   @default("Cashier 1")
   employeeId       String?   @default("emp_cashier_1")
   openedAt         DateTime  @default(now())
@@ -54,6 +56,8 @@ model Shift {
 model Sale {
   id              String        @id @default(uuid())
   tenantId        String        @default("tenant_1")
+  storeId         String?
+  terminalId      String?       @default("R01")
   invoiceNo       String        @unique
   invoiceSeq      Int?          @default(0) // Strict sequential integer for NBR VAT compliance
   customerId      String?
@@ -126,6 +130,10 @@ model Product {
   
   SaleItem        SaleItem[]
   wastageLogs     WastageLog[]
+
+  @@index([barcode])
+  @@index([name])
+  @@index([distributorId])
 }
 
 // --------------------------------------------------------------------
@@ -194,6 +202,7 @@ model Customer {
 model KhataLedger {
   id              String    @id
   tenantId        String    @default("tenant_1")
+  storeId         String?
   customerId      String
   amount          Float     // Positive for CHARGE, negative for PAYMENT
   type            String    // CHARGE, PAYMENT, WRITE_OFF
@@ -322,4 +331,76 @@ model MessGroup {
   members    Customer[]
   createdAt  DateTime   @default(now())
 }
+
+// --------------------------------------------------------------------
+// 8. Multi-Tenant SaaS & Multi-Store Hierarchy Models
+// --------------------------------------------------------------------
+model Tenant {
+  id             String            @id
+  name           String
+  cr_number      String?
+  vat_number     String?
+  plan_tier      String?           @default("PRO") // STARTER, GROWTH, PRO, ENTERPRISE
+  status         String?           @default("ACTIVE") // ACTIVE, SUSPENDED, PAST_DUE
+  benefit_iban   String?
+  contact_email  String?
+  contact_phone  String?
+  created_at     DateTime          @default(now())
+  updated_at     DateTime          @default(now())
+  stores         Store[]
+  terminals      TerminalLicense[]
+  inventories    StoreInventory[]
+}
+
+model Store {
+  id             String            @id
+  tenantId       String
+  code           String            // e.g. 'S01', 'S02'
+  name           String
+  address        String?
+  phone          String?
+  is_active      Int?              @default(1)
+  created_at     DateTime          @default(now())
+
+  tenant         Tenant            @relation(fields: [tenantId], references: [id])
+  terminals      TerminalLicense[]
+  inventories    StoreInventory[]
+}
+
+model TerminalLicense {
+  id             String            @id
+  tenantId       String
+  storeId        String
+  terminalCode   String            @default("R01")
+  deviceModel    String?           @default("Sunmi D2mini")
+  serialNumber   String?           @unique
+  licenseKey     String?           @unique
+  pairingCode    String?
+  status         String?           @default("ACTIVE") // ACTIVE, PAIRED, REVOKED
+  lastHeartbeat  DateTime?
+  created_at     DateTime          @default(now())
+
+  tenant         Tenant            @relation(fields: [tenantId], references: [id])
+  store          Store             @relation(fields: [storeId], references: [id])
+}
+
+model StoreInventory {
+  id             String            @id
+  tenantId       String
+  storeId        String
+  productId      String
+  stockQuantity  Float?            @default(0.0)
+  sellingPrice   Float?
+  unitCost       Float?
+  minThreshold   Float?            @default(5.0)
+  maxThreshold   Float?            @default(50.0)
+  updated_at     DateTime          @default(now())
+
+  tenant         Tenant            @relation(fields: [tenantId], references: [id])
+  store          Store             @relation(fields: [storeId], references: [id])
+  product        Product           @relation(fields: [productId], references: [id])
+
+  @@unique([storeId, productId])
+}
+
 

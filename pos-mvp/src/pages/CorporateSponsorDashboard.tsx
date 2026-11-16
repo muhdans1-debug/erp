@@ -14,6 +14,7 @@ import {
   Store
 } from 'lucide-react';
 import { playThankYouVoice } from '../utils/sound';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 interface SponsoredRoom {
   roomId: string;
@@ -86,7 +87,7 @@ const DEFAULT_SPONSOR_DATA: SponsorSummary = {
 };
 
 export default function CorporateSponsorDashboard({
-  apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://192.168.8.7:3000',
+  apiBase = getApiBaseUrl(),
   sponsorId = 'sp_alnaseem_01'
 }: CorporateSponsorDashboardProps) {
   const [data, setData] = useState<SponsorSummary>(DEFAULT_SPONSOR_DATA);

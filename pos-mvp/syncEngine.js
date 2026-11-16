@@ -169,6 +169,7 @@ export const syncNow = async () => {
       const incomingLedger = data.entries || [];
 
       if (incomingLedger.length > 0) {
+        const touchedCustomerIds = new Set();
         await db.transaction(async (tx) => {
           for (const entry of incomingLedger) {
             const existing = await tx.orm.KhataLedger.where({ id: entry.id }).all().first();
@@ -178,12 +179,64 @@ export const syncNow = async () => {
                 timestamp: entry.timestamp ? new Date(entry.timestamp) : new Date(),
                 syncStatus: 'SYNCED',
               });
+              if (entry.customerId) touchedCustomerIds.add(entry.customerId);
             }
+          }
+
+          for (const cId of touchedCustomerIds) {
+            await tx.execute({
+              sql: `UPDATE Customer 
+                    SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), 
+                        updatedAt = datetime('now') 
+                    WHERE id = ?`,
+              args: [cId, cId]
+            });
           }
         });
         result.ledgerPulled = incomingLedger.length;
-        console.log(`[SyncEngine] Successfully pulled ${incomingLedger.length} ledger events from master.`);
+        console.log(`[SyncEngine] Successfully pulled ${incomingLedger.length} ledger events and refreshed balances.`);
       }
+    }
+
+    // ==========================================
+    // PART 4: SYNC MESS GROUPS & MEMBERSHIP
+    // ==========================================
+    try {
+      const messGroupsRes = await fetch(`${masterBaseUrl}/api/nfc/mess-groups`);
+      if (messGroupsRes.ok) {
+        const mgData = await messGroupsRes.json();
+        const incomingGroups = mgData.messGroups || mgData.groups || [];
+        if (incomingGroups.length > 0) {
+          await db.transaction(async (tx) => {
+            for (const g of incomingGroups) {
+              await tx.execute({
+                sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt) 
+                      VALUES (?, 'tenant_askar_01', ?, datetime('now')) 
+                      ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
+                args: [g.id, g.group_name || g.name]
+              });
+              if (Array.isArray(g.members)) {
+                for (const m of g.members) {
+                  await tx.execute({
+                    sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+                    args: [g.id, m.id]
+                  });
+                }
+              }
+              if (g.cardTag) {
+                await tx.execute({
+                  sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) 
+                        VALUES (?, 'MESS', NULL, ?, datetime('now')) 
+                        ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id`,
+                  args: [g.cardTag, g.id]
+                });
+              }
+            }
+          });
+        }
+      }
+    } catch (mgErr) {
+      // Optional background sync warning
     }
 
     return result;

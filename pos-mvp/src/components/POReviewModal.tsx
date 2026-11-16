@@ -121,19 +121,24 @@ export default function POReviewModal({ po, onClose, onFinalApprove, onDiscard, 
     }
 
     // 2. Format the WhatsApp Message Text using WhatsApp Markdown (*bold*, _italic_)
-    let message = `*NEW PURCHASE ORDER*\n`;
-    message += `*From:* Askar Supermarket\n`;
-    message += `*Date:* ${new Date().toLocaleDateString()}\n`;
-    message += `*PO Ref:* #${po.id.slice(0, 6).toUpperCase()}\n\n`;
-    message += `Hello ${po.supplierName || 'Distributor'} team, please process the following delivery:\n\n`;
+    let message = `🛒 *PURCHASE ORDER - ASKAR SUPERMARKET*\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n`;
+    message += `🔖 *PO Ref:* #${po.id.slice(0, 8).toUpperCase()}\n`;
+    message += `🏢 *Supplier:* ${po.supplierName || 'Distributor'}\n`;
+    message += `📍 *Delivery Location:* Askar Supermarket, Askar, Bahrain\n`;
+    message += `📞 *Store Contact:* +973 33843855\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `Hello ${po.supplierName || 'Distributor'} team, please dispatch the following stock items:\n\n`;
 
     // Append each item line by line
     items.forEach((item, index) => {
-      message += `${index + 1}. *${item.reorderQuantity}x* ${item.name}\n`;
+      message += `${index + 1}. *${item.reorderQuantity}x* ${item.name}${item.barcode ? ` [${item.barcode}]` : ''}\n`;
     });
 
-    message += `\n*Estimated Total: BD ${totalCost.toFixed(3)}*\n`;
-    message += `\nPlease confirm receipt of this order.`;
+    message += `\n💰 *Estimated Order Total: BHD ${totalCost.toFixed(3)}*\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `Please confirm order receipt & expected delivery slot. Thank you!`;
 
     // 3. Encode the text so it can be passed in a URL
     const encodedMessage = encodeURIComponent(message);

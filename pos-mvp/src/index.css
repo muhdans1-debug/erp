@@ -171,7 +171,7 @@ input, textarea, [contenteditable] {
 }
 
 /* ══════════════════════════════════════════════════
-   @media print — 58mm Thermal Receipts & Reports
+   @media print — 58mm / 80mm Thermal Receipts & Reports
    ══════════════════════════════════════════════════ */
 @media print {
   /* Hide the main app UI */
@@ -179,7 +179,7 @@ input, textarea, [contenteditable] {
     display: none !important;
   }
 
-  nav, header, aside, .print\:hidden {
+  nav, header, aside, .print\:hidden, .no-print {
     display: none !important;
   }
 
@@ -194,57 +194,83 @@ input, textarea, [contenteditable] {
     -webkit-user-select: text !important;
   }
   
-  /* Force 58mm thermal roll width */
+  /* Flexible thermal roll page settings */
   @page {
-    margin: 0;
-    size: 58mm auto;
+    margin: 0mm;
+    size: auto;
   }
 
   .print-receipt {
     display: block !important;
-    width: 58mm !important;
-    max-width: 58mm !important;
+    width: 48mm !important;
+    max-width: 48mm !important;
     margin: 0 auto !important;
-    padding: 2mm !important;
+    padding: 1.5mm 1mm !important;
+    border: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    box-sizing: border-box !important;
     font-family: 'Roboto Mono', Consolas, "Courier New", monospace !important;
     font-weight: 600 !important;
-    font-size: 12px !important;
-    line-height: 1.4 !important;
+    font-size: 9.5px !important;
+    line-height: 1.25 !important;
+    letter-spacing: -0.15px !important;
     color: #000000 !important;
     background: #ffffff !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-receipt.format-58mm {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    padding: 1.5mm 1mm !important;
+    border: none !important;
+    font-size: 9.5px !important;
+    line-height: 1.25 !important;
+  }
+
+  .print-receipt.format-80mm {
+    width: 70mm !important;
+    max-width: 70mm !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    padding: 2mm 1.5mm !important;
+    border: none !important;
   }
   
   .print-receipt h1, .print-receipt h2, .print-receipt h3, .print-receipt p {
     margin: 0 !important;
-    padding: 1px 0 !important;
+    padding: 0.5px 0 !important;
   }
 
   /* Nesto / NBB Strict Justification POS Styles */
   .print-receipt .center { text-align: center !important; }
   .print-receipt .bold { font-weight: 700 !important; }
-  .print-receipt .large { font-size: 16px !important; }
+  .print-receipt .large { font-size: 12.5px !important; font-weight: 700 !important; }
   .print-receipt .row {
     display: flex !important;
     justify-content: space-between !important;
     width: 100% !important;
+    margin: 0.5px 0 !important;
   }
   .print-receipt .divider {
     border-top: 1px dashed #000000 !important;
-    margin: 8px 0 !important;
+    margin: 3.5px 0 !important;
   }
   .print-receipt .item-row {
     display: flex !important;
     justify-content: space-between !important;
-    margin-bottom: 4px !important;
+    margin-bottom: 2px !important;
     width: 100% !important;
   }
-  .print-receipt .item-name { width: 50% !important; text-align: left !important; word-break: break-word !important; }
-  .print-receipt .item-qty { width: 20% !important; text-align: center !important; }
+  .print-receipt .item-name { width: 52% !important; text-align: left !important; word-break: break-word !important; }
+  .print-receipt .item-qty { width: 18% !important; text-align: center !important; }
   .print-receipt .item-amt { width: 30% !important; text-align: right !important; }
   .print-receipt .barcode-container {
-    margin-top: 15px !important;
+    margin-top: 8px !important;
     text-align: center !important;
   }
 

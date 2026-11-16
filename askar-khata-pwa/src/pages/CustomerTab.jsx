@@ -5,12 +5,19 @@ import {
   ArrowLeft, 
   Share2, 
   Lock, 
+  Unlock,
   CheckCircle2, 
   WifiOff, 
   Printer, 
   PhoneCall, 
-  MessageCircle,
-  Clock 
+  MessageCircle, 
+  Clock, 
+  Volume2, 
+  VolumeX,
+  QrCode,
+  Eye,
+  EyeOff,
+  ShieldAlert
 } from 'lucide-react';
 import BenefitPayModal from '../components/BenefitPayModal';
 import { generateBenefitPayPayload } from '../utils/benefitPay';
@@ -42,7 +49,25 @@ const TAB_TEXTS = {
     settledTitle: 'Balance Settled (No Debt)',
     custom: 'Custom',
     payCustomBtn: 'Pay Custom Amount',
-    currency: 'BHD'
+    listenBalance: '🔊 Listen to Balance',
+    switchAcc: '⚙️ Switch Account / Setup New Phone',
+    recentPurchases: 'Transaction History',
+    transactionsHistory: 'Full Transaction History',
+    filterAll: 'All',
+    filterPurchases: 'Purchases',
+    filterPayments: 'Payments',
+    runningBal: 'Balance',
+    showMore: 'Show More Transactions',
+    showLess: 'Show Less',
+    noRecentPurchases: 'No transactions recorded',
+    currency: 'BHD',
+    hideBalance: 'Camp Privacy Mode (Hide)',
+    showBalance: 'Show Balance',
+    freezeTitle: 'Freeze Account',
+    frozenBadge: 'Account Locked / Frozen',
+    frozenDesc: 'In-store credit charges are disabled to protect your account.',
+    unfreezeBtn: '🔓 Unlock / Unfreeze Khata',
+    freezeBtn: '🔒 Freeze Khata (Lost Card Protection)'
   },
   ar: {
     brand: 'أسواق أسكر المركزية',
@@ -70,7 +95,25 @@ const TAB_TEXTS = {
     settledTitle: 'الحساب مسدد بالكامل (لا توجد ديون)',
     custom: 'مخصص',
     payCustomBtn: 'دفع المبلغ المخصص',
-    currency: 'د.ب'
+    listenBalance: '🔊 استمع إلى الرصيد',
+    switchAcc: '⚙️ تغيير الحساب / إعداد هاتف آخر',
+    recentPurchases: 'سجل المعاملات والتواريخ',
+    transactionsHistory: 'سجل المعاملات والتواريخ بالكامل',
+    filterAll: 'الكل',
+    filterPurchases: 'مشتريات',
+    filterPayments: 'سدادات',
+    runningBal: 'الرصيد',
+    showMore: 'عرض المزيد من المعاملات',
+    showLess: 'عرض أقل',
+    noRecentPurchases: 'لا توجد معاملات مسجلة',
+    currency: 'د.ب',
+    hideBalance: 'وضع الخصوصية (إخفاء)',
+    showBalance: 'إظهار الرصيد',
+    freezeTitle: 'تجميد الحساب',
+    frozenBadge: 'الحساب مجمد / مقفل',
+    frozenDesc: 'تم إيقاف المشتريات الآجلة في المتجر لحماية حسابك.',
+    unfreezeBtn: '🔓 إلغاء التجميد وفتح الحساب',
+    freezeBtn: '🔒 تجميد الحساب (حماية البطاقة المفقودة)'
   },
   ml: {
     brand: 'അസ്കർ സൂപ്പർമാർക്കറ്റ്',
@@ -98,7 +141,25 @@ const TAB_TEXTS = {
     settledTitle: 'മുഴുവൻ തുകയും അടച്ചു തീർത്തു',
     custom: 'കസ്റ്റം',
     payCustomBtn: 'തുക നൽകുക',
-    currency: 'BHD'
+    listenBalance: '🔊 തുക കേൾക്കുക',
+    switchAcc: '⚙️ അക്കൗണ്ട് മാറ്റുക',
+    recentPurchases: 'ഇടപാടുകളുടെ വിവരങ്ങൾ',
+    transactionsHistory: 'മുഴുവൻ ഇടപാടുകളുടെ വിവരങ്ങൾ',
+    filterAll: 'എല്ലാം',
+    filterPurchases: 'വാങ്ങിയവ',
+    filterPayments: 'അടച്ചവ',
+    runningBal: 'ബാക്കി',
+    showMore: 'കൂടുതൽ ഇടപാടുകൾ കാണുക',
+    showLess: 'കുറച്ചു കാണിക്കുക',
+    noRecentPurchases: 'ഇടപാടുകൾ ലഭ്യമല്ല',
+    currency: 'BHD',
+    hideBalance: 'തുക മറയ്ക്കുക (പ്രൈവസി)',
+    showBalance: 'തുക കാണിക്കുക',
+    freezeTitle: 'അക്കൗണ്ട് മരവിപ്പിക്കുക',
+    frozenBadge: 'അക്കൗണ്ട് മരവിപ്പിച്ചിരിക്കുന്നു',
+    frozenDesc: 'കടയിൽ നിന്ന് സാധനങ്ങൾ കടം വാങ്ങുന്നത് തടഞ്ഞിരിക്കുന്നു.',
+    unfreezeBtn: '🔓 അക്കൗണ്ട് അൺലോക്ക് ചെയ്യുക',
+    freezeBtn: '🔒 അക്കൗണ്ട് ഫ്രീസ് ചെയ്യുക (കാർഡ് നഷ്ടപ്പെട്ടാൽ)'
   },
   bn: {
     brand: 'আসকার সুপারমার্কেট',
@@ -126,7 +187,25 @@ const TAB_TEXTS = {
     settledTitle: 'সব হিসাব পরিশোধিত (কোনো বাকি নেই)',
     custom: 'কাস্টম',
     payCustomBtn: 'নির্দিষ্ট টাকা দিন',
-    currency: 'BHD'
+    listenBalance: '🔊 বাকি হিসাব শুনুন',
+    switchAcc: '⚙️ অ্যাকাউন্ট পরিবর্তন করুন',
+    recentPurchases: 'লেনদেনের বিস্তারিত ইতিহাস',
+    transactionsHistory: 'সম্পূর্ণ লেনদেনের ইতিহাস ও তারিখ',
+    filterAll: 'সকল',
+    filterPurchases: 'ক্রয়',
+    filterPayments: 'পরিশোধ',
+    runningBal: 'ব্যালেন্স',
+    showMore: 'আরও লেনদেন দেখুন',
+    showLess: 'কম দেখুন',
+    noRecentPurchases: 'কোনো লেনদেন রেকর্ড নেই',
+    currency: 'BHD',
+    hideBalance: 'ব্যক্তিগত মোড (লুকান)',
+    showBalance: 'টাকা দেখুন',
+    freezeTitle: 'অ্যাকাউন্ট ফ্রিজ করুন',
+    frozenBadge: 'অ্যাকাউন্ট লক করা হয়েছে',
+    frozenDesc: 'দোকান থেকে বাকিতে কেনাকাটা সাময়িকভাবে বন্ধ আছে।',
+    unfreezeBtn: '🔓 অ্যাকাউন্ট আনলক করুন',
+    freezeBtn: '🔒 অ্যাকাউন্ট ফ্রিজ করুন (কার্ড হারালে)'
   },
   hi: {
     brand: 'अस्कर सुपरमार्केट',
@@ -154,7 +233,25 @@ const TAB_TEXTS = {
     settledTitle: 'खाता चुकता (कोई बकाया नहीं)',
     custom: 'कस्टम',
     payCustomBtn: 'कस्टम राशि भरें',
-    currency: 'BHD'
+    listenBalance: '🔊 बाकी हिसाब सुनें',
+    switchAcc: '⚙️ खाता बदलें / नया फोन सेटअप करें',
+    recentPurchases: 'पूरा लेन-देन इतिहास',
+    transactionsHistory: 'पूरा लेन-देन इतिहास एवं तारीखें',
+    filterAll: 'सभी',
+    filterPurchases: 'खरीदारी',
+    filterPayments: 'भुगतान',
+    runningBal: 'बकाया',
+    showMore: 'और लेन-देन देखें',
+    showLess: 'कम दिखाएं',
+    noRecentPurchases: 'कोई लेन-देन दर्ज नहीं है',
+    currency: 'BHD',
+    hideBalance: 'प्राइवेसी मोड (छिपाएं)',
+    showBalance: 'बकाया दिखाएं',
+    freezeTitle: 'खाता फ्रीज करें',
+    frozenBadge: 'खाता लॉक / फ्रीज है',
+    frozenDesc: 'दुकान से उधारी खरीदारी अस्थायी रूप से बंद है।',
+    unfreezeBtn: '🔓 खाता अनलॉक करें',
+    freezeBtn: '🔒 खाता फ्रीज करें (खोए कार्ड की सुरक्षा)'
   }
 };
 
@@ -191,6 +288,28 @@ function getDynamicQuickChips(balance) {
   return [];
 }
 
+// Helper: Localized date and time formatting for full transaction ledger
+function formatTxDate(dateStr, lang) {
+  if (!dateStr) return { date: '—', time: '' };
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return { date: String(dateStr), time: '' };
+    const date = d.toLocaleDateString(lang === 'ar' ? 'ar-BH' : 'en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+    const time = d.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    return { date, time };
+  } catch {
+    return { date: String(dateStr), time: '' };
+  }
+}
+
 export default function CustomerTab() {
   const { customerId } = useParams();
   const [searchParams] = useSearchParams();
@@ -209,6 +328,17 @@ export default function CustomerTab() {
   const [showCustomPay, setShowCustomPay] = useState(false);
   const [showBenefitModal, setShowBenefitModal] = useState(false);
   const [benefitPayData, setBenefitPayData] = useState(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [txFilter, setTxFilter] = useState('ALL'); // 'ALL' | 'PURCHASE' | 'PAYMENT'
+  const [visibleTxCount, setVisibleTxCount] = useState(10);
+  const [hideBalance, setHideBalance] = useState(() => {
+    try {
+      return localStorage.getItem('khata_hide_balance') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [freezeLoading, setFreezeLoading] = useState(false);
 
   const abortControllerRef = useRef(null);
   const [showSuccessBanner, setShowSuccessBanner] = useState(() => 
@@ -220,6 +350,138 @@ export default function CustomerTab() {
     document.documentElement.lang = lang;
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   }, [lang]);
+
+  // Multilingual Voice Speech for Laborers & Non-Literate Camp Patrons
+  const speakBalance = useCallback(() => {
+    if (!('speechSynthesis' in window) || !ledger) return;
+
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    const balanceNum = Number(ledger.balance || 0);
+    const absBal = Math.abs(balanceNum).toFixed(3);
+    const isSettled = Math.abs(balanceNum) <= 0.0005;
+    const name = ledger.name || '';
+
+    let textToSpeak = '';
+    let voiceLang = 'en-US';
+
+    switch (lang) {
+      case 'hi':
+        voiceLang = 'hi-IN';
+        textToSpeak = isSettled
+          ? `नमस्ते ${name}, आपका अस्कर सुपरमार्केट में कोई बकाया नहीं है। आपका पूरा हिसाब चुकता है।`
+          : `नमस्ते ${name}, आपका अस्कर सुपरमार्केट में कुल बकाया ${absBal} दीनार है।`;
+        break;
+      case 'bn':
+        voiceLang = 'bn-BD';
+        textToSpeak = isSettled
+          ? `নমস্কার ${name}, আপনার আসকার সুপারমার্কেটে কোনো বাকি নেই। সব হিসাব পরিশোধিত।`
+          : `নমস্কার ${name}, আপনার আসকার সুপারমার্কেটে মোট বাকি ${absBal} দিনার।`;
+        break;
+      case 'ml':
+        voiceLang = 'ml-IN';
+        textToSpeak = isSettled
+          ? `നമസ്കാരം ${name}, അസ്കർ സൂപ്പർമാർക്കറ്റിൽ കുടിശ്ശിക ഒന്നും തന്നെ ഇല്ല. എല്ലാം അടച്ചു തീർത്തു.`
+          : `നമസ്കാരം ${name}, അസ്കർ സൂപ്പർമാർക്കറ്റിൽ നിങ്ങൾക്ക് നൽകാനുള്ള തുക ${absBal} ദിനാർ ആണ്.`;
+        break;
+      case 'ar':
+        voiceLang = 'ar-SA';
+        textToSpeak = isSettled
+          ? `مرحباً ${name}، تم سداد كامل الحساب في أسواق أسكر ولا توجد أي مبالغ مستحقة.`
+          : `مرحباً ${name}، رصيد حسابك المستحق في أسواق أسكر هو ${absBal} دينار بحريني.`;
+        break;
+      default:
+        voiceLang = 'en-US';
+        textToSpeak = isSettled
+          ? `Hello ${name}, your Askar Supermarket account is fully settled with zero debt owed.`
+          : `Hello ${name}, your outstanding balance at Askar Supermarket is ${absBal} Bahraini Dinars.`;
+        break;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.lang = voiceLang;
+    utterance.rate = 0.88;
+
+    const voices = window.speechSynthesis.getVoices();
+    const matchVoice = voices.find(v => v.lang === voiceLang || v.lang.startsWith(voiceLang.slice(0, 2)));
+    if (matchVoice) {
+      utterance.voice = matchVoice;
+    }
+
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  }, [ledger, lang, isSpeaking]);
+
+  const toggleHideBalance = () => {
+    setHideBalance(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('khata_hide_balance', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleToggleFreeze = async () => {
+    if (!ledger) return;
+    const isCurrentlyActive = ledger.is_active !== 0;
+    const confirmMsg = isCurrentlyActive
+      ? 'Are you sure you want to FREEZE your Khata? In-store credit purchases will be blocked immediately until you unlock it.'
+      : 'Are you sure you want to UNFREEZE your Khata account?';
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setFreezeLoading(true);
+      const res = await fetch(`/api/khata/${encodeURIComponent(ledger.id || customerId)}/freeze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ freeze: isCurrentlyActive })
+      });
+      const result = await res.json();
+      if (result.success) {
+        const nextActive = result.is_active !== undefined ? Number(result.is_active) : (isCurrentlyActive ? 0 : 1);
+        const updatedRecord = {
+          ...ledger,
+          is_active: nextActive,
+          isActive: Boolean(nextActive)
+        };
+        setLedger(updatedRecord);
+        // Persist immediately to local cache so refresh or offline doesn't revert state
+        try {
+          safeSetBoundedCache(`khata_tab_cache_${customerId}`, JSON.stringify(updatedRecord));
+          if (ledger.id && ledger.id !== customerId) {
+            safeSetBoundedCache(`khata_tab_cache_${ledger.id}`, JSON.stringify(updatedRecord));
+          }
+        } catch (e) {
+          console.warn('Failed to update cache on freeze:', e);
+        }
+      } else {
+        alert(result.error || 'Failed to update account freeze state');
+      }
+    } catch {
+      alert('Connection error updating account lock status');
+    } finally {
+      setFreezeLoading(false);
+    }
+  };
+
+  // Cancel speech on unmount
+  useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const fetchLedger = useCallback(async (signal) => {
     try {
@@ -263,16 +525,30 @@ export default function CustomerTab() {
       }
 
       const data = await finalRes.json();
+      const allTx = data.transactions || data.recentPurchases || data.ledger || [];
       const customerRecord = {
         id: data.id || customerId,
         name: data.name || 'Valued Customer',
         balance: Number(data.balance ?? data.currentBalance ?? 0),
         credit_limit: Number(data.credit_limit ?? data.creditLimit ?? 30.0),
-        pendingClaims: data.pendingClaims || []
+        is_active: data.is_active !== undefined ? Number(data.is_active) : (data.isActive === false ? 0 : 1),
+        pendingClaims: data.pendingClaims || [],
+        recentPurchases: allTx,
+        transactions: allTx,
+        ledger: allTx
       };
 
       setLedger(customerRecord);
       setIsOffline(false);
+
+      // Permanent Device Binding: Store in localStorage and 10-year cookie
+      try {
+        const bindId = customerRecord.id || customerId;
+        localStorage.setItem('my_khata_customer_id', bindId);
+        document.cookie = `khata_customer_id=${encodeURIComponent(bindId)}; path=/; max-age=315360000; SameSite=Lax`;
+      } catch (bindErr) {
+        console.warn('CustomerTab device binding error:', bindErr);
+      }
 
       // Synchronize cross-identifier key pairing with bounded storage (Resolved ADV-06 & PWA-DAT-02)
       try {
@@ -296,14 +572,24 @@ export default function CustomerTab() {
       try {
         const cached = localStorage.getItem(`khata_tab_cache_${customerId}`);
         if (cached) {
-          setLedger(JSON.parse(cached));
+          const parsed = JSON.parse(cached);
+          setLedger(parsed);
           setIsOffline(true);
           setLoading(false);
+          try {
+            const bindId = parsed.id || customerId;
+            localStorage.setItem('my_khata_customer_id', bindId);
+            document.cookie = `khata_customer_id=${encodeURIComponent(bindId)}; path=/; max-age=315360000; SameSite=Lax`;
+          } catch {}
           return;
         }
       } catch {}
 
-      setError(t.networkErr || err.message || 'Could not load ledger');
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setError(t.networkErr || 'No internet connection detected.');
+      } else {
+        setError(err.message && !err.message.includes('fetch') ? err.message : 'Cannot reach server. The central service may be temporarily unavailable or updating.');
+      }
     } finally {
       setLoading(false);
     }
@@ -455,10 +741,10 @@ export default function CustomerTab() {
           </div>
           <h2 className="text-xl font-black text-white mb-2">Notice</h2>
           <p className="text-slate-400 text-sm mb-6 leading-relaxed">{error}</p>
-          <Link to="/" className="inline-flex items-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-sm transition">
-            <ArrowLeft className="w-4 h-4" />
-            <span>Return to Search</span>
-          </Link>
+          <button onClick={() => window.location.href = '/?switch=1'} className="inline-flex items-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-sm transition cursor-pointer">
+            <QrCode className="w-4 h-4" />
+            <span>Scan Receipt QR Code</span>
+          </button>
         </div>
       </div>
     );
@@ -477,10 +763,10 @@ export default function CustomerTab() {
     >
       {/* Top Header & Navigation */}
       <div className="w-full max-w-md mb-2 flex items-center justify-between px-1 no-print">
-        <Link to="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition py-2">
-          <ArrowLeft className={`w-4 h-4 ${isRtl ? 'rotate-180' : ''}`} />
-          <span>{t.backHome}</span>
-        </Link>
+        <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 py-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span>{t.brand}</span>
+        </div>
 
         {/* Language Switcher (Min 44px Height) */}
         <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-2xl">
@@ -539,6 +825,19 @@ export default function CustomerTab() {
             </div>
           )}
 
+          {/* Frozen / Locked Account Alert Banner */}
+          {ledger.is_active === 0 && (
+            <div className="mb-6 p-4 bg-rose-500/15 border-2 border-rose-500/40 rounded-2xl text-rose-300 text-xs font-semibold space-y-2 no-print text-left">
+              <div className="flex items-center gap-2 font-bold text-sm text-rose-400">
+                <ShieldAlert className="w-5 h-5 shrink-0 text-rose-400" />
+                <span>{t.frozenBadge}</span>
+              </div>
+              <p className="text-[11px] text-rose-200">
+                {t.frozenDesc}
+              </p>
+            </div>
+          )}
+
           <div className="flex items-center justify-center gap-2 mb-2">
             <span className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase bg-emerald-950/80 border border-emerald-800/40 px-3 py-1 rounded-full">
               {t.live}
@@ -551,16 +850,89 @@ export default function CustomerTab() {
           <p className="text-[11px] text-slate-500 mt-1 font-mono">{t.id}: {ledger.id}</p>
 
           {/* Balance Display (Emerald for Credit & Settled, Rose for Debt) */}
-          <div className="my-6 py-6 px-4 bg-slate-950/80 rounded-3xl border border-slate-800">
-            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">
-              {isCredit ? t.creditTitle : isSettled ? t.settledTitle : t.owed}
+          <div className="my-6 py-6 px-4 bg-slate-950/80 rounded-3xl border border-slate-800 relative">
+            <div className="flex items-center justify-between mb-1 px-1">
+              <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">
+                {isCredit ? t.creditTitle : isSettled ? t.settledTitle : t.owed}
+              </p>
+              <button
+                type="button"
+                onClick={toggleHideBalance}
+                title={hideBalance ? t.showBalance : t.hideBalance}
+                className="flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer"
+              >
+                {hideBalance ? (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{t.showBalance}</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{t.hideBalance}</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <p className={`text-5xl sm:text-6xl font-black my-2 tracking-tight ${isCredit || isSettled ? 'text-emerald-400' : 'text-rose-500'}`}>
+              {hideBalance 
+                ? '••••••' 
+                : (isCredit ? `+${t.currency} ${absBalance}` : `${t.currency} ${absBalance}`)}
             </p>
-            <p className={`text-5xl font-black my-2 tracking-tight ${isCredit || isSettled ? 'text-emerald-400' : 'text-rose-500'}`}>
-              {isCredit ? `+${t.currency} ${absBalance}` : `${t.currency} ${absBalance}`}
-            </p>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-400 font-medium mb-4">
               {t.limit}: {t.currency} {ledger.credit_limit.toFixed(3)}
             </p>
+
+            {/* Voice Audio Button for Laborers & Non-literate Camp Patrons */}
+            {typeof window !== 'undefined' && 'speechSynthesis' in window && (
+              <button
+                type="button"
+                onClick={speakBalance}
+                className={`w-full py-3 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition-all cursor-pointer shadow-xs active:scale-[0.98] ${
+                  isSpeaking
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 animate-pulse'
+                    : 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border-emerald-700/50 hover:border-emerald-500'
+                }`}
+              >
+                {isSpeaking ? (
+                  <>
+                    <VolumeX className="w-4 h-4 text-amber-400 animate-spin" />
+                    <span>Stop Voice Audio</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-4 h-4 text-emerald-400" />
+                    <span>{t.listenBalance}</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Sovereign Khata Self-Freeze / Unlock Kill Switch */}
+            <button
+              type="button"
+              onClick={handleToggleFreeze}
+              disabled={freezeLoading}
+              className={`w-full py-2.5 px-4 mt-2.5 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border transition-all cursor-pointer shadow-xs active:scale-[0.98] ${
+                ledger.is_active === 0
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-rose-500/40 hover:text-rose-300'
+              }`}
+            >
+              {freezeLoading ? (
+                <span>Updating status...</span>
+              ) : ledger.is_active === 0 ? (
+                <>
+                  <Unlock className="w-4 h-4 text-amber-400" />
+                  <span>{t.unfreezeBtn}</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-4 h-4 text-slate-400" />
+                  <span>{t.freezeBtn}</span>
+                </>
+              )}
+            </button>
           </div>
 
           {/* Payment Section (Full or Partial Settlement) */}
@@ -648,6 +1020,174 @@ export default function CustomerTab() {
             </div>
           )}
 
+          {/* Full Transaction History with Dates & Running Balances */}
+          {(() => {
+            const allTransactions = ledger.transactions || ledger.recentPurchases || ledger.ledger || [];
+            if (allTransactions.length === 0) {
+              return (
+                <div className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-center text-xs text-slate-500">
+                  {t.noRecentPurchases || 'No transactions recorded'}
+                </div>
+              );
+            }
+
+            const purchases = allTransactions.filter(tx => {
+              const amt = Number(tx.amount || 0);
+              const type = (tx.type || '').toUpperCase();
+              return !(type.includes('PAY') || type.includes('SETTLE') || amt < 0);
+            });
+
+            const payments = allTransactions.filter(tx => {
+              const amt = Number(tx.amount || 0);
+              const type = (tx.type || '').toUpperCase();
+              return type.includes('PAY') || type.includes('SETTLE') || amt < 0;
+            });
+
+            const displayedTransactions = txFilter === 'PURCHASE'
+              ? purchases
+              : txFilter === 'PAYMENT'
+              ? payments
+              : allTransactions;
+
+            const visibleItems = displayedTransactions.slice(0, visibleTxCount);
+            const hasMore = displayedTransactions.length > visibleTxCount;
+
+            return (
+              <div className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-left">
+                {/* Header & Filter Controls */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                      {t.transactionsHistory || 'Transaction History'}
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
+                      {allTransactions.length}
+                    </span>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1 text-[11px] font-semibold bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0 self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setTxFilter('ALL')}
+                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                        txFilter === 'ALL'
+                          ? 'bg-slate-700 text-white shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {t.filterAll || 'All'} ({allTransactions.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxFilter('PURCHASE')}
+                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                        txFilter === 'PURCHASE'
+                          ? 'bg-rose-950/80 text-rose-300 border border-rose-800/60 shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {t.filterPurchases || 'Purchases'} ({purchases.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxFilter('PAYMENT')}
+                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                        txFilter === 'PAYMENT'
+                          ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {t.filterPayments || 'Payments'} ({payments.length})
+                    </button>
+                  </div>
+                </div>
+
+                {/* List of Transactions */}
+                <div className="space-y-2">
+                  {visibleItems.map((tx, idx) => {
+                    const amt = Number(tx.amount || 0);
+                    const isCreditTx = (tx.type || '').toUpperCase().includes('SETTLE') || (tx.type || '').toUpperCase().includes('PAY') || amt < 0;
+                    const isOpeningBalance = (tx.type || '').toUpperCase().includes('OPENING');
+                    const formattedAmt = Math.abs(amt).toFixed(3);
+                    const { date, time } = formatTxDate(tx.timestamp || tx.created_at, lang);
+                    const runningBal = tx.running_balance !== undefined && tx.running_balance !== null
+                      ? Number(tx.running_balance).toFixed(3)
+                      : null;
+
+                    return (
+                      <div
+                        key={tx.id || idx}
+                        className="p-3 bg-slate-900/90 hover:bg-slate-900 rounded-xl border border-slate-800 text-xs font-mono transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          {/* Left: Icon, Reference & Full Date/Time */}
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-sm mt-0.5 ${
+                              isCreditTx 
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                                : isOpeningBalance
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            }`}>
+                              {isCreditTx ? '💳' : isOpeningBalance ? '📖' : '🛒'}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-slate-200 font-sans font-bold text-xs truncate">
+                                {tx.reference ? tx.reference : isOpeningBalance ? 'Opening Balance (Previous Book)' : isCreditTx ? 'BenefitPay Payment' : 'Grocery Purchase'}
+                              </p>
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5 font-mono flex-wrap">
+                                <span>📅 {date}</span>
+                                {time && <span>• ⏰ {time}</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Right: Amount & Running Balance */}
+                          <div className="text-right shrink-0">
+                            <span className={`font-black text-xs ${isCreditTx ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {isCreditTx ? `-${t.currency} ${formattedAmt}` : `+${t.currency} ${formattedAmt}`}
+                            </span>
+                            {runningBal !== null && (
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                {t.runningBal || 'Bal'}: {t.currency} {runningBal}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Show More / Show Less Pagination Button */}
+                {displayedTransactions.length > 10 && (
+                  <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-center gap-2">
+                    {hasMore ? (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleTxCount(prev => prev + 15)}
+                        className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-700/80 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <span>{t.showMore || 'Show More'} ({displayedTransactions.length - visibleTxCount} remaining)</span>
+                        <span>↓</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleTxCount(10)}
+                        className="py-1.5 px-4 bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                      >
+                        <span>{t.showLess || 'Show Less'}</span>
+                        <span>↑</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Action Buttons: Itemized Statement, WhatsApp Share & Print */}
           <div className="mt-5 space-y-2 no-print">
             <Link
@@ -708,6 +1248,16 @@ export default function CustomerTab() {
               <span>{t.whatsappHelp}</span>
             </a>
           </div>
+        </div>
+
+        {/* Discreet Shop Owner Switch / Setup Link */}
+        <div className="mt-4 text-center no-print">
+          <Link
+            to="/?switch=1"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition py-1"
+          >
+            <span>{t.switchAcc}</span>
+          </Link>
         </div>
       </main>
 

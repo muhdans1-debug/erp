@@ -4,6 +4,7 @@ import {
   Trash2, Copy, Check, ArrowUpDown, Plus, X, Radio, 
   ExternalLink, Banknote
 } from 'lucide-react';
+import { getApiBaseUrl } from './utils/apiConfig';
 
 interface NfcCardItem {
   tag_id: string;
@@ -25,17 +26,29 @@ interface NfcCardItem {
 
 interface NfcManagerProps {
   apiBase?: string;
+  initialTab?: 'CARDS' | 'MESS_GROUPS';
   onOpenCustomerStatement?: (customer: any) => void;
   onNavigateToKhata?: () => void;
 }
 
 export default function NfcManager({
-  apiBase = 'http://localhost:3000',
+  apiBase = getApiBaseUrl(),
+  initialTab = 'CARDS',
   onOpenCustomerStatement,
   onNavigateToKhata
 }: NfcManagerProps) {
   // Navigation Tab
-  const [activeTab, setActiveTab] = useState<'CARDS' | 'MESS_GROUPS'>('CARDS');
+  const [activeTab, setActiveTab] = useState<'CARDS' | 'MESS_GROUPS'>(initialTab);
+
+  // Standard POS Authorization Headers
+  const getHeaders = (hasBody = false) => {
+    const headers: Record<string, string> = {
+      'x-pos-client': 'store-pos',
+      'x-manager-pin': '9999'
+    };
+    if (hasBody) headers['Content-Type'] = 'application/json';
+    return headers;
+  };
 
   // State
   const [cards, setCards] = useState<NfcCardItem[]>([]);
@@ -59,10 +72,17 @@ export default function NfcManager({
   const [isBridgeConnected, setIsBridgeConnected] = useState(false);
   const [recentScansLog, setRecentScansLog] = useState<{ id: string; tag_id: string; timestamp: string; partyName?: string; isNew: boolean }[]>([]);
   const lastProcessedTimeRef = useRef<number>(0);
+  const lastProcessedUidRef = useRef<{ tag: string; time: number }>({ tag: '', time: 0 });
 
-  // On-Demand Remote Scan Controls
+  // On-Demand Remote Scan Controls (5-Minute Inactivity Auto-Off)
   const [scanStatus, setScanStatus] = useState<'IDLE' | 'WAITING' | 'PROCESSING'>('IDLE');
+  const scanStatusRef = useRef<'IDLE' | 'WAITING' | 'PROCESSING'>('IDLE');
+  const scanTimeoutRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    scanStatusRef.current = scanStatus;
+  }, [scanStatus]);
 
   const triggerRemoteScan = () => {
     setScanStatus('WAITING');
@@ -71,10 +91,16 @@ export default function NfcManager({
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'REQUEST_MANAGER_SCAN' }));
     }
+
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    scanTimeoutRef.current = setTimeout(() => {
+      setScanStatus((curr) => (curr === 'WAITING' ? 'IDLE' : curr));
+    }, 5 * 60 * 1000);
   };
 
   const cancelRemoteScan = () => {
     setScanStatus('IDLE');
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'MANAGER_SCAN_COMPLETE' }));
     }
@@ -125,7 +151,9 @@ export default function NfcManager({
   const loadCardsData = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${apiBase}/api/nfc/cards?t=${Date.now()}`);
+      const res = await fetch(`${apiBase}/api/nfc/cards?t=${Date.now()}`, {
+        headers: getHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         if (data && data.success && Array.isArray(data.cards)) {
@@ -145,7 +173,9 @@ export default function NfcManager({
   // 2. Fetch Customer Directory for Assignment
   const loadCustomers = async () => {
     try {
-      const res = await fetch(`${apiBase}/khata/ledger?sort=alpha`);
+      const res = await fetch(`${apiBase}/khata/ledger?sort=alpha`, {
+        headers: getHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) setCustomersList(data);
@@ -157,7 +187,9 @@ export default function NfcManager({
   // 3. Fetch Mess Groups
   const loadMessGroups = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/nfc/mess-groups`);
+      const res = await fetch(`${apiBase}/api/nfc/mess-groups`, {
+        headers: getHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         if (data?.messGroups) setMessGroupsList(data.messGroups);
@@ -181,6 +213,12 @@ export default function NfcManager({
       const cleanId = (tagId || '').trim().toUpperCase();
       if (!cleanId) return;
 
+      const now = Date.now();
+      if (lastProcessedUidRef.current.tag === cleanId && (now - lastProcessedUidRef.current.time < 2500)) {
+        return;
+      }
+      lastProcessedUidRef.current = { tag: cleanId, time: now };
+
       console.log(`📡 [NFC Manager Hub] Sunmi Hardware NFC Tap Received: ${cleanId}`);
 
       if (preloadedCustomer) {
@@ -200,7 +238,9 @@ export default function NfcManager({
 
       // Lookup details
       try {
-        const res = await fetch(`${apiBase}/api/customers/nfc/${encodeURIComponent(cleanId)}`);
+        const res = await fetch(`${apiBase}/api/customers/nfc/${encodeURIComponent(cleanId)}`, {
+          headers: getHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           if (data?.customer) {
@@ -296,28 +336,52 @@ export default function NfcManager({
       }
     };
 
+    // Direct Sunmi Antenna Scan Event Listener
+    const handleSunmiDirectScan = (e: any) => {
+      const tag = e?.detail?.tag_id || e?.detail?.nfcId || (typeof e?.detail === 'string' ? e.detail : '');
+      if (tag) {
+        lastProcessedTimeRef.current = Date.now();
+        handleHardwareTap(tag, e?.detail?.customer);
+      }
+    };
+    window.addEventListener('sunmi-nfc-scan', handleSunmiDirectScan);
+
     connectWebSocket();
 
-    // Fallback Poller to Fastify /api/nfc/latest (only when WebSocket bridge is disconnected)
-    pollInterval = setInterval(async () => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        return; // WebSocket delivers real-time push events; bypass HTTP polling to conserve CPU & I/O
-      }
+    // Cloud Edge Poller: Only polls when actively WAITING for a scan and tab is visible
+    const pollRelay = async () => {
+      if (scanStatusRef.current !== 'WAITING' || (typeof document !== 'undefined' && document.hidden)) return;
       try {
-        const res = await fetch(`${apiBase}/api/nfc/latest`);
+        const res = await fetch(`${apiBase}/api/nfc/latest`, {
+          headers: getHeaders(),
+          signal: AbortSignal.timeout(2000)
+        });
         if (res.ok) {
           const data = await res.json();
-          if (data?.latest?.tag_id && data.latest.timestamp > lastProcessedTimeRef.current) {
-            lastProcessedTimeRef.current = data.latest.timestamp;
-            await handleHardwareTap(data.latest.tag_id, data.latest.customer);
+          const tag = data?.tag_id || data?.tagId || data?.latest?.tag_id || data?.latest?.tagId;
+          const ts = Number(data?.timestamp || data?.latest?.timestamp || 0);
+          const cust = data?.customer || data?.latest?.customer;
+          if (tag && ts > lastProcessedTimeRef.current) {
+            lastProcessedTimeRef.current = ts;
+            setScanStatus('IDLE');
+            await handleHardwareTap(tag, cust);
+
+            // Consume and clear on Cloud Edge so it is received once and never loops
+            fetch(`${apiBase}/api/nfc/latest/clear`, {
+              method: 'POST',
+              headers: getHeaders(true)
+            }).catch(() => {});
           }
         }
       } catch {}
-    }, 4000);
+    };
+
+    pollInterval = setInterval(pollRelay, 4000);
 
     return () => {
       unmounted = true;
       clearInterval(pollInterval);
+      window.removeEventListener('sunmi-nfc-scan', handleSunmiDirectScan);
       ws?.close();
       wsRef.current = null;
     };
@@ -329,8 +393,8 @@ export default function NfcManager({
     const clean = simulatedTagInput.trim().toUpperCase();
     fetch(`${apiBase}/api/nfc/relay`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tag_id: clean })
+      headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
+      body: JSON.stringify({ tag_id: clean, terminalId: 'Laptop Simulator' })
     }).catch(() => {});
     setSimulatedTagInput('');
   };
@@ -365,12 +429,13 @@ export default function NfcManager({
 
           const createRes = await fetch(`${apiBase}/api/customers`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders(true),
             body: JSON.stringify({
               name: newCustName.trim(),
               phone: newCustPhone.trim() || null,
               cpr: newCustCpr.trim() || null,
-              batchNo: newCustBatch.trim() || null
+              batchNo: newCustBatch.trim() || null,
+              creditLimit: 30.0
             })
           });
 
@@ -391,7 +456,7 @@ export default function NfcManager({
 
         const assignRes = await fetch(`${apiBase}/api/nfc/assign`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getHeaders(true),
           body: JSON.stringify({
             tag_id: cleanTag,
             card_type: 'PERSONAL',
@@ -423,7 +488,7 @@ export default function NfcManager({
 
         const assignRes = await fetch(`${apiBase}/api/nfc/assign`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getHeaders(true),
           body: JSON.stringify({
             tag_id: cleanTag,
             card_type: 'MESS',
@@ -487,7 +552,7 @@ export default function NfcManager({
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(true),
         body: JSON.stringify({
           group_name: editGroupName.trim(),
           member_ids: editGroupMembers,
@@ -521,7 +586,8 @@ export default function NfcManager({
     setActionLoading(true);
     try {
       const res = await fetch(`${apiBase}/api/nfc/mess-groups/${groupId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getHeaders()
       });
       const data = await res.json();
       if (data?.success) {
@@ -547,7 +613,7 @@ export default function NfcManager({
     try {
       const res = await fetch(`${apiBase}/api/nfc/unlink`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(true),
         body: JSON.stringify({ tag_id: tagId })
       });
       const data = await res.json();
@@ -710,14 +776,12 @@ export default function NfcManager({
 
           {/* Connection Status & Live Antenna Badge */}
           <div className="flex flex-wrap items-center gap-3">
-            <div className={`px-4 py-2.5 rounded-2xl border text-xs font-bold flex items-center gap-2.5 shadow-sm ${
-              isBridgeConnected 
-                ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300' 
-                : 'bg-amber-950/80 border-amber-500/50 text-amber-300'
-            }`}>
-              <span className={`w-2.5 h-2.5 rounded-full ${isBridgeConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <div className="px-4 py-2.5 rounded-2xl border text-xs font-bold flex items-center gap-2.5 shadow-sm bg-emerald-950/80 border-emerald-500/50 text-emerald-300">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>
-                {isBridgeConnected ? 'Sunmi POS Terminal Linked (0ms Relay)' : 'Connecting Bridge Hub (:3000/ws)...'}
+                {isBridgeConnected 
+                  ? 'Sunmi POS Terminal Linked (Direct WS 0ms)' 
+                  : 'Cloud Edge Relay Active (Listening for Sunmi & iPhone Taps)'}
               </span>
             </div>
 

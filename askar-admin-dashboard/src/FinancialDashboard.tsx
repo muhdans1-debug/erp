@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Activity, RefreshCw, Calendar, TrendingDown, TrendingUp, AlertCircle, ArrowLeft, ShieldCheck, Printer } from 'lucide-react';
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
 import FinancialReportWidget from './FinancialReportWidget';
+import { getAdminPin } from './utils/auth';
+import { getApiBaseUrl } from './utils/apiConfig';
+import { fetchPnlStatement, fetchVatStatement } from './services/dataService';
 
 interface FinancialDashboardProps {
   apiBase?: string;
@@ -9,7 +12,7 @@ interface FinancialDashboardProps {
 }
 
 export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }: FinancialDashboardProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || getApiBaseUrl();
   
   const [financials, setFinancials] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -20,44 +23,36 @@ export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }
   const [vatReturn, setVatReturn] = useState<any>(null);
   const [loadingVat, setLoadingVat] = useState(false);
 
-  const fetchVatReturn = (startDate?: string, endDate?: string) => {
+  const fetchVatReturn = async (startDate?: string, endDate?: string) => {
     setLoadingVat(true);
-    const query = (startDate && endDate) ? `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : '';
-    const managerPin = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_pin') || (import.meta as any).env?.VITE_MANAGER_PIN) : null) || '9999';
-    fetch(`${apiBase}/api/reports/vat-return${query}`, {
-      headers: {
-        'x-manager-pin': managerPin
+    try {
+      const data = await fetchVatStatement(apiBase, startDate, endDate);
+      if (data && data.success) {
+        setVatReturn(data);
       }
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setVatReturn(data);
-        }
-      })
-      .catch((err) => console.error("VAT return fetch error:", err))
-      .finally(() => setLoadingVat(false));
+    } catch (err) {
+      console.error("VAT return fetch error:", err);
+    } finally {
+      setLoadingVat(false);
+    }
   };
 
-  const fetchFinancials = () => {
+  const fetchFinancials = async () => {
     setLoading(true);
     setError(null);
-    fetch(`${apiBase}/api/reports/pnl?period=${period}`, {
-      headers: { 'x-manager-pin': '9999' }
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.data) {
-          setFinancials(data.data);
-        } else {
-          setError(data.error || 'Failed to load financial statement');
-        }
-      })
-      .catch(err => {
-        console.error(err);
-        setError('Failed to connect to back-office server. Ensure port 3000 is running.');
-      })
-      .finally(() => setLoading(false));
+    try {
+      const data = await fetchPnlStatement(apiBase, period);
+      if (data) {
+        setFinancials(data);
+      } else {
+        setError('Failed to load financial statement');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to calculate financial statement.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {

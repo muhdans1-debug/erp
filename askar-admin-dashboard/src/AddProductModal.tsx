@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Save, X, Barcode, Truck, Percent, Scale, AlertCircle } from 'lucide-react';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
+import { getAdminPin } from './utils/auth';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -7,7 +9,8 @@ interface AddProductModalProps {
   apiBase?: string;
 }
 
-export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://localhost:3000' }: AddProductModalProps) {
+export default function AddProductModal({ onClose, onSuccess, apiBase }: AddProductModalProps) {
+  const resolvedApiBase = apiBase || getApiBaseUrl();
   const [distributors, setDistributors] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     id: '', // Barcode / SKU
@@ -26,10 +29,10 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
 
   const getCandidateUrls = () => {
     const list = [
-      apiBase,
-      typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
-      'http://localhost:3000',
-      'http://192.168.8.7:3000'
+      resolvedApiBase,
+      getApiBaseUrl(),
+      DEFAULT_EDGE_API_URL,
+      typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null
     ];
     return list.filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
   };
@@ -113,9 +116,13 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
       try {
         const res = await fetch(`${url}/api/products`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pos-client': 'pim-admin',
+            'x-manager-pin': getAdminPin() || '9999'
+          },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(3000)
+          signal: AbortSignal.timeout(4000)
         });
         const data = await res.json();
         if (res.ok && (data.success || data.id)) {

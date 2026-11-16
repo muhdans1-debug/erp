@@ -98,6 +98,10 @@ export function findProductByPLU<T extends { id: string; barcode?: string; name:
   return catalog.find((p) => {
     const id = String(p.id).trim().toLowerCase();
     const barcode = String(p.barcode || '').trim().toLowerCase();
+    const prodPlu = String((p as any).plu_code || (p as any).pluCode || (p as any).plu || '').trim().toLowerCase();
+
+    // 0. Direct match with explicit PLU / short code assigned in dashboard
+    if (prodPlu && (prodPlu === targetPlu || prodPlu === numPluStr)) return true;
 
     // 1. Direct match with 5-digit PLU (e.g. "00101")
     if (id === targetPlu || barcode === targetPlu) return true;

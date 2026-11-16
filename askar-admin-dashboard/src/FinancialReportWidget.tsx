@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Calendar, TrendingUp, DollarSign, Receipt, Percent, CreditCard, Download, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { getAdminPin } from './utils/auth';
+import { getApiBaseUrl } from './utils/apiConfig';
 
 interface FinancialReportData {
   success: boolean;
@@ -48,7 +50,7 @@ interface FinancialReportWidgetProps {
 }
 
 export default function FinancialReportWidget({ apiBase: propApiBase, onRangeChange }: FinancialReportWidgetProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || getApiBaseUrl();
 
   // Format YYYY-MM-DD
   const formatYmd = (d: Date) => {
@@ -73,10 +75,9 @@ export default function FinancialReportWidget({ apiBase: propApiBase, onRangeCha
     setLoading(true);
     setError(null);
     try {
-      const managerPin = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_pin') || (import.meta as any).env?.VITE_MANAGER_PIN) : null) || '9999';
       const response = await fetch(`${apiBase}/reports/financial?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, {
         headers: {
-          'x-manager-pin': managerPin
+          'x-manager-pin': getAdminPin()
         }
       });
       if (!response.ok) {

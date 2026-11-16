@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS "Product" (
 );
 
 CREATE INDEX IF NOT EXISTS "idx_product_barcode" ON "Product" ("barcode");
+CREATE INDEX IF NOT EXISTS "idx_product_name" ON "Product" ("name");
 CREATE INDEX IF NOT EXISTS "idx_product_distributor" ON "Product" ("distributorId");
 
 -- 3. CUSTOMERS & KHATA (CREDIT)
@@ -200,8 +201,7 @@ CREATE TABLE IF NOT EXISTS "SaleItem" (
   "vatRateAtSale" REAL NOT NULL DEFAULT 10.0,
   "vatAmount" REAL NOT NULL DEFAULT 0.0,
   "total_price" REAL,
-  FOREIGN KEY ("saleId") REFERENCES "Sale" ("id"),
-  FOREIGN KEY ("productId") REFERENCES "Product" ("id")
+  FOREIGN KEY ("saleId") REFERENCES "Sale" ("id")
 );
 
 CREATE INDEX IF NOT EXISTS "idx_sale_item_sale" ON "SaleItem" ("saleId");
@@ -276,8 +276,7 @@ CREATE TABLE IF NOT EXISTS "WastageLog" (
   "totalLoss" REAL NOT NULL,
   "reason" TEXT NOT NULL,
   "loggedBy" TEXT NOT NULL DEFAULT 'Admin',
-  "createdAt" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY ("productId") REFERENCES "Product" ("id")
+  "createdAt" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 -- 10. PRICE AUDIT HISTORY

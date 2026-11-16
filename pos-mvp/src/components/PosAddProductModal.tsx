@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackagePlus, X, ScanBarcode, Truck, Percent, Scale, Tag, Layers, CheckCircle2, AlertCircle, RotateCcw, ShoppingCart, Search, RefreshCw } from 'lucide-react';
 import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
 
 export interface PosAddProductModalProps {
   onClose: () => void;
@@ -21,6 +22,11 @@ export default function PosAddProductModal({
   catalog = []
 }: PosAddProductModalProps) {
   const [distributors, setDistributors] = useState<any[]>([]);
+  const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+  const nameInputRef = React.useRef<HTMLInputElement>(null);
+  const initialBarcodeConsumedRef = React.useRef(false);
+  const [lastSavedNotice, setLastSavedNotice] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     barcode: initialBarcode || '',
     name: '',
@@ -131,26 +137,23 @@ export default function PosAddProductModal({
     onClose();
   };
 
-  // Sync barcode if changed
+  // Sync initial barcode on first mount
   useEffect(() => {
-    if (initialBarcode && !formData.barcode) {
+    if (initialBarcode && !initialBarcodeConsumedRef.current) {
+      initialBarcodeConsumedRef.current = true;
       setFormData(prev => ({ ...prev, barcode: initialBarcode }));
     }
   }, [initialBarcode]);
 
-  // Network candidates resolution (prevents offline or IP mismatch failures)
+  // Network candidates resolution (defaults to Cloud Gateway & Edge)
   const getCandidateUrls = () => {
-    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-    const list = [
-      apiBase && apiBase !== 'http://localhost:3000' ? apiBase : (isAndroid ? 'http://192.168.8.7:3000' : apiBase),
-      typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
-      typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
-      'http://192.168.8.7:3000',
-      'http://askar-master.local:3000',
-      'http://localhost:3000'
-    ];
-    return list
-      .filter((val, idx, arr): val is string => Boolean(val) && !val?.includes('192.168.8.20') && arr.indexOf(val) === idx);
+    return [
+      apiBase && !apiBase.includes('localhost') ? apiBase : null,
+      getApiBaseUrl(),
+      CLOUD_GATEWAY_URL,
+      DEFAULT_EDGE_API_URL,
+      LAN_SERVER_URL
+    ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
   };
 
   // Fetch official distributors
@@ -307,11 +310,12 @@ export default function PosAddProductModal({
     let pushedToServer = false;
     for (const url of candidates) {
       try {
+        const managerPin = (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('MANAGER_PIN'))) || '9999';
         const res = await fetch(`${url}/api/products`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': managerPin,
             'x-pos-client': 'store-pos'
           },
           body: JSON.stringify(payload),
@@ -338,11 +342,74 @@ export default function PosAddProductModal({
       } catch { }
     }
 
-    // ⚡ UI UNBLOCK: Trigger callbacks and dismiss modal immediately
+    // ⚡ UI UNBLOCK: Trigger callbacks
     onProductAdded(savedProduct, andAddToCart);
     setIsSubmitting(false);
-    onClose();
+
+    if (andAddToCart) {
+      // If adding to cart for checkout, close modal
+      onClose();
+    } else {
+      // 🟢 Save to Catalog Only: KEEP WINDOW OPEN & GIVE A FRESH WINDOW!
+      // 1. Update local product list so duplicate detection immediately recognizes the newly added product
+      setAllProducts(prev => [
+        savedProduct,
+        ...prev.filter(p => p && p.id !== savedProduct.id && (!savedProduct.barcode || p.barcode !== savedProduct.barcode))
+      ]);
+
+      // 2. Reset form data to a completely fresh state
+      setFormData({
+        barcode: '',
+        name: '',
+        sellingPrice: '',
+        purchasePrice: '',
+        stockQuantity: '1',
+        minThreshold: '10',
+        maxThreshold: '50',
+        distributorId: distributors.length > 0 ? distributors[0].id : '',
+        vatRate: '10.0',
+        is_weighed_item: false,
+        category: 'ESSENTIALS'
+      });
+      setIsUpdateMode(false);
+      setDismissedExistingId(null);
+      setErrorMessage(null);
+
+      // 3. Display celebratory flash banner with product name
+      setLastSavedNotice(`✅ "${savedProduct.name}" saved to catalog! Ready for next product.`);
+      setTimeout(() => setLastSavedNotice(null), 5000);
+
+      // 4. Focus barcode input for rapid continuous scanning / entry
+      setTimeout(() => {
+        barcodeInputRef.current?.focus();
+      }, 60);
+    }
   };
+
+  const handleSaveRef = React.useRef<(andAddToCart?: boolean) => void>(() => {});
+  handleSaveRef.current = handleSave;
+
+  // ⌨️ Global Keyboard Shortcut: Alt + S for Save to Catalog & Fresh Window
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. Alt + S (case-insensitive): Trigger Save to Catalog
+      if (e.altKey && (e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSaveRef.current(false);
+        return;
+      }
+      // 2. Escape: Close modal
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
@@ -374,6 +441,19 @@ export default function PosAddProductModal({
             <AlertCircle size={18} className="text-rose-600 shrink-0" />
             <span className="flex-1">{errorMessage}</span>
             <button type="button" onClick={() => setErrorMessage(null)} className="text-rose-600 font-black">✕</button>
+          </div>
+        )}
+
+        {/* Success Alert Banner for Rapid Sequential Entry */}
+        {lastSavedNotice && (
+          <div className="mx-6 mt-4 p-3.5 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex items-center justify-between gap-2 text-emerald-900 text-xs font-bold animate-in fade-in slide-in-from-top-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              <span>{lastSavedNotice}</span>
+            </div>
+            <span className="text-[10px] font-mono bg-emerald-200 text-emerald-950 px-2.5 py-0.5 rounded-full font-black uppercase">
+              Fresh Form Ready
+            </span>
           </div>
         )}
 
@@ -453,6 +533,7 @@ export default function PosAddProductModal({
                 <ScanBarcode size={14} className="text-slate-500" /> Barcode / ID
               </label>
               <input
+                ref={barcodeInputRef}
                 type="text"
                 name="barcode"
                 value={formData.barcode}
@@ -464,6 +545,7 @@ export default function PosAddProductModal({
             <div className="sm:col-span-2">
               <label className="block text-slate-700 font-bold mb-1">Product Name *</label>
               <input
+                ref={nameInputRef}
                 type="text"
                 name="name"
                 required
@@ -703,16 +785,20 @@ export default function PosAddProductModal({
             type="button"
             disabled={isSubmitting}
             onClick={() => handleSave(false)}
-            className="px-4 py-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+            className="px-4 py-3 bg-white hover:bg-slate-100 border-2 border-slate-300 hover:border-slate-400 text-slate-800 font-black text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-2"
+            title="Save to Catalog and open fresh form for next product [Alt+S]"
           >
-            {isUpdateMode ? 'Update Catalog Only' : 'Save to Catalog Only'}
+            <span>{isUpdateMode ? 'Update Catalog' : 'Save to Catalog'}</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 text-[10px] font-mono font-black border border-slate-300 shadow-2xs">
+              Alt+S
+            </kbd>
           </button>
 
           <button
             type="button"
             disabled={isSubmitting}
             onClick={() => handleSave(true)}
-            className={`flex-1 py-3.5 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-p  ointer disabled:opacity-50 ${isUpdateMode ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+            className={`flex-1 py-3.5 text-white font-bold text-sm rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${isUpdateMode ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
           >
             {isUpdateMode ? <RefreshCw size={18} /> : <CheckCircle2 size={18} />}

@@ -3,6 +3,7 @@ import { Network } from '@capacitor/network';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import { db } from '../db';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 export type SyncTrafficStatus = 'ONLINE' | 'OFFLINE' | 'OFFLINE_WARNING' | 'SYNCING';
 
@@ -15,17 +16,7 @@ export interface BackupResult {
 }
 
 const getResolvedDefaultApiBase = (): string => {
-  if (typeof window !== 'undefined') {
-    const custom = localStorage.getItem('master_server_url') || localStorage.getItem('server_ip');
-    if (custom && custom.trim()) {
-      return custom.startsWith('http') ? custom.replace(/\/+$/, '') : `http://${custom.trim()}:3000`;
-    }
-    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-    if (isAndroid) return 'http://192.168.8.7:3000';
-    const host = window.location.hostname || 'localhost';
-    return `http://${host}:3000`;
-  }
-  return 'http://192.168.8.7:3000';
+  return getApiBaseUrl();
 };
 
 export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = true) {
@@ -39,18 +30,21 @@ export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = tru
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [lastBackup, setLastBackup] = useState<BackupResult | null>(null);
   const isSyncingRef = useRef<boolean>(false);
+  const rateLimitCooldownRef = useRef<number>(0);
 
   // Helper to calculate offline duration & status
   const evaluateOfflineStatus = useCallback(() => {
+    const isDeviceOnline = typeof navigator !== 'undefined' && navigator.onLine;
     const lastOnlineStr = localStorage.getItem('last_online_timestamp');
     const lastOnline = lastOnlineStr ? Number(lastOnlineStr) : Date.now();
     const diffHours = (Date.now() - lastOnline) / (1000 * 60 * 60);
     setOfflineHours(Math.floor(diffHours));
 
-    if (diffHours >= 24) {
+    // Only warn about prolonged offline if the device itself has lost network connectivity for over 48 hours
+    if (!isDeviceOnline && diffHours >= 48) {
       setSyncStatus('OFFLINE_WARNING');
     } else {
-      setSyncStatus('OFFLINE');
+      setSyncStatus(isDeviceOnline ? 'ONLINE' : 'OFFLINE');
     }
   }, []);
 
@@ -59,6 +53,12 @@ export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = tru
     if (isSyncingRef.current) {
       return { success: false, message: 'Sync already in progress' };
     }
+
+    // Exponential backoff cooldown when Cloudflare returns HTTP 429 Rate Limit
+    if (Date.now() < rateLimitCooldownRef.current) {
+      return { success: false, message: 'Cloud rate limit cooldown active' };
+    }
+
     isSyncingRef.current = true;
     try {
       setSyncStatus('SYNCING');
@@ -80,33 +80,36 @@ export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = tru
         console.error("TURSO SYNC FAILED:", tursoErr);
       }
 
-      // 2. Secondary: If cloud handshake timed out or failed, verify if Local Wi-Fi / Master Server is reachable
-      const isAndroidClient = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
-      const savedServerUrl = typeof window !== 'undefined' ? (localStorage.getItem('master_server_url') || localStorage.getItem('server_ip')) : null;
-      const normalizedSaved = savedServerUrl ? (savedServerUrl.startsWith('http') ? savedServerUrl : `http://${savedServerUrl}:3000`) : null;
+      // 2. Secondary: If cloud handshake timed out or failed, verify if Cloudflare Edge is reachable
       const checkCandidates = [
-        isAndroidClient ? 'http://192.168.8.7:3000' : null,
         apiBase,
-        normalizedSaved,
-        'http://192.168.8.7:3000',
-        'http://askar-master.local:3000',
-        `http://${host}:3000`,
-        'http://localhost:3000',
-        'http://127.0.0.1:3000'
-      ].filter((v, i, a): v is string => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
+        getApiBaseUrl(),
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      let receivedRateLimit = false;
 
       for (const target of checkCandidates) {
         try {
           // Check lightweight health endpoint first (0ms response time), fallback to sync status
           let pingRes = await fetch(`${target}/api/health`, {
-            signal: AbortSignal.timeout(1500),
+            signal: AbortSignal.timeout(2000),
           }).catch(() => null);
+
+          if (pingRes?.status === 429) {
+            receivedRateLimit = true;
+            rateLimitCooldownRef.current = Date.now() + 60000; // 60s cooldown
+          }
 
           if (!pingRes || !pingRes.ok) {
             pingRes = await fetch(`${target}/api/sync/status`, {
-              signal: AbortSignal.timeout(1500),
+              signal: AbortSignal.timeout(2000),
             }).catch(() => null);
+
+            if (pingRes?.status === 429) {
+              receivedRateLimit = true;
+              rateLimitCooldownRef.current = Date.now() + 60000;
+            }
           }
 
           if (pingRes && pingRes.ok) {
@@ -123,7 +126,12 @@ export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = tru
         }
       }
 
-      // 3. Truly offline
+      // 3. Fallback evaluation
+      if (receivedRateLimit || (typeof navigator !== 'undefined' && navigator.onLine)) {
+        setSyncStatus('ONLINE');
+        return { success: true, message: 'Wi-Fi connected. Operating on high-performance local database.' };
+      }
+
       console.warn('🔴 [Disaster Recovery] Sync failed, system offline:', syncRes?.error);
       evaluateOfflineStatus();
       return { success: false, message: 'Sync offline' };
@@ -169,8 +177,8 @@ export function useDisasterRecovery(apiBaseProp?: string, enabled: boolean = tru
     window.addEventListener('online', handleNetworkChange);
     window.addEventListener('offline', handleNetworkChange);
 
-    // 2. Continuous Health & Sync Loop — 20 seconds for prompt auto-recovery
-    const retryIntervalMs = 20 * 1000;
+    // 2. Continuous Health & Sync Loop — 45 seconds to reduce Cloudflare quota burning
+    const retryIntervalMs = 45 * 1000;
     const intervalId = setInterval(() => {
       performSync();
     }, retryIntervalMs);

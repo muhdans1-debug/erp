@@ -8,12 +8,15 @@
  * 2. Mobile Fawri+ / IBAN Accounts (Direct phone number / IBAN settlement for SME & Sole Proprietorships)
  */
 
+import { getManagerPin } from './authUtils';
+import { getApiBaseUrl } from './apiConfig';
+
 export interface BenefitPayConfig {
   accountType: 'MERCHANT' | 'MOBILE_FAWRI';
   merchantId: string;       // e.g. "97300182" or Acquiring Bank Terminal/Merchant ID
-  merchantName: string;     // e.g. "ASKAR SUPERMARKET"
-  mobileNumber: string;     // e.g. "+973 39401234" or "39401234"
-  iban: string;             // e.g. "BH67NBOB00000012345678"
+  merchantName: string;     // e.g. "layali sbi" or "ASKAR SUPERMARKET"
+  mobileNumber: string;     // e.g. "+973 33843855" or "33843855"
+  iban: string;             // e.g. "BH77SBIN02740045310001"
   cprOrCr: string;          // CR or CPR Number
   branchId: string;         // e.g. "MAIN-01" or "POS-01"
   notes: string;            // Customer instructions
@@ -21,14 +24,14 @@ export interface BenefitPayConfig {
 }
 
 export const DEFAULT_BENEFIT_CONFIG: BenefitPayConfig = {
-  accountType: 'MERCHANT',
+  accountType: 'MOBILE_FAWRI',
   merchantId: '97300182',
-  merchantName: 'ASKAR SUPERMARKET',
-  mobileNumber: '+973 39000000',
-  iban: '',
-  cprOrCr: '200012345678901',
+  merchantName: 'layali sbi',
+  mobileNumber: '+973 33843855',
+  iban: 'BH77SBIN02740045310001',
+  cprOrCr: '790614189',
   branchId: 'MAIN-01',
-  notes: 'Scan with BenefitPay app to pay directly',
+  notes: 'Scan with BenefitPay app to pay directly via Fawri+',
   updatedAt: new Date().toISOString(),
 };
 
@@ -41,7 +44,10 @@ export const getStoredBenefitPayConfig = (): BenefitPayConfig => {
     const raw = localStorage.getItem('benefitpay_config');
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_BENEFIT_CONFIG, ...parsed };
+      const clean = (parsed && parsed.config) ? { ...parsed, ...parsed.config } : parsed;
+      delete clean.config;
+      delete clean.success;
+      return { ...DEFAULT_BENEFIT_CONFIG, ...clean };
     }
     // Backward compatibility with legacy key
     const legacyMerchantId = localStorage.getItem('benefitpay_merchant_id');
@@ -93,30 +99,31 @@ export const saveStoredBenefitPayConfig = async (
     broadcastBenefitPayConfig(merged);
   }
 
-  // Synchronize with master backend server
-  const targetApi =
-    apiBase ||
-    (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : '') ||
-    'http://localhost:3000';
+  // Synchronize with master backend server / Cloudflare Edge API
+  const targetApi = apiBase || getApiBaseUrl();
 
   try {
     const res = await fetch(`${targetApi}/api/config/benefit-account`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-manager-pin': '9999',
+        'x-manager-pin': getManagerPin(),
         'x-pos-client': 'pos-register',
       },
       body: JSON.stringify(merged),
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(4000),
     });
     if (res.ok) {
       const data = await res.json();
-      if (data?.config) {
+      const clean = (data && data.config) ? data.config : data;
+      if (clean && typeof clean === 'object') {
+        const finalized = { ...DEFAULT_BENEFIT_CONFIG, ...clean };
+        delete (finalized as any).config;
+        delete (finalized as any).success;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('benefitpay_config', JSON.stringify(data.config));
+          localStorage.setItem('benefitpay_config', JSON.stringify(finalized));
         }
-        return data.config;
+        return finalized;
       }
     }
   } catch (err) {
@@ -130,27 +137,30 @@ export const saveStoredBenefitPayConfig = async (
  * Fetch latest BenefitPay configuration from backend server and update cache
  */
 export const fetchBenefitPayConfig = async (apiBase?: string): Promise<BenefitPayConfig> => {
-  const targetApi =
-    apiBase ||
-    (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : '') ||
-    'http://localhost:3000';
+  const targetApi = apiBase || getApiBaseUrl();
 
   try {
     const res = await fetch(`${targetApi}/api/config/benefit-account`, {
       headers: {
         'x-pos-client': 'pos-register',
       },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(4000),
     });
     if (res.ok) {
       const data = await res.json();
-      if (data && typeof data === 'object' && (data.merchantId || data.mobileNumber)) {
-        const merged = { ...DEFAULT_BENEFIT_CONFIG, ...data };
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('benefitpay_config', JSON.stringify(merged));
-          if (data.merchantId) localStorage.setItem('benefitpay_merchant_id', data.merchantId);
+      if (data && typeof data === 'object') {
+        const raw = (data as any).config || data;
+        const clean = { ...raw };
+        delete clean.config;
+        delete clean.success;
+        if (clean.merchantId || clean.mobileNumber || clean.iban) {
+          const merged = { ...DEFAULT_BENEFIT_CONFIG, ...clean };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('benefitpay_config', JSON.stringify(merged));
+            if (clean.merchantId) localStorage.setItem('benefitpay_merchant_id', clean.merchantId);
+          }
+          return merged;
         }
-        return merged;
       }
     }
   } catch (e) {
@@ -188,14 +198,21 @@ export const calculateEMVCoCRC16 = (payload: string): string => {
 };
 
 /**
- * Bahrain BenefitPay Fawri+ Dynamic QR Code Payload Generator (EMVCo MPM Compliant)
- * Generates an authentic EMVCo MPM QR string (starts with 000201...) recognized
- * natively by the BenefitPay mobile app scanner in the Kingdom of Bahrain.
+ * Bahrain BenefitPay Fawri+ Dynamic QR Code Payload Generator
+ * Supports:
+ * 1. Mobile Fawri+ / IBAN Mode (for BenefitPay Mobile Scanner in Bahrain):
+ *    The official BenefitPay app scanner natively recognizes the standard JSON IBAN payload:
+ *    {"iban":"BH..."}
+ *    When scanned, it immediately opens the Fawri+ direct transfer screen with the recipient bank & account pre-filled.
+ * 2. Official Corporate/Commercial Merchant Account Mode (EMVCo MPM QRCPS):
+ *    Standardized to Central Bank of Bahrain & The BENEFIT Company EMVCo specifications
+ *    Used when the business has an official Merchant ID registered with acquiring bank.
  */
 export const generateBenefitPayPayload = (
   amount: number,
   invoiceNo: string,
-  configOrMerchant?: BenefitPayConfig | string
+  configOrMerchant?: BenefitPayConfig | string,
+  formatOverride?: 'BENEFIT_JSON' | 'RAW_IBAN' | 'EMV_MERCHANT'
 ): string => {
   const isDynamic = typeof amount === 'number' && amount > 0;
   const formattedAmount = isDynamic ? Number(amount).toFixed(3) : '0.000';
@@ -210,6 +227,29 @@ export const generateBenefitPayPayload = (
     config = configOrMerchant;
   }
 
+  const cleanIban = (config.iban || '').replace(/\s+/g, '').toUpperCase();
+
+  // If RAW_IBAN requested
+  if (formatOverride === 'RAW_IBAN') {
+    return cleanIban || 'BH77SBIN02740045310001';
+  }
+
+  // 1. MOBILE_FAWRI mode (or forced BENEFIT_JSON):
+  // Returns authentic JSON payload {"iban": "BH..."} recognized natively by BenefitPay scanner
+  if (formatOverride === 'BENEFIT_JSON' || (config.accountType === 'MOBILE_FAWRI' && formatOverride !== 'EMV_MERCHANT')) {
+    if (cleanIban && cleanIban.startsWith('BH')) {
+      return JSON.stringify({ iban: cleanIban });
+    }
+    let cleanMobile = (config.mobileNumber || '').replace(/[^\d]/g, '');
+    if (cleanMobile.length === 8 && !cleanMobile.startsWith('973')) {
+      cleanMobile = `973${cleanMobile}`;
+    }
+    if (cleanMobile) {
+      return JSON.stringify({ mobile: cleanMobile });
+    }
+  }
+
+  // 2. Official Corporate/Commercial Merchant Account Mode (EMVCo MPM QRCPS)
   // 1. Tag 00: Payload Format Indicator (01)
   let emv = formatEMVCoTag('00', '01');
 
@@ -221,27 +261,16 @@ export const generateBenefitPayPayload = (
   // Subtag 00: Globally Unique Scheme Identifier for Bahrain
   sub26 += formatEMVCoTag('00', 'bh.benefit');
 
-  if (config.accountType === 'MOBILE_FAWRI') {
-    let cleanMobile = (config.mobileNumber || '').replace(/[^\d]/g, '');
-    if (cleanMobile.length === 8 && !cleanMobile.startsWith('973')) {
-      cleanMobile = `973${cleanMobile}`;
-    }
-    sub26 += formatEMVCoTag('01', cleanMobile || '97339000000');
-  } else {
-    const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
-    sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
-  }
+  const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
+  sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
 
   const branch = (config.branchId || 'POS-01').trim();
   if (branch) {
     sub26 += formatEMVCoTag('02', branch);
   }
 
-  if (config.iban) {
-    const cleanIban = config.iban.replace(/\s+/g, '').toUpperCase();
-    if (cleanIban) {
-      sub26 += formatEMVCoTag('03', cleanIban);
-    }
+  if (cleanIban) {
+    sub26 += formatEMVCoTag('03', cleanIban);
   }
 
   emv += formatEMVCoTag('26', sub26);
@@ -261,7 +290,7 @@ export const generateBenefitPayPayload = (
   emv += formatEMVCoTag('58', 'BH');
 
   // 8. Tag 59: Merchant Name (Clean ASCII max 25 chars for EMVCo TLV safety)
-  const rawName = (config.merchantName || 'ASKAR SUPERMARKET').trim();
+  const rawName = (config.merchantName || 'layali sbi').trim();
   const safeName = rawName.replace(/[^\x20-\x7E]/g, '').trim() || 'ASKAR SUPERMARKET';
   emv += formatEMVCoTag('59', safeName.slice(0, 25));
 
@@ -291,21 +320,31 @@ export const generateBenefitPayPayload = (
 };
 
 /**
- * Raw Fawri+ protocol payload string (used on customer dual screens and POS display)
+ * Direct BenefitPay Fawri+ IBAN payload
+ */
+export const generateFawriIbanPayload = (config?: BenefitPayConfig): string => {
+  const cfg = config || getStoredBenefitPayConfig();
+  const cleanIban = (cfg.iban || '').replace(/\s+/g, '').toUpperCase();
+  return JSON.stringify({ iban: cleanIban || 'BH77SBIN02740045310001' });
+};
+
+/**
+ * Raw IBAN string for direct copy / general banking apps
+ */
+export const generateFawriRawIban = (config?: BenefitPayConfig): string => {
+  const cfg = config || getStoredBenefitPayConfig();
+  return (cfg.iban || '').replace(/\s+/g, '').toUpperCase() || 'BH77SBIN02740045310001';
+};
+
+/**
+ * Legacy Fawri string (backward compatibility)
  */
 export const generateFawriRawString = (
-  amount: number,
-  invoiceNo: string,
+  _amount?: number,
+  _invoiceNo?: string,
   config?: BenefitPayConfig
 ): string => {
-  const cfg = config || getStoredBenefitPayConfig();
-  const amt = Number(amount || 0).toFixed(3);
-  const inv = (invoiceNo || `INV-${Date.now().toString().slice(-6)}`).trim();
-
-  if (cfg.accountType === 'MOBILE_FAWRI') {
-    return `BH-BENEFIT-FAWRI:MOBILE=${cfg.mobileNumber}:AMT=${amt}:REF=${inv}:NAME=${cfg.merchantName || 'ASKAR'}`;
-  }
-  return `BH-BENEFIT-FAWRI:MERCHANT=${cfg.merchantId}:AMT=${amt}:REF=${inv}:NAME=${cfg.merchantName || 'ASKAR'}`;
+  return generateFawriIbanPayload(config);
 };
 
 export default generateBenefitPayPayload;

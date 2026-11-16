@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useDeferredValue } from 'react';
 import { db } from '../db.ts';
 import { Scale, RefreshCw, Search, HardDrive, Sparkles } from 'lucide-react';
 import { QuickCategory, DEFAULT_CATEGORIES } from './EditQuickTabsModal';
@@ -25,6 +25,7 @@ export const POSGrid: React.FC<POSGridProps> = ({ onSelectItem, className = '', 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>('0ms Local Chip (Active)');
@@ -103,15 +104,22 @@ export const POSGrid: React.FC<POSGridProps> = ({ onSelectItem, className = '', 
     });
   }, [products]);
 
-  // Filter products by category and live search query
+  // Filter products by category and live search query (capped and deferred for 60fps responsiveness)
   const filteredProducts = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return categorizedProducts.filter((p) => {
+    const q = deferredSearchQuery.trim().toLowerCase();
+    const result: ProductItem[] = [];
+    for (let i = 0; i < categorizedProducts.length; i++) {
+      const p = categorizedProducts[i];
       const matchesCategory = selectedCategory === 'ALL' || p.category === selectedCategory;
+      if (!matchesCategory) continue;
       const matchesSearch = !q || p.name.toLowerCase().includes(q) || (p.barcode && p.barcode.toLowerCase().includes(q));
-      return matchesCategory && matchesSearch;
-    });
-  }, [categorizedProducts, selectedCategory, searchQuery]);
+      if (matchesSearch) {
+        result.push(p);
+        if (q && result.length >= 60) break; // Keep DOM lean while searching
+      }
+    }
+    return result;
+  }, [categorizedProducts, selectedCategory, deferredSearchQuery]);
 
   return (
     <div className={`flex flex-col h-full bg-slate-50 ${className}`}>
@@ -187,9 +195,9 @@ export const POSGrid: React.FC<POSGridProps> = ({ onSelectItem, className = '', 
             {filteredProducts.map((product) => {
               const isWeighed = Boolean(product.is_weighed_item);
               const priceDisplay = Number(product.price ?? product.sellingPrice ?? 0).toFixed(3);
-              const stock = product.stockQuantity !== undefined && product.stockQuantity !== null ? Number(product.stockQuantity) : null;
-              const isOutOfStock = stock !== null && stock <= 0;
-              const isLowStock = stock !== null && stock > 0 && stock <= 5;
+              const stock = product.stockQuantity !== undefined && product.stockQuantity !== null ? Number(product.stockQuantity) : 99999;
+              const isOutOfStock = false; // Unlimited stock mode
+              const isLowStock = false;
 
               return (
                 <button

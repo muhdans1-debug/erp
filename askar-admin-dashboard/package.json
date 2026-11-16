@@ -9,6 +9,7 @@
     "dev:dev": "vite --port 5176 --host 0.0.0.0",
     "dev:host": "vite --port 5175 --host 0.0.0.0",
     "build": "vite build",
+    "deploy": "wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview"
   },

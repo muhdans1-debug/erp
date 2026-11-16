@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue } from 'react';
 import { Search, X } from 'lucide-react';
 import { Product } from '../types/pos';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 export interface F12SearchOverlayProps {
   isOpen: boolean;
@@ -8,6 +9,24 @@ export interface F12SearchOverlayProps {
   catalog: Product[];
   apiBase?: string;
   onSelectItem: (item: Product) => void;
+}
+
+// Cached local database helper to avoid repetitive JSON parsing on keypresses
+let lastRawCache: string | null = null;
+let parsedCacheItems: any[] = [];
+
+function getCachedProducts(): any[] {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('askar_local_db_cache_Product') : null;
+    if (!raw) return [];
+    if (raw === lastRawCache) return parsedCacheItems;
+    lastRawCache = raw;
+    const parsed = JSON.parse(raw);
+    parsedCacheItems = Array.isArray(parsed) ? parsed : [];
+    return parsedCacheItems;
+  } catch {
+    return [];
+  }
 }
 
 export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
@@ -18,6 +37,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
   onSelectItem,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredQuery = useDeferredValue(searchQuery);
   const [serverResults, setServerResults] = useState<Product[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,76 +53,27 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
     }
   }, [isOpen]);
 
-  // Live Server Fallback Search
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (!q || q.length < 2) {
-      setServerResults([]);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-      const candidates = [
-        apiBase && apiBase !== 'http://localhost:3000' ? apiBase : (isAndroid ? 'http://192.168.8.7:3000' : apiBase),
-        typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
-        typeof localStorage !== 'undefined' && localStorage.getItem('server_ip') ? `http://${localStorage.getItem('server_ip')}:3000` : null,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000'
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
-
-      for (const base of candidates) {
-        try {
-          const res = await fetch(`${base}/api/products/search?q=${encodeURIComponent(q)}`, {
-            signal: AbortSignal.timeout(3000)
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data)) {
-              setServerResults(data.map((p: any) => ({
-                id: p.id,
-                name: p.name,
-                price: Number(p.sellingPrice || p.price || 0),
-                unitCost: Number(p.purchasePrice || p.unitCost || 0),
-                barcode: p.barcode || p.id,
-                category: p.category,
-                isScaleItem: Boolean(p.is_weighed_item),
-                vatRate: Number(p.vatRate || 0),
-                stockQuantity: Number(p.stockQuantity !== undefined ? p.stockQuantity : 100)
-              })));
-              break;
-            }
-          }
-        } catch {}
-      }
-    }, 200);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery, apiBase]);
-
   const effectiveCatalog = useMemo(() => {
     try {
-      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('askar_local_db_cache_Product') : null;
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (Array.isArray(cached) && cached.length > 0) {
-          const catalogIds = new Set(catalog.map((p) => p.id));
-          const catalogBarcodes = new Set(catalog.map((p) => p.barcode).filter(Boolean));
-          const extra = cached
-            .filter((c: any) => c && !catalogIds.has(c.id) && (!c.barcode || !catalogBarcodes.has(c.barcode)))
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              price: Number(c.sellingPrice ?? c.price ?? 0),
-              unitCost: Number(c.purchasePrice ?? c.unitCost ?? 0),
-              barcode: c.barcode || c.id,
-              category: c.category,
-              isScaleItem: Boolean(c.is_weighed_item),
-              vatRate: Number(c.vatRate ?? 0),
-              stockQuantity: Number(c.stockQuantity ?? 100)
-            }));
-          if (extra.length > 0) {
-            return [...extra, ...catalog];
-          }
+      const cached = getCachedProducts();
+      if (cached.length > 0) {
+        const catalogIds = new Set(catalog.map((p) => p.id));
+        const catalogBarcodes = new Set(catalog.map((p) => p.barcode).filter(Boolean));
+        const extra = cached
+          .filter((c: any) => c && !catalogIds.has(c.id) && (!c.barcode || !catalogBarcodes.has(c.barcode)))
+          .map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            price: Number(c.sellingPrice ?? c.price ?? 0),
+            unitCost: Number(c.purchasePrice ?? c.unitCost ?? 0),
+            barcode: c.barcode || c.id,
+            category: c.category,
+            isScaleItem: Boolean(c.is_weighed_item),
+            vatRate: Number(c.vatRate ?? 0),
+            stockQuantity: Number(c.stockQuantity ?? 100)
+          }));
+        if (extra.length > 0) {
+          return [...extra, ...catalog];
         }
       }
     } catch {}
@@ -110,23 +81,77 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
   }, [catalog, isOpen]);
 
   const filteredCatalog = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     if (!q) return effectiveCatalog.slice(0, 30);
-    return effectiveCatalog.filter((product) => {
-      return (
+    const matches: Product[] = [];
+    for (let i = 0; i < effectiveCatalog.length; i++) {
+      const product = effectiveCatalog[i];
+      if (
         product.name.toLowerCase().includes(q) ||
         (product.barcode && product.barcode.toLowerCase().includes(q)) ||
         product.id.toLowerCase().includes(q)
-      );
-    });
-  }, [effectiveCatalog, searchQuery]);
+      ) {
+        matches.push(product);
+        if (matches.length >= 40) break; // Instant cap to prevent DOM thrashing
+      }
+    }
+    return matches;
+  }, [effectiveCatalog, deferredQuery]);
+
+  // Live Server Fallback Search: Only query server if local matches are scarce (< 3) and user paused typing
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2 || filteredCatalog.length >= 5) {
+      // Local matches already found products; zero network requests needed
+      setServerResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const candidates = [
+        apiBase,
+        getApiBaseUrl(),
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/api/products/search?q=${encodeURIComponent(q)}`, {
+            signal: AbortSignal.timeout(2000)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : (data.products || data.data || []);
+            if (Array.isArray(list) && list.length > 0) {
+              setServerResults(list.slice(0, 30).map((p: any) => ({
+                id: p.id,
+                name: p.name,
+                price: Number(p.sellingPrice ?? p.price ?? 0),
+                unitCost: Number(p.purchasePrice ?? p.unitCost ?? 0),
+                barcode: p.barcode || p.id,
+                category: p.category,
+                isScaleItem: Boolean(p.is_weighed_item),
+                vatRate: Number(p.vatRate ?? 0),
+                stockQuantity: Number(p.stockQuantity !== undefined ? p.stockQuantity : 100)
+              })));
+              break;
+            }
+          } else if (res.status === 429) {
+            // Cloudflare rate limit reached; abort candidate loop to avoid network congestion
+            break;
+          }
+        } catch {}
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, apiBase, filteredCatalog.length]);
 
   // Merge local matches with server results ensuring zero duplicates
   const displayedProducts = useMemo(() => {
     const localMatches = filteredCatalog;
     const localIds = new Set(localMatches.map((p) => p.id));
     const extraServerMatches = serverResults.filter((p) => !localIds.has(p.id));
-    return [...localMatches, ...extraServerMatches];
+    return [...localMatches, ...extraServerMatches].slice(0, 50);
   }, [filteredCatalog, serverResults]);
 
   if (!isOpen) return null;
@@ -184,9 +209,9 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
             </div>
           ) : (
             displayedProducts.map((prod) => {
-              const stock = prod.stockQuantity !== undefined && prod.stockQuantity !== null ? Number(prod.stockQuantity) : 0;
-              const isOutOfStock = stock <= 0;
-              const isLowStock = stock > 0 && stock <= 5;
+              const stock = prod.stockQuantity !== undefined && prod.stockQuantity !== null ? Number(prod.stockQuantity) : 99999;
+              const isOutOfStock = false; // Unlimited stock mode
+              const isLowStock = false;
 
               return (
                 <div

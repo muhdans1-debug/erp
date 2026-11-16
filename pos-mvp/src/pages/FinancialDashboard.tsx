@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Activity, RefreshCw, Calendar, TrendingDown, TrendingUp, AlertCircle, ArrowLeft, ShieldCheck, Printer } from 'lucide-react';
 import { TableSkeleton, KpiCardSkeleton } from '../components/Skeleton';
 import FinancialReportWidget from '../components/FinancialReportWidget';
+import { getManagerPin } from '../utils/authUtils';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 interface FinancialDashboardProps {
   apiBase?: string;
@@ -9,7 +11,7 @@ interface FinancialDashboardProps {
 }
 
 export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }: FinancialDashboardProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = (propApiBase && propApiBase !== 'http://localhost:3000') ? propApiBase : getApiBaseUrl();
   
   const [financials, setFinancials] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -23,7 +25,9 @@ export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }
   const fetchVatReturn = (startDate?: string, endDate?: string) => {
     setLoadingVat(true);
     const query = (startDate && endDate) ? `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : '';
-    fetch(`${apiBase}/api/reports/vat-return${query}`)
+    fetch(`${apiBase}/api/reports/vat-return${query}`, {
+      headers: { 'x-manager-pin': getManagerPin() }
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -38,7 +42,7 @@ export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }
     setLoading(true);
     setError(null);
     fetch(`${apiBase}/api/reports/pnl?period=${period}`, {
-      headers: { 'x-manager-pin': '9999' }
+      headers: { 'x-manager-pin': getManagerPin() }
     })
       .then(res => res.json())
       .then(data => {
@@ -50,7 +54,7 @@ export default function FinancialDashboard({ apiBase: propApiBase, onBackToPos }
       })
       .catch(err => {
         console.error(err);
-        setError('Failed to connect to back-office server. Ensure port 3000 is running.');
+        setError('Failed to connect to back-office / edge server. Please check network connectivity.');
       })
       .finally(() => setLoading(false));
   };

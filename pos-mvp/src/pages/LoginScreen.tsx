@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Lock, Delete, Settings, Wifi, CheckCircle2, AlertCircle } from 'lucide-react';
-import { getServerIp, setServerIp } from '../utils/apiConfig';
+import { getServerIp, setServerIp, getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 // 1. Native Web Crypto Hashing Function
 async function generateSha256(pin: string): Promise<string> {
@@ -9,14 +9,6 @@ async function generateSha256(pin: string): Promise<string> {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
-
-// 2. Secure Fallback Hashes (Replacing plaintext PINs)
-const EMERGENCY_HASHES = {
-  CASHIER: '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', // SHA-256 for 1234
-  MANAGER: '888df25ae35772424a560c7152a1de794440e0ea5cfee62828333a456a506e05',  // SHA-256 for 9999
-  MANAGER_ALT: 'b96e95af961ddca691bf0571fc069a5aee6dc08bb435520e5c94200676dc4ff0', // Emergency Admin Hash
-  ANAS: 'edee29f882543b956620b26d0ee0e7e950399b1c4222f5de05e06425b4c995e9'       // SHA-256 for 2222
-};
 
 interface LoginScreenProps {
   onLogin: (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string }) => void;
@@ -72,16 +64,10 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
   };
 
   const getCandidateBases = () => {
-    const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
-    const custom = typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : null;
     return [
-      custom,
-      apiBase,
-      'http://192.168.8.7:3000',
-      'http://askar-master.local:3000',
-      `http://${host}:3000`,
-      'http://localhost:3000'
-    ].filter((v, i, a) => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i) as string[];
+      getApiBaseUrl(),
+      DEFAULT_EDGE_API_URL
+    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i) as string[];
   };
 
   // Pre-sync employee directory in background so any cashier can log in offline
@@ -129,15 +115,23 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
         if (res.ok) {
           const data = await res.json();
           if (data && data.success && data.employee) {
-            // Update cached employees
+            // Update cached employees with hashed PIN (never plaintext)
             try {
+              const hashedPin = await generateSha256(cleanPin);
               const raw = localStorage.getItem('askar_cached_employees');
               const list: any[] = raw ? JSON.parse(raw) : [];
+              const safeEmployee = {
+                id: data.employee.id,
+                name: data.employee.name,
+                role: data.employee.role,
+                pin_hash: hashedPin,
+                is_active: data.employee.is_active ?? 1
+              };
               const idx = list.findIndex((e: any) => e.id === data.employee.id);
               if (idx >= 0) {
-                list[idx] = { ...list[idx], ...data.employee, pin_code: cleanPin };
+                list[idx] = safeEmployee;
               } else {
-                list.push({ ...data.employee, pin_code: cleanPin });
+                list.push(safeEmployee);
               }
               localStorage.setItem('askar_cached_employees', JSON.stringify(list));
             } catch {}
@@ -168,12 +162,16 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
       return;
     }
 
-    // 2. Offline fallback: check cached employees in localStorage
+    // 2. Offline fallback: check cached employee PIN hashes in localStorage
     try {
+      const hashedInput = await generateSha256(cleanPin);
       const raw = localStorage.getItem('askar_cached_employees');
       if (raw) {
         const list: any[] = JSON.parse(raw);
-        const match = list.find((e: any) => String(e.pin_code).trim() === cleanPin && (e.is_active === 1 || e.is_active === true || e.is_active === undefined));
+        const match = list.find((e: any) => 
+          (e.pin_hash === hashedInput || e.pin_code === hashedInput || (e.pin_code && String(e.pin_code).trim() === cleanPin)) && 
+          (e.is_active === 1 || e.is_active === true || e.is_active === undefined)
+        );
         if (match) {
           onLogin(match.role === 'MANAGER' ? 'MANAGER' : 'CASHIER', { id: match.id, name: match.name });
           setIsVerifying(false);
@@ -182,21 +180,8 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
       }
     } catch {}
 
-    // 3. Built-in hardcoded fallback for emergency resilience (Secured with native Web Crypto SHA-256)
-    console.warn("API unreachable & cache miss. Attempting offline fallback auth.");
-    const hashedInput = await generateSha256(cleanPin);
-
-    if (hashedInput === EMERGENCY_HASHES.MANAGER || hashedInput === EMERGENCY_HASHES.MANAGER_ALT) {
-      onLogin('MANAGER', { id: 'emp_manager_1', name: 'Emergency Admin' });
-    } else if (hashedInput === EMERGENCY_HASHES.CASHIER) {
-      onLogin('CASHIER', { id: 'emp_cashier_1', name: 'Emergency Cashier' });
-    } else if (hashedInput === EMERGENCY_HASHES.ANAS) {
-      onLogin('CASHIER', { id: 'emp_db0efa57', name: 'anas' });
-    } else {
-      setError('Invalid PIN code. Access denied.');
-      setPin('');
-    }
-
+    setError('Invalid PIN code or device offline without cached credentials.');
+    setPin('');
     setIsVerifying(false);
   };
 
@@ -215,6 +200,30 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
     setPin(pin.slice(0, -1));
     setError('');
   };
+
+  // Physical laptop keyboard listener (Digits 0-9, Backspace, Enter)
+  useEffect(() => {
+    const handlePhysicalKeyDown = (e: KeyboardEvent) => {
+      if (showServerModal) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        handleKeyPress(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleDelete();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (pin.length === 4) {
+          handleLogin(pin);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handlePhysicalKeyDown);
+    return () => window.removeEventListener('keydown', handlePhysicalKeyDown);
+  }, [pin, showServerModal]);
 
   return (
     <div
@@ -438,10 +447,6 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
             color: '#94a3b8'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>Staff PIN: <strong style={{ color: '#10b981' }}>1234, 2222 (anas)</strong></span>
-          </div>
-
           <button
             type="button"
             onClick={() => {
@@ -468,6 +473,31 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
             }}
           >
             📦 Open Feitian F100 PIM Intake Mode
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set('view', 'tap');
+              window.location.href = url.toString();
+            }}
+            style={{
+              marginTop: '4px',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: '1px solid #c7d2fe',
+              backgroundColor: '#eef2ff',
+              color: '#3730a3',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            📱 iPhone 16 Pro Tap Pad & Scanner
           </button>
         </div>
       </div>

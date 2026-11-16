@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getAdminPin } from './utils/auth';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Building2,
@@ -75,7 +76,7 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': '9999',
+          'x-manager-pin': getAdminPin(),
           'x-pos-client': 'pim-admin',
         },
         body: JSON.stringify(config),
@@ -692,7 +693,7 @@ export default function BenefitPaySettingsPanel({ apiBase }: { apiBase: string }
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <ShieldCheck size={13} color="#10b981" />
-                  <span>EMVCo QRCPS MPM Payload (bh.benefit)</span>
+                  <span>{config.accountType === 'MOBILE_FAWRI' ? 'BenefitPay Fawri+ IBAN Payload' : 'EMVCo QRCPS MPM Payload (bh.benefit)'}</span>
                 </span>
                 <button
                   type="button"

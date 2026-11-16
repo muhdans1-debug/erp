@@ -51,26 +51,42 @@ export const localDbPath = path.resolve(dataDir, 'local.db');
 const url = process.env.TURSO_DATABASE_URL;
 const authToken = process.env.TURSO_AUTH_TOKEN;
 
-if (!url || !authToken) {
-  console.error("❌ CRITICAL: Turso credentials missing from .env file.");
-  process.exit(1); // Kill the server if secrets are missing
-}
-
 // Safe Initialization: Allow LibSQL and SQLite WAL engine to handle recovery natively without deleting local.db
 // Compute relative file URL path for Windows/Unix cross-platform compatibility
 let relPath = path.relative(process.cwd(), localDbPath).replace(/\\/g, '/');
 if (!relPath.startsWith('.') && !relPath.startsWith('/')) relPath = './' + relPath;
 const localDbUrl = `file:${relPath}`;
 
-// 1. Initialize the Singleton LibSQL Embedded Replica Client
-export const client = createClient({
+// 1. Initialize the Singleton LibSQL Client (Embedded Replica if valid credentials present & enabled, pure local SQLite by default)
+let clientConfig = {
   url: localDbUrl,
-  syncUrl: url,
-  authToken: authToken,
-  syncInterval: 0, // Keep at 0 to prevent WAL collisions during schema migrations
-});
+  syncInterval: 0,
+};
 
-console.log("🔒 Database client initialized securely via environment variables.");
+const isWellFormedJwt = typeof authToken === 'string' && authToken.split('.').length === 3;
+if (url && isWellFormedJwt && process.env.ENABLE_TURSO_REPLICA === 'true') {
+  clientConfig.syncUrl = url;
+  clientConfig.authToken = authToken;
+  console.log("🔒 Database client initialized with Turso Cloud replica.");
+} else {
+  console.log("⚡ Database client running in high-performance standalone local SQLite mode (local.db).");
+}
+
+export const client = createClient(clientConfig);
+
+// 2. Direct Cloud Client for background non-blocking mirroring & cloud health
+export let tursoCloudClient = null;
+if (url && authToken) {
+  try {
+    tursoCloudClient = createClient({
+      url,
+      authToken
+    });
+    console.log("☁️ [Turso] Direct Cloud client initialized for background syncing & remote queries.");
+  } catch (cloudErr) {
+    console.warn("⚠️ [Turso] Could not initialize direct cloud client:", cloudErr.message);
+  }
+}
 
 const IDENTIFIER_REGEX = /^[a-zA-Z0-9_]+$/;
 function validateIdentifier(ident) {
@@ -325,6 +341,21 @@ db.transaction = async (callbackOrMode = 'write') => {
 
 // Auto-run schema initialization
 export async function initDatabase() {
+  const isReplica = Boolean(clientConfig.syncUrl);
+  
+  if (isReplica) {
+    return;
+  }
+
+  // Pure standalone local SQLite mode (only when running without Turso cloud credentials)
+  try {
+    await client.execute('PRAGMA foreign_keys = ON;');
+    await client.execute('PRAGMA journal_mode = WAL;');
+    console.log('🔒 [LibSQL] PRAGMA foreign_keys = ON & WAL mode activated.');
+  } catch (pragmaErr) {
+    console.warn('⚠️ [LibSQL] PRAGMA setup notice:', pragmaErr.message);
+  }
+
   const schemaPath = path.resolve(__dirname, 'schema.sql');
   if (fs.existsSync(schemaPath)) {
     try {
@@ -352,6 +383,20 @@ export async function initDatabase() {
       await client.execute("ALTER TABLE Product ADD COLUMN is_weighed_item INTEGER DEFAULT 0");
       console.log('✅ [Migration] Added missing is_weighed_item column to Product');
     }
+    // High-speed search performance indexes
+    await client.execute("CREATE INDEX IF NOT EXISTS idx_product_barcode ON Product(barcode);");
+    await client.execute("CREATE INDEX IF NOT EXISTS idx_product_name ON Product(name);");
+    await client.execute("CREATE INDEX IF NOT EXISTS idx_product_distributorId ON Product(distributorId);");
+    console.log('✅ [Indexes] Product search indexes verified (barcode, name, distributorId).');
+
+    // Ensure DeletedProduct tombstone table exists
+    await client.execute(`CREATE TABLE IF NOT EXISTS DeletedProduct (
+      id TEXT PRIMARY KEY,
+      barcode TEXT,
+      tenantId TEXT,
+      name TEXT,
+      deletedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
   } catch (migErr) {
     console.warn('⚠️ [Migration] Column check notice:', migErr.message);
   }

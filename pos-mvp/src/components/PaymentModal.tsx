@@ -9,10 +9,17 @@ import {
   Copy,
   Check,
   RefreshCw,
-  Settings
+  Settings,
+  Coins
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { printFullReceipt } from '../utils/printer';
+import { printFullReceipt, formatSaleReceiptText } from '../utils/printer';
+import {
+  getNetworkPrinterConfig,
+  setNetworkPrinterConfig,
+  testSunmiNetworkPrint,
+  isNativeSunmiHardware
+} from '../utils/networkPrinter';
 import { generateNbrTlvBase64 } from '../utils/nbrQr';
 import { openCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
@@ -24,6 +31,9 @@ import {
   generateBenefitPayPayload,
 } from '../utils/benefitPay';
 import BenefitPayConfigModal from './BenefitPayConfigModal';
+import { DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
+import { getRegionalIsoString, getSynchronizedDate } from '../utils/time';
+import { saveRecentSale } from '../services/recentSalesService';
 
 export interface PaymentItem {
   id: string;
@@ -50,8 +60,13 @@ export interface PaymentModalProps {
   apiBase?: string;
   initialMethod?: 'CASH' | 'BENEFIT_PAY' | 'CARD';
   invoiceNo?: string;
+  autoPrintReceipt?: boolean;
+  onToggleAutoPrint?: (enabled: boolean) => void;
   onSuccess?: (receiptData: any) => void;
   onComplete?: () => void;
+  initialBenefitPayment?: any;
+  receiptFormat?: '58mm' | '80mm';
+  onReceiptFormatChange?: (format: '58mm' | '80mm') => void;
 }
 
 export default function PaymentModal({
@@ -66,17 +81,73 @@ export default function PaymentModal({
   apiBase = 'http://localhost:3000',
   initialMethod = 'BENEFIT_PAY',
   invoiceNo: propInvoiceNo,
+  autoPrintReceipt,
+  onToggleAutoPrint,
   onSuccess,
   onComplete,
+  initialBenefitPayment,
+  receiptFormat: propReceiptFormat,
+  onReceiptFormatChange,
 }: PaymentModalProps) {
   const totalAmount = propTotalAmount !== undefined ? propTotalAmount : (propTotal !== undefined ? propTotal : 0);
   const subtotal = propSubtotal;
   const vat = propVat;
   const [selectedMethod, setSelectedMethod] = useState<'CASH' | 'BENEFIT_PAY' | 'CARD'>(initialMethod);
 
+  // Thermal paper roll width (58mm Compact vs 80mm Standard)
+  const [receiptFormat, setReceiptFormat] = useState<'58mm' | '80mm'>(() => {
+    if (propReceiptFormat) return propReceiptFormat;
+    try {
+      const saved = localStorage.getItem('pos_receipt_format');
+      if (saved === '80mm') return '80mm';
+    } catch { }
+    return '58mm';
+  });
+
+  useEffect(() => {
+    if (propReceiptFormat && propReceiptFormat !== receiptFormat) {
+      setReceiptFormat(propReceiptFormat);
+    }
+  }, [propReceiptFormat]);
+
+  const handleFormatSelect = (format: '58mm' | '80mm') => {
+    setReceiptFormat(format);
+    try {
+      localStorage.setItem('pos_receipt_format', format);
+    } catch { }
+    if (onReceiptFormatChange) onReceiptFormatChange(format);
+  };
+
+  // Selective Auto-Print Preference
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    if (autoPrintReceipt !== undefined) return autoPrintReceipt;
+    try {
+      const saved = localStorage.getItem('pos_auto_print_receipt');
+      if (saved !== null) return JSON.parse(saved);
+    } catch { }
+    return false;
+  });
+
+  useEffect(() => {
+    if (autoPrintReceipt !== undefined) {
+      setAutoPrint(autoPrintReceipt);
+    }
+  }, [autoPrintReceipt]);
+
   // BenefitPay Owner Account Configuration
   const [benefitConfig, setBenefitConfig] = useState<BenefitPayConfig>(getStoredBenefitPayConfig);
   const [showBenefitConfigModal, setShowBenefitConfigModal] = useState(false);
+
+  // Network Sunmi Printer State (Billing on Laptop -> Printing on Sunmi)
+  const [printerConfig, setPrinterConfigState] = useState(getNetworkPrinterConfig);
+  const [testingSunmi, setTestingSunmi] = useState(false);
+  const isNative = isNativeSunmiHardware();
+
+  useEffect(() => {
+    const handlePrinterCfg = () => setPrinterConfigState(getNetworkPrinterConfig());
+    window.addEventListener('pos-printer-config-changed', handlePrinterCfg);
+    return () => window.removeEventListener('pos-printer-config-changed', handlePrinterCfg);
+  }, []);
 
   const [copiedMobile, setCopiedMobile] = useState(false);
   const [copiedIban, setCopiedIban] = useState(false);
@@ -110,10 +181,13 @@ export default function PaymentModal({
     return `BP-TXN-${timestamp}-${rand}`;
   }, [totalAmount, isOpen]);
 
+  // QR Code format toggle for Fawri+ (BenefitPay App JSON vs Raw IBAN vs EMVCo Merchant)
+  const [qrFormat, setQrFormat] = useState<'BENEFIT_JSON' | 'RAW_IBAN' | 'EMV_MERCHANT'>('BENEFIT_JSON');
+
   // Fawri+ Dynamic QR Code Payload (generated via benefitPay utility)
   const qrPayload = useMemo(() => {
-    return generateBenefitPayPayload(totalAmount, activeInvoiceNo, benefitConfig);
-  }, [totalAmount, activeInvoiceNo, benefitConfig]);
+    return generateBenefitPayPayload(totalAmount, activeInvoiceNo, benefitConfig, qrFormat);
+  }, [totalAmount, activeInvoiceNo, benefitConfig, qrFormat]);
 
   // Bahrain NBR Simplified Tax Invoice QR (Article 53 TLV Base64)
   const nbrPayload = useMemo(() => {
@@ -172,13 +246,20 @@ export default function PaymentModal({
 
   // Complete checkout process (supports manual cashier click or automated BenefitPay webhook)
   const executePayment = async (overrideMethod?: 'CASH' | 'BENEFIT_PAY' | 'CARD', overrideRef?: string) => {
+    if (processing) return;
     const finalMethod = overrideMethod || selectedMethod;
     const finalRef = overrideRef || (finalMethod === 'BENEFIT_PAY' ? transactionRef : undefined);
     setProcessing(true);
 
+    const configuredTerminalId = typeof window !== 'undefined'
+      ? (localStorage.getItem('terminal_id') || localStorage.getItem('active_terminal_id') || 'T1')
+      : 'T1';
+
     const salePayload = {
       id: crypto.randomUUID(),
-      tenantId: 'askar_main',
+      tenantId: 'tenant_askar_01',
+      terminalId: configuredTerminalId,
+      storeId: 'store_askar_01',
       invoiceNo: activeInvoiceNo,
       cart,
       subtotal,
@@ -190,21 +271,44 @@ export default function PaymentModal({
       transactionRef: finalRef,
       cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
       changeDue: finalMethod === 'CASH' ? changeDue : undefined,
-      items: cart.map((item) => ({
-        productId: item.id,
-        quantity: item.quantity ?? 1,
-        priceAtSale: item.sellingPrice,
-        costAtSale: item.purchasePrice || 0,
-      })),
+      items: cart.map((item) => {
+        const qty = item.quantity ?? (item as any).qty ?? 1;
+        const unitPrice = item.sellingPrice ?? (item as any).price ?? 0;
+        const lineTotal = Number((unitPrice * qty).toFixed(3));
+        const prodName = item.name || (item as any).productName || 'Item';
+        return {
+          id: item.id || `si_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          productId: item.id || (item as any).productId,
+          name: prodName,
+          productName: prodName,
+          barcode: (item as any).barcode || item.id,
+          quantity: qty,
+          qty,
+          price: unitPrice,
+          sellingPrice: unitPrice,
+          priceAtSale: unitPrice,
+          unitPrice: unitPrice,
+          total_price: lineTotal,
+          total: lineTotal,
+          costAtSale: item.purchasePrice || (item as any).unitCost || 0,
+          unitCost: item.purchasePrice || (item as any).unitCost || 0,
+        };
+      }),
+    };
+
+    // Authorised POS terminal handshake header (required by requirePosOrManagerAuth middleware)
+    const posAuthHeaders = {
+      'Content-Type': 'application/json',
+      'x-pos-client': 'sunmi-d2mini',
     };
 
     let data: any = null;
     try {
       const res = await fetch(`${apiBase}/checkout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: posAuthHeaders,
         body: JSON.stringify(salePayload),
-        signal: AbortSignal.timeout(900)
+        signal: AbortSignal.timeout(8000)  // Extended: Cloudflare Worker RTT from Bahrain ~900-1200ms + cold-start buffer
       });
       if (res.ok) {
         data = await res.json();
@@ -215,16 +319,16 @@ export default function PaymentModal({
       console.warn('Payment checkout network notice (initiating instant local zero-block fallback):', netErr);
     }
 
-    // Try failover alternative server if primary failed or returned error
+    // Try failover alternative server if primary failed
     if (!data || !data.success) {
-      const altCandidates = ['http://192.168.8.7:3000', 'http://localhost:3000'].filter(u => !apiBase.startsWith(u));
+      const altCandidates = [DEFAULT_EDGE_API_URL].filter(u => !apiBase.startsWith(u));
       for (const altBase of altCandidates) {
         try {
           const altRes = await fetch(`${altBase}/checkout`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: posAuthHeaders,
             body: JSON.stringify(salePayload),
-            signal: AbortSignal.timeout(600)
+            signal: AbortSignal.timeout(6000)
           });
           if (altRes.ok) {
             const altData = await altRes.json();
@@ -250,7 +354,7 @@ export default function PaymentModal({
           ...salePayload,
           id: salePayload.id || verifiedInvoiceNo,
           invoiceNo: verifiedInvoiceNo,
-          offlineTimestamp: new Date().toISOString()
+          offlineTimestamp: getRegionalIsoString()
         }).catch((err) => console.warn('Offline save error:', err));
       }
 
@@ -261,8 +365,39 @@ export default function PaymentModal({
         transactionRef: finalRef,
         cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
         changeDue: finalMethod === 'CASH' ? changeDue : undefined,
-        createdAt: new Date().toISOString(),
+        createdAt: getRegionalIsoString(),
       };
+
+      // 💾 Persist to durable recent sales history for instant cashier reprint
+      try {
+        saveRecentSale({
+          invoiceNo: finalReceiptData.invoiceNo,
+          total: totalAmount,
+          subtotal,
+          vat,
+          items: (cart || []).map((c: any) => ({
+            name: c.name,
+            nameAr: c.nameAr || c.name_ar,
+            qty: c.qty ?? c.quantity ?? 1,
+            price: c.price ?? c.sellingPrice ?? 0,
+            vatRate: c.vatRate,
+            is_weighed_item: c.is_weighed_item || c.isScaleItem,
+            scaleWeight: c.scaleWeight
+          })),
+          paymentMode: finalMethod,
+          timestamp: finalReceiptData.createdAt,
+          customerName: customer?.name,
+          customerPhone: (customer as any)?.phone || undefined,
+          customerCardUid: customer?.cardUid || undefined,
+          customerId: customer?.id || undefined,
+          cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+          changeDue: finalMethod === 'CASH' ? changeDue : undefined,
+          cashierName: localStorage.getItem('active_shift_cashier') || 'Register 01',
+          transactionRef: finalRef,
+        });
+      } catch (saveRecentErr) {
+        console.warn('Failed saving recent sale:', saveRecentErr);
+      }
 
       // Strict hardware rule: Only trigger RJ11 solenoid kick on CASH payment!
       // BenefitPay Fawri+ keeps drawer physically locked.
@@ -275,21 +410,29 @@ export default function PaymentModal({
       onComplete?.();
       playThankYouVoice('SALE');
 
-      // Print full NBR VAT receipt via printer utility / Web Worker
-      printFullReceipt({
-        invoiceNo: finalReceiptData.invoiceNo,
-        items: (cart || []) as any,
-        subtotal,
-        vat,
-        total: totalAmount,
-        paymentMode: finalMethod,
-        cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
-        changeDue: finalMethod === 'CASH' ? changeDue : undefined,
-        customerName: customer?.name,
-        customerCardUid: customer?.cardUid || undefined,
-        cashierName: 'Register 01',
-        transactionRef: finalRef,
-      }).catch(() => { });
+      // Print full NBR VAT receipt via printer utility / Web Worker (if auto-print enabled)
+      if (autoPrint) {
+        const custBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+        const isKhataSale = (finalMethod as string) === 'KHATA' || (finalMethod as string) === 'CREDIT' || (finalMethod as string) === 'CREDIT_PERSONAL';
+        printFullReceipt({
+          invoiceNo: finalReceiptData.invoiceNo,
+          items: (cart || []) as any,
+          subtotal,
+          vat,
+          total: totalAmount,
+          paymentMode: finalMethod,
+          cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+          changeDue: finalMethod === 'CASH' ? changeDue : undefined,
+          customerName: customer?.name,
+          customerCardUid: customer?.cardUid || undefined,
+          customerId: customer?.id || undefined,
+          customerUuid: customer?.id || undefined,
+          previousBalance: isKhataSale ? custBal : undefined,
+          newBalance: isKhataSale ? custBal + totalAmount : (custBal > 0 ? custBal : undefined),
+          cashierName: 'Register 01',
+          transactionRef: finalRef,
+        }).catch(() => { });
+      }
     } catch (err) {
       console.error('Payment checkout error:', err);
     } finally {
@@ -299,14 +442,93 @@ export default function PaymentModal({
 
   const handleConfirmPayment = () => executePayment();
 
-  // ⚡ BenefitPay Fawri+ Webhook WebSocket Listener
-  // Listens on Fastify /ws bus for BENEFIT_PAY_SUCCESS callback from Bahrain FinTech Bay
+  // ⚡ BenefitPay Fawri+ Automated Webhook & Remote Polling Engine
+  // Listens via:
+  // 1. window event 'sunmi-remote-benefit-success' (dispatched by App.tsx from Cloudflare Edge heartbeat)
+  // 2. High-speed 1.5-second active polling of /api/register/command?terminalId=... while modal is open
+  // 3. Fastify WebSocket /ws bus fallback (for local network POS)
   useEffect(() => {
     if (!isOpen || completedSale) return;
 
-    let ws: WebSocket | null = null;
     let isSubscribed = true;
 
+    const handleBenefitPaymentEvent = async (detail: any) => {
+      if (!isSubscribed || completedSale || processing) return;
+
+      const receivedAmt = detail?.amount !== undefined && detail?.amount !== null ? Number(detail.amount) : null;
+      const refNumber = detail?.referenceNumber || detail?.ref || transactionRef;
+
+      // Validate amount match (within 0.005 BD tolerance for currency rounding)
+      const matchesAmount = receivedAmt === null || Math.abs(receivedAmt - totalAmount) < 0.005;
+      const matchesInvoice = Boolean(detail?.invoiceNo && activeInvoiceNo && detail.invoiceNo === activeInvoiceNo);
+      const matchesRef = Boolean(detail?.referenceNumber && transactionRef && (
+        detail.referenceNumber === transactionRef ||
+        detail.referenceNumber.includes(transactionRef) ||
+        transactionRef.includes(detail.referenceNumber)
+      ));
+
+      if (matchesAmount || matchesInvoice || matchesRef) {
+        console.log(`⚡ [BenefitPay Webhook] Instant Fawri+ payment verified (BHD ${(receivedAmt ?? totalAmount).toFixed(3)}, Ref: ${refNumber})! Auto-settling sale...`);
+        if (isSubscribed) {
+          setWebhookAutoSettled(true);
+          setSelectedMethod('BENEFIT_PAY');
+          await executePayment('BENEFIT_PAY', refNumber);
+        }
+      } else {
+        console.warn(`[BenefitPay Webhook] Amount mismatch: received BHD ${receivedAmt}, expected BHD ${totalAmount}`);
+      }
+    };
+
+    // If initial payment was already delivered when modal opened
+    if (initialBenefitPayment) {
+      handleBenefitPaymentEvent(initialBenefitPayment);
+    }
+
+    // 1. CustomEvent listener
+    const onRemoteBenefitSuccess = (e: any) => {
+      handleBenefitPaymentEvent(e?.detail);
+    };
+    window.addEventListener('sunmi-remote-benefit-success', onRemoteBenefitSuccess);
+
+    // 2. High-speed active command polling (every 1.5 seconds) while modal is active
+    let resolvedTerminalId = 'T1';
+    try {
+      resolvedTerminalId = localStorage.getItem('terminal_id') || 'T1';
+      if (resolvedTerminalId === 'SUNMI-D2-REG01' || resolvedTerminalId === '1') resolvedTerminalId = 'T1';
+      if (resolvedTerminalId === 'F100' || resolvedTerminalId === '2') resolvedTerminalId = 'T2';
+      if (resolvedTerminalId === 'LAPTOP-01' || resolvedTerminalId === 'WEB-POS' || resolvedTerminalId === '3') resolvedTerminalId = 'T3';
+    } catch {}
+
+    const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
+      (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
+    );
+
+    const pollInterval = setInterval(async () => {
+      if (!isSubscribed || completedSale) return;
+      for (const base of candidateBases) {
+        try {
+          const res = await fetch(`${base}/api/register/command?terminalId=${resolvedTerminalId}`, {
+            headers: { 'x-pos-client': 'store-pos' },
+            signal: AbortSignal.timeout(2000)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.commands) && data.commands.length > 0) {
+              for (const cmd of data.commands) {
+                if (typeof cmd === 'object' && (cmd.command === 'BENEFIT_PAY_SUCCESS' || cmd.type === 'BENEFIT_PAY_SUCCESS')) {
+                  handleBenefitPaymentEvent(cmd.payload || cmd);
+                } else if (typeof cmd === 'string' && cmd.includes('BENEFIT_PAY_SUCCESS')) {
+                  handleBenefitPaymentEvent({ amount: totalAmount });
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }, 1500);
+
+    // 3. WebSocket listener
+    let ws: WebSocket | null = null;
     try {
       const wsUrl = (apiBase || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'))
         .replace(/^http:/, 'ws:')
@@ -314,7 +536,6 @@ export default function PaymentModal({
         .replace(/\/+$/, '') + '/ws';
 
       ws = new WebSocket(wsUrl);
-
       ws.onmessage = async (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
@@ -323,18 +544,7 @@ export default function PaymentModal({
             return;
           }
           if (data.type === 'BENEFIT_PAY_SUCCESS') {
-            const matchesInvoice = data.invoiceNo && data.invoiceNo === activeInvoiceNo;
-            const matchesRef = data.referenceNumber && (data.referenceNumber === transactionRef || data.referenceNumber.includes(transactionRef));
-            const matchesAmount = data.amount && Math.abs(Number(data.amount) - totalAmount) < 0.005;
-
-            if (matchesInvoice || matchesRef || (matchesAmount && selectedMethod === 'BENEFIT_PAY')) {
-              console.log('⚡ [BenefitPay Webhook] Instant Fawri+ payment received via Webhook! Auto-settling sale...');
-              if (isSubscribed) {
-                setWebhookAutoSettled(true);
-                setSelectedMethod('BENEFIT_PAY');
-                await executePayment('BENEFIT_PAY', data.referenceNumber || transactionRef);
-              }
-            }
+            handleBenefitPaymentEvent(data.payload || data);
           }
         } catch (err) {
           console.error('WebSocket parsing error:', err);
@@ -346,15 +556,20 @@ export default function PaymentModal({
 
     return () => {
       isSubscribed = false;
+      clearInterval(pollInterval);
+      window.removeEventListener('sunmi-remote-benefit-success', onRemoteBenefitSuccess);
       if (ws) {
-        try { ws.close(); } catch { }
+        try { ws.close(); } catch {}
       }
     };
-  }, [isOpen, completedSale, activeInvoiceNo, transactionRef, totalAmount, selectedMethod, apiBase]);
+  }, [isOpen, completedSale, activeInvoiceNo, transactionRef, totalAmount, selectedMethod, apiBase, processing]);
 
-  // Trigger thermal receipt print via hardware printer on Sunmi or window.print() on browser
+  // Trigger thermal receipt print via hardware printer on Sunmi or isolated iframe on browser
   const handlePrintReceipt = async () => {
     try {
+      const custBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+      const payMethodStr = String(completedSale?.paymentMethod || selectedMethod);
+      const isKhataSale = payMethodStr === 'KHATA' || payMethodStr === 'CREDIT' || payMethodStr === 'CREDIT_PERSONAL';
       await printFullReceipt({
         invoiceNo: completedSale?.invoiceNo || activeInvoiceNo,
         items: cart.map((i) => ({
@@ -370,19 +585,44 @@ export default function PaymentModal({
         cashTendered: completedSale?.cashTendered !== undefined ? completedSale.cashTendered : (cashTendered ? parseFloat(cashTendered) : undefined),
         changeDue: completedSale?.changeDue !== undefined ? completedSale.changeDue : changeDue,
         customerName: customer?.name,
+        customerCardUid: customer?.cardUid || undefined,
+        customerId: customer?.id || undefined,
+        customerUuid: customer?.id || undefined,
+        previousBalance: isKhataSale ? custBal : undefined,
+        newBalance: isKhataSale ? custBal + totalAmount : (custBal > 0 ? custBal : undefined),
       });
     } catch (e) {
       console.warn('Direct printer dispatch notice:', e);
     }
-
-    if (typeof window !== 'undefined' && !(window as any).Capacitor?.isNativePlatform?.()) {
-      window.print();
-    }
   };
+
+  // Exact authentic Sunmi monospaced 32-character receipt text
+  const receiptText = useMemo(() => {
+    return formatSaleReceiptText({
+      shopName: "ASKAR SUPERMARKET",
+      shopAddress: "Askar, Kingdom of Bahrain",
+      shopPhone: "Tel: +973 1700 0000",
+      vatNumber: "200012345678901",
+      invoiceNo: completedSale?.invoiceNo || activeInvoiceNo || 'INV-005000',
+      items: (cart || []) as any,
+      subtotal,
+      vat,
+      total: totalAmount,
+      paymentMode: completedSale?.paymentMethod || selectedMethod,
+      cashTendered: completedSale?.cashTendered !== undefined ? completedSale.cashTendered : (cashTendered ? parseFloat(cashTendered) : undefined),
+      changeDue: completedSale?.changeDue !== undefined ? completedSale.changeDue : changeDue,
+      customerName: customer?.name,
+      customerCardUid: customer?.cardUid || undefined,
+      cashierName: "Register 01",
+      transactionRef: completedSale?.transactionRef || transactionRef,
+      isMess: (selectedMethod as string) === 'MESS_KHATA',
+      saleDate: getSynchronizedDate()
+    });
+  }, [completedSale, activeInvoiceNo, cart, subtotal, vat, totalAmount, selectedMethod, cashTendered, changeDue, customer, transactionRef]);
 
   return (
     <div
-      className="select-none"
+      className="select-none modal-overlay-print"
       style={{
         position: 'fixed',
         inset: 0,
@@ -396,42 +636,65 @@ export default function PaymentModal({
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
-      {/* THERMAL RECEIPT PRINT STYLES FOR EXACT 58mm THERMAL ROLL - OPTION A+ ULTRA BOLD */}
+      {/* THERMAL RECEIPT PRINT STYLES - ISOLATED 58mm / 80mm FORMAT */}
       <style>{`
+        @media screen {
+          #pos-thermal-receipt {
+            display: none !important;
+          }
+        }
         @media print {
           @page {
-            size: 58mm auto;
-            margin: 0;
+            size: auto;
+            margin: 0mm;
           }
-          body * {
-            visibility: hidden !important;
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
           }
-          #pos-thermal-receipt, #pos-thermal-receipt * {
-            visibility: visible !important;
+          .no-print, header, nav, aside {
+            display: none !important;
+          }
+          .modal-overlay-print {
+            position: static !important;
+            background: transparent !important;
+            backdrop-filter: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            display: block !important;
           }
           #pos-thermal-receipt {
-            position: fixed !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 58mm !important;
-            max-width: 58mm !important;
-            margin: 0 !important;
-            padding: 4px 6px !important;
+            display: block !important;
+            position: static !important;
+            left: auto !important;
+            top: auto !important;
+            margin: 0 auto !important;
             background: #ffffff !important;
             color: #000000 !important;
             box-shadow: none !important;
             border: none !important;
+            box-sizing: border-box !important;
             font-family: 'Roboto Mono', Consolas, 'Courier New', monospace !important;
-            font-size: 12px !important;
-            font-weight: 900 !important;
-            -webkit-text-stroke: 0.7px #000000 !important;
-            letter-spacing: -0.2px !important;
-            line-height: 1.35 !important;
+            font-weight: 600 !important;
+            letter-spacing: -0.15px !important;
+            line-height: 1.25 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .no-print {
-            display: none !important;
+          #pos-thermal-receipt.format-58mm {
+            width: 48mm !important;
+            max-width: 48mm !important;
+            padding: 1.5mm 1mm !important;
+            border: none !important;
+            font-size: 9.5px !important;
+          }
+          #pos-thermal-receipt.format-80mm {
+            width: 70mm !important;
+            max-width: 70mm !important;
+            padding: 2mm 1.5mm !important;
+            border: none !important;
+            font-size: 11px !important;
           }
         }
       `}</style>
@@ -559,48 +822,94 @@ export default function PaymentModal({
                 </div>
               </div>
 
-              {/* SCREEN PREVIEW OF RECEIPT */}
+              {/* RECEIPT WIDTH TOGGLE & HEADER */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>Thermal Receipt Preview</span>
+                <div style={{ display: 'flex', gap: '4px', background: '#1e293b', padding: '3px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleFormatSelect('58mm')}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: receiptFormat === '58mm' ? '#0284c7' : 'transparent',
+                      color: receiptFormat === '58mm' ? '#ffffff' : '#94a3b8',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    58mm Compact
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFormatSelect('80mm')}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: receiptFormat === '80mm' ? '#0284c7' : 'transparent',
+                      color: receiptFormat === '80mm' ? '#ffffff' : '#94a3b8',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    80mm Desktop
+                  </button>
+                </div>
+              </div>
+
+              {/* SCREEN PREVIEW OF RECEIPT (Compact Authentic Supermarket Style) */}
               <div
                 style={{
                   backgroundColor: '#ffffff',
                   color: '#000000',
-                  borderRadius: '12px',
-                  padding: '16px',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
                   fontFamily: "'Roboto Mono', Consolas, 'Courier New', monospace",
                   fontWeight: 600,
-                  fontSize: '12px',
-                  lineHeight: 1.4,
+                  fontSize: receiptFormat === '80mm' ? '11px' : '9.5px',
+                  lineHeight: 1.25,
                   border: '1px dashed #000000',
-                  marginBottom: '20px',
+                  marginBottom: '14px',
+                  maxHeight: '44vh',
+                  overflowY: 'auto',
+                  maxWidth: receiptFormat === '80mm' ? '340px' : '270px',
+                  margin: '0 auto 14px auto',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                 }}
               >
-                <div style={{ textAlign: 'center', borderBottom: '1px dashed #000000', paddingBottom: '8px' }}>
-                  <div style={{ fontWeight: '700', fontSize: '16px' }}>ASKAR SUPERMARKET</div>
-                  <div style={{ fontWeight: '700' }}>أسكار سوبر ماركت</div>
-                  <div style={{ fontSize: '11px' }}>Simplified Tax Invoice</div>
-                  <div style={{ fontSize: '11px' }}>VAT No: 200012345678901</div>
-                  <div style={{ fontSize: '11px' }}>Tel: +973 1700 0000</div>
+                <div style={{ textAlign: 'center', borderBottom: '1px dashed #000000', paddingBottom: '6px' }}>
+                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '14px' : '12.5px' }}>ASKAR SUPERMARKET</div>
+                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '13px' : '11.5px' }}>أسواق عسكر المركزية</div>
+                  <div style={{ fontSize: '9px' }}>Simplified Tax Invoice</div>
+                  <div style={{ fontSize: '9px' }}>VAT No: 200012345678901</div>
+                  <div style={{ fontSize: '9px' }}>Tel: +973 1700 0000</div>
                 </div>
 
-                <div style={{ padding: '8px 0', borderBottom: '1px dashed #000000', fontSize: '11px' }}>
+                <div style={{ padding: '6px 0', borderBottom: '1px dashed #000000', fontSize: '9.5px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Inv:</span>
                     <strong style={{ fontWeight: 700 }}>{completedSale.invoiceNo}</strong>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                     <span>Date:</span>
                     <span>{new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                     <span>Staff:</span>
                     <span>Register 01</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                     <span>Mode:</span>
                     <span>{completedSale.paymentMethod}</span>
                   </div>
                   {completedSale.transactionRef && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                       <span>Ref No:</span>
                       <strong style={{ fontWeight: 700 }}>{completedSale.transactionRef}</strong>
                     </div>
@@ -608,10 +917,10 @@ export default function PaymentModal({
                 </div>
 
                 {/* ITEM BREAKDOWN (Strict Alignment) */}
-                <div style={{ padding: '6px 0', borderBottom: '1px dashed #000000' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '11px', marginBottom: '4px' }}>
-                    <div style={{ width: '50%', textAlign: 'left' }}>Item</div>
-                    <div style={{ width: '20%', textAlign: 'center' }}>Qty</div>
+                <div style={{ padding: '5px 0', borderBottom: '1px dashed #000000' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '9.5px', marginBottom: '3px' }}>
+                    <div style={{ width: '52%', textAlign: 'left' }}>Item</div>
+                    <div style={{ width: '18%', textAlign: 'center' }}>Qty</div>
                     <div style={{ width: '30%', textAlign: 'right' }}>Amt(BD)</div>
                   </div>
                   {cart.map((item, idx) => {
@@ -620,37 +929,37 @@ export default function PaymentModal({
                     const lineTotal = unitPrice * qty;
                     const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
                     return (
-                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '2px' }}>
-                        <div style={{ width: '50%', textAlign: 'left', wordBreak: 'break-word' }}>
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginTop: '1.5px' }}>
+                        <div style={{ width: '52%', textAlign: 'left', wordBreak: 'break-word' }}>
                           {item.name} {isVat10 ? '*' : ''}
                         </div>
-                        <div style={{ width: '20%', textAlign: 'center' }}>{qty}</div>
+                        <div style={{ width: '18%', textAlign: 'center' }}>{qty}</div>
                         <div style={{ width: '30%', textAlign: 'right', fontWeight: 700 }}>{lineTotal.toFixed(3)}</div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div style={{ padding: '8px 0', borderBottom: '1px dashed #000000', fontSize: '12px' }}>
+                <div style={{ padding: '6px 0', borderBottom: '1px dashed #000000', fontSize: '9.5px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Subtotal:</span>
                     <span>BD {subtotal.toFixed(3)}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                     <span>VAT (10%):</span>
                     <span>BD {vat.toFixed(3)}</span>
                   </div>
-                  <div style={{ borderTop: '1px dashed #000000', margin: '6px 0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '16px' }}>
+                  <div style={{ borderTop: '1px dashed #000000', margin: '4px 0' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: receiptFormat === '80mm' ? '14px' : '12.5px' }}>
                     <span>TOTAL:</span>
                     <span>BD {totalAmount.toFixed(3)}</span>
                   </div>
-                  <div style={{ borderTop: '1px dashed #000000', margin: '6px 0' }} />
+                  <div style={{ borderTop: '1px dashed #000000', margin: '4px 0' }} />
                 </div>
 
                 {completedSale.paymentMethod === 'CASH' && (
-                  <div style={{ padding: '6px 0', borderBottom: '1px dashed #000000', fontSize: '11px' }}>
-                    <div style={{ textAlign: 'center', fontWeight: 700, marginBottom: '4px' }}>
+                  <div style={{ padding: '4px 0', borderBottom: '1px dashed #000000', fontSize: '9.5px' }}>
+                    <div style={{ textAlign: 'center', fontWeight: 700, marginBottom: '2px' }}>
                       *** PAID VIA CASH ***
                     </div>
                     {completedSale.cashTendered !== undefined && (
@@ -659,7 +968,7 @@ export default function PaymentModal({
                           <span>Cash Tendered:</span>
                           <span>BD {Number(completedSale.cashTendered).toFixed(3)}</span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1px' }}>
                           <span>Change:</span>
                           <span>BD {Number(completedSale.changeDue || 0).toFixed(3)}</span>
                         </div>
@@ -669,41 +978,41 @@ export default function PaymentModal({
                 )}
 
                 {completedSale.paymentMethod === 'BENEFIT_PAY' && (
-                  <div style={{ padding: '6px 0', borderBottom: '1px dashed #000000', textAlign: 'center', fontSize: '11px' }}>
+                  <div style={{ padding: '4px 0', borderBottom: '1px dashed #000000', textAlign: 'center', fontSize: '9.5px' }}>
                     <div style={{ fontWeight: 700 }}>*** PAID VIA BENEFITPAY ***</div>
-                    <div style={{ marginTop: '2px' }}>Fawri+ Instant QR</div>
+                    <div style={{ marginTop: '1px' }}>Fawri+ Instant QR</div>
                   </div>
                 )}
 
                 {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}
-                <div style={{ textAlign: 'center', marginTop: '10px', marginBottom: '8px' }}>
-                  <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '1px solid #000000' }}>
+                <div style={{ textAlign: 'center', marginTop: '8px', marginBottom: '6px' }}>
+                  <div style={{ display: 'inline-block', padding: '2px', background: '#ffffff', border: '1px solid #000000' }}>
                     <QRCodeSVG
                       value={nbrPayload}
-                      size={96}
+                      size={receiptFormat === '80mm' ? 82 : 68}
                       level="M"
                       includeMargin={false}
                       fgColor="#000000"
                       bgColor="#ffffff"
                     />
                   </div>
-                  <div style={{ fontSize: '9px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.5px' }}>
+                  <div style={{ fontSize: '8px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.3px' }}>
                     NBR SIMPLIFIED TAX INVOICE
                   </div>
                 </div>
 
                 {/* CODE 128 BARCODE SIMULATION */}
-                <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                  <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '12px', lineHeight: 1 }}>
+                <div style={{ textAlign: 'center', marginTop: '6px' }}>
+                  <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '11px', lineHeight: 1 }}>
                     |||| | ||||| |||| || |||||||
                   </div>
-                  <div style={{ fontSize: '10px', marginTop: '3px', fontWeight: 700 }}>
+                  <div style={{ fontSize: '9px', marginTop: '2px', fontWeight: 700 }}>
                     {completedSale.invoiceNo}
                   </div>
                 </div>
 
-                <div style={{ textAlign: 'center', paddingTop: '8px', fontSize: '10px', color: '#000000' }}>
-                  <div style={{ marginBottom: '2px' }}>* Item includes 10% VAT</div>
+                <div style={{ textAlign: 'center', paddingTop: '6px', fontSize: '8.5px', color: '#000000' }}>
+                  <div style={{ marginBottom: '1px' }}>* Item includes 10% VAT</div>
                   <div style={{ fontWeight: 700 }}>Thank You For Shopping!</div>
                   <div>Please retain invoice for returns.</div>
                 </div>
@@ -715,7 +1024,7 @@ export default function PaymentModal({
                   onClick={handlePrintReceipt}
                   style={{
                     flex: 1,
-                    backgroundColor: '#0284c7',
+                    backgroundColor: (!isNative && printerConfig.mode === 'SUNMI_NETWORK') ? '#059669' : '#0284c7',
                     color: '#ffffff',
                     border: 'none',
                     borderRadius: '10px',
@@ -727,11 +1036,15 @@ export default function PaymentModal({
                     justifyContent: 'center',
                     gap: '8px',
                     cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(2, 132, 199, 0.3)',
+                    boxShadow: (!isNative && printerConfig.mode === 'SUNMI_NETWORK')
+                      ? '0 4px 12px rgba(5, 150, 105, 0.3)'
+                      : '0 4px 12px rgba(2, 132, 199, 0.3)',
                   }}
                 >
                   <Printer size={18} />
-                  Print Thermal Receipt
+                  {!isNative && printerConfig.mode === 'SUNMI_NETWORK'
+                    ? `Print on Sunmi (${printerConfig.targetTerminal || 'T1'})`
+                    : 'Print Thermal Receipt'}
                 </button>
                 <button
                   onClick={onClose}
@@ -924,6 +1237,63 @@ export default function PaymentModal({
                       </div>
                     </div>
 
+                    {/* QR FORMAT SELECTOR PILLS */}
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginBottom: '12px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setQrFormat('BENEFIT_JSON')}
+                        style={{
+                          backgroundColor: qrFormat === 'BENEFIT_JSON' ? '#dc2626' : '#0f172a',
+                          color: '#ffffff',
+                          border: qrFormat === 'BENEFIT_JSON' ? '1px solid #ef4444' : '1px solid #334155',
+                          borderRadius: '8px',
+                          padding: '4px 10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <span>⚡ BenefitPay App (IBAN)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setQrFormat('RAW_IBAN')}
+                        style={{
+                          backgroundColor: qrFormat === 'RAW_IBAN' ? '#2563eb' : '#0f172a',
+                          color: '#ffffff',
+                          border: qrFormat === 'RAW_IBAN' ? '1px solid #3b82f6' : '1px solid #334155',
+                          borderRadius: '8px',
+                          padding: '4px 10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span>Raw IBAN</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setQrFormat('EMV_MERCHANT')}
+                        style={{
+                          backgroundColor: qrFormat === 'EMV_MERCHANT' ? '#059669' : '#0f172a',
+                          color: '#ffffff',
+                          border: qrFormat === 'EMV_MERCHANT' ? '1px solid #10b981' : '1px solid #334155',
+                          borderRadius: '8px',
+                          padding: '4px 10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span>EMVCo QRCPS</span>
+                      </button>
+                    </div>
+
                     {/* DYNAMIC QR CODE DISPLAY */}
                     <div
                       style={{
@@ -948,7 +1318,7 @@ export default function PaymentModal({
                     {/* OWNER BENEFICIARY DETAILS */}
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{ fontSize: '14px', fontWeight: 800, color: '#f1f5f9' }}>
-                        {benefitConfig.merchantName || 'ASKAR SUPERMARKET'}
+                        {benefitConfig.merchantName || 'layali sbi'}
                       </div>
                       {benefitConfig.accountType === 'MOBILE_FAWRI' ? (
                         benefitConfig.mobileNumber && (
@@ -1030,7 +1400,7 @@ export default function PaymentModal({
                       </button>
                     </div>
 
-                    {/* STATUS PULSE */}
+                    {/* STATUS & CASHIER ACTION PROMPT */}
                     {webhookAutoSettled ? (
                       <div
                         style={{
@@ -1051,16 +1421,21 @@ export default function PaymentModal({
                       <div
                         style={{
                           marginTop: '12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          fontSize: '12px',
-                          color: '#38bdf8',
+                          padding: '8px 12px',
+                          backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                          border: '1px solid rgba(56, 189, 248, 0.2)',
+                          borderRadius: '8px',
+                          fontSize: '11px',
+                          color: '#94a3b8',
+                          textAlign: 'center',
                         }}
                       >
-                        <RefreshCw size={14} className="animate-spin" />
-                        <span>Fawri+ Webhook Active &bull; Waiting for customer scan...</span>
+                        <div style={{ color: '#38bdf8', fontWeight: 700, marginBottom: '2px' }}>
+                          📲 Customer scans with BenefitPay app & approves Fawri+ transfer
+                        </div>
+                        <div>
+                          Once customer confirms on their phone, tap <strong style={{ color: '#f1f5f9' }}>Confirm BenefitPay</strong> below to print receipt.
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1077,8 +1452,19 @@ export default function PaymentModal({
                         Total Amount Due
                       </span>
                     </div>
-                    <div className="font-mono text-3xl font-black text-emerald-400">
-                      BD {totalAmount.toFixed(3)}
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openCashDrawer({ reason: 'PAYMENT_MODAL_QUICK_POP' })}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-black transition active:scale-95 cursor-pointer shadow-xs"
+                        title="Open Sunmi Cash Drawer [F9]"
+                      >
+                        <Coins size={14} className="text-amber-400" />
+                        <span>Pop Drawer (F9)</span>
+                      </button>
+                      <div className="font-mono text-3xl font-black text-emerald-400">
+                        BD {totalAmount.toFixed(3)}
+                      </div>
                     </div>
                   </div>
 
@@ -1095,8 +1481,8 @@ export default function PaymentModal({
                           setTenderedAmount(totalAmount);
                         }}
                         className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
-                            ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
-                            : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
+                          ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
+                          : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                           }`}
                       >
                         <span className="text-[10px] font-sans font-bold text-emerald-200">EXACT</span>
@@ -1114,8 +1500,8 @@ export default function PaymentModal({
                               setTenderedAmount(val);
                             }}
                             className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
-                                : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
+                              ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
+                              : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                               }`}
                           >
                             <span className="text-[10px] font-sans font-bold text-slate-400">NOTE</span>
@@ -1198,6 +1584,78 @@ export default function PaymentModal({
                 </div>
               )}
 
+              {/* PRINT TOGGLE & NETWORK SUNMI SELECTOR BAR */}
+              <div className="flex flex-col gap-2.5 p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 mt-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Printer size={18} className={autoPrint ? 'text-emerald-400' : 'text-slate-400'} />
+                    <span className="text-xs font-bold text-slate-200">
+                      Auto-Print 58mm Thermal Receipt
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !autoPrint;
+                      setAutoPrint(next);
+                      localStorage.setItem('pos_auto_print_receipt', JSON.stringify(next));
+                      onToggleAutoPrint?.(next);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${autoPrint
+                        ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/30'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                  >
+                    <span>{autoPrint ? 'PRINT: ON' : 'PRINT: OFF (Selective)'}</span>
+                  </button>
+                </div>
+
+                {/* Network Sunmi Printer Controls (Visible on Laptop / Desktop Web POS) */}
+                {!isNative && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-700/60">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${printerConfig.mode === 'SUNMI_NETWORK' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        Printer: <strong className={printerConfig.mode === 'SUNMI_NETWORK' ? 'text-emerald-300' : 'text-slate-400'}>
+                          {printerConfig.mode === 'SUNMI_NETWORK' ? `Sunmi Handheld (${printerConfig.targetTerminal || 'T1'})` : 'This Laptop (Browser)'}
+                        </strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setTestingSunmi(true);
+                          try {
+                            await testSunmiNetworkPrint(printerConfig.targetTerminal);
+                          } finally {
+                            setTestingSunmi(false);
+                          }
+                        }}
+                        disabled={testingSunmi}
+                        className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Send a quick test receipt to Sunmi printer"
+                      >
+                        {testingSunmi ? 'Testing...' : 'Test Sunmi'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextMode = printerConfig.mode === 'SUNMI_NETWORK' ? 'LOCAL_BROWSER' : 'SUNMI_NETWORK';
+                          const updated = setNetworkPrinterConfig({ mode: nextMode });
+                          setPrinterConfigState(updated);
+                        }}
+                        className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-slate-700 hover:bg-slate-600 text-cyan-300 transition-colors cursor-pointer"
+                      >
+                        {printerConfig.mode === 'SUNMI_NETWORK' ? 'Use Laptop' : 'Use Sunmi'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* FOOTER ACTION BUTTONS */}
               <div className="flex items-center gap-3 mt-6">
                 <button
@@ -1213,12 +1671,12 @@ export default function PaymentModal({
                   disabled={processing || (selectedMethod === 'CASH' && isShort)}
                   onClick={handleConfirmPayment}
                   className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${selectedMethod === 'BENEFIT_PAY'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : selectedMethod === 'CASH'
-                        ? isShort
-                          ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                          : 'bg-emerald-600 hover:bg-emerald-700'
-                        : 'bg-blue-600 hover:bg-blue-700'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : selectedMethod === 'CASH'
+                      ? isShort
+                        ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
                     }`}
                 >
                   {processing ? (
@@ -1247,152 +1705,75 @@ export default function PaymentModal({
         </div>
       </div>
 
-      {/* DEDICATED THERMAL RECEIPT CONTAINER FOR @media print (Option A+ Ultra Heavy Monospaced Style) */}
+      {/* DEDICATED THERMAL RECEIPT CONTAINER FOR @media print (Exact Authentic Sunmi Hardware Format) */}
       <div
         id="pos-thermal-receipt"
-        className="print-receipt"
+        className={`print-receipt format-${receiptFormat}`}
         style={{
-          display: 'none',
           fontFamily: "'Roboto Mono', Consolas, 'Courier New', monospace",
-          fontWeight: 900,
-          WebkitTextStroke: '0.7px #000000',
+          fontWeight: 600,
           color: '#000000',
-          width: '58mm',
+          width: receiptFormat === '80mm' ? '70mm' : '48mm',
+          maxWidth: receiptFormat === '80mm' ? '70mm' : '48mm',
           margin: '0 auto',
-          fontSize: '12px',
-          lineHeight: 1.35,
-          letterSpacing: '-0.2px',
+          padding: '1.5mm 1mm',
+          border: 'none',
+          boxSizing: 'border-box',
+          fontSize: receiptFormat === '80mm' ? '11px' : '9.5px',
+          lineHeight: 1.25,
+          letterSpacing: '-0.15px',
         }}
       >
-        {/* HEADER */}
-        <div style={{ textAlign: 'center', fontWeight: 900, fontSize: '15px', WebkitTextStroke: '0.9px #000000' }}>ASKAR SUPERMARKET</div>
-        <div style={{ textAlign: 'center', fontWeight: 900, fontSize: '14px', WebkitTextStroke: '0.9px #000000' }}>أسواق عسكر المركزية</div>
-        <div style={{ textAlign: 'center', fontWeight: 900 }}>Simplified Tax Invoice</div>
-        <div style={{ textAlign: 'center', fontWeight: 900 }}>فاتورة ضريبية مبسطة</div>
-        <div style={{ textAlign: 'center', fontWeight: 900 }}>VAT No: 200012345678901</div>
-        <div style={{ textAlign: 'center' }}>Tel: +973 1700 0000</div>
-
-        <div style={{ borderTop: '2.5px dashed #000000', margin: '8px 0' }} />
-
-        {/* META INFO (Strict Alignment) */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Inv:</span> <span>{completedSale?.invoiceNo || 'INV-005000'}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Date:</span> <span>{new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Staff:</span> <span>Register 01</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Mode:</span> <span>{selectedMethod}</span></div>
-        {customer && <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Customer:</span> <span>{customer.name}</span></div>}
-
-        <div style={{ borderTop: '2.5px dashed #000000', margin: '8px 0' }} />
-
-        {/* ITEMS HEADER */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '12.5px' }}>
-          <div style={{ width: '50%', textAlign: 'left' }}>Item</div>
-          <div style={{ width: '20%', textAlign: 'center' }}>Qty</div>
-          <div style={{ width: '30%', textAlign: 'right' }}>Amt(BD)</div>
-        </div>
-
-        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
-
-        {/* ITEMS LIST */}
-        {cart.map((item, idx) => {
-          const qty = item.qty || item.quantity || 1;
-          const unitPrice = item.price ?? item.sellingPrice ?? 0;
-          const lineTotal = unitPrice * qty;
-          const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0);
-          return (
-            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 900 }}>
-              <div style={{ width: '50%', textAlign: 'left', wordBreak: 'break-word' }}>
-                {item.name} {isVat10 ? '*' : ''}
-              </div>
-              <div style={{ width: '20%', textAlign: 'center' }}>{qty}</div>
-              <div style={{ width: '30%', textAlign: 'right', fontWeight: 900 }}>{lineTotal.toFixed(3)}</div>
-            </div>
-          );
-        })}
-
-        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
-
-        {/* TOTALS */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>Subtotal:</span> <span>BD {subtotal.toFixed(3)}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}><span>VAT (10%):</span> <span>BD {vat.toFixed(3)}</span></div>
-
-        {/* Highlighted Total */}
-        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '17px', WebkitTextStroke: '0.95px #000000' }}>
-          <span>TOTAL:</span>
-          <span>BD {totalAmount.toFixed(3)}</span>
-        </div>
-        <div style={{ borderTop: '2.5px solid #000000', margin: '8px 0' }} />
-
-        {selectedMethod === 'CASH' && (
-          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
-            <div style={{ fontWeight: 900 }}>*** PAID VIA CASH ***</div>
-            {tenderedAmount !== undefined && Number(tenderedAmount) > 0 && (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
-                  <span>Cash Tendered:</span> <span>BD {Number(tenderedAmount).toFixed(3)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}>
-                  <span>Change:</span> <span>BD {Number(changeDue || 0).toFixed(3)}</span>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {selectedMethod === 'BENEFIT_PAY' && (
-          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
-            <div style={{ fontWeight: 900 }}>*** PAID VIA BENEFITPAY ***</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
-              <span>Method:</span> <span>Fawri+ QR</span>
-            </div>
-            {(completedSale?.transactionRef || transactionRef) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900 }}>
-                <span>Ref No:</span> <span>{completedSale?.transactionRef || transactionRef}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {selectedMethod === 'CARD' && (
-          <div style={{ textAlign: 'center', marginTop: '8px', fontWeight: 900 }}>
-            <div style={{ fontWeight: 900 }}>*** PAID VIA CARD ***</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontWeight: 900 }}>
-              <span>Terminal:</span> <span>POS Contactless EMV</span>
-            </div>
-          </div>
-        )}
+        <pre
+          style={{
+            fontFamily: "'Roboto Mono', Consolas, 'Courier New', monospace",
+            fontWeight: 600,
+            fontSize: receiptFormat === '80mm' ? '11px' : '9.5px',
+            lineHeight: 1.25,
+            letterSpacing: '-0.15px',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            margin: 0,
+            padding: 0,
+            border: 'none',
+            color: '#000000'
+          }}
+        >
+          {receiptText}
+        </pre>
 
         {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}
-        <div style={{ textAlign: 'center', marginTop: '10px', marginBottom: '8px' }}>
-          <div style={{ display: 'inline-block', padding: '3px', background: '#ffffff', border: '2px solid #000000' }}>
+        <div style={{ textAlign: 'center', marginTop: '6px', marginBottom: '4px' }}>
+          <div style={{ display: 'inline-block', padding: '2px', background: '#ffffff' }}>
             <QRCodeSVG
               value={nbrPayload}
-              size={96}
+              size={receiptFormat === '80mm' ? 82 : 68}
               level="M"
               includeMargin={false}
               fgColor="#000000"
               bgColor="#ffffff"
             />
           </div>
-          <div style={{ fontSize: '9px', fontWeight: 900, marginTop: '2px', letterSpacing: '0.5px' }}>
-            NBR SIMPLIFIED TAX INVOICE
+          <div style={{ fontSize: '8px', fontWeight: 700, marginTop: '2px', letterSpacing: '0.3px' }}>
+            NBR SIMPLIFIED TAX INVOICE QR
           </div>
         </div>
 
-        {/* FOOTER & BARCODE */}
-        <div style={{ textAlign: 'center', marginTop: '15px', fontWeight: 900 }}>
-          <div style={{ letterSpacing: '2px', fontWeight: 900, fontSize: '13px', lineHeight: 1 }}>
+        {/* RETURN BARCODE SECTION */}
+        <div style={{ textAlign: 'center', marginTop: '4px' }}>
+          <div style={{ fontSize: '9px', fontWeight: 600, marginBottom: '2px' }}>
+            --------------------------------<br />
+            SCAN TO RETURN ITEMS
+          </div>
+          <div style={{ letterSpacing: '2px', fontWeight: 700, fontSize: '11px', lineHeight: 1 }}>
             |||| | ||||| |||| || |||||||
           </div>
-          <div style={{ fontSize: '10px', marginTop: '4px', fontWeight: 900 }}>
-            {completedSale?.invoiceNo || 'INV-005000'}
+          <div style={{ fontSize: '9px', marginTop: '2px', fontWeight: 700 }}>
+            {completedSale?.invoiceNo || activeInvoiceNo || 'INV-005000'}
           </div>
-        </div>
-
-        <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '10px', fontWeight: 900 }}>
-          * Item includes 10% VAT<br />
-          Thank You For Shopping!<br />
-          Please retain invoice for returns.
+          <div style={{ fontSize: '9px', fontWeight: 600, marginTop: '2px' }}>
+            ================================
+          </div>
         </div>
       </div>
 

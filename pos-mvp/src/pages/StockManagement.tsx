@@ -23,6 +23,7 @@ import {
   Edit
 } from 'lucide-react';
 import AddProductModal from '../components/AddProductModal';
+import { CLOUD_GATEWAY_URL } from '../utils/apiConfig';
 import POReviewModal from '../components/POReviewModal';
 import LogWastageModal from '../components/LogWastageModal';
 import { TableSkeleton } from '../components/Skeleton';
@@ -34,7 +35,10 @@ interface StockManagementProps {
 }
 
 export default function StockManagement({ apiBase: propApiBase, onBackToPos, initialTab = 'PENDING' }: StockManagementProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || (typeof window !== 'undefined' ? (
+    (localStorage.getItem('master_server_url') && !localStorage.getItem('master_server_url')?.includes('askar-edge-api.layali-askar-pos.workers.dev') ? localStorage.getItem('master_server_url') : null) ||
+    CLOUD_GATEWAY_URL
+  ) : CLOUD_GATEWAY_URL);
   const [activeTab, setActiveTab] = useState<'THRESHOLDS' | 'PENDING' | 'IN_TRANSIT' | 'DISTRIBUTORS'>(initialTab);
 
   useEffect(() => {

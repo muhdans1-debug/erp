@@ -6,7 +6,7 @@
     },
     "prod_onions_1kg": {
       "isQuickProduct": true,
-      "category": "DAIRY"
+      "category": "PRODUCE"
     },
     "test_barcode_123": {
       "isQuickProduct": true,
@@ -25,15 +25,15 @@
       "category": "SNACKS"
     },
     "f100_1793713103684_xrdjm": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793713247688_loo2s": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793713341369_lewq8": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793713451028_mysfg": {
@@ -41,7 +41,7 @@
       "category": "GROCERY"
     },
     "f100_1793713711375_q4b76": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793714524788_0qtnf": {
@@ -61,15 +61,15 @@
       "category": "GROCERY"
     },
     "f100_1793714994682_qizqx": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793715322275_2s1ca": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793715530227_zft4c": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793715582570_y6occ": {
@@ -77,7 +77,7 @@
       "category": "GROCERY"
     },
     "f100_1793715687972_ww1hq": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716226022_g6vi3": {
@@ -93,35 +93,35 @@
       "category": "GROCERY"
     },
     "f100_1793716652997_7w9c6": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716757008_qtg6n": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793716818091_9ln4d": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717002750_lnjky": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717199874_7e4y7": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717303367_ssdhk": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717354962_9q3qp": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717402113_bejsa": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793717508425_08530": {
@@ -129,7 +129,7 @@
       "category": "GROCERY"
     },
     "f100_1793722200644_w9xay": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793722390078_au5im": {
@@ -169,15 +169,15 @@
       "category": "GROCERY"
     },
     "f100_1793723914501_7ore0": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793724043228_a9vuk": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793724119116_u0luv": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "GROCERY"
     },
     "f100_1793724219366_4ucoe": {
@@ -194,7 +194,8 @@
     },
     "f100_1793724854412_85vns": {
       "isQuickProduct": true,
-      "category": "GROCERY"
+      "category": "GROCERY",
+      "quickColor": null
     },
     "f100_1793724987740_08a00": {
       "isQuickProduct": true,
@@ -257,7 +258,7 @@
       "category": "GROCERY"
     },
     "f100_1793750878479_zr14p": {
-      "isQuickProduct": true,
+      "isQuickProduct": false,
       "category": "SNACKS"
     },
     "f100_1793752014603_l2vsq": {
@@ -374,8 +375,36 @@
       "category": "ESSENTIALS"
     },
     "f68b9858-d7eb-48ac-b072-66ad89a0f063": {
+      "isQuickProduct": false,
+      "category": "ESSENTIALS"
+    },
+    "62a65057-4a08-4de7-b86a-5d770eb3d3b6": {
+      "isQuickProduct": true,
+      "category": "PRODUCE"
+    },
+    "a3b5a28b-ea29-4b52-b508-66899c9b487e": {
       "isQuickProduct": true,
       "category": "ESSENTIALS"
+    },
+    "fb85a8d5-30a4-432f-9abb-2e5c4dfb5e12": {
+      "isQuickProduct": true,
+      "category": "GROCERY",
+      "quickColor": null
+    },
+    "1b43fcb3-cfa8-4a31-8448-9943c8ab3b8a": {
+      "isQuickProduct": true,
+      "category": "GROCERY",
+      "quickColor": null
+    },
+    "697233a2-b6ec-4c1d-b87e-5cc9ae7e4bc9": {
+      "isQuickProduct": false,
+      "category": "GROCERY",
+      "quickColor": null
+    },
+    "9d676120-fea8-4dd1-9346-b669551e9432": {
+      "isQuickProduct": true,
+      "category": "GROCERY",
+      "quickColor": null
     }
   },
   "removedIds": [
@@ -391,7 +420,40 @@
     "f100_1793716423039_lxn1n",
     "110",
     "f100_1793747451296_vrob2",
-    "INV-OFF-407869"
+    "INV-OFF-407869",
+    "f100_1793714994682_qizqx",
+    "f100_1793715530227_zft4c",
+    "f100_1793723914501_7ore0",
+    "f100_1793750878479_zr14p",
+    "f100_1793722200644_w9xay",
+    "f68b9858-d7eb-48ac-b072-66ad89a0f063",
+    "f100_1793713103684_xrdjm",
+    "f100_1793713247688_loo2s",
+    "f100_1793713341369_lewq8",
+    "f100_1793713711375_q4b76",
+    "f100_1793715322275_2s1ca",
+    "f100_1793715687972_ww1hq",
+    "1",
+    "6789",
+    "test_local_del_1794744319377",
+    "bar_1794744319377",
+    "b_test_bulk_1_1794744319562",
+    "test_bulk_1_1794744319562",
+    "b_test_bulk_2_1794744319562",
+    "test_bulk_2_1794744319562",
+    "b_test_bulk_3_1794744319562",
+    "test_bulk_3_1794744319562",
+    "f100_1793716652997_7w9c6",
+    "f100_1793716757008_qtg6n",
+    "f100_1793716818091_9ln4d",
+    "f100_1793717002750_lnjky",
+    "f100_1793717199874_7e4y7",
+    "f100_1793717303367_ssdhk",
+    "f100_1793717354962_9q3qp",
+    "697233a2-b6ec-4c1d-b87e-5cc9ae7e4bc9",
+    "f100_1793717402113_bejsa",
+    "f100_1793724043228_a9vuk",
+    "f100_1793724119116_u0luv"
   ],
   "categories": [
     {

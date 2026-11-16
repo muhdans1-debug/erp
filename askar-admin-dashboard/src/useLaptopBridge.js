@@ -215,27 +215,43 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     return false;
   }, []);
 
-  // Command: Remote Cash Drawer Kick on Sunmi Hardware
-  const remoteDrawerKick = useCallback(() => {
+  // Command: Remote Cash Drawer Kick on Terminal Hardware
+  const remoteDrawerKick = useCallback((terminalId = 'T1') => {
+    let sent = false;
     if (ws.current?.readyState === WebSocket.OPEN) {
-      console.log('⚡ [Laptop RJ45 Bridge] Sending REMOTE_DRAWER_KICK to Sunmi hardware...');
+      console.log(`⚡ [Laptop RJ45 Bridge] Sending REMOTE_DRAWER_KICK to terminal ${terminalId}...`);
       const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || 'askar-manager-secret-2026';
       ws.current.send(JSON.stringify({
         type: 'REMOTE_DRAWER_KICK',
+        terminalId,
+        authorized: true,
+        source: 'ADMIN_DASHBOARD',
         token: managerSecret,
         sentAt: new Date().toISOString()
       }));
-      return true;
+      sent = true;
     }
-    return false;
+
+    // HTTP backup to Central Server
+    try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+      fetch(`${backendUrl}/api/hardware/drawer-kick`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
+        body: JSON.stringify({ terminalId, command: 'DRAWER_KICK', authorized: true, source: 'ADMIN_DASHBOARD' })
+      }).then(() => { sent = true; }).catch(() => {});
+    } catch {}
+
+    return sent;
   }, []);
 
-  // Command: Remote Clear Cart on Sunmi Register
-  const remoteClearCart = useCallback(() => {
+  // Command: Remote Clear Cart on Terminal
+  const remoteClearCart = useCallback((terminalId = 'T1') => {
     if (ws.current?.readyState === WebSocket.OPEN) {
-      console.log('🗑️ [Laptop RJ45 Bridge] Sending REMOTE_CLEAR_CART to Sunmi register...');
+      console.log(`🗑️ [Laptop RJ45 Bridge] Sending REMOTE_CLEAR_CART to terminal ${terminalId}...`);
       ws.current.send(JSON.stringify({
         type: 'REMOTE_CLEAR_CART',
+        terminalId,
         sentAt: new Date().toISOString()
       }));
       return true;
@@ -243,12 +259,13 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     return false;
   }, []);
 
-  // Command: Remote Lock Sunmi Register
-  const remoteLockRegister = useCallback(() => {
+  // Command: Remote Lock Terminal Register
+  const remoteLockRegister = useCallback((terminalId = 'T1') => {
     if (ws.current?.readyState === WebSocket.OPEN) {
-      console.log('🔒 [Laptop RJ45 Bridge] Sending REMOTE_LOCK_REGISTER to Sunmi register...');
+      console.log(`🔒 [Laptop RJ45 Bridge] Sending REMOTE_LOCK_REGISTER to terminal ${terminalId}...`);
       ws.current.send(JSON.stringify({
         type: 'REMOTE_LOCK_REGISTER',
+        terminalId,
         sentAt: new Date().toISOString()
       }));
       return true;

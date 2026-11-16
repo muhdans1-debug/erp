@@ -9,9 +9,11 @@ import {
   ShieldCheck, 
   Delete,
   Ban,
-  Clock
+  Clock,
+  Calendar
 } from 'lucide-react';
 import { printCreditNote } from '../utils/printer';
+import { getManagerPin } from '../utils/authUtils';
 
 export interface SaleItem {
   id: string;
@@ -65,6 +67,11 @@ export default function OrderHistoryDrawer({
   const [confirmSale, setConfirmSale] = useState<SaleRecord | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [filterMode, setFilterMode] = useState<'TODAY' | 'CUSTOM'>('TODAY');
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
+
   // Beep feedback using Web Audio API
   const playBeep = useCallback((isSuccess = true) => {
     try {
@@ -84,34 +91,41 @@ export default function OrderHistoryDrawer({
     } catch (_) {}
   }, []);
 
-  // Fetch today's sales
-  const fetchTodaySales = useCallback(async () => {
+  // Fetch sales (today or date-to-date)
+  const fetchSales = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiBase}/api/sales/today`);
-      const data = await res.json();
-      if (res.ok && data.success && Array.isArray(data.sales)) {
-        setSales(data.sales);
+      let endpoint = `${apiBase}/api/sales/today`;
+      if (filterMode === 'CUSTOM' && startDate && endDate) {
+        endpoint = `${apiBase}/api/reports/sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
       }
+      const res = await fetch(endpoint, {
+        headers: { 'x-manager-pin': getManagerPin() }
+      });
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data?.sales || data?.data || []);
+      setSales(list);
     } catch (err) {
-      console.warn('Failed to load today sales:', err);
+      console.warn('Failed to load sales history:', err);
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, filterMode, startDate, endDate]);
+
+  const fetchTodaySales = fetchSales;
 
   // Handle drawer open/close
   useEffect(() => {
     if (isOpen) {
       setPinInput('');
       setPinError(false);
-      fetchTodaySales();
+      fetchSales();
     } else {
       setIsUnlocked(false);
       setConfirmSale(null);
       setStatusMessage(null);
     }
-  }, [isOpen, fetchTodaySales]);
+  }, [isOpen, fetchSales]);
 
   // Handle PIN input digits
   const handlePinDigit = (digit: string) => {
@@ -121,7 +135,8 @@ export default function OrderHistoryDrawer({
     setPinError(false);
 
     if (nextPin.length === 4) {
-      if (nextPin === '9999') {
+      const managerPin = getManagerPin();
+      if (nextPin === managerPin) {
         setIsUnlocked(true);
         playBeep(true);
       } else {
@@ -145,7 +160,10 @@ export default function OrderHistoryDrawer({
     try {
       const res = await fetch(`${apiBase}/api/sales/${sale.id}/void`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': pinInput || getManagerPin()
+        }
       });
       const data = await res.json();
 
@@ -163,7 +181,7 @@ export default function OrderHistoryDrawer({
           totalAmount: Number(sale.totalAmount || sale.total || 0),
           vatAmount: Number(sale.totalVat || sale.vatTotal || 0),
           date: new Date().toISOString(),
-          cashierName: 'Manager 9999 (Void & Re-ring)',
+          cashierName: 'Manager (Void & Re-ring)',
           items: sale.items || []
         }).catch((err) => console.warn('Credit note print error:', err));
 
@@ -234,7 +252,7 @@ export default function OrderHistoryDrawer({
             </div>
             <h3 className="text-base font-bold text-white mb-1">Manager Access Required</h3>
             <p className="text-xs text-slate-400 text-center mb-6">
-              Enter Manager PIN (9999) to view transaction history and authorize NBR invoice voids.
+              Enter Manager PIN to view transaction history and authorize NBR invoice voids.
             </p>
 
             {/* PIN Dots */}
@@ -253,7 +271,7 @@ export default function OrderHistoryDrawer({
 
             {pinError && (
               <p className="text-xs font-bold text-rose-400 mb-3 flex items-center gap-1">
-                <AlertCircle size={14} /> Incorrect Manager PIN. Try 9999.
+                <AlertCircle size={14} /> Incorrect Manager PIN.
               </p>
             )}
 
@@ -295,18 +313,76 @@ export default function OrderHistoryDrawer({
         ) : (
           /* VIEW 2: ORDER HISTORY & VOID BILL PANEL */
           <div className="flex-1 flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Today's Receipts ({sales.length})
-              </span>
-              <button
-                type="button"
-                onClick={fetchTodaySales}
-                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-bold cursor-pointer"
-              >
-                <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-                Refresh
-              </button>
+            {/* Filter Mode Selector & Date Pickers */}
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 mb-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setFilterMode('TODAY')}
+                    className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                      filterMode === 'TODAY'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterMode('CUSTOM')}
+                    className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      filterMode === 'CUSTOM'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Calendar size={12} />
+                    <span>Date Filter</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchSales}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs text-blue-400 hover:text-blue-300 rounded-lg font-bold transition-colors cursor-pointer"
+                  title="Refresh Sales"
+                >
+                  <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {/* Custom Date Range Selector */}
+              {filterMode === 'CUSTOM' && (
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-bold">From:</span>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-bold">To:</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold px-0.5 pt-0.5">
+                <span>
+                  {filterMode === 'TODAY' ? "Today's Receipts" : `Receipts (${startDate} to ${endDate})`}
+                </span>
+                <span className="text-white font-black">{sales.length} Bills</span>
+              </div>
             </div>
 
             {/* Notification Banner */}

@@ -14,6 +14,9 @@ export interface DeveloperDiagnosticsModalProps {
   lastScannedBarcode: string | null;
   handleBarcodeScan: (barcode: string) => void;
   onOpenCashOut: () => void;
+  onOpenPnl?: () => void;
+  onOpenMaster?: () => void;
+  onOpenZReport?: () => void;
 }
 
 export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps> = ({
@@ -30,6 +33,9 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
   lastScannedBarcode,
   handleBarcodeScan,
   onOpenCashOut,
+  onOpenPnl,
+  onOpenMaster,
+  onOpenZReport,
 }) => {
   const [manualUidInput, setManualUidInput] = useState('');
 
@@ -94,6 +100,40 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
                 Configure Account
               </button>
             )}
+          </div>
+
+          {/* Executive & Financial Views */}
+          <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200">
+            <p className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2">Executive Reports & Audits</p>
+            <div className="flex flex-wrap gap-2">
+              {onOpenPnl && (
+                <button
+                  type="button"
+                  onClick={onOpenPnl}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs transition-colors"
+                >
+                  📊 P&L & Financial Report
+                </button>
+              )}
+              {onOpenMaster && (
+                <button
+                  type="button"
+                  onClick={onOpenMaster}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs transition-colors"
+                >
+                  📑 Command Center (Unified)
+                </button>
+              )}
+              {onOpenZReport && (
+                <button
+                  type="button"
+                  onClick={onOpenZReport}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs transition-colors"
+                >
+                  🧾 End of Day Z-Report
+                </button>
+              )}
+            </div>
           </div>
 
           {/* NFC Simulator */}

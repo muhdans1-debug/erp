@@ -1,4 +1,5 @@
 // pos-mvp/src/components/CartTable.tsx
+import { memo, useRef, useEffect } from 'react';
 import { ShoppingCart, Tag, Minus, Plus, Trash2 } from 'lucide-react';
 import { useCartStore, CartItem } from '../store/cartStore';
 
@@ -9,11 +10,27 @@ interface CartTableProps {
   onRemoveItem?: (index: number, item: CartItem) => void;
 }
 
-export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onAdjustQty, onRemoveItem }: CartTableProps) {
+function CartTableComponent({ onPriceOverrideClick, onWeightEditClick, onAdjustQty, onRemoveItem }: CartTableProps) {
   // Fine-grained selector: re-render ONLY when active cart items array mutates
   const items = useCartStore((state) => state.items);
+  const lastScannedProductId = useCartStore((state) => state.lastScannedProductId);
   const storeAdjust = useCartStore((state) => state.adjustItemQtyByIndex);
   const storeRemove = useCartStore((state) => state.removeItem);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const prevItemsLength = useRef(items.length);
+  const prevLastScanned = useRef(lastScannedProductId);
+
+  // Auto-scroll to top when a new item is added or scanned so the cashier immediately sees it on top
+  useEffect(() => {
+    if (items.length > 0 && (items.length > prevItemsLength.current || lastScannedProductId !== prevLastScanned.current)) {
+      if (containerRef.current) {
+        containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+    prevItemsLength.current = items.length;
+    prevLastScanned.current = lastScannedProductId;
+  }, [items.length, lastScannedProductId]);
 
   const handleAdjust = (index: number, delta: number) => {
     if (onAdjustQty) {
@@ -44,17 +61,25 @@ export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onA
   }
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-hide bg-white p-2.5 divide-y divide-slate-100 min-h-0 scroll-zone pr-[18px]">
+    <div
+      ref={containerRef}
+      className="flex-1 overflow-y-auto scrollbar-hide bg-white p-2.5 divide-y divide-slate-100 min-h-0 scroll-zone pr-[18px]"
+    >
       {items.map((item, index) => {
         const qty = item.quantity ?? item.qty ?? 1;
         const isNegative = qty < 0;
         const unitPrice = item.sellingPrice ?? item.price ?? 0;
         const lineTotal = unitPrice * qty;
+        const isLatest = index === 0;
 
         return (
           <div
             key={item.id ? `${item.id}-${index}` : index}
-            className="flex justify-between items-center py-2.5 px-1 hover:bg-slate-50/90 rounded-xl transition-colors border-b border-slate-100/70 gap-2 min-h-[72px]"
+            className={`flex justify-between items-center py-2.5 px-1.5 rounded-xl transition-all border-b gap-2 min-h-[72px] ${
+              isLatest
+                ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400/40 shadow-2xs'
+                : 'hover:bg-slate-50/90 border-slate-100/70'
+            }`}
           >
             {/* Quick 1-Tap Line Item Void/Delete Button (Voids entire item regardless of qty) */}
             <button
@@ -69,9 +94,16 @@ export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onA
 
             {/* Product Details: Name, Barcode Pill, Unit Base Price, Discount Tag */}
             <div className="min-w-0 flex-1 pr-1">
-              <p className="font-bold text-slate-800 text-sm truncate leading-tight">
-                {item.name} {(item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0)) ? '*' : ''}
-              </p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="font-bold text-slate-800 text-sm truncate leading-tight">
+                  {item.name} {(item.vatRate === 10 || (item.vatRate === undefined && item.taxRate !== 0)) ? '*' : ''}
+                </p>
+                {isLatest && (
+                  <span className="inline-flex items-center gap-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shadow-2xs shrink-0 animate-in fade-in">
+                    ⚡ Top
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {item.barcode && (
                   <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-600 font-mono font-semibold">
@@ -176,3 +208,5 @@ export default function CartTable({ onPriceOverrideClick, onWeightEditClick, onA
     </div>
   );
 }
+
+export default memo(CartTableComponent);

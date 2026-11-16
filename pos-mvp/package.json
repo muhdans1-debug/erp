@@ -3,20 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "electron-main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:web": "vite --port 5173 --host 0.0.0.0",
-    "server": "node server.js",
-    "updater": "node updater.js",
     "build": "tsc && vite build",
-    "dist": "npm run build && electron-builder",
-    "electron:dev": "electron .",
+    "deploy": "wrangler deploy",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "dev:manager": "vite --port 5175 --host 0.0.0.0",
-    "db:hydrate": "node scripts/hydrate_from_turso.mjs",
-    "start:master": "concurrently -n \"API,DASH\" -c \"bgBlue.bold,bgCyan.bold\" \"node server.js\" \"cd ../askar-admin-dashboard && npm run dev\""
+    "db:hydrate": "node scripts/hydrate_from_turso.mjs"
   },
   "dependencies": {
     "@capacitor-community/keep-awake": "^8.0.1",
@@ -31,23 +24,12 @@
     "@capacitor/network": "^8.0.1",
     "@capgo/capacitor-nfc": "^8.3.2",
     "@capgo/capacitor-updater": "^8.54.0",
-    "@fastify/cors": "^11.3.1",
-    "@fastify/multipart": "^10.1.7",
-    "@fastify/static": "^10.1.8",
-    "@fastify/websocket": "^11.3.7",
     "@libsql/client": "^0.18.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "@types/qrcode": "^1.5.6",
-    "bcrypt": "^6.0.0",
-    "bonjour-service": "^1.4.4",
     "capacitor-sunmi-printer": "^0.0.3",
-    "fastify": "^5.12.7",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^1.56.0",
-    "node-cron": "^4.6.0",
-    "nodemailer": "^10.1.0",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
@@ -58,60 +40,16 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
     "@types/node": "^26.6.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-legacy": "^8.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.6.1",
-    "concurrently": "^10.0.6",
-    "electron": "45.2.1",
-    "electron-builder": "^26.18.0",
     "postcss": "^8.5.30",
     "tailwindcss": "^4.3.3",
     "terser": "^5.51.2",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
-  },
-  "build": {
-    "appId": "com.askarpos.app",
-    "productName": "Askar POS",
-    "electronVersion": "45.2.1",
-    "directories": {
-      "output": "release"
-    },
-    "asarUnpack": [
-      "local.db",
-      "schema.sql",
-      "quick_products_config.json",
-      "khata_config.json"
-    ],
-    "files": [
-      "dist/**/*",
-      "server.js",
-      "db.js",
-      "schema.sql",
-      "electron-main.js",
-      "package.json",
-      "repositories/**/*",
-      "services/**/*",
-      "syncEngine.js",
-      "src/automation/**/*",
-      "quick_products_config.json",
-      "khata_config.json",
-      "local.db",
-      "!android",
-      "!platform-tools",
-      "!archives",
-      "!scratch"
-    ],
-    "win": {
-      "target": "nsis"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
   }
 }

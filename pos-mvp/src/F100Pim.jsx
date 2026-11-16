@@ -40,6 +40,7 @@ import { SunmiPrinter, printF100ShelfTag } from './utils/printer';
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { dataUrlToFile, compressImageFile } from './utils/imageCompressor';
+import { getManagerPin } from './utils/authUtils';
 
 /**
  * Feitian F100 Modern PIM & Stock Intake Terminal
@@ -61,7 +62,7 @@ const DEFAULT_CATEGORIES = [
   'ESSENTIALS'
 ];
 
-export default function F100Pim() {
+export default function F100Pim({ onSwitchToPos }) {
   const initialFormState = {
     id: '',
     barcode: '',
@@ -99,9 +100,10 @@ export default function F100Pim() {
   const [recentScans, setRecentScans] = useState([]);
   const [serverUrlInput, setServerUrlInput] = useState(() => {
     const saved = localStorage.getItem('master_server_url');
-    if (!saved || saved.includes('192.168.8.20')) {
-      try { localStorage.setItem('master_server_url', 'http://192.168.8.7:3000'); } catch { }
-      return 'http://192.168.8.7:3000';
+    if (!saved || saved.includes('192.168.8.20') || saved.includes('192.168.8.7') || saved.includes('localhost:3000')) {
+      const edgeUrl = 'https://askar-edge-api.layali-askar-pos.workers.dev';
+      try { localStorage.setItem('master_server_url', edgeUrl); } catch { }
+      return edgeUrl;
     }
     return saved;
   });
@@ -166,6 +168,23 @@ export default function F100Pim() {
     stickyLocksRef.current = stickyLocks;
   }, [stickyLocks]);
 
+  // Ensure F100 PIM registers as Counter 2 (T2) and announces presence
+  useEffect(() => {
+    try {
+      localStorage.setItem('terminal_id', 'T2');
+      localStorage.setItem('REGISTER_PREFIX', 'T2');
+      localStorage.setItem('f100_active_mode', 'pim');
+    } catch { }
+    window.dispatchEvent(new CustomEvent('sunmi-cart-broadcast', {
+      detail: {
+        cart: [],
+        total: 0,
+        status: 'PIM_ACTIVE',
+        activeCartId: 'T2-PIM'
+      }
+    }));
+  }, []);
+
   const toggleLock = (field) => {
     triggerHaptic(40);
     setStickyLocks((prev) => {
@@ -213,17 +232,33 @@ export default function F100Pim() {
     setTimeout(() => setFeedbackToast(null), 2500);
   };
 
-  // Dynamic API Base resolution (Defaults to Supermarket Back Office Laptop 192.168.8.7:3000)
-  const getApiBase = () => {
-    if (typeof window === 'undefined') return 'http://192.168.8.7:3000';
-    const custom = localStorage.getItem('master_server_url');
-    if (custom && !custom.includes('192.168.8.20')) return custom;
-    try { localStorage.setItem('master_server_url', 'http://192.168.8.7:3000'); } catch { }
-    const isNative = Boolean(window.Capacitor?.isNativePlatform?.());
-    if (isNative) return 'http://192.168.8.7:3000';
-    const host = window.location.hostname || '192.168.8.7';
-    return `http://${host}:3000`;
-  };
+  // Dynamic API Base & Multi-Gateway Candidate Resolution
+  const getApiCandidates = useCallback(() => {
+    const candidates = [];
+    if (typeof window !== 'undefined') {
+      const custom = localStorage.getItem('master_server_url') || localStorage.getItem('server_ip');
+      if (custom && custom.trim() && !custom.includes('askar-edge-api.layali-askar-pos.workers.dev')) {
+        let clean = custom.trim();
+        if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+          clean = clean.includes('.') ? `https://${clean}` : `http://${clean}:3000`;
+        }
+        candidates.push(clean);
+      }
+    }
+    // High-availability cloud gateway on Vercel (unthrottled Turso connection)
+    candidates.push('https://askar-khata-pwa.vercel.app');
+    // Local store LAN hub
+    candidates.push('http://192.168.8.7:3000');
+    // Cloudflare Edge fallback
+    candidates.push('https://askar-edge-api.layali-askar-pos.workers.dev');
+
+    return Array.from(new Set(candidates));
+  }, []);
+
+  const getApiBase = useCallback(() => {
+    const candidates = getApiCandidates();
+    return candidates[0] || 'https://askar-khata-pwa.vercel.app';
+  }, [getApiCandidates]);
 
   // Unlock root/body scrolling for F100 PIM while preserving Sunmi POS locks on exit
   useEffect(() => {
@@ -594,6 +629,10 @@ export default function F100Pim() {
 
       const uploadRes = await fetch(`${apiBase}/api/products/upload-photo`, {
         method: 'POST',
+        headers: {
+          'x-pos-client': 'f100-mobile-pos',
+          ...(getManagerPin() ? { 'x-manager-pin': getManagerPin() } : {})
+        },
         body: formData
       });
 
@@ -621,142 +660,134 @@ export default function F100Pim() {
           return;
         }
 
-        const apiBase = getApiBase();
-        const batch = pending.map((item) => {
-          let parsedPayload = {};
-          try {
-            parsedPayload = typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload;
-          } catch {
-            parsedPayload = {};
-          }
-          return {
-            local_id: item.id,
-            barcode: item.barcode,
-            data: parsedPayload,
-            image: item.image_base64
-          };
-        });
-
-        // Stream any local photo URIs to Master server via FormData rather than JSON
-        for (const b of batch) {
-          if (b.image && typeof b.image === 'string' && (b.image.startsWith('http://localhost/_capacitor_file_') || b.image.startsWith('file://') || b.image.startsWith('blob:') || b.image.startsWith('capacitor://'))) {
-            try {
-              const uploadedUrl = await uploadProductPhoto(b.image, b.barcode);
-              if (uploadedUrl) {
-                b.image = uploadedUrl;
-                if (b.data) b.data.imageUrl = uploadedUrl;
-              }
-            } catch (upErr) {
-              console.warn('📸 Photo stream upload skipped:', upErr);
-            }
-          }
-        }
-
+        const candidates = getApiCandidates();
         let isSynced = false;
 
-        // Protocol 1: Native Fastify Batch Push (/api/sync/pim-push)
-        try {
-          const c1 = new AbortController();
-          const t1 = setTimeout(() => c1.abort(), 4000);
-          const res = await fetch(`${apiBase}/api/sync/pim-push`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ batch }),
-            signal: c1.signal
-          });
-          clearTimeout(t1);
+        for (const targetBase of candidates) {
+          if (isSynced) break;
 
-          if (res.ok) {
-            const data = await res.json();
-            const syncedIds = data.syncedIds || pending.map((i) => i.id);
-            await markItemsSynced(syncedIds);
-            isSynced = true;
-            if (isManual) {
-              showToast(`🎉 Synced ${syncedIds.length} items to Back Office!`, 'success');
-            }
-          }
-        } catch (e) {
-          // Fall through to Protocol 2
-        }
-
-        // Protocol 2: Fallback to Universal /api/products/bulk-upsert
-        if (!isSynced) {
+          // Protocol 1: Native Fastify Batch Push (/api/sync/pim-push)
           try {
-            const c2 = new AbortController();
-            const t2 = setTimeout(() => c2.abort(), 6000);
-            const upsertPayload = {
-              products: batch.map((b) => ({
-                id: (b.data.id && typeof b.data.id === 'string' && b.data.id.startsWith('f100_')) ? b.data.id : (b.data.id || b.barcode || b.local_id),
-                barcode: b.barcode,
-                name: b.data.name || 'Product',
-                category: b.data.category || 'GROCERY',
-                purchasePrice: Number(b.data.purchasePrice || b.data.unitCost || 0),
-                unitCost: Number(b.data.unitCost || b.data.purchasePrice || 0),
-                sellingPrice: Number(b.data.sellingPrice || b.data.price || 0),
-                stockQuantity: Number(b.data.stockQuantity ?? b.data.intakeQty ?? 1),
-                minThreshold: Number(b.data.minThreshold || 20),
-                maxThreshold: Number(b.data.maxThreshold || 100),
-                supplierName: b.data.supplierName || 'Local Distributor',
-                supplierEmail: b.data.supplierEmail || 'supplier@askar.bh',
-                distributorId: b.data.distributorId || null,
-                taxRate: Number(b.data.taxRate || ((b.data.vatRate ?? 10) / 100)),
-                vatRate: Number(b.data.vatRate ?? 10),
-                is_weighed_item: b.data.is_weighed_item ? 1 : 0
-              }))
-            };
-
-            const bulkRes = await fetch(`${apiBase}/api/products/bulk-upsert`, {
+            const c1 = new AbortController();
+            const t1 = setTimeout(() => c1.abort(), 4500);
+            const res = await fetch(`${targetBase}/api/sync/pim-push`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(upsertPayload),
-              signal: c2.signal
+              headers: {
+                'Content-Type': 'application/json',
+                'x-pos-client': 'f100-mobile-pos',
+                ...(getManagerPin() ? { 'x-manager-pin': getManagerPin() } : {})
+              },
+              body: JSON.stringify({ batch }),
+              signal: c1.signal
             });
-            clearTimeout(t2);
+            clearTimeout(t1);
 
-            if (bulkRes.ok) {
-              const allIds = pending.map((i) => i.id);
-              await markItemsSynced(allIds);
+            if (res.ok) {
+              const data = await res.json();
+              const syncedIds = data.syncedIds || pending.map((i) => i.id);
+              await markItemsSynced(syncedIds);
               isSynced = true;
               if (isManual) {
-                showToast(`🎉 Synced ${allIds.length} items to Back Office!`, 'success');
+                showToast(`🎉 Synced ${syncedIds.length} items to Back Office!`, 'success');
               }
+              break;
             }
-          } catch (bulkErr) { }
-        }
-
-        // Protocol 3: Individual Item Universal POST fallback
-        if (!isSynced) {
-          const syncedIds = [];
-          for (const item of pending) {
-            try {
-              const payload = typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload;
-              const endpoint = `${apiBase}/api/products`;
-              const c3 = new AbortController();
-              const t3 = setTimeout(() => c3.abort(), 3000);
-              const singleRes = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: c3.signal
-              });
-              clearTimeout(t3);
-              if (singleRes.ok) {
-                syncedIds.push(item.id);
-              }
-            } catch { }
+          } catch (e) {
+            // Fall through to Protocol 2
           }
 
-          if (syncedIds.length > 0) {
-            await markItemsSynced(syncedIds);
-            isSynced = true;
-            if (isManual) {
-              showToast(`🎉 Synced ${syncedIds.length} items to Back Office!`, 'success');
+          // Protocol 2: Fallback to Universal /api/products/bulk-upsert
+          if (!isSynced) {
+            try {
+              const c2 = new AbortController();
+              const t2 = setTimeout(() => c2.abort(), 5000);
+              const upsertPayload = {
+                products: batch.map((b) => ({
+                  id: (b.data.id && typeof b.data.id === 'string' && b.data.id.startsWith('f100_')) ? b.data.id : (b.data.id || b.barcode || b.local_id),
+                  barcode: b.barcode,
+                  name: b.data.name || 'Product',
+                  category: b.data.category || 'GROCERY',
+                  purchasePrice: Number(b.data.purchasePrice || b.data.unitCost || 0),
+                  unitCost: Number(b.data.unitCost || b.data.purchasePrice || 0),
+                  sellingPrice: Number(b.data.sellingPrice || b.data.price || 0),
+                  stockQuantity: Number(b.data.stockQuantity ?? b.data.intakeQty ?? 1),
+                  minThreshold: Number(b.data.minThreshold || 20),
+                  maxThreshold: Number(b.data.maxThreshold || 100),
+                  supplierName: b.data.supplierName || 'Local Distributor',
+                  supplierEmail: b.data.supplierEmail || 'supplier@askar.bh',
+                  distributorId: b.data.distributorId || null,
+                  taxRate: Number(b.data.taxRate || ((b.data.vatRate ?? 10) / 100)),
+                  vatRate: Number(b.data.vatRate ?? 10),
+                  is_weighed_item: b.data.is_weighed_item ? 1 : 0
+                }))
+              };
+
+              const bulkRes = await fetch(`${targetBase}/api/products/bulk-upsert`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-pos-client': 'f100-mobile-pos',
+                  ...(getManagerPin() ? { 'x-manager-pin': getManagerPin() } : {})
+                },
+                body: JSON.stringify(upsertPayload),
+                signal: c2.signal
+              });
+              clearTimeout(t2);
+
+              if (bulkRes.ok) {
+                const allIds = pending.map((i) => i.id);
+                await markItemsSynced(allIds);
+                isSynced = true;
+                if (isManual) {
+                  showToast(`🎉 Synced ${allIds.length} items to Back Office!`, 'success');
+                }
+                break;
+              }
+            } catch (bulkErr) { }
+          }
+
+          // Protocol 3: Individual Item Universal POST fallback
+          if (!isSynced) {
+            const syncedIds = [];
+            for (const item of pending) {
+              try {
+                const payload = typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload;
+                const endpoint = `${targetBase}/api/products`;
+                const c3 = new AbortController();
+                const t3 = setTimeout(() => c3.abort(), 3000);
+                const singleRes = await fetch(endpoint, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-pos-client': 'f100-mobile-pos',
+                    ...(getManagerPin() ? { 'x-manager-pin': getManagerPin() } : {})
+                  },
+                  body: JSON.stringify(payload),
+                  signal: c3.signal
+                });
+                clearTimeout(t3);
+                if (singleRes.ok) {
+                  syncedIds.push(item.id);
+                }
+              } catch { }
+            }
+
+            if (syncedIds.length > 0) {
+              await markItemsSynced(syncedIds);
+              isSynced = true;
+              if (isManual) {
+                showToast(`🎉 Synced ${syncedIds.length} items to Back Office!`, 'success');
+              }
+              break;
             }
           }
         }
 
         if (!isSynced && isManual) {
-          showToast(`⚠️ Cannot reach Back Office at ${apiBase.replace(/^https?:\/\//, '')}. Check Wi-Fi & PC.`, 'error');
+          const msg = (typeof navigator !== 'undefined' && navigator.onLine)
+            ? '⚠️ Central server currently busy or updating. Scans safe in local SQLite.'
+            : '⚠️ Cannot reach Back Office via Cloud or LAN. Check internet connection.';
+          showToast(msg, 'error');
         }
       } catch (err) {
         if (isManual) {
@@ -851,6 +882,39 @@ export default function F100Pim() {
       });
     } catch (saveErr) {
       console.error('Failed to write to local F100 database:', saveErr);
+    }
+
+    // 1b. Update local catalog caches in 0ms so F100 Mobile POS can immediately ring up this item
+    try {
+      const existingRaw = localStorage.getItem('askar_catalog_cache');
+      let catalog = existingRaw ? JSON.parse(existingRaw) : [];
+      if (!Array.isArray(catalog)) catalog = [];
+      const itemFormatted = {
+        id: itemToSave.id || itemToSave.barcode || `prod_${Date.now()}`,
+        barcode: itemToSave.barcode || '',
+        name: itemToSave.name || 'Product',
+        nameAr: itemToSave.nameAr || '',
+        sellingPrice: Number(itemToSave.sellingPrice || itemToSave.price || 0),
+        price: Number(itemToSave.sellingPrice || itemToSave.price || 0),
+        purchasePrice: Number(itemToSave.purchasePrice || itemToSave.unitCost || 0),
+        unitCost: Number(itemToSave.unitCost || itemToSave.purchasePrice || 0),
+        vatRate: Number(itemToSave.vatRate ?? 10),
+        category: itemToSave.category || 'GROCERY',
+        stockQuantity: Number(itemToSave.stockQuantity ?? itemToSave.intakeQty ?? 1),
+        is_weighed_item: Boolean(itemToSave.is_weighed_item)
+      };
+      const idx = catalog.findIndex((x) => x.id === itemFormatted.id || (x.barcode && x.barcode === itemFormatted.barcode));
+      if (idx >= 0) {
+        catalog[idx] = { ...catalog[idx], ...itemFormatted };
+      } else {
+        catalog.unshift(itemFormatted);
+      }
+      localStorage.setItem('askar_catalog_cache', JSON.stringify(catalog));
+      localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(catalog));
+      window.dispatchEvent(new CustomEvent('CATALOG_UPDATED', { detail: itemFormatted }));
+      console.log('⚡ [F100 PIM -> POS] Catalog hot-cached and dispatched for instant POS availability:', itemFormatted.name);
+    } catch (cacheErr) {
+      console.warn('Failed to update local catalog cache:', cacheErr);
     }
 
     // 2. Opportunistic immediate push sync if connected
@@ -952,30 +1016,36 @@ export default function F100Pim() {
               type="button"
               onClick={() => {
                 try {
+                  localStorage.setItem('f100_active_mode', 'pos');
                   localStorage.removeItem('f100_default_mode');
                 } catch { }
-                const url = new URL(window.location.href);
-                url.searchParams.delete('view');
-                if (url.pathname.includes('/f100') || url.pathname.includes('/pim')) {
-                  url.pathname = '/';
+                if (typeof onSwitchToPos === 'function') {
+                  onSwitchToPos();
+                } else {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete('view');
+                  if (url.pathname.includes('/f100') || url.pathname.includes('/pim')) {
+                    url.pathname = '/';
+                  }
+                  window.location.href = url.toString();
                 }
-                window.location.href = url.toString();
               }}
               style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.12)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                color: '#e2e8f0',
-                fontSize: '12px',
-                fontWeight: 700,
+                backgroundColor: '#2563eb',
+                border: '1px solid #3b82f6',
+                color: '#ffffff',
+                fontSize: '11px',
+                fontWeight: 800,
                 padding: '6px 10px',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px'
+                gap: '4px',
+                boxShadow: '0 2px 6px rgba(37, 99, 235, 0.3)'
               }}
             >
-              ← POS
+              ← T2 KHATA POS
             </button>
 
             <div>

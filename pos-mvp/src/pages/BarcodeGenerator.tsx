@@ -20,6 +20,7 @@ export default function BarcodeGenerator({ apiBase = 'http://localhost:3000' }: 
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [stickerCount, setStickerCount] = useState<number>(24);
+  const [labelFormat, setLabelFormat] = useState<'A4_SHEET' | 'THERMAL_ROLL' | 'SHELF_TALKER'>('A4_SHEET');
   const [loading, setLoading] = useState<boolean>(true);
   const [customText, setCustomText] = useState<string>('Askar Supermarket');
   const [includeStoreTag, setIncludeStoreTag] = useState<boolean>(true);
@@ -124,6 +125,53 @@ export default function BarcodeGenerator({ apiBase = 'http://localhost:3000' }: 
           </div>
         </div>
 
+        {/* Label Format Selector */}
+        <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+            Printer &amp; Label Template
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button
+              type="button"
+              onClick={() => { setLabelFormat('A4_SHEET'); setStickerCount(24); }}
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                labelFormat === 'A4_SHEET'
+                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              <div className="font-bold text-sm">📄 A4 Sticker Sheet</div>
+              <div className="text-xs text-slate-500 mt-0.5">3 × 8 (24 labels/sheet, Avery style)</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setLabelFormat('THERMAL_ROLL'); setStickerCount(1); }}
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                labelFormat === 'THERMAL_ROLL'
+                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              <div className="font-bold text-sm">🏷️ Thermal Roll Sticker</div>
+              <div className="text-xs text-slate-500 mt-0.5">50×30mm / 38×25mm (Xprinter roll)</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setLabelFormat('SHELF_TALKER'); setStickerCount(6); }}
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                labelFormat === 'SHELF_TALKER'
+                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              <div className="font-bold text-sm">🔖 Shelf Price Talker</div>
+              <div className="text-xs text-slate-500 mt-0.5">Large bold price for grocery shelf rails</div>
+            </button>
+          </div>
+        </div>
+
         {/* Presets and Options */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-100">
           <div className="flex items-center gap-2">
@@ -190,52 +238,132 @@ export default function BarcodeGenerator({ apiBase = 'http://localhost:3000' }: 
           <div className="print:hidden flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
               <CheckCircle2 size={14} className="text-emerald-500" />
-              <span>A4 Print Preview ({stickerCount} Labels)</span>
+              <span>
+                {labelFormat === 'A4_SHEET' && `A4 Sheet Preview (${stickerCount} Labels)`}
+                {labelFormat === 'THERMAL_ROLL' && `Continuous Thermal Roll Preview (${stickerCount} Labels)`}
+                {labelFormat === 'SHELF_TALKER' && `Shelf Edge Price Talker Preview (${stickerCount} Tags)`}
+              </span>
             </div>
             <div className="text-xs text-slate-400">
-              Standard 3 x 8 Grid Layout
+              {labelFormat === 'A4_SHEET' && 'Standard 3 × 8 Grid (Avery Style)'}
+              {labelFormat === 'THERMAL_ROLL' && '50mm × 30mm Roll Format (1 per page)'}
+              {labelFormat === 'SHELF_TALKER' && 'Shelf Rail Format (Large Price BHD)'}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-2">
-            {Array.from({ length: stickerCount }).map((_, idx) => (
-              <div
-                key={idx}
-                className="flex flex-col items-center justify-center p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs print:border-dashed print:border-slate-300 print:rounded-lg print:p-2.5 print:shadow-none print:break-inside-avoid"
-              >
-                {includeStoreTag && (
-                  <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400 mb-0.5 text-center">
-                    {customText}
+          {/* Format 1: Continuous Thermal Roll (50mm x 30mm) */}
+          {labelFormat === 'THERMAL_ROLL' && (
+            <div className="flex flex-col items-center gap-3 print:gap-0">
+              {Array.from({ length: stickerCount }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="w-[200px] h-[120px] p-2 bg-white border border-slate-300 rounded-lg flex flex-col justify-between items-center text-center shadow-xs print:w-[50mm] print:h-[30mm] print:border-none print:shadow-none print:p-1 print:break-after-page"
+                >
+                  {includeStoreTag && (
+                    <span className="text-[9px] font-bold tracking-widest uppercase text-slate-500 leading-none">
+                      {customText}
+                    </span>
+                  )}
+                  <span className="font-bold text-xs text-slate-900 truncate w-full px-1">
+                    {selectedProduct.name}
                   </span>
-                )}
-
-                <span className="font-bold text-sm text-slate-800 truncate w-full text-center leading-tight">
-                  {selectedProduct.name}
-                </span>
-
-                {/* The Barcode SVG Component */}
-                <div className="my-1.5 flex justify-center w-full overflow-hidden">
-                  <Barcode
-                    value={barcodeValue}
-                    format="CODE128"
-                    width={1.4}
-                    height={46}
-                    displayValue={false}
-                    margin={2}
-                  />
+                  <div className="my-0.5 flex justify-center w-full overflow-hidden">
+                    <Barcode
+                      value={barcodeValue}
+                      format="CODE128"
+                      width={1.2}
+                      height={34}
+                      displayValue={false}
+                      margin={0}
+                    />
+                  </div>
+                  <div className="w-full flex items-center justify-between px-1 border-t border-slate-200 pt-0.5">
+                    <span className="text-[10px] font-mono text-slate-600">{barcodeValue}</span>
+                    <span className="font-black text-xs text-emerald-700">BD {Number(selectedProduct.sellingPrice).toFixed(3)}</span>
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
 
-                <div className="w-full flex items-center justify-between px-2 pt-1 border-t border-slate-100 print:border-slate-200">
-                  <span className="text-[11px] font-mono text-slate-500 tracking-wider">
-                    {barcodeValue}
-                  </span>
-                  <span className="font-bold text-sm text-emerald-600 tracking-tight">
-                    BD {Number(selectedProduct.sellingPrice).toFixed(3)}
-                  </span>
+          {/* Format 2: Shelf Edge Talker (Large Price for Shelf Rails) */}
+          {labelFormat === 'SHELF_TALKER' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 print:grid-cols-2 print:gap-3">
+              {Array.from({ length: stickerCount }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 bg-white border-2 border-slate-900 rounded-xl flex flex-col justify-between shadow-xs print:rounded-none print:border-slate-800 print:break-inside-avoid"
+                >
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                    <span className="text-[10px] font-black tracking-widest uppercase text-slate-500">{customText}</span>
+                    <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">SHELF TAG</span>
+                  </div>
+                  <div className="my-2">
+                    <div className="font-black text-base text-slate-900 leading-tight line-clamp-2">{selectedProduct.name}</div>
+                    <div className="text-3xl font-black text-emerald-700 tracking-tight mt-1">
+                      BD {Number(selectedProduct.sellingPrice).toFixed(3)}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <div className="overflow-hidden">
+                      <Barcode
+                        value={barcodeValue}
+                        format="CODE128"
+                        width={1.2}
+                        height={30}
+                        displayValue={false}
+                        margin={0}
+                      />
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-700">{barcodeValue}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {/* Format 3: Standard A4 3x8 Sticker Grid */}
+          {labelFormat === 'A4_SHEET' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-2">
+              {Array.from({ length: stickerCount }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="flex flex-col items-center justify-center p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs print:border-dashed print:border-slate-300 print:rounded-lg print:p-2.5 print:shadow-none print:break-inside-avoid"
+                >
+                  {includeStoreTag && (
+                    <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400 mb-0.5 text-center">
+                      {customText}
+                    </span>
+                  )}
+
+                  <span className="font-bold text-sm text-slate-800 truncate w-full text-center leading-tight">
+                    {selectedProduct.name}
+                  </span>
+
+                  {/* The Barcode SVG Component */}
+                  <div className="my-1.5 flex justify-center w-full overflow-hidden">
+                    <Barcode
+                      value={barcodeValue}
+                      format="CODE128"
+                      width={1.4}
+                      height={46}
+                      displayValue={false}
+                      margin={2}
+                    />
+                  </div>
+
+                  <div className="w-full flex items-center justify-between px-2 pt-1 border-t border-slate-100 print:border-slate-200">
+                    <span className="text-[11px] font-mono text-slate-500 tracking-wider">
+                      {barcodeValue}
+                    </span>
+                    <span className="font-bold text-sm text-emerald-600 tracking-tight">
+                      BD {Number(selectedProduct.sellingPrice).toFixed(3)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="max-w-2xl mx-auto bg-white p-12 rounded-2xl border border-dashed border-slate-300 text-center text-slate-400">

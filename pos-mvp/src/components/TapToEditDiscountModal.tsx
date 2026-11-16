@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Percent, KeyRound, Tag, RotateCcw, Check, Delete, Trash2 } from 'lucide-react';
 import { PriceOverrideItem } from '../types/pos';
+import { getManagerPin } from '../utils/authUtils';
 
 export interface TapToEditDiscountModalProps {
   item: PriceOverrideItem | null;
@@ -174,8 +175,9 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
       onClose();
     } else if (activeTab === 'override') {
       const pin = managerPinInput.trim();
-      if (pin !== '9999' && pin !== '1234') {
-        setOverrideError('Invalid Manager PIN. (Default: 9999)');
+      const managerPin = getManagerPin();
+      if (pin !== managerPin) {
+        setOverrideError('Invalid Manager PIN.');
         setOverrideTargetField('pin');
         return;
       }
@@ -379,7 +381,7 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5 flex items-center gap-2 text-xs text-blue-900">
                 <KeyRound size={16} className="shrink-0 text-blue-700" />
                 <span className="font-medium">
-                  Manager PIN required (9999). Tap field to type.
+                  Manager PIN required. Tap field to type.
                 </span>
               </div>
 

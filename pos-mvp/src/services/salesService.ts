@@ -1,14 +1,11 @@
 // pos-mvp/src/services/salesService.ts
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 /**
- * Resolves the active master backend URL (mDNS, configured IP, or local network fallback)
+ * Resolves the active master backend URL via unified config
  */
 export const getMasterServerUrl = (): string => {
-  if (typeof window === 'undefined') return 'http://192.168.8.7:3000';
-  const stored = localStorage.getItem('master_server_url') || localStorage.getItem('MASTER_IP');
-  if (stored) return stored;
-  const host = window.location.hostname || 'localhost';
-  return `http://${host}:3000`;
+  return getApiBaseUrl();
 };
 
 /**

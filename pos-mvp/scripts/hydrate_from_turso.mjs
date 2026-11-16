@@ -6,6 +6,35 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Automatic Environment Configuration Loader (.env)
+const envCandidatePaths = [
+  path.resolve(__dirname, '../.env'),
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(process.cwd(), '.env')
+];
+for (const envFilePath of envCandidatePaths) {
+  if (fs.existsSync(envFilePath)) {
+    try {
+      const rawEnv = fs.readFileSync(envFilePath, 'utf8');
+      for (const line of rawEnv.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx !== -1) {
+          const k = trimmed.slice(0, eqIdx).trim();
+          let v = trimmed.slice(eqIdx + 1).trim();
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1);
+          }
+          if (!process.env[k]) {
+            process.env[k] = v;
+          }
+        }
+      }
+    } catch {}
+  }
+}
+
 // Load environment variables if present
 const tursoUrl = process.env.TURSO_DATABASE_URL || 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io';
 const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || '';

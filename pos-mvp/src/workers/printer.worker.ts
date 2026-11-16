@@ -23,6 +23,11 @@ self.onmessage = (event: MessageEvent) => {
     commands.push({ action: 'printText', data: 'Simplified Tax Invoice\n' });
     commands.push({ action: 'printText', data: `VAT No: ${payload.vatNumber || '200012345678901'}\n` });
     commands.push({ action: 'printText', data: `Tel: ${payload.shopPhone || '+973 1700 0000'}\n` });
+    if (payload.isReprint) {
+      commands.push({ action: 'printText', data: '--------------------------------\n' });
+      commands.push({ action: 'printText', data: '*** DUPLICATE / REPRINT COPY ***\n' });
+      commands.push({ action: 'printText', data: 'نسخة معاد طباعتها\n' });
+    }
     commands.push({ action: 'printText', data: '--------------------------------\n' });
 
     commands.push({ action: 'setAlignment', data: 0 }); // Left

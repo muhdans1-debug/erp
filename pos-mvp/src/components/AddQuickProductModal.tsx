@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Search, X } from 'lucide-react';
 import { QuickCategory } from './EditQuickTabsModal';
 import { Product as BaseProduct } from '../types/pos';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 export interface Product extends BaseProduct {
   quickColor?: string | null;
@@ -83,9 +84,11 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
         onAddProduct(product, selectedCategory);
       }
 
-      const candidates = [apiBase, 'http://localhost:3000', 'http://192.168.8.7:3000'].filter(
-        (val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx
-      );
+      const candidates = [
+        apiBase && !apiBase.includes('localhost') ? apiBase : null,
+        getApiBaseUrl(),
+        DEFAULT_EDGE_API_URL
+      ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
       for (const url of candidates) {
         try {
           fetch(`${url}/api/quick-products/update`, {

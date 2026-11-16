@@ -3,6 +3,8 @@ import {
   Users, UserCheck, UserX, Plus, Edit2, Clock, AlertTriangle, 
   RefreshCw, Printer, FileText
 } from 'lucide-react';
+import { DEFAULT_EDGE_API_URL, getApiBaseUrl } from './utils/apiConfig';
+import { fetchShiftsAndEmployees } from './services/dataService';
 const printShiftCloseout = () => window.print();
 
 interface Employee {
@@ -42,9 +44,7 @@ interface EmployeeShiftReconciliationProps {
 
 export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftReconciliationProps) {
   // Resilient API base that binds dynamically to current hostname (e.g. 192.168.8.7:3000)
-  const resolvedApiBase = apiBase || (typeof window !== 'undefined' 
-    ? (localStorage.getItem('master_server_url') || `http://${window.location.hostname || 'localhost'}:3000`) 
-    : 'http://localhost:3000');
+  const resolvedApiBase = apiBase || getApiBaseUrl();
 
   const [activeSubTab, setActiveSubTab] = useState<'reconciliation' | 'employees'>('reconciliation');
   const [sessions, setSessions] = useState<ShiftSession[]>([]);
@@ -81,19 +81,47 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
 
   const [isBridgeLive, setIsBridgeLive] = useState(false);
 
-  // Fetch Data with cache-busting to prevent stale browser disk cache
-  const loadData = async () => {
-    setLoading(true);
+  // Fetch Data with cache-busting and Sovereign Edge fallback
+  const loadData = async (silent: boolean | any = false) => {
+    if (silent !== true) setLoading(true);
     setError(null);
     try {
-      const [recRes, empRes] = await Promise.all([
-        fetch(`${resolvedApiBase}/api/shifts/reconciliation?t=${Date.now()}`),
-        fetch(`${resolvedApiBase}/api/employees?t=${Date.now()}`)
-      ]);
-      const recData = await recRes.json();
-      const empData = await empRes.json();
+      let recData: any = null;
+      let empData: any = null;
 
-      if (recData.success && Array.isArray(recData.sessions)) {
+      try {
+        const [recRes, empRes] = await Promise.all([
+          fetch(`${resolvedApiBase}/api/shifts/reconciliation?t=${Date.now()}`),
+          fetch(`${resolvedApiBase}/api/employees?t=${Date.now()}`)
+        ]);
+        if (recRes.ok) recData = await recRes.json();
+        if (empRes.ok) empData = await empRes.json();
+      } catch {}
+
+      // Failover to Sovereign Cloudflare Edge if primary base failed
+      if (!recData || !recData.success) {
+        try {
+          const [altRec, altEmp] = await Promise.all([
+            fetch(`${DEFAULT_EDGE_API_URL}/api/shifts/reconciliation?t=${Date.now()}`),
+            fetch(`${DEFAULT_EDGE_API_URL}/api/employees?t=${Date.now()}`)
+          ]);
+          if (altRec.ok) recData = await altRec.json();
+          if (altEmp.ok) empData = await altEmp.json();
+        } catch {}
+      }
+
+      // Sovereign Turso Direct Fallback
+      if (!recData || !recData.sessions) {
+        try {
+          const directData = await fetchShiftsAndEmployees(resolvedApiBase);
+          recData = { success: true, sessions: directData.shifts };
+          if (!empData) empData = { success: true, employees: directData.employees };
+        } catch (dbErr) {
+          console.warn('Turso direct shifts fallback error:', dbErr);
+        }
+      }
+
+      if (recData && recData.success && Array.isArray(recData.sessions)) {
         const parseShiftTime = (dtStr?: string | null) => {
           if (!dtStr) return 0;
           const clean = dtStr.includes('T') ? dtStr : dtStr.replace(' ', 'T') + (dtStr.endsWith('Z') ? '' : 'Z');
@@ -111,13 +139,13 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
 
         setSessions(sorted);
       }
-      if (empData.success && Array.isArray(empData.employees)) {
+      if (empData && empData.success && Array.isArray(empData.employees)) {
         setEmployees(empData.employees);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to load shift reconciliation data');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -242,23 +270,51 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
 
     setSavingEmp(true);
     try {
-      const res = await fetch(`${apiBase}/api/employees`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingEmp?.id,
-          name: formName.trim(),
-          pin_code: formPin.trim(),
-          role: formRole,
-          is_active: formActive
-        })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      let saved = false;
+      let errorMsg = 'Failed to save employee.';
+      const payload = {
+        id: editingEmp?.id,
+        name: formName.trim(),
+        pin_code: formPin.trim(),
+        role: formRole,
+        is_active: formActive
+      };
+
+      try {
+        const res = await fetch(`${resolvedApiBase}/api/employees`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          saved = true;
+        } else {
+          errorMsg = data.error || errorMsg;
+        }
+      } catch {}
+
+      if (!saved && resolvedApiBase !== DEFAULT_EDGE_API_URL) {
+        try {
+          const altRes = await fetch(`${DEFAULT_EDGE_API_URL}/api/employees`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const altData = await altRes.json();
+          if (altRes.ok && altData.success) {
+            saved = true;
+          } else {
+            errorMsg = altData.error || errorMsg;
+          }
+        } catch {}
+      }
+
+      if (saved) {
         setShowEmpModal(false);
         loadData();
       } else {
-        alert(data.error || 'Failed to save employee.');
+        alert(errorMsg);
       }
     } catch (e: any) {
       alert(e?.message || 'Error saving employee');
@@ -307,11 +363,19 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
       return;
     }
 
+    const escapeHtml = (str: any) => String(str ?? '').replace(/[&<>"']/g, (m) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[m] || m));
+
     const printContent = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>NBR Tax Z-Report - Shift ${shift.id}</title>
+        <title>NBR Tax Z-Report - Shift ${escapeHtml(shift.id)}</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; color: #1e293b; line-height: 1.5; }
           .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
@@ -344,10 +408,10 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
         <div class="grid">
           <div class="card">
             <div class="card-title">Cashier Identification & Timeline</div>
-            <div class="row"><span class="label">Cashier Name:</span><span class="value">${cashierName}</span></div>
-            <div class="row"><span class="label">Staff ID:</span><span class="value">${cashierId}</span></div>
-            <div class="row"><span class="label">Assigned Role:</span><span class="value">${cashierRole}</span></div>
-            <div class="row"><span class="label">Shift Session ID:</span><span class="value">${shift.id}</span></div>
+            <div class="row"><span class="label">Cashier Name:</span><span class="value">${escapeHtml(cashierName)}</span></div>
+            <div class="row"><span class="label">Staff ID:</span><span class="value">${escapeHtml(cashierId)}</span></div>
+            <div class="row"><span class="label">Assigned Role:</span><span class="value">${escapeHtml(cashierRole)}</span></div>
+            <div class="row"><span class="label">Shift Session ID:</span><span class="value">${escapeHtml(shift.id)}</span></div>
             <div class="row"><span class="label">Shift Opened:</span><span class="value">${new Date(shift.opened_at).toLocaleString()}</span></div>
             <div class="row"><span class="label">Shift Closed:</span><span class="value">${shift.closed_at ? new Date(shift.closed_at).toLocaleString() : 'ACTIVE STILL OPEN'}</span></div>
           </div>
@@ -368,6 +432,12 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
           <div class="row"><span class="label">+ Cash Sales:</span><span class="value">${cashSales.toFixed(3)} BHD</span></div>
           <div class="row highlight"><span class="label"><strong>Expected Drawer Total:</strong></span><span class="value" style="color: #2563eb;"><strong>${expectedDrawer.toFixed(3)} BHD</strong></span></div>
           <div class="row"><span class="label"><strong>Actual Counted Cash:</strong></span><span class="value"><strong>${actualCash.toFixed(3)} BHD</strong></span></div>
+          <div class="row"><span class="label">Discrepancy (Variance):</span><span class="value">${validation.variance.toFixed(3)} BHD</span></div>
+
+          <div class="verdict verdict-${validation.status}">
+            AUDIT VERDICT: ${escapeHtml(validation.label)}
+          </div>
+        </div>
           <div class="row"><span class="label">Discrepancy (Variance):</span><span class="value">${validation.variance.toFixed(3)} BHD</span></div>
 
           <div class="verdict verdict-${validation.status}">
@@ -434,7 +504,7 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
           </div>
 
           <button
-            onClick={loadData}
+            onClick={() => loadData()}
             className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition border border-slate-700 cursor-pointer"
             title="Refresh Data"
           >

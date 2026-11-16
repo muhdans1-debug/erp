@@ -309,6 +309,131 @@ fastify.post('/api/products', async (req, reply) => {
   }
 });
 
+fastify.post('/api/products/bulk-upsert', async (request, reply) => {
+  try {
+    const { products } = request.body || {};
+    if (!Array.isArray(products) || products.length === 0) {
+      return reply.status(400).send({ error: 'No products provided' });
+    }
+
+    let createdCount = 0;
+    for (const p of products) {
+      const pid = String(p.id || p.barcode || crypto.randomUUID()).trim();
+      const barcode = p.barcode ? String(p.barcode).trim() : pid;
+      const name = String(p.name || 'Product').trim();
+      const sellingPrice = Number(p.sellingPrice ?? p.price ?? 0);
+      const purchasePrice = Number(p.purchasePrice ?? p.unitCost ?? 0);
+      const unitCost = Number(p.unitCost ?? p.purchasePrice ?? 0);
+      const stockQuantity = Number(p.stockQuantity ?? 10);
+      const minThreshold = Number(p.minThreshold ?? 10);
+      const maxThreshold = Number(p.maxThreshold ?? 50);
+      const category = (p.category || 'ESSENTIALS').toUpperCase();
+      const vatRate = p.vatRate !== undefined ? Number(p.vatRate) : 10;
+      const taxRate = p.taxRate !== undefined ? Number(p.taxRate) : 0.1;
+      const is_weighed_item = p.is_weighed_item ? 1 : 0;
+      const tenantId = p.tenantId || 'tenant_askar_01';
+      const distributorId = p.distributorId || null;
+      const supplierName = p.supplierName || null;
+      const supplierEmail = p.supplierEmail || null;
+      const updatedAt = new Date().toISOString();
+
+      await db.execute({
+        sql: `INSERT INTO Product (
+          id, barcode, name, sellingPrice, purchasePrice, unitCost, 
+          stockQuantity, minThreshold, maxThreshold, category, vatRate, taxRate, 
+          is_weighed_item, tenantId, distributorId, supplierName, supplierEmail, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          barcode = excluded.barcode,
+          name = excluded.name,
+          sellingPrice = excluded.sellingPrice,
+          purchasePrice = excluded.purchasePrice,
+          unitCost = excluded.unitCost,
+          stockQuantity = excluded.stockQuantity,
+          category = excluded.category,
+          vatRate = excluded.vatRate,
+          taxRate = excluded.taxRate,
+          is_weighed_item = excluded.is_weighed_item,
+          updatedAt = excluded.updatedAt`,
+        args: [
+          pid, barcode, name, sellingPrice, purchasePrice, unitCost,
+          stockQuantity, minThreshold, maxThreshold, category, vatRate, taxRate,
+          is_weighed_item, tenantId, distributorId, supplierName, supplierEmail, updatedAt
+        ]
+      });
+      createdCount++;
+    }
+
+    return { success: true, createdCount, total: products.length };
+  } catch (err) {
+    return reply.status(500).send({ error: 'Bulk upsert failed', details: err?.message });
+  }
+});
+
+fastify.post('/api/sync/pim-push', async (request, reply) => {
+  try {
+    const { batch } = request.body || {};
+    if (!Array.isArray(batch) || batch.length === 0) {
+      return reply.status(400).send({ error: 'No batch items provided' });
+    }
+
+    const syncedIds = [];
+    for (const item of batch) {
+      const localId = item.local_id || item.id;
+      const data = item.data || item;
+      const cleanBarcode = item.barcode ? String(item.barcode).trim() : (data.barcode ? String(data.barcode).trim() : String(localId));
+      const pid = String(data.id || cleanBarcode || localId).trim();
+      const name = String(data.name || 'Product').trim();
+      const sellingPrice = Number(data.sellingPrice ?? data.price ?? 0);
+      const purchasePrice = Number(data.purchasePrice ?? data.unitCost ?? 0);
+      const unitCost = Number(data.unitCost ?? data.purchasePrice ?? 0);
+      const stockQuantity = Number(data.stockQuantity ?? data.intakeQty ?? 10);
+      const minThreshold = Number(data.minThreshold ?? 10);
+      const maxThreshold = Number(data.maxThreshold ?? 50);
+      const category = (data.category || 'ESSENTIALS').toUpperCase();
+      const vatRate = data.vatRate !== undefined ? Number(data.vatRate) : 10;
+      const taxRate = data.taxRate !== undefined ? Number(data.taxRate) : 0.1;
+      const is_weighed_item = data.is_weighed_item ? 1 : 0;
+      const tenantId = data.tenantId || 'tenant_askar_01';
+      const distributorId = data.distributorId || null;
+      const supplierName = data.supplierName || null;
+      const supplierEmail = data.supplierEmail || null;
+      const updatedAt = new Date().toISOString();
+
+      await db.execute({
+        sql: `INSERT INTO Product (
+          id, barcode, name, sellingPrice, purchasePrice, unitCost, 
+          stockQuantity, minThreshold, maxThreshold, category, vatRate, taxRate, 
+          is_weighed_item, tenantId, distributorId, supplierName, supplierEmail, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          barcode = excluded.barcode,
+          name = excluded.name,
+          sellingPrice = excluded.sellingPrice,
+          purchasePrice = excluded.purchasePrice,
+          unitCost = excluded.unitCost,
+          stockQuantity = excluded.stockQuantity,
+          category = excluded.category,
+          vatRate = excluded.vatRate,
+          taxRate = excluded.taxRate,
+          is_weighed_item = excluded.is_weighed_item,
+          updatedAt = excluded.updatedAt`,
+        args: [
+          pid, cleanBarcode, name, sellingPrice, purchasePrice, unitCost,
+          stockQuantity, minThreshold, maxThreshold, category, vatRate, taxRate,
+          is_weighed_item, tenantId, distributorId, supplierName, supplierEmail, updatedAt
+        ]
+      });
+
+      if (localId) syncedIds.push(localId);
+    }
+
+    return { success: true, syncedIds, processedCount: syncedIds.length };
+  } catch (err) {
+    return reply.status(500).send({ error: 'PIM push sync failed', details: err?.message });
+  }
+});
+
 fastify.get('/api/distributors', async (_req, reply) => {
   try {
     const res = await db.execute('SELECT * FROM Distributor ORDER BY name ASC');
@@ -332,11 +457,80 @@ fastify.post('/api/verify-pin', async (req, reply) => {
 // Telemetry & Register Spy In-Memory Relays
 const fleetMap = new Map();
 let latestCart = { counterId: 'Counter 1', items: [], updatedAt: Date.now() };
+let pendingFleetCommands = [];
+
+const normalizeTerminalId = (rawId) => {
+  const clean = String(rawId || '').trim();
+  const upper = clean.toUpperCase();
+  if (!clean || clean === 'SUNMI-D2-REG01' || clean === '1' || upper === 'T1' || clean.toLowerCase() === 'sunmi') return 'T1';
+  if (clean === 'F100' || clean === 'F100-POS' || clean === '2' || upper === 'T2' || clean.toLowerCase() === 'feitian' || clean.toLowerCase() === 'pim') return 'T2';
+  if (clean === 'LAPTOP-01' || clean === 'WEB-POS' || clean === '3' || upper === 'T3' || clean.toLowerCase() === 'desktop' || clean.toLowerCase() === 'laptop') return 'T3';
+  if (upper === 'T4' || clean === '4' || upper === 'LAPTOP-02' || upper === 'LAPTOP2' || upper === 'DESKTOP-02' || upper === 'DESKTOP2') return 'T4';
+  if (upper === 'M1' || upper === 'PHONE-01' || upper === 'MOBILE-01') return 'M1';
+  if (upper === 'M2' || upper === 'PHONE-02' || upper === 'MOBILE-02') return 'M2';
+  return upper;
+};
+
+const getFriendlyTerminalName = (id, customName) => {
+  if (customName && customName.trim()) return customName.trim();
+  if (id === 'T1') return 'Counter 1 (Sunmi D2 Mini)';
+  if (id === 'T2') return 'Counter 2 (Feitian F100)';
+  if (id === 'T3') return 'Counter 3 (Desktop Web POS)';
+  if (id === 'T4') return 'Counter 4 (Desktop Web POS 2)';
+  if (id === 'M1') return 'Floor Mobile 1 (Staff Phone)';
+  if (id === 'M2') return 'Floor Mobile 2 (Delivery/Backstore)';
+  return `Register ${id}`;
+};
+
+// Seed default fleet entries
+const DEFAULT_FLEET = ['T1', 'T2', 'T3', 'T4', 'M1', 'M2'];
+for (const tid of DEFAULT_FLEET) {
+  fleetMap.set(tid, {
+    terminalId: tid,
+    terminalName: getFriendlyTerminalName(tid),
+    cashierName: tid.startsWith('M') ? 'Staff' : `Cashier ${tid.replace(/\D/g, '') || '1'}`,
+    status: 'IDLE',
+    items: [],
+    itemCount: 0,
+    total: 0,
+    customerName: 'Walk-in',
+    lastSeen: 0,
+    updatedAt: 0
+  });
+}
+
+function popFleetCommands(targetId) {
+  const normId = normalizeTerminalId(targetId);
+  const now = Date.now();
+  const matched = [];
+  pendingFleetCommands = pendingFleetCommands.filter((cmd) => {
+    if (now - cmd.timestamp > 60000) return false;
+    if (cmd.terminalId === normId || cmd.terminalId === 'ALL' || normId === 'ALL') {
+      matched.push({
+        command: cmd.command,
+        type: cmd.command,
+        payload: cmd.payload,
+        id: cmd.id
+      });
+      return false;
+    }
+    return true;
+  });
+  return matched;
+}
 
 fastify.post('/api/heartbeat', async (req, reply) => {
   const body = req.body || {};
-  const id = body.terminalId || body.id || 'T1';
-  fleetMap.set(id, { ...body, lastSeen: Date.now(), isOnline: true });
+  const id = normalizeTerminalId(body.terminalId || body.id || 'T1');
+  const existing = fleetMap.get(id) || {};
+  fleetMap.set(id, {
+    ...existing,
+    ...body,
+    terminalId: id,
+    terminalName: getFriendlyTerminalName(id, body.terminalName || existing.terminalName),
+    lastSeen: Date.now(),
+    isOnline: true
+  });
   return { success: true };
 });
 
@@ -344,7 +538,7 @@ fastify.get('/api/hardware/fleet', async (_req, reply) => {
   const list = [];
   const now = Date.now();
   for (const [id, t] of fleetMap.entries()) {
-    list.push({ ...t, isOnline: (now - t.lastSeen) < 15000 });
+    list.push({ ...t, isOnline: (now - (t.lastSeen || 0)) < 45000 });
   }
   return { success: true, terminals: list };
 });
@@ -358,6 +552,227 @@ fastify.post('/api/hardware/cart-stream', async (req, reply) => {
 fastify.get('/api/hardware/cart-state', async (_req, reply) => {
   return { success: true, cart: latestCart };
 });
+
+async function loadFleetRegistryFromDb() {
+  try {
+    const res = await db.execute({
+      sql: `SELECT value FROM StoreSetting WHERE key = 'fleet_registers_registry' LIMIT 1`,
+      args: []
+    });
+    if (res.rows && res.rows.length > 0 && res.rows[0].value) {
+      const parsed = JSON.parse(String(res.rows[0].value));
+      if (parsed && typeof parsed === 'object') {
+        for (const tid of Object.keys(parsed)) {
+          const dbReg = parsed[tid];
+          const memReg = fleetMap.get(tid);
+          if (!memReg || (dbReg.lastSeen && dbReg.lastSeen >= (memReg.lastSeen || 0))) {
+            fleetMap.set(tid, {
+              ...memReg,
+              ...dbReg
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+}
+
+async function saveFleetRegistryToDb() {
+  try {
+    const obj = {};
+    for (const [k, v] of fleetMap.entries()) {
+      obj[k] = v;
+    }
+    await db.execute({
+      sql: `INSERT INTO StoreSetting (key, value, updatedAt)
+            VALUES ('fleet_registers_registry', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updatedAt = CURRENT_TIMESTAMP`,
+      args: [JSON.stringify(obj)]
+    });
+  } catch {}
+}
+
+// Live Register Cart Snapshot & Ingest (Multi-Register Fleet Spy)
+fastify.get('/api/register/cart/live', async (req, reply) => {
+  await loadFleetRegistryFromDb();
+  const now = Date.now();
+  const registers = [];
+  for (const [tid, reg] of fleetMap.entries()) {
+    const isOnline = (now - (reg.lastSeen || reg.updatedAtEpoch || 0)) < 45000;
+    registers.push({
+      ...reg,
+      isOnline,
+      connectionStatus: isOnline ? 'ONLINE' : 'OFFLINE',
+      secondsSinceLastSeen: Math.floor((now - (reg.lastSeen || 0)) / 1000)
+    });
+  }
+  registers.sort((a, b) => a.terminalId.localeCompare(b.terminalId));
+
+  const requestedId = normalizeTerminalId(req.query?.terminalId || req.query?.terminal);
+  const targetReg = registers.find(r => r.terminalId === requestedId) ||
+                    registers.find(r => r.isOnline && r.items && r.items.length > 0) ||
+                    registers[0];
+
+  return {
+    success: true,
+    registers,
+    activeCount: registers.filter(r => r.isOnline).length,
+    selectedTerminalId: targetReg?.terminalId || 'T1',
+    terminalId: targetReg?.terminalId || 'T1',
+    terminalName: targetReg?.terminalName || 'Counter 1',
+    items: targetReg?.items || [],
+    total: targetReg?.total || 0,
+    customerName: targetReg?.customerName || 'Walk-in',
+    cart: targetReg,
+    payload: targetReg,
+    timestamp: now
+  };
+});
+
+fastify.post('/api/register/cart/live', async (req, reply) => {
+  await loadFleetRegistryFromDb();
+  const body = req.body || {};
+  const payload = body.payload || body;
+  const tid = normalizeTerminalId(payload.terminalId || body.terminalId || 'T1');
+  const now = Date.now();
+  const nowIso = new Date().toISOString();
+
+  const existing = fleetMap.get(tid) || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const total = Number(payload.total || 0);
+
+  const regSnapshot = {
+    ...existing,
+    terminalId: tid,
+    terminalName: getFriendlyTerminalName(tid, payload.terminalName || body.terminalName),
+    cashierName: payload.cashierName || body.cashierName || existing.cashierName || 'Cashier',
+    items,
+    itemCount: items.reduce((s, i) => s + (Number(i.quantity ?? i.qty ?? 1)), 0),
+    total,
+    customer: payload.customer || null,
+    customerName: payload.customer?.name || payload.customerName || 'Walk-in',
+    activeCartId: payload.activeCartId || '1',
+    status: (items.length > 0) ? 'ACTIVE_CART' : 'IDLE',
+    updatedAt: nowIso,
+    updatedAtEpoch: now,
+    lastSeen: now,
+    isOnline: true
+  };
+
+  fleetMap.set(tid, regSnapshot);
+  latestCart = regSnapshot;
+
+  await saveFleetRegistryToDb();
+  const commands = popFleetCommands(tid);
+  return { ok: true, success: true, updated: true, terminalId: tid, commands, serverEpoch: now };
+});
+
+// Register Heartbeat
+fastify.post('/api/register/heartbeat', async (req, reply) => {
+  await loadFleetRegistryFromDb();
+  const body = req.body || {};
+  const tid = normalizeTerminalId(body.terminalId || body.id || 'T1');
+  const now = Date.now();
+  const existing = fleetMap.get(tid) || {
+    terminalId: tid,
+    terminalName: getFriendlyTerminalName(tid),
+    cashierName: 'Cashier',
+    status: 'IDLE',
+    items: [],
+    itemCount: 0,
+    total: 0,
+    customerName: 'Walk-in'
+  };
+
+  fleetMap.set(tid, {
+    ...existing,
+    lastSeen: now,
+    cashierName: body.cashierName || existing.cashierName,
+    isOnline: true
+  });
+
+  await saveFleetRegistryToDb();
+  const commands = popFleetCommands(tid);
+  return { success: true, terminalId: tid, isOnline: true, commands };
+});
+
+fastify.get('/api/register/heartbeat', async (req, reply) => {
+  const tid = normalizeTerminalId(req.query?.terminalId || req.query?.id || 'T1');
+  const now = Date.now();
+  if (fleetMap.has(tid)) {
+    const existing = fleetMap.get(tid);
+    existing.lastSeen = now;
+    existing.isOnline = true;
+  }
+  const commands = popFleetCommands(tid);
+  return { success: true, terminalId: tid, timestamp: now, commands };
+});
+
+// Remote Register Commands (Drawer Kick, Clear Cart, Lock Register)
+fastify.post('/api/register/command', async (req, reply) => {
+  const body = req.body || {};
+  const rawTid = body.terminalId || body.terminal || req.query?.terminalId;
+  const terminalId = rawTid && String(rawTid).toUpperCase() !== 'ALL'
+    ? normalizeTerminalId(rawTid)
+    : 'ALL';
+  const rawCmd = String(body.command || body.type || req.query?.command || '').trim().toUpperCase();
+  if (!rawCmd) return reply.status(400).send({ error: 'command required' });
+
+  const cleanCmd = rawCmd.startsWith('REMOTE_') ? rawCmd.replace('REMOTE_', '') : rawCmd;
+  const cmdId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  const newCmd = {
+    id: cmdId,
+    terminalId,
+    command: cleanCmd,
+    payload: body.payload !== undefined ? body.payload : (body.command ? body : {}),
+    timestamp: Date.now()
+  };
+  pendingFleetCommands.push(newCmd);
+
+  return { success: true, dispatched: true, terminalId, command: cleanCmd, commandId: cmdId };
+});
+
+fastify.get('/api/register/command', async (req, reply) => {
+  const terminalId = normalizeTerminalId(req.query?.terminalId || 'ALL');
+  const commands = popFleetCommands(terminalId);
+  return { success: true, terminalId, commands };
+});
+
+// Cash Drawer Kick Endpoint
+const handleDrawerKick = async (req, reply) => {
+  const body = req.body || {};
+  const rawTerminal = body.terminalId || body.targetTerminal || req.query?.terminalId || 'T1';
+  const terminalId = normalizeTerminalId(rawTerminal);
+  const cmdId = `kick_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  pendingFleetCommands.push({
+    id: cmdId,
+    terminalId,
+    command: 'DRAWER_KICK',
+    payload: {
+      reason: body.reason || 'MANUAL_TRIGGER',
+      cashier: body.cashierName || 'Cashier',
+      timestamp: Date.now()
+    },
+    timestamp: Date.now()
+  });
+
+  return {
+    success: true,
+    dispatched: true,
+    terminalId,
+    commandId: cmdId,
+    message: `Cash drawer kick signal dispatched to terminal ${terminalId}`
+  };
+};
+
+fastify.post('/api/hardware/drawer-kick', handleDrawerKick);
+fastify.get('/api/hardware/drawer-kick', handleDrawerKick);
+fastify.post('/api/drawer-kick', handleDrawerKick);
+fastify.get('/api/drawer-kick', handleDrawerKick);
 
 // ROUTE: Customer Lookup by Phone Number, Name, CPR, or ID (Hardened & Sanitized)
 fastify.post('/api/customers/lookup', async (request, reply) => {
@@ -378,32 +793,59 @@ fastify.post('/api/customers/lookup', async (request, reply) => {
       .replace(/^0+/, '');
     const sanitizedCpr = cleanQuery.replace(/[\s-]/g, '');
 
-    // Public lookup strictly excludes sensitive access_token credential (Resolved PWA-SEC-02)
-    const result = await db.execute({
-      sql: `SELECT id, name, phone, COALESCE(balance, 0.0) as balance 
-            FROM Customer 
-            WHERE name LIKE ? 
-               OR phone = ? 
-               OR phone LIKE ? 
-               OR cpr = ? 
-               OR id = ? 
-               OR access_token = ?
-               OR cardUid = ?
-               OR nfcCardId = ?
-               OR nfc_card_id = ?
-            LIMIT 8`,
-      args: [
-        `%${cleanQuery}%`,
-        sanitizedPhone,
-        `%${sanitizedPhone}%`,
-        sanitizedCpr,
-        cleanQuery,
-        cleanQuery,
-        cleanQuery,
-        cleanQuery,
-        cleanQuery
-      ]
-    });
+    const isPosClient = request.headers['x-pos-client'] === 'store-pos' || 
+                        request.headers['x-manager-pin'] === '9999' ||
+                        request.query?.source === 'pos';
+
+    let result;
+    if (isPosClient) {
+      // In-store cashier POS lookup (supports searching customers by name or partial phone)
+      result = await db.execute({
+        sql: `SELECT id, name, phone, COALESCE(balance, 0.0) as balance 
+              FROM Customer 
+              WHERE name LIKE ? 
+                 OR phone = ? 
+                 OR phone LIKE ? 
+                 OR cpr = ? 
+                 OR id = ? 
+                 OR access_token = ?
+                 OR cardUid = ?
+                 OR nfcCardId = ?
+              LIMIT 8`,
+        args: [
+          `%${cleanQuery}%`,
+          sanitizedPhone,
+          `%${sanitizedPhone}%`,
+          sanitizedCpr,
+          cleanQuery,
+          cleanQuery,
+          cleanQuery,
+          cleanQuery
+        ]
+      });
+    } else {
+      // Public Web Client: Strict Privacy Guard (NO name searching, NO directory browsing)
+      // Only matches exact private UUID, secret access_token, or exact full phone/CPR
+      result = await db.execute({
+        sql: `SELECT id, name, phone 
+              FROM Customer 
+              WHERE id = ? 
+                 OR access_token = ? 
+                 OR phone = ? 
+                 OR cpr = ?
+                 OR cardUid = ?
+                 OR nfcCardId = ?
+              LIMIT 1`,
+        args: [
+          cleanQuery,
+          cleanQuery,
+          sanitizedPhone,
+          sanitizedCpr,
+          cleanQuery,
+          cleanQuery
+        ]
+      });
+    }
 
     const matches = (result.rows || []).map(row => ({
       id: row.id,
@@ -587,7 +1029,7 @@ const handleKhataStatementOrTab = async (request, reply) => {
     // 1. Look up customer in unified Customer table supporting all ID/NFC columns
     const authCheck = await db.execute({
       sql: `SELECT id, name, COALESCE(balance, 0.0) AS balance, COALESCE(credit_limit, 30.0) AS credit_limit, 
-                   phone, access_token, cardUid, cpr, mess_id, 
+                   phone, access_token, cardUid, cpr, mess_id, is_active, isActive,
                    COALESCE(NULLIF(khataPin, ''), NULLIF(khata_pin, ''), NULLIF(pin, '')) as pin
             FROM Customer 
             WHERE access_token = ? OR id = ? OR phone = ? OR phone = ? OR cardUid = ? OR nfcCardId = ? OR nfc_card_id = ? OR cpr = ? 
@@ -623,24 +1065,30 @@ const handleKhataStatementOrTab = async (request, reply) => {
         }).catch(() => ({ rows: [] }));
 
         const recentPurchases = await db.execute({
-          sql: `SELECT id, amount, type, reference, timestamp 
+          sql: `SELECT id, amount, type, reference, running_balance, timestamp, created_at 
                 FROM KhataLedger 
                 WHERE customerId = ? 
-                ORDER BY timestamp DESC LIMIT 3`,
+                ORDER BY timestamp DESC, id DESC LIMIT 100`,
           args: [customer.id]
         }).catch(() => ({ rows: [] }));
 
+        const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
+        const allLedger = recentPurchases.rows || [];
         return reply.send({
           success: true,
           id: customer.id,
           name: customer.name,
           balance: Number(customer.balance ?? 0),
           credit_limit: Number(customer.credit_limit ?? 30.0),
-          isLocked: true,
+          is_active: isActiveNum,
+          isActive: Boolean(isActiveNum),
+          isLocked: false,
           pendingClaims: pendingClaims.rows || [],
-          recentPurchases: recentPurchases.rows || [],
-          ledger: recentPurchases.rows || [],
-          message: 'PIN or Pairing Token required for detailed line-item statement'
+          recentPurchases: allLedger,
+          transactions: allLedger,
+          ledger: allLedger,
+          totalTransactions: allLedger.length,
+          message: 'Khata Tab with complete transaction ledger'
         });
       }
 
@@ -697,18 +1145,23 @@ const handleKhataStatementOrTab = async (request, reply) => {
         args: [customer.id]
       }).catch(() => ({ rows: [] }));
 
+      const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
       return reply.send({
         success: true,
         id: customer.id,
         name: customer.name,
         balance: Number(customer.balance ?? 0),
         credit_limit: Number(customer.credit_limit ?? 30.0),
+        is_active: isActiveNum,
+        isActive: Boolean(isActiveNum),
         phone: customer.phone,
         cpr: maskedCpr,
         token,
         pendingClaims: pendingClaims.rows || [],
-        recentPurchases: (ledgerQuery.rows || []).slice(0, 3),
-        ledger: ledgerQuery.rows || []
+        recentPurchases: ledgerQuery.rows || [],
+        transactions: ledgerQuery.rows || [],
+        ledger: ledgerQuery.rows || [],
+        totalTransactions: (ledgerQuery.rows || []).length
       });
     }
 
@@ -725,6 +1178,64 @@ fastify.get('/api/khata/:uuid/tab', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id/tab', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id', handleKhataStatementOrTab);
 fastify.get('/api/tab/:id', handleKhataStatementOrTab);
+
+// Sovereign Customer Self-Freeze / Kill-Switch Endpoint
+const handleKhataFreezeCloud = async (request, reply) => {
+  const { id } = request.params;
+  const { freeze, pin } = request.body || {};
+  const cleanId = String(id || '').trim();
+
+  try {
+    const custRes = await db.execute({
+      sql: `SELECT id, name, is_active, isActive, 
+                   COALESCE(NULLIF(khataPin, ''), NULLIF(khata_pin, ''), NULLIF(pin, '')) as pin
+            FROM Customer 
+            WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1`,
+      args: [cleanId, cleanId, cleanId]
+    });
+
+    if (!custRes.rows || custRes.rows.length === 0) {
+      return reply.code(404).send({ success: false, error: 'Customer account not found' });
+    }
+
+    const customer = custRes.rows[0];
+    const isCurrentlyActive = !(customer.is_active === 0 || customer.isActive === 0);
+    const shouldFreeze = freeze !== undefined ? Boolean(freeze) : isCurrentlyActive;
+    const newActiveState = shouldFreeze ? 0 : 1;
+
+    // Optional PIN verification if unfreezing an account that has a PIN set
+    if (!shouldFreeze && customer.pin && pin) {
+      const isValid = await verifyAndMigratePin(customer.id, pin, customer.pin);
+      if (!isValid) {
+        return reply.code(403).send({ success: false, error: 'Invalid PIN to unfreeze account' });
+      }
+    }
+
+    await db.execute({
+      sql: `UPDATE Customer SET is_active = ?, isActive = ?, updatedAt = datetime('now') WHERE id = ?`,
+      args: [newActiveState, newActiveState, customer.id]
+    });
+
+    return reply.send({
+      success: true,
+      id: customer.id,
+      name: customer.name,
+      is_active: newActiveState,
+      isActive: Boolean(newActiveState),
+      message: newActiveState === 0 
+        ? 'Khata successfully locked. Store credit purchases are disabled.'
+        : 'Khata unlocked. Store credit purchases are active.'
+    });
+  } catch (err) {
+    fastify.log.error(err, 'Khata freeze error');
+    return reply.code(500).send({ success: false, error: 'Failed to update Khata lock state' });
+  }
+};
+
+fastify.post('/api/khata/:id/freeze', handleKhataFreezeCloud);
+fastify.post('/khata/:id/freeze', handleKhataFreezeCloud);
+fastify.post('/api/customers/:id/freeze', handleKhataFreezeCloud);
+fastify.post('/customers/:id/freeze', handleKhataFreezeCloud);
 
 // Secure Tap Payments Gateway & Direct Fawri+ BenefitPay Initialization
 fastify.post('/api/checkout/init', async (request, reply) => {
@@ -1281,6 +1792,254 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
     return reply.status(500).send({ error: err.message });
   }
 });
+
+// --- CLOUD RESILIENT SYNC ENDPOINTS: Direct Turso LibSQL Execution ---
+
+// 1. Direct Khata Customer Debt Settlement & Repayment
+const handleCustomerSettleCloud = async (request, reply) => {
+  const { id } = request.params || {};
+  const { customerId, amount, amountPaid, paymentMethod, reference } = request.body || {};
+  const targetId = id || customerId;
+  const settleAmount = Number(amount ?? amountPaid ?? 0);
+
+  if (!targetId) {
+    return reply.status(400).send({ success: false, error: 'Customer ID is required' });
+  }
+  if (isNaN(settleAmount) || settleAmount <= 0) {
+    return reply.status(400).send({ success: false, error: 'Valid settlement amount is required' });
+  }
+
+  try {
+    const custRes = await db.execute({
+      sql: 'SELECT id, name, phone, balance, credit_limit as creditLimit FROM Customer WHERE id = ? LIMIT 1',
+      args: [targetId]
+    });
+    if (!custRes.rows || custRes.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: 'Customer not found' });
+    }
+    const customer = custRes.rows[0];
+
+    const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
+    const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
+    const nowIso = new Date().toISOString();
+    const ledgerId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+
+    // Insert into KhataLedger (negative amount for balance deduction)
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (
+        id, tenantId, customerId, amount, type, reference, running_balance,
+        syncStatus, timestamp, created_at
+      ) VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?)`,
+      args: [ledgerId, targetId, -settleAmount, payRef, nowIso, nowIso]
+    });
+
+    // Reconcile running sum and update Customer.balance
+    const sumRes = await db.execute({
+      sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
+      args: [targetId]
+    });
+    const newBalance = Number(Number(sumRes.rows[0]?.balance || 0).toFixed(3));
+
+    await db.execute({
+      sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
+      args: [newBalance, targetId]
+    });
+
+    return reply.send({
+      success: true,
+      message: 'Debt settled successfully',
+      customerName: customer.name,
+      amountPaid: settleAmount,
+      settledAmount: settleAmount,
+      previousBalance: Number(customer.balance || 0),
+      newBalance,
+      paymentMethod: paymentMethod || 'CASH',
+      receiptNo,
+      timestamp: nowIso
+    });
+  } catch (err) {
+    fastify.log.error(err, 'Cloud customer settle error');
+    return reply.status(500).send({ success: false, error: 'Failed to settle debt on cloud database', details: err?.message });
+  }
+};
+
+fastify.post('/api/customers/:id/settle', handleCustomerSettleCloud);
+fastify.post('/api/khata/:id/settle', handleCustomerSettleCloud);
+fastify.post('/api/khata/:id/pay', handleCustomerSettleCloud);
+fastify.post('/khata/:id/pay', handleCustomerSettleCloud);
+fastify.post('/api/khata/pay', handleCustomerSettleCloud);
+fastify.post('/khata/pay', handleCustomerSettleCloud);
+
+// 2. Direct Append-Only Khata Charge Endpoint
+const handleKhataChargeCloud = async (request, reply) => {
+  const { customerId, customer_id, id, amount, invoiceNo, reference, timestamp, createdAt } = request.body || {};
+  const effectiveId = customerId || customer_id || id;
+  const numAmount = Number(amount || 0);
+  const effectiveInvoiceNo = invoiceNo || reference || `INV-${Date.now()}`;
+  const nowIso = timestamp || createdAt || new Date().toISOString();
+
+  if (!effectiveId || isNaN(numAmount) || numAmount <= 0) {
+    return reply.status(400).send({ success: false, error: 'Valid customerId and positive amount are required' });
+  }
+
+  try {
+    // Verify customer exists and is not frozen
+    const custRes = await db.execute({
+      sql: 'SELECT id, name, is_active, isActive FROM Customer WHERE id = ? OR access_token = ? LIMIT 1',
+      args: [effectiveId, effectiveId]
+    });
+    if (!custRes.rows || custRes.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: 'Customer account not found' });
+    }
+    const customerRow = custRes.rows[0];
+    if (customerRow.is_active === 0 || customerRow.isActive === 0) {
+      return reply.status(403).send({
+        success: false,
+        error: 'Customer Khata account is FROZEN. Store credit purchases are locked by customer.',
+        isFrozen: true
+      });
+    }
+
+    const ledgerId = `khata_chg_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (
+        id, tenantId, customerId, amount, type, reference, running_balance,
+        syncStatus, timestamp, created_at
+      ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+      ON CONFLICT(id) DO NOTHING`,
+      args: [ledgerId, effectiveId, numAmount, effectiveInvoiceNo, nowIso, nowIso]
+    });
+
+    const sumRes = await db.execute({
+      sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
+      args: [effectiveId]
+    });
+    const newBalance = Number(Number(sumRes.rows[0]?.balance || 0).toFixed(3));
+
+    await db.execute({
+      sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
+      args: [newBalance, effectiveId]
+    });
+
+    return reply.send({
+      success: true,
+      message: 'Khata charge applied successfully',
+      customerId: effectiveId,
+      chargedAmount: numAmount,
+      newBalance,
+      invoiceNo: effectiveInvoiceNo
+    });
+  } catch (err) {
+    fastify.log.error(err, 'Cloud Khata charge error');
+    return reply.status(500).send({ success: false, error: 'Failed to record Khata charge', details: err?.message });
+  }
+};
+
+fastify.post('/api/khata/charge', handleKhataChargeCloud);
+fastify.post('/khata/charge', handleKhataChargeCloud);
+
+// 3. Direct Sales Sync Batch Drain Endpoint
+const handleSyncSalesCloud = async (request, reply) => {
+  const { sales } = request.body || {};
+  if (!Array.isArray(sales) || sales.length === 0) {
+    return reply.status(400).send({ error: 'No sales provided in sync batch' });
+  }
+
+  let processedCount = 0;
+  const affectedCustomerIds = new Set();
+
+  try {
+    for (const sale of sales) {
+      const invoiceNo = sale.invoiceNo || `INV-T-${Date.now()}`;
+      const total = Number(sale.total || sale.totalAmount || 0);
+      const subtotal = Number(sale.subtotal || total);
+      const paymentType = sale.paymentType || 'CASH';
+      const status = sale.status || 'COMPLETED';
+      const customerId = sale.customerId || null;
+      const employeeId = sale.employeeId || null;
+      const shiftId = sale.shiftId || null;
+      const createdAt = sale.createdAt || new Date().toISOString();
+      const terminalId = sale.terminalId || 'T1';
+      const items = Array.isArray(sale.items) ? sale.items : [];
+
+      await db.execute({
+        sql: `INSERT INTO Sale (id, invoiceNo, total, totalAmount, subtotal, paymentType, status, syncStatus, customerId, employeeId, shiftId, terminalId, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET syncStatus = 'SYNCED'`,
+        args: [sale.id, invoiceNo, total, total, subtotal, paymentType, status, customerId, employeeId, shiftId, terminalId, createdAt]
+      });
+
+      const isCreditSale =
+        paymentType === 'CREDIT' ||
+        paymentType === 'CREDIT_PERSONAL' ||
+        paymentType === 'CREDIT_MESS' ||
+        paymentType === 'NFC_CREDIT' ||
+        paymentType === 'MESS_KHATA';
+
+      if (customerId && isCreditSale) {
+        const ledgerId = `tx_inv_${invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        await db.execute({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance,
+            syncStatus, timestamp, created_at
+          ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+          ON CONFLICT(id) DO NOTHING`,
+          args: [ledgerId, customerId, total, invoiceNo, createdAt, createdAt]
+        });
+        affectedCustomerIds.add(customerId);
+      }
+
+      for (const item of items) {
+        const itemId = item.id || `si_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+        const prodId = item.productId || item.id;
+        const qty = Number(item.quantity ?? item.qty ?? 1);
+        const price = Number(item.priceAtSale ?? item.price ?? item.sellingPrice ?? 0);
+        const totalPrice = Number((item.total_price ?? (qty * price)).toFixed(3));
+        const vatRate = item.vatRateAtSale !== undefined ? Number(item.vatRateAtSale) : (item.vatRate !== undefined ? Number(item.vatRate) : 10.0);
+        const vatAmount = Number((item.vatAmount ?? (vatRate === 10 ? (totalPrice - (totalPrice / 1.10)) : 0)).toFixed(3));
+        const costPrice = Number(item.costAtSale ?? item.unitCost ?? 0);
+
+        await db.execute({
+          sql: `INSERT INTO SaleItem (id, saleId, productId, quantity, priceAtSale, costAtSale, vatRateAtSale, vatAmount, total_price, tenantId)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tenant_askar_01')
+                ON CONFLICT(id) DO UPDATE SET quantity = excluded.quantity, total_price = excluded.total_price`,
+          args: [itemId, sale.id, prodId, qty, price, costPrice, vatRate, vatAmount, totalPrice]
+        });
+
+        // Decrement stock in Turso
+        if (prodId) {
+          await db.execute({
+            sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?) WHERE id = ? OR barcode = ?',
+            args: [qty, prodId, prodId]
+          }).catch(() => {});
+        }
+      }
+      processedCount++;
+    }
+
+    // Reconcile affected customer balances
+    for (const custId of affectedCustomerIds) {
+      const sumRes = await db.execute({
+        sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
+        args: [custId]
+      });
+      const newBal = Number(Number(sumRes.rows[0]?.balance || 0).toFixed(3));
+      await db.execute({
+        sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
+        args: [newBal, custId]
+      });
+    }
+
+    return { success: true, processed: processedCount };
+  } catch (err) {
+    fastify.log.error(err, 'Cloud sales sync error');
+    return reply.status(500).send({ error: 'Sales sync to cloud database failed', details: err?.message });
+  }
+};
+
+fastify.post('/api/sync/sales', handleSyncSalesCloud);
+fastify.post('/api/sales/sync', handleSyncSalesCloud);
+
 
 // Vercel Serverless Function Handler (Protected against rewrite 404s)
 export { fastify };

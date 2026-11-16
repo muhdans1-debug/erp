@@ -6,17 +6,18 @@
     "pos-mvp",
     "askar-admin-dashboard",
     "askar-khata-pwa",
-    "askar-khata-api"
+    "askar-edge-api"
   ],
   "scripts": {
-    "dev": "npm --prefix pos-mvp run dev",
-    "dev:web": "npm --prefix pos-mvp run dev:web",
-    "server": "npm --prefix pos-mvp run server",
-    "dev:dashboard": "npm --prefix askar-admin-dashboard run dev:host",
-    "dev:khata": "npm --prefix askar-khata-pwa run dev:host",
-    "build": "npm --prefix pos-mvp run build",
-    "build:all": "npm --prefix pos-mvp run build && npm --prefix askar-admin-dashboard run build && npm --prefix askar-khata-pwa run build",
-    "preview": "npm --prefix pos-mvp run preview",
-    "tauri": "npm --prefix pos-mvp run tauri"
+    "dev:pos": "npm --prefix pos-mvp run dev",
+    "dev:dashboard": "npm --prefix askar-admin-dashboard run dev",
+    "dev:khata": "npm --prefix askar-khata-pwa run dev",
+    "dev:edge": "npm --prefix askar-edge-api run dev",
+    "build:pos": "npm --prefix pos-mvp run build",
+    "build:dashboard": "npm --prefix askar-admin-dashboard run build",
+    "build:khata": "npm --prefix askar-khata-pwa run build",
+    "build:apk": "powershell.exe -ExecutionPolicy Bypass -File pos-mvp/build_and_package_apk.ps1",
+    "deploy:edge": "npm --prefix askar-edge-api run deploy",
+    "deploy:dashboard": "npm --prefix askar-admin-dashboard run deploy"
   }
 }

@@ -4,8 +4,25 @@ import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import { generateNBRReceiptHtml, ReceiptTemplateProps } from './receiptTemplate';
 import { generateNbrTlvBase64 } from './nbrQr';
-export { generateNBRReceiptHtml };
-export type { ReceiptTemplateProps };
+import { getRegionalReceiptDateTime } from './time';
+import {
+  getNetworkPrinterConfig,
+  setNetworkPrinterConfig,
+  dispatchSunmiPrintJob,
+  testSunmiNetworkPrint,
+  isNativeSunmiHardware,
+  type NetworkPrinterConfig
+} from './networkPrinter';
+
+export {
+  generateNBRReceiptHtml,
+  getNetworkPrinterConfig,
+  setNetworkPrinterConfig,
+  dispatchSunmiPrintJob,
+  testSunmiNetworkPrint,
+  isNativeSunmiHardware
+};
+export type { ReceiptTemplateProps, NetworkPrinterConfig };
 
 // Initialize the printer Web Worker natively in Vite for off-main-thread receipt formatting
 const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefined'
@@ -370,15 +387,24 @@ export interface FullReceiptProps {
   cashTendered?: number;
   changeDue?: number;
   saleDate?: string | Date;
+  isReprint?: boolean;
 }
 
-// 58mm thermal paper fits 32 characters per line in standard font
-const formatTwoCols = (left: string, right: string, width = 32): string => {
+// 58mm thermal paper fits 32 characters per line in standard font (42 for 80mm)
+export const formatTwoCols = (left: string, right: string, width = 32): string => {
   const leftTrim = left.length > width - right.length - 1
     ? left.slice(0, width - right.length - 2) + '.'
     : left;
   const spaces = Math.max(1, width - leftTrim.length - right.length);
   return `${leftTrim}${' '.repeat(spaces)}${right}\n`;
+};
+
+export const centerText = (text: string, width = 32): string => {
+  const trimmed = text.trim();
+  if (trimmed.length >= width) return trimmed + '\n';
+  const leftPad = Math.floor((width - trimmed.length) / 2);
+  const rightPad = width - trimmed.length - leftPad;
+  return `${' '.repeat(leftPad)}${trimmed}${' '.repeat(rightPad)}\n`;
 };
 
 // Raw ESC/POS standard byte constants for direct execution
@@ -417,9 +443,531 @@ export const printRawEscPos = async (rawString: string): Promise<boolean> => {
   }
 };
 
+const escapeHtml = (str: any) => String(str ?? '').replace(/[&<>"']/g, (m) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#039;'
+}[m] || m));
+
+/**
+ * Generate in-memory CODE128 barcode data URL for receipt return scanning
+ */
+export const generateBarcodeDataUrl = (data: string): string => {
+  if (typeof document === 'undefined') return '';
+  try {
+    const cleanData = String(data || '').trim();
+    if (!cleanData) return '';
+    const canvas = document.createElement('canvas');
+    JsBarcode(canvas, cleanData, {
+      format: 'CODE128',
+      width: 2,
+      height: 44,
+      displayValue: false,
+      margin: 2,
+    });
+    return canvas.toDataURL('image/png');
+  } catch (err) {
+    console.warn('Barcode generation warning:', err);
+    return '';
+  }
+};
+
+/**
+ * Generate in-memory QR Code data URL for NBR TLV / Khata statements
+ */
+export const generateQrDataUrl = async (data: string, width = 140): Promise<string> => {
+  try {
+    const clean = String(data || '').trim();
+    if (!clean) return '';
+    return await QRCode.toDataURL(clean, {
+      width,
+      margin: 1,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+  } catch (err) {
+    console.warn('QR code generation warning:', err);
+    return '';
+  }
+};
+
+/**
+ * Wrap raw monospaced thermal slip text (Z-Reports, Khata statements, closeouts)
+ * into a standalone 58mm / 80mm printable HTML page with zero leading margins.
+ */
+export const wrapMonospaceTextToHtml = (text: string, title = 'Thermal Print Slip', extraHtml = ''): string => {
+  const is80mm = typeof window !== 'undefined' && localStorage.getItem('pos_receipt_format') === '80mm';
+  const widthMm = is80mm ? '70mm' : '48mm';
+  const pageSize = is80mm ? '80mm auto' : '58mm auto';
+  const fontSize = is80mm ? '11px' : '9.5px';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page {
+      size: ${pageSize};
+      margin: 0mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    body {
+      font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
+      font-weight: 600;
+      color: #000000;
+      width: ${widthMm};
+      max-width: ${widthMm};
+      margin: 0 auto;
+      padding: 1.5mm 1mm;
+      border: none;
+      box-sizing: border-box;
+      font-size: ${fontSize};
+      line-height: 1.25;
+      letter-spacing: -0.15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    @media print {
+      html, body {
+        margin: 0 auto !important;
+        background: #ffffff !important;
+      }
+      body {
+        width: ${widthMm} !important;
+        max-width: ${widthMm} !important;
+        margin: 0 auto !important;
+        padding: 1.5mm 1mm !important;
+        border: none !important;
+        box-sizing: border-box !important;
+      }
+    }
+  </style>
+</head>
+<body>${escapeHtml(text)}${extraHtml}</body>
+</html>`;
+};
+
+/**
+ * Isolated iframe printing engine.
+ * Renders ONLY the receipt slip into a headless iframe, completely detached from the POS
+ * application DOM. Guarantees 0 POS app bleed, 0 blank pages upfront, and exact 58mm/80mm roll width.
+ */
+export const printThermalSlipViaIframe = (htmlContent: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve(false);
+      return;
+    }
+
+    try {
+      const oldFrame = document.getElementById('pos-thermal-print-frame');
+      if (oldFrame && oldFrame.parentNode) {
+        try {
+          oldFrame.parentNode.removeChild(oldFrame);
+        } catch { }
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.id = 'pos-thermal-print-frame';
+      iframe.setAttribute(
+        'style',
+        'position:fixed;top:-10000px;left:-10000px;width:0px;height:0px;border:none;visibility:hidden;z-index:-9999;'
+      );
+      document.body.appendChild(iframe);
+
+      const frameDoc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!frameDoc || !iframe.contentWindow) {
+        console.warn('Thermal print iframe window unavailable');
+        resolve(false);
+        return;
+      }
+
+      frameDoc.open();
+      frameDoc.write(htmlContent);
+      frameDoc.close();
+
+      const triggerPrint = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+          resolve(true);
+        } catch (err) {
+          console.warn('Iframe print execution notice:', err);
+          resolve(false);
+        } finally {
+          setTimeout(() => {
+            try {
+              if (iframe.parentNode) {
+                iframe.parentNode.removeChild(iframe);
+              }
+            } catch { }
+          }, 45000);
+        }
+      };
+
+      if (frameDoc.readyState === 'complete') {
+        setTimeout(triggerPrint, 250);
+      } else {
+        iframe.onload = () => setTimeout(triggerPrint, 250);
+        setTimeout(triggerPrint, 600);
+      }
+    } catch (e) {
+      console.warn('printThermalSlipViaIframe error:', e);
+      resolve(false);
+    }
+  });
+};
+
+/**
+ * 58mm / 80mm Monospaced Sales Receipt Formatter (Exact Authentic Sunmi Hardware Format).
+ * Formats clean, 32-column text with authentic dividers, strict 2-column alignment, and zero artificial borders.
+ */
+export const formatSaleReceiptText = (props: FullReceiptProps): string => {
+  const is80mm = typeof window !== 'undefined' && localStorage.getItem('pos_receipt_format') === '80mm';
+  const width = is80mm ? 42 : 32;
+  const lineEqual = "=".repeat(width) + "\n";
+  const lineDash = "-".repeat(width) + "\n";
+
+  const shopName = props.shopName || "ASKAR SUPERMARKET";
+  const shopNameAr = "أسواق عسكر المركزية";
+  const shopAddress = props.shopAddress || "Askar, Kingdom of Bahrain";
+  const shopPhone = props.shopPhone || "Tel: +973 1700 0000";
+  const vatNumber = props.vatNumber || "200012345678901";
+
+  let cleanInvoice = (props.invoiceNo !== undefined && props.invoiceNo !== null) ? String(props.invoiceNo).trim() : '';
+  if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
+    cleanInvoice = 'INV-005000';
+  }
+  const finalInvoiceDisplay = cleanInvoice.startsWith('INV-')
+    ? cleanInvoice
+    : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
+
+  const formattedDate = getRegionalReceiptDateTime(props.saleDate);
+  const cashierName = props.cashierName || "Register 01";
+  const paymentMode = (props.paymentMode || "CASH").toUpperCase();
+
+  const total = Number(props.total || 0);
+  const subtotal = props.subtotal !== undefined
+    ? Number(props.subtotal)
+    : (props.vat !== undefined ? total - Number(props.vat) : Number((total / 1.1).toFixed(3)));
+  const vat = props.vat !== undefined
+    ? Number(props.vat)
+    : Number((total - subtotal).toFixed(3));
+
+  let out = "";
+  out += centerText(shopName, width);
+  out += centerText(shopNameAr, width);
+  out += centerText("Simplified Tax Invoice", width);
+  out += centerText("فاتورة ضريبية مبسطة", width);
+  out += centerText(`TRN: ${vatNumber}`, width);
+  out += centerText(shopAddress, width);
+  out += centerText(shopPhone, width);
+  if (props.isReprint) {
+    out += lineEqual;
+    out += centerText("*** DUPLICATE / REPRINT COPY ***", width);
+    out += centerText("نسخة معاد طباعتها", width);
+    out += lineEqual;
+  } else {
+    out += lineEqual;
+  }
+
+  out += formatTwoCols("Invoice:", finalInvoiceDisplay, width);
+  out += formatTwoCols("Date:", formattedDate, width);
+  out += formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`, width);
+  if (props.customerName && !props.isMess) {
+    out += formatTwoCols("Customer:", props.customerName, width);
+  }
+  out += lineDash;
+  out += formatTwoCols("Item / Description", "Qty   Amt(BD)", width);
+  out += lineDash;
+
+  // Group items
+  const groupedMap = new Map<string, { item: ReceiptItem; count: number }>();
+  for (const item of props.items || []) {
+    const key = item.id || item.name;
+    const itemQty = Number((item as any).qty ?? (item as any).quantity ?? 1);
+    if (groupedMap.has(key)) {
+      groupedMap.get(key)!.count += itemQty;
+    } else {
+      groupedMap.set(key, { item, count: itemQty });
+    }
+  }
+
+  let totalQty = 0;
+  let idx = 0;
+  for (const { item, count } of groupedMap.values()) {
+    idx += 1;
+    const isScale = Boolean((item as any).isScaleItem ?? (item as any).is_weighed_item);
+    totalQty += (isScale ? 1 : count);
+    const unitPrice = Number(item.price ?? (item as any).sellingPrice ?? 0);
+    const lineTotal = Number(item.total_price ?? (unitPrice * count));
+    const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && (item as any).taxRate !== 0);
+
+    const itemLabel = `${idx}. ${item.name}${isVat10 ? ' *' : ''}`;
+    out += `${itemLabel}\n`;
+
+    const qtyLine = isScale
+      ? `  ${count.toFixed(3)}kg @ BD ${unitPrice.toFixed(3)}`
+      : `  ${count}x @ BD ${unitPrice.toFixed(3)}`;
+    out += formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`, width);
+  }
+
+  out += lineDash;
+  out += formatTwoCols("Subtotal (Excl. VAT):", `BD ${subtotal.toFixed(3)}`, width);
+  out += formatTwoCols("VAT (10%):", `BD ${vat.toFixed(3)}`, width);
+  out += lineDash;
+  out += formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`, width);
+  out += centerText("(Inclusive of 10% VAT)", width);
+  out += lineDash;
+
+  // Payments
+  if (paymentMode === 'CASH') {
+    out += centerText("*** Paid via CASH ***", width);
+    const tendered = props.cashTendered !== undefined ? Number(props.cashTendered) : total;
+    const change = props.changeDue !== undefined ? Number(props.changeDue) : (tendered > total ? tendered - total : 0);
+    out += formatTwoCols("Cash Tendered:", `BD ${tendered.toFixed(3)}`, width);
+    out += formatTwoCols("Change Returned:", `BD ${change.toFixed(3)}`, width);
+    out += lineDash;
+  } else if (paymentMode === 'BENEFIT_PAY') {
+    out += centerText("*** Paid via BENEFITPAY ***", width);
+    out += formatTwoCols("Method:", "BenefitPay Fawri+", width);
+    if (props.transactionRef) {
+      out += formatTwoCols("Reference No:", props.transactionRef, width);
+    }
+    out += lineDash;
+  } else if (paymentMode === 'CARD') {
+    out += centerText("*** Paid via CARD ***", width);
+    out += formatTwoCols("Terminal:", "POS Contactless EMV", width);
+    out += lineDash;
+  } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
+    const group = props.groupName || props.customerName || "Shared Mess";
+    out += centerText("*** MESS SPLIT-BILL RECEIPT ***", width);
+    out += formatTwoCols("Mess Account:", group, width);
+    if (props.shopperName) out += formatTwoCols("Shopper:", props.shopperName, width);
+    if (props.cardUid) out += formatTwoCols("Card UID:", String(props.cardUid), width);
+    out += formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`, width);
+    out += formatTwoCols("Pool Members:", String(props.members?.length || 0), width);
+    out += lineDash;
+    out += "EQUAL SPLIT SHARE PER MEMBER:\n";
+    if (Array.isArray(props.members)) {
+      props.members.forEach((m: any) => {
+        const splitVal = Number(m.amount ?? m.splitAmount ?? (total / Math.max(1, props.members!.length))).toFixed(3);
+        out += formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`, width);
+      });
+    }
+    out += lineDash;
+    out += "Shares synced to Khata Account\n";
+    out += lineDash;
+  } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA') {
+    out += centerText("*** KHATA CREDIT TAB ***", width);
+    if (props.customerName) out += formatTwoCols("Customer:", props.customerName, width);
+    if (props.customerCardUid) out += formatTwoCols("Card UID:", props.customerCardUid, width);
+    if (props.previousBalance !== undefined) {
+      out += formatTwoCols("Previous Balance:", `BD ${Number(props.previousBalance).toFixed(3)}`, width);
+    }
+    out += formatTwoCols("Added to Tab:", `+BD ${total.toFixed(3)}`, width);
+    out += lineDash;
+    out += formatTwoCols("NEW BALANCE DUE:", `BD ${Number(props.newBalance || 0).toFixed(3)}`, width);
+    out += lineDash;
+  }
+
+  out += centerText(`Total Items Count: ${totalQty} (${groupedMap.size} lines)`, width);
+  out += centerText("* Item includes 10% VAT", width);
+  out += centerText("THANK YOU FOR SHOPPING!", width);
+  out += centerText("شكراً لتسوقكم معنا!", width);
+  out += centerText("Returns accepted with invoice in 3 days", width);
+  out += lineEqual;
+
+  return out;
+};
+
+/**
+ * Generate full NBR Simplified Tax Invoice HTML with embedded NBR QR code,
+ * Return barcode, Mess split details, Khata tab, and zero-margin 58mm/80mm thermal CSS.
+ * Formatted to match authentic Sunmi thermal hardware output (NO artificial borders).
+ */
+export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<string> => {
+  const is80mm = typeof window !== 'undefined' && localStorage.getItem('pos_receipt_format') === '80mm';
+  const widthMm = is80mm ? '70mm' : '48mm';
+  const pageSize = is80mm ? '80mm auto' : '58mm auto';
+  const baseFontSize = is80mm ? '11px' : '9.5px';
+
+  let cleanInvoice = (props.invoiceNo !== undefined && props.invoiceNo !== null) ? String(props.invoiceNo).trim() : '';
+  if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
+    cleanInvoice = 'INV-005000';
+  }
+  const finalInvoiceDisplay = cleanInvoice.startsWith('INV-')
+    ? cleanInvoice
+    : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
+
+  const receiptText = formatSaleReceiptText(props);
+  const total = Number(props.total || 0);
+  const subtotal = props.subtotal !== undefined
+    ? Number(props.subtotal)
+    : (props.vat !== undefined ? total - Number(props.vat) : Number((total / 1.1).toFixed(3)));
+  const vat = props.vat !== undefined
+    ? Number(props.vat)
+    : Number((total - subtotal).toFixed(3));
+  const saleDateObj = props.saleDate ? new Date(props.saleDate) : new Date();
+
+  // QR Code (NBR Official Article 53 TLV)
+  let nbrQrDataUrl = '';
+  try {
+    const nbrPayload = generateNbrTlvBase64({
+      sellerName: props.shopName || "ASKAR SUPERMARKET",
+      vatNumber: props.vatNumber || "200012345678901",
+      timestamp: saleDateObj,
+      total: total,
+      vatAmount: vat
+    });
+    nbrQrDataUrl = await generateQrDataUrl(nbrPayload, 140);
+  } catch (err) {
+    console.warn("Failed generating NBR QR code:", err);
+  }
+
+  // Barcode (CODE128)
+  const barcodeDataUrl = generateBarcodeDataUrl(finalInvoiceDisplay);
+
+  // Optional: Khata PWA QR code if customer has debt
+  let khataQrDataUrl = '';
+  const targetCustId = props.customerId || props.customerUuid || props.cardUid || props.customerCardUid;
+  const paymentMode = (props.paymentMode || "CASH").toUpperCase();
+  const isKhataCustomer = Boolean(
+    targetCustId && (
+      paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || props.isMess ||
+      (props.newBalance !== undefined && Number(props.newBalance) > 0)
+    )
+  );
+
+  if (isKhataCustomer && targetCustId) {
+    const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
+      ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
+      : 'https://askar-khata-pwa.vercel.app';
+    const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
+    try {
+      khataQrDataUrl = await generateQrDataUrl(pwaUrl, 140);
+    } catch { }
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Receipt ${escapeHtml(finalInvoiceDisplay)}</title>
+  <style>
+    @page {
+      size: ${pageSize};
+      margin: 0mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    body {
+      font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
+      font-weight: 600;
+      color: #000000;
+      width: ${widthMm};
+      max-width: ${widthMm};
+      margin: 0 auto;
+      padding: 1.5mm 1mm;
+      border: none;
+      box-sizing: border-box;
+      font-size: ${baseFontSize};
+      line-height: 1.25;
+      letter-spacing: -0.15px;
+    }
+    pre.sunmi-receipt, .sunmi-receipt {
+      font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
+      font-weight: 600;
+      font-size: ${baseFontSize};
+      line-height: 1.25;
+      letter-spacing: -0.15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      padding: 0;
+      color: #000000;
+      border: none;
+    }
+    .center { text-align: center; }
+    @media print {
+      html, body {
+        margin: 0 auto !important;
+        background: #ffffff !important;
+      }
+      body {
+        width: ${widthMm} !important;
+        max-width: ${widthMm} !important;
+        margin: 0 auto !important;
+        padding: 1.5mm 1mm !important;
+        border: none !important;
+        box-sizing: border-box !important;
+      }
+      pre.sunmi-receipt, .sunmi-receipt {
+        border: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <pre class="sunmi-receipt">${escapeHtml(receiptText)}</pre>
+
+  ${nbrQrDataUrl ? `
+    <div class="center" style="margin: 6px 0 3px 0;">
+      <img src="${nbrQrDataUrl}" style="width: 110px; height: 110px; display: inline-block;" alt="NBR Tax QR" />
+      <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 8px; font-weight: 700; margin-top: 2px;">
+        NBR SIMPLIFIED TAX INVOICE QR
+      </div>
+    </div>
+  ` : ''}
+
+  ${khataQrDataUrl ? `
+    <div class="center" style="margin: 6px 0 4px 0;">
+      <pre class="sunmi-receipt">--------------------------------\nLIVE KHATA STATEMENT & PAYMENT\n--------------------------------</pre>
+      <img src="${khataQrDataUrl}" style="width: 100px; height: 100px; display: inline-block;" alt="Khata QR" />
+      <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 7.5px; margin-top: 2px;">Scan to view ledger & pay via BenefitPay</div>
+      <pre class="sunmi-receipt">--------------------------------</pre>
+    </div>
+  ` : ''}
+
+  <div class="center" style="margin-top: 4px;">
+    <pre class="sunmi-receipt" style="margin-bottom: 2px;">--------------------------------\nSCAN TO RETURN ITEMS</pre>
+    ${barcodeDataUrl ? `
+      <img src="${barcodeDataUrl}" style="width: 82%; max-height: 38px; display: inline-block;" alt="Barcode" />
+    ` : `
+      <div style="font-family: monospace; letter-spacing: 2.5px; font-weight: 700; font-size: 11px;">||| | ||||| |||| || ||||||</div>
+    `}
+    <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 8.5px; font-weight: 700; margin-top: 1px;">${escapeHtml(finalInvoiceDisplay)}</div>
+    <pre class="sunmi-receipt" style="margin-top: 2px;">================================</pre>
+  </div>
+</body>
+</html>`;
+};
+
 let isPrinterInitialized = false;
 
-export const printFullReceipt = async ({
+/**
+ * Direct Hardware Printing on physical Sunmi terminal (Thermal ESC/POS + Sunmi AIDL)
+ */
+export const printNativeSunmiReceipt = async ({
   shopName = "ASKAR SUPERMARKET",
   shopAddress = "Askar, Kingdom of Bahrain",
   shopPhone = "Tel: +973 1700 0000",
@@ -460,29 +1008,35 @@ export const printFullReceipt = async ({
       await printRawEscPos('\x1B\x45\x01\x1B\x47\x01');
     } catch { }
 
-    // 1. HEADER (Centered - NBR Simplified Tax Invoice Compliant)
-    await Printer.setPrinterAlignment({ alignment: 'center' });
-    await Printer.setFontSize({ fontSize: 26 });
-    const headerBlock = [
-      `${shopName}\n`,
-      "أسكار سوبر ماركت\n",
-      "Simplified Tax Invoice\n",
-      "فاتورة ضريبية مبسطة\n",
-      `VAT No: ${vatNumber}\n`,
-      `${shopAddress}\n`,
-      `${shopPhone}\n`,
-      "================================\n"
-    ].join('');
-    await Printer.printText({ textToPrint: headerBlock });
+    const receiptText = formatSaleReceiptText({
+      shopName,
+      shopAddress,
+      shopPhone,
+      vatNumber,
+      invoiceNo,
+      items,
+      subtotal,
+      vat,
+      total,
+      paymentMode,
+      customerName,
+      customerCardUid,
+      previousBalance,
+      newBalance,
+      cashierName,
+      transactionRef,
+      isMess,
+      groupName,
+      cardUid,
+      shopperName,
+      members,
+      customerId,
+      customerUuid,
+      cashTendered,
+      changeDue,
+      saleDate
+    });
 
-    // 2. TRANSACTION METADATA (Left-aligned - Strictly formatted to 32 chars)
-    await Printer.setPrinterAlignment({ alignment: 'left' });
-    await Printer.setFontSize({ fontSize: 22 });
-
-    const now = new Date();
-    const formattedDate = `${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-
-    // Sanitize invoice number to guarantee non-zero, compliant Bahrain sequential string
     let cleanInvoice = (invoiceNo !== undefined && invoiceNo !== null) ? String(invoiceNo).trim() : '';
     if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
       cleanInvoice = 'INV-005000';
@@ -491,117 +1045,10 @@ export const printFullReceipt = async ({
       ? cleanInvoice
       : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
 
-    // Group items
-    const groupedMap = new Map<string, { item: ReceiptItem; count: number }>();
-    for (const item of items) {
-      const key = item.id || item.name;
-      const itemQty = (item as any).qty ?? (item as any).quantity ?? 1;
-      if (groupedMap.has(key)) {
-        groupedMap.get(key)!.count += itemQty;
-      } else {
-        groupedMap.set(key, { item, count: itemQty });
-      }
-    }
-
-    let totalQuantity = 0;
-    const bodyLines: string[] = [
-      formatTwoCols("Invoice:", finalInvoiceDisplay),
-      formatTwoCols("Date:", formattedDate),
-      formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`),
-      "--------------------------------\n",
-      formatTwoCols("Item", "Qty   Amt(BD)"),
-      "--------------------------------\n"
-    ];
-
-    for (const { item, count } of groupedMap.values()) {
-      const isScale = (item as any).isScaleItem ?? (item as any).is_weighed_item;
-      totalQuantity += (isScale ? 1 : count);
-      const unitPrice = item.price ?? (item as any).sellingPrice ?? 0;
-      const lineTotal = item.total_price ?? (unitPrice * count);
-      const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && (item as any).taxRate !== 0);
-
-      const itemLabel = `${item.name}${isVat10 ? ' *' : ''}`;
-      bodyLines.push(`${itemLabel}\n`);
-
-      const qtyLine = isScale
-        ? `  ${count.toFixed(3)}kg x ${unitPrice.toFixed(3)}`
-        : `  ${count} x BD ${unitPrice.toFixed(3)}`;
-      bodyLines.push(formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`));
-    }
-
-    bodyLines.push("--------------------------------\n");
-    bodyLines.push(formatTwoCols("Subtotal:", `BD ${subtotal.toFixed(3)}`));
-    bodyLines.push(formatTwoCols("VAT (10%):", `BD ${vat.toFixed(3)}`));
-    bodyLines.push("--------------------------------\n");
-    bodyLines.push(formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`));
-    bodyLines.push("--------------------------------\n");
-
-    // Cash details with Tendered & Change Due
-    if (paymentMode === 'CASH') {
-      bodyLines.push("*** Paid via CASH ***\n");
-      if (cashTendered !== undefined && Number(cashTendered) > 0) {
-        bodyLines.push(formatTwoCols("Cash Tendered:", `BD ${Number(cashTendered).toFixed(3)}`));
-        const finalChange = changeDue !== undefined ? changeDue : (Number(cashTendered) > total ? Number(cashTendered) - total : 0);
-        bodyLines.push(formatTwoCols("Change Returned:", `BD ${Number(finalChange).toFixed(3)}`));
-      }
-      bodyLines.push("--------------------------------\n");
-    }
-
-    // BenefitPay details
-    if (paymentMode === 'BENEFIT_PAY') {
-      bodyLines.push("*** Paid via BenefitPay ***\n");
-      if (transactionRef) bodyLines.push(formatTwoCols("Ref No:", transactionRef));
-      bodyLines.push("Method: Fawri+ QR\n");
-      bodyLines.push("--------------------------------\n");
-    }
-
-    // Khata / Credit details
-    if (paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || isMess) {
-      if (paymentMode === 'MESS_KHATA' || isMess) {
-        bodyLines.push("*** MESS SPLIT-BILL RECEIPT ***\n");
-        bodyLines.push(formatTwoCols("MESS GROUP:", groupName || customerName || "Shared Mess"));
-        if (shopperName) bodyLines.push(formatTwoCols("Shopper:", shopperName));
-        if (cardUid) bodyLines.push(formatTwoCols("Card UID:", String(cardUid)));
-        bodyLines.push(formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`));
-        bodyLines.push(formatTwoCols("Members in Pool:", String(members?.length || 0)));
-        bodyLines.push("--------------------------------\n");
-        bodyLines.push("EQUAL SPLIT CHARGE PER MEMBER:\n");
-        if (Array.isArray(members)) {
-          members.forEach((m: any) => {
-            const splitVal = Number(m.amount ?? m.splitAmount ?? (total / members.length)).toFixed(3);
-            bodyLines.push(formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`));
-          });
-        }
-        bodyLines.push("--------------------------------\n");
-        bodyLines.push("Cashier / Auth: ________________\n");
-        bodyLines.push("Shares synced to Khata PWA\n");
-        bodyLines.push("--------------------------------\n");
-      } else {
-        bodyLines.push("*** KHATA CREDIT TAB ***\n");
-        if (customerName) bodyLines.push(formatTwoCols("Customer:", customerName));
-        if (customerCardUid) bodyLines.push(formatTwoCols("Card UID:", customerCardUid));
-        if (previousBalance !== undefined) bodyLines.push(formatTwoCols("Previous Balance:", `BD ${previousBalance.toFixed(3)}`));
-        bodyLines.push(formatTwoCols("Added to Tab:", `+BD ${total.toFixed(3)}`));
-        bodyLines.push(formatTwoCols("TOTAL BALANCE DUE:", `BD ${newBalance.toFixed(3)}`));
-        bodyLines.push("--------------------------------\n");
-      }
-    }
-
-    // Dispatch body payload in single continuous stream
-    await Printer.printText({ textToPrint: bodyLines.join('') });
-
-    // 3. CLOSING & FOOTER (VAT notice)
-    await Printer.setPrinterAlignment({ alignment: 'center' });
+    // 1. Dispatch full authentic Sunmi receipt text in single continuous stream
+    await Printer.setPrinterAlignment({ alignment: 'left' });
     await Printer.setFontSize({ fontSize: 20 });
-    const footerLines = [
-      `Total Items Count: ${totalQuantity}\n`,
-      "* Item includes 10% VAT\n",
-      `Invoice: ${finalInvoiceDisplay}\n`,
-      "THANK YOU FOR SHOPPING!\n",
-      "Please retain invoice for returns.\n",
-      "================================\n",
-    ].join('');
-    await Printer.printText({ textToPrint: footerLines });
+    await Printer.printText({ textToPrint: receiptText });
 
     // 4. BAHRAIN NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE (Official 5-Tag TLV Base64)
     try {
@@ -670,9 +1117,49 @@ export const printFullReceipt = async ({
     try {
       await Printer.cutPaper();
     } catch { }
+    return true;
   } catch (error) {
-    console.warn("SUNMI printer print error:", error);
+    console.warn("Native Sunmi hardware print error:", error);
+    return false;
   }
+};
+
+/**
+ * Unified Full Receipt Print Function:
+ * - If running on physical Sunmi hardware: Prints directly via built-in thermal printer.
+ * - If running on Laptop / Desktop browser: Dispatches print job across the network to Sunmi via Central Server!
+ * - Fallback: If network print is disabled or unreachable, opens local isolated browser print.
+ */
+export const printFullReceipt = async (props: FullReceiptProps): Promise<boolean> => {
+  const isNative = isNativeSunmiHardware();
+
+  // 🟢 CASE 1: Laptop / Desktop Billing Station -> Dispatch across network to Sunmi
+  if (!isNative) {
+    const netConfig = getNetworkPrinterConfig();
+    if (netConfig.enabled && netConfig.mode === 'SUNMI_NETWORK') {
+      try {
+        const netResult = await dispatchSunmiPrintJob(props, netConfig.targetTerminal);
+        if (netResult.success) {
+          return true; // Successfully routed to Sunmi across network!
+        }
+        console.warn('Sunmi network print dispatch notice:', netResult.error);
+      } catch (netErr) {
+        console.warn('Sunmi network print error:', netErr);
+      }
+    }
+
+    // Fallback: Local isolated 58mm / 80mm browser print slip
+    try {
+      const receiptHtml = await generateFullReceiptHtml(props);
+      return await printThermalSlipViaIframe(receiptHtml);
+    } catch (htmlPrintErr) {
+      console.warn("Isolated thermal receipt print failed:", htmlPrintErr);
+      return false;
+    }
+  }
+
+  // 🟢 CASE 2: Native Sunmi hardware terminal
+  return await printNativeSunmiReceipt(props);
 };
 
 /**
@@ -914,13 +1401,33 @@ export interface KhataStatementItem {
   runningBalance: number;
 }
 
+export interface MessGroupMemberPrintInfo {
+  name: string;
+  phone?: string | null;
+  currentBalance: number;
+  spendPercentage?: number;
+  equalSplitShare?: number;
+}
+
+export interface MessGroupPrintInfo {
+  id?: string;
+  group_name: string;
+  memberCount?: number;
+  totalBalance?: number;
+  equalSplitShare?: number;
+  members?: MessGroupMemberPrintInfo[];
+}
+
 export const printKhataStatement = async ({
   shopName = "ASKAR STORE - KHATA STATEMENT",
   customerName,
   customerPhone,
   customerCpr,
   statement = [],
-  currentBalance = 0
+  currentBalance = 0,
+  dateRange,
+  messGroup = null,
+  isMessStatement = false
 }: {
   shopName?: string;
   customerName: string;
@@ -928,21 +1435,57 @@ export const printKhataStatement = async ({
   customerCpr?: string | null;
   statement: KhataStatementItem[];
   currentBalance: number;
+  dateRange?: string;
+  messGroup?: MessGroupPrintInfo | null;
+  isMessStatement?: boolean;
 }) => {
+  let fullText = "";
   try {
     await Printer.initPrinter();
     try {
       await Printer.enterPrinterBuffer({ clean: true });
     } catch { }
 
-    let fullText = "";
     fullText += `${shopName}\n`;
-    fullText += `Customer: ${customerName}\n`;
-    if (customerPhone) fullText += `Phone: ${customerPhone}\n`;
-    if (customerCpr) fullText += `CPR: ${customerCpr}\n`;
-    fullText += "================================\n";
-    fullText += formatTwoCols("DATE / DESC", "BAL (BD)") + "\n";
-    fullText += "--------------------------------\n";
+
+    if (isMessStatement && messGroup) {
+      const eqShare = Number(
+        messGroup.equalSplitShare ||
+        (messGroup.totalBalance !== undefined && messGroup.members?.length
+          ? messGroup.totalBalance / Math.max(1, messGroup.members.length)
+          : currentBalance / Math.max(1, messGroup.members?.length || messGroup.memberCount || 1))
+      );
+      fullText += `MESS ACCOUNT: ${messGroup.group_name}\n`;
+      fullText += `Members: ${messGroup.members?.length || messGroup.memberCount || 0} Room Members\n`;
+      if (dateRange) fullText += `Period: ${dateRange}\n`;
+      fullText += "================================\n";
+      fullText += formatTwoCols("TOTAL CAMP DEBT:", `BD ${Number(messGroup.totalBalance ?? currentBalance).toFixed(3)}`) + "\n";
+      fullText += formatTwoCols("EQUAL SHARE / MEMBER:", `BD ${eqShare.toFixed(3)}`) + "\n";
+      fullText += "================================\n";
+      fullText += "MEMBER EQUAL SPLIT BREAKDOWN:\n";
+      fullText += "--------------------------------\n";
+      if (messGroup.members && messGroup.members.length > 0) {
+        for (const m of messGroup.members) {
+          const mEq = Number(m.equalSplitShare || eqShare).toFixed(3);
+          const mAct = Number(m.currentBalance || 0).toFixed(3);
+          const pct = m.spendPercentage !== undefined ? ` (${m.spendPercentage}%)` : '';
+          fullText += `${m.name.toUpperCase()}\n`;
+          fullText += formatTwoCols("  Equal Split Due:", `BD ${mEq}`) + "\n";
+          fullText += formatTwoCols(`  Actual Card Spent${pct}:`, `BD ${mAct}`) + "\n";
+          fullText += "--------------------------------\n";
+        }
+      }
+      fullText += "ITEMIZED MESS TRANSACTIONS:\n";
+      fullText += "--------------------------------\n";
+    } else {
+      fullText += `Customer: ${customerName}\n`;
+      if (customerPhone) fullText += `Phone: ${customerPhone}\n`;
+      if (customerCpr) fullText += `CPR: ${customerCpr}\n`;
+      if (dateRange) fullText += `Period: ${dateRange}\n`;
+      fullText += "================================\n";
+      fullText += formatTwoCols("DATE / DESC", "BAL (BD)") + "\n";
+      fullText += "--------------------------------\n";
+    }
 
     // Print history (oldest to newest or top entries)
     const printList = [...statement].reverse();
@@ -954,9 +1497,9 @@ export const printKhataStatement = async ({
     }
 
     fullText += "================================\n";
-    fullText += formatTwoCols("OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
+    fullText += formatTwoCols(isMessStatement ? "TOTAL OUTSTANDING:" : "OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
     fullText += `Printed: ${new Date().toLocaleString()}\n`;
-    fullText += "Official Store Account Ledger\n";
+    fullText += isMessStatement ? "Camp Room Shared Khata Statement\n" : "Official Store Account Ledger\n";
     fullText += "\n\n\n";
 
     // Execute a single IPC bridge call
@@ -969,8 +1512,11 @@ export const printKhataStatement = async ({
     } catch { }
     console.log("Khata statement printed successfully on thermal printer!");
   } catch (err) {
-    console.warn("Thermal hardware print fallback to window.print():", err);
-    window.print();
+    console.warn("Thermal hardware print fallback to iframe print:", err);
+    try {
+      const html = wrapMonospaceTextToHtml(fullText, isMessStatement ? "Mess Khata Statement" : "Khata Customer Statement");
+      await printThermalSlipViaIframe(html);
+    } catch { }
   }
 };
 
@@ -979,6 +1525,8 @@ export interface KhataPaymentReceiptProps {
   shopAddress?: string;
   shopPhone?: string;
   receiptNo?: string;
+  customerId?: string;
+  customerUuid?: string;
   customerName: string;
   customerPhone?: string | null;
   customerCpr?: string | null;
@@ -1141,6 +1689,24 @@ export const printKhataPaymentReceipt = async (props: KhataPaymentReceiptProps) 
     await Printer.printText({ textToPrint: "Please retain receipt for balance proof.\n" });
     await Printer.printText({ textToPrint: "================================\n" });
 
+    // Khata PWA QR Code Dispatch for mobile phone binding
+    const targetCustId = props.customerId || props.customerUuid;
+    if (targetCustId) {
+      try {
+        const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
+          ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
+          : 'https://askar-khata-pwa.vercel.app';
+        const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
+        await Printer.setPrinterAlignment({ alignment: 'center' });
+        await Printer.setFontSize({ fontSize: 16 });
+        await Printer.printText({ textToPrint: "SCAN TO VIEW LIVE STATEMENT:\n" });
+        await printQRCode(pwaUrl, 180);
+        await Printer.printText({ textToPrint: "--------------------------------\n" });
+      } catch (qrErr) {
+        console.warn("Khata QR print notice:", qrErr);
+      }
+    }
+
     // Feed and cut paper
     await Printer.lineWrap({ lines: 3 });
     await Printer.cutPaper();
@@ -1150,9 +1716,31 @@ export const printKhataPaymentReceipt = async (props: KhataPaymentReceiptProps) 
     console.log("Khata payment receipt printed successfully on Sunmi 58mm printer!");
     return true;
   } catch (error) {
-    console.warn("Sunmi thermal printer dispatch error (or non-Android environment):", error);
-    // Non-blocking fallback
-    return false;
+    console.warn("Sunmi thermal printer dispatch notice (falling back to iframe print):", error);
+    try {
+      const formattedText = formatKhataReceipt(props);
+      let extraHtml = '';
+      const targetCustId = props.customerId || props.customerUuid;
+      if (targetCustId) {
+        try {
+          const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
+            ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
+            : 'https://askar-khata-pwa.vercel.app';
+          const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
+          const qrDataUrl = await generateQrDataUrl(pwaUrl, 120);
+          if (qrDataUrl) {
+            extraHtml = `\n<div style="text-align: center; margin-top: 10px; margin-bottom: 5px;">
+  <div style="font-size: 8px; font-weight: 700; margin-bottom: 3px;">SCAN TO VIEW LIVE STATEMENT:</div>
+  <img src="${qrDataUrl}" style="width: 80px; height: 80px; display: block; margin: 0 auto;" />
+</div>`;
+          }
+        } catch { }
+      }
+      const html = wrapMonospaceTextToHtml(formattedText, "Khata Payment Receipt", extraHtml);
+      return await printThermalSlipViaIframe(html);
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -1230,7 +1818,7 @@ export const printCreditNote = async (props: CreditNoteProps): Promise<boolean> 
       for (const item of props.items) {
         const name = item.productName || item.name || "Item";
         const qty = item.quantity || 1;
-        const price = Number(item.priceAtSale || item.unitPrice || 0);
+        const price = Number((item as any).priceAtSale || (item as any).unitPrice || (item as any).price || (item as any).sellingPrice || 0);
         await Printer.printText({
           textToPrint: formatTwoCols(`- ${name}`, `${qty} x ${price.toFixed(3)}`)
         });
@@ -1272,8 +1860,14 @@ export const printCreditNote = async (props: CreditNoteProps): Promise<boolean> 
     console.log("Credit Note printed successfully on Sunmi 58mm printer!");
     return true;
   } catch (err) {
-    console.warn("Credit Note printing failed (non-Android / dev environment fallback):", err);
-    return false;
+    console.warn("Credit Note hardware dispatch notice (falling back to iframe print):", err);
+    try {
+      const formattedText = formatCreditNote(props);
+      const html = wrapMonospaceTextToHtml(formattedText, "Credit Note");
+      return await printThermalSlipViaIframe(html);
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -1467,9 +2061,14 @@ export const printZReport = async (props: ZReportPrintProps): Promise<boolean> =
     console.log("Z-Report printed successfully on Sunmi 58mm thermal printer!");
     return true;
   } catch (err) {
-    console.warn("Sunmi thermal printer dispatch error (fallback to window.print):", err);
-    window.print();
-    return false;
+    console.warn("Sunmi thermal printer dispatch notice (falling back to iframe print):", err);
+    try {
+      const rawFormatted = formatZReport(props);
+      const html = wrapMonospaceTextToHtml(rawFormatted, "Daily Z-Report");
+      return await printThermalSlipViaIframe(html);
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -1601,7 +2200,10 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
   if (typeof window !== 'undefined') {
     const isCap = (window as any).Capacitor?.isNativePlatform?.();
     if (!isCap) {
-      window.print();
+      try {
+        const html = wrapMonospaceTextToHtml(formattedText, "Shift Closeout Report");
+        return await printThermalSlipViaIframe(html);
+      } catch { }
     }
   }
 
@@ -1610,6 +2212,8 @@ export const printShiftCloseout = async (props: ShiftCloseoutPrintProps): Promis
 
 if (typeof window !== 'undefined') {
   (window as any).printFullReceipt = printFullReceipt;
+  (window as any).printThermalSlipViaIframe = printThermalSlipViaIframe;
+  (window as any).generateFullReceiptHtml = generateFullReceiptHtml;
   (window as any).printKhataPaymentReceipt = printKhataPaymentReceipt;
   (window as any).formatKhataReceipt = formatKhataReceipt;
   (window as any).printCreditNote = printCreditNote;

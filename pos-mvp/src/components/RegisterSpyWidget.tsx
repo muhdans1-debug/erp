@@ -155,15 +155,15 @@ export default function RegisterSpyWidget({
                         {idx + 1}
                       </span>
                       <div>
-                        <p className="font-bold text-sm text-white">{item.name}</p>
+                        <p className="font-bold text-sm text-white">{item.name || item.productName || 'Item'}</p>
                         <p className="text-xs text-slate-400 font-mono">
-                          {item.is_weighed_item ? `${Number(item.quantity).toFixed(3)}kg` : `Qty: ${item.quantity}`} × BD {Number(item.price).toFixed(3)}
+                          {item.is_weighed_item ? `${Number(item.quantity || item.qty || 1).toFixed(3)}kg` : `Qty: ${item.quantity || item.qty || 1}`} × BD {Number(item.price ?? item.priceAtSale ?? item.sellingPrice ?? 0).toFixed(3)}
                         </p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="font-mono font-bold text-emerald-400 text-sm">
-                        BD {Number(item.total || (item.price * item.quantity)).toFixed(3)}
+                        BD {Number(item.total || item.total_price || ((item.price ?? item.priceAtSale ?? item.sellingPrice ?? 0) * (item.quantity || item.qty || 1))).toFixed(3)}
                       </p>
                     </div>
                   </div>

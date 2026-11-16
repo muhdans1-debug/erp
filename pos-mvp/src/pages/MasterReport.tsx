@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Download, TrendingUp, TrendingDown, Banknote, Activity, RefreshCw, ArrowLeft, CheckCircle2, Trash2, Database, AlertCircle } from 'lucide-react';
 import LogWastageModal from '../components/LogWastageModal';
 import { TableSkeleton, KpiCardSkeleton } from '../components/Skeleton';
+import { getManagerPin } from '../utils/authUtils';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 interface MasterReportProps {
   apiBase?: string;
@@ -9,7 +11,7 @@ interface MasterReportProps {
 }
 
 export default function MasterReport({ apiBase: propApiBase, onBackToPos }: MasterReportProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = (propApiBase && propApiBase !== 'http://localhost:3000') ? propApiBase : getApiBaseUrl();
   
   const todayStr = new Date().toISOString().split('T')[0];
   const [dateRange, setDateRange] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'CUSTOM' | 'YESTERDAY' | 'ALL' | string>('TODAY');
@@ -31,7 +33,7 @@ export default function MasterReport({ apiBase: propApiBase, onBackToPos }: Mast
         : `${apiBase}/api/reports/unified?range=${dateRange}`;
       const res = await fetch(url, {
         headers: {
-          'x-manager-pin': '9999'
+          'x-manager-pin': getManagerPin()
         }
       });
       const data = await res.json();

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import LoginScreen from './pages/LoginScreen';
 import CheckoutScreen from './pages/CheckoutScreen';
@@ -7,17 +7,28 @@ import CustomerDisplayPage from './pages/CustomerDisplayPage';
 import CustomerStatementPage from './pages/CustomerStatementPage';
 import CorporateSponsorDashboard from './pages/CorporateSponsorDashboard';
 import F100Pim from './F100Pim';
+import MobileKhataScreen from './pages/MobileKhataScreen';
+import MobileTapPad from './pages/MobileTapPad';
+import ProducePriceCommander from './pages/ProducePriceCommander';
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
+import { useNetworkSync } from './hooks/useNetworkSync';
 import { initOTA } from './utils/otaUpdater';
-import { printFullReceipt, printKhataStatement } from './utils/printer';
+import { printNativeSunmiReceipt, printKhataStatement, showToast } from './utils/printer';
 import { playNfcChime } from './utils/sound';
+import { openCashDrawer } from './services/cashDrawerService';
 import { Printer } from 'capacitor-sunmi-printer';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 import { initNativeOfflineStorage } from './utils/nativeDb';
+import { getApiBaseUrl, getServerIp, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
+import { syncClockWithMasterServer, updateClockOffsetFromHeartbeat } from './utils/time';
+import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
 export default function App() {
+  // Ultra-Speed Hardware Barcode Scanner & Sunmi Native Broadcast Wedge
+  useBarcodeWedge();
+
   // Target the 4.3" SUNMI Customer Display route directly (800x480)
   const isCustomerDisplayRoute = typeof window !== 'undefined' && (
     window.location.pathname === '/customer-display' ||
@@ -25,24 +36,27 @@ export default function App() {
     new URLSearchParams(window.location.search).get('view') === 'customer-display'
   );
 
-  // Public Cloud Edge Host Check (Cloudflare Pages, Vercel, or custom Khata domain)
-  const isPublicEdge = typeof window !== 'undefined' && (
-    window.location.hostname.includes('pages.dev') ||
-    window.location.hostname.includes('vercel.app') ||
-    window.location.hostname.includes('trycloudflare.com') ||
-    window.location.hostname.includes('askar') ||
-    window.location.hostname === 'khata.askar.com'
+  // Explicit Cashier Billing POS Route (on laptops, desktops, web browsers, or Sunmi terminals)
+  const isExplicitPos = typeof window !== 'undefined' && (
+    window.location.pathname === '/pos' ||
+    window.location.pathname.startsWith('/pos/') ||
+    window.location.pathname === '/register' ||
+    window.location.pathname === '/checkout' ||
+    new URLSearchParams(window.location.search).get('view') === 'pos' ||
+    new URLSearchParams(window.location.search).get('view') === 'register' ||
+    new URLSearchParams(window.location.search).get('view') === 'checkout'
   );
 
-  // Target Customer Self-Service Statement Portal (/tab/:id, /statement, /khata, ?view=statement, OR root / on public edge)
-  const isStatementRoute = typeof window !== 'undefined' && (
+  // Target Customer Self-Service Statement Portal (/tab/:id, /statement, /khata, ?view=statement)
+  // Dedicated statement host: khata.askar.com
+  const isStatementRoute = typeof window !== 'undefined' && !isExplicitPos && (
     window.location.pathname.startsWith('/tab') ||
     window.location.pathname === '/statement' ||
     window.location.pathname === '/khata' ||
     window.location.pathname.startsWith('/khata/') ||
     new URLSearchParams(window.location.search).get('view') === 'statement' ||
     new URLSearchParams(window.location.search).has('khata') ||
-    (isPublicEdge && !window.location.pathname.startsWith('/sponsor') && !window.location.pathname.startsWith('/b2b') && !window.location.search.includes('view=sponsor'))
+    (window.location.hostname === 'khata.askar.com')
   );
 
   // Target Corporate Sponsor B2B Dashboard (/sponsor, /b2b, or ?view=sponsor)
@@ -52,15 +66,184 @@ export default function App() {
     new URLSearchParams(window.location.search).get('view') === 'sponsor'
   );
 
-  // Target Feitian F100 Bulk PIM Intake Node (/f100, /pim, ?view=f100, ?view=pim, or persisted terminal flag or Feitian F100 hardware)
-  const isF100PimRoute = typeof window !== 'undefined' && (
+  // Target iPhone 16 Pro / Mobile Tap Pad Route (/tap, /relay, or ?view=tap, ?view=companion)
+  const isTapPadRoute = typeof window !== 'undefined' && (
+    window.location.pathname === '/tap' ||
+    window.location.pathname.startsWith('/tap/') ||
+    window.location.pathname === '/relay' ||
+    window.location.pathname.startsWith('/relay/') ||
+    new URLSearchParams(window.location.search).get('view') === 'tap' ||
+    new URLSearchParams(window.location.search).get('view') === 'relay' ||
+    new URLSearchParams(window.location.search).get('view') === 'companion'
+  );
+
+  // Target Daily Fresh Produce Commander (/produce, /veggies, or ?view=produce, ?tab=produce)
+  const isProduceRoute = typeof window !== 'undefined' && (
+    window.location.pathname === '/produce' ||
+    window.location.pathname.startsWith('/produce/') ||
+    window.location.pathname === '/veggies' ||
+    window.location.pathname.startsWith('/veggies/') ||
+    new URLSearchParams(window.location.search).get('view') === 'produce' ||
+    new URLSearchParams(window.location.search).get('tab') === 'produce' ||
+    new URLSearchParams(window.location.search).get('view') === 'veggies'
+  );
+
+  // Target 60-Sec Price Change (/price-change, /flash-pricing, ?view=price-change)
+  const isPriceChangeRoute = typeof window !== 'undefined' && (
+    window.location.pathname === '/price-change' ||
+    window.location.pathname === '/flash-pricing' ||
+    window.location.pathname.startsWith('/price-change') ||
+    new URLSearchParams(window.location.search).get('view') === 'price-change' ||
+    new URLSearchParams(window.location.search).get('tab') === 'price_change' ||
+    new URLSearchParams(window.location.search).get('view') === '60s' ||
+    new URLSearchParams(window.location.search).get('tab') === '60s'
+  );
+
+  // Feitian F100 Handheld Terminal Detection (Terminal 02 Profile)
+  const isF100Device = typeof window !== 'undefined' && (
+    (typeof navigator !== 'undefined' && (
+      navigator.userAgent.toLowerCase().includes('f100') ||
+      navigator.userAgent.toLowerCase().includes('feitian') ||
+      navigator.userAgent.toLowerCase().includes('fp-100') ||
+      navigator.userAgent.toLowerCase().includes('smartpos')
+    )) ||
+    localStorage.getItem('terminal_id') === 'T2' ||
+    localStorage.getItem('f100_default_mode') === 'true' ||
+    localStorage.getItem('f100_active_mode') === 'pos' ||
+    localStorage.getItem('f100_active_mode') === 'pim' ||
     window.location.pathname.startsWith('/f100') ||
     window.location.pathname.startsWith('/pim') ||
     new URLSearchParams(window.location.search).get('view') === 'f100' ||
     new URLSearchParams(window.location.search).get('view') === 'pim' ||
-    localStorage.getItem('f100_default_mode') === 'true' ||
-    (navigator.userAgent.includes('F100') && localStorage.getItem('f100_default_mode') !== 'false')
+    new URLSearchParams(window.location.search).get('view') === 'mobile' ||
+    new URLSearchParams(window.location.search).get('view') === 'khata' ||
+    ['2', 't2', 'f100'].includes((new URLSearchParams(window.location.search).get('terminal') || '').toLowerCase())
   );
+
+  const [f100Mode, setF100Mode] = useState<'pos' | 'pim'>(() => {
+    if (typeof window !== 'undefined') {
+      const view = new URLSearchParams(window.location.search).get('view');
+      if (view === 'pim' || view === 'f100') return 'pim';
+      if (view === 'pos' || view === 'mobile' || view === 'khata') return 'pos';
+      const saved = localStorage.getItem('f100_active_mode');
+      if (saved === 'pim' || saved === 'pos') return saved;
+      if (localStorage.getItem('f100_default_mode') === 'true') return 'pim';
+    }
+    return 'pos'; // Default to high-speed Terminal 02 Khata POS
+  });
+
+  // Automatically enforce terminal prefix and ID for multi-device fleet (Laptops + Sunmi + Handhelds)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const explicitParam = (searchParams.get('terminal') || searchParams.get('terminalId') || searchParams.get('register') || '').toLowerCase();
+      const ua = (navigator.userAgent || '').toLowerCase();
+      const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+      const isMobile = /android|iphone|ipad|ipod/i.test(ua);
+
+      // 1. Explicit URL parameter always wins
+      if (explicitParam === '1' || explicitParam === 't1' || explicitParam === 'sunmi') {
+        localStorage.setItem('terminal_id', 'T1');
+        localStorage.setItem('REGISTER_PREFIX', 'T1');
+        return;
+      }
+      if (explicitParam === '2' || explicitParam === 't2' || explicitParam === 'f100' || explicitParam === 'mobile' || explicitParam === 'khata' || explicitParam === 'pim') {
+        localStorage.setItem('terminal_id', 'T2');
+        localStorage.setItem('REGISTER_PREFIX', 'T2');
+        return;
+      }
+      if (explicitParam === '3' || explicitParam === 't3' || explicitParam === 'desktop' || explicitParam === 'laptop' || explicitParam === 'laptop1' || explicitParam === 'web') {
+        localStorage.setItem('terminal_id', 'T3');
+        localStorage.setItem('REGISTER_PREFIX', 'T3');
+        return;
+      }
+      if (explicitParam === '4' || explicitParam === 't4' || explicitParam === 'desktop2' || explicitParam === 'laptop2' || explicitParam === 'web2') {
+        localStorage.setItem('terminal_id', 'T4');
+        localStorage.setItem('REGISTER_PREFIX', 'T4');
+        return;
+      }
+      if (explicitParam === 'm1' || explicitParam === 'phone' || explicitParam === 'phone1' || explicitParam === 'mobile1') {
+        localStorage.setItem('terminal_id', 'M1');
+        localStorage.setItem('REGISTER_PREFIX', 'M1');
+        return;
+      }
+      if (explicitParam === 'm2' || explicitParam === 'phone2' || explicitParam === 'mobile2') {
+        localStorage.setItem('terminal_id', 'M2');
+        localStorage.setItem('REGISTER_PREFIX', 'M2');
+        return;
+      }
+
+      // 2. Hardware profile detection
+      if (isF100Device) {
+        if (!localStorage.getItem('terminal_id') || localStorage.getItem('terminal_id') === 'T1') {
+          localStorage.setItem('terminal_id', 'T2');
+          localStorage.setItem('REGISTER_PREFIX', 'T2');
+        }
+      } else if (!isMobile && !isNative) {
+        // Desktop Web POS (PC / Mac / Laptop running browser)
+        const myClientUuid = (() => {
+          let id = localStorage.getItem('pos_browser_client_uuid');
+          if (!id) {
+            id = 'desk_' + Math.random().toString(36).slice(2, 9);
+            localStorage.setItem('pos_browser_client_uuid', id);
+          }
+          return id;
+        })();
+
+        // Query live fleet to avoid colliding with an already active Counter 3 (Desktop 1)
+        const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(Boolean);
+        const firstBase = candidateBases[0] || 'https://askar-edge-api.layali-askar-pos.workers.dev';
+        fetch(`${firstBase}/api/register/cart/live`, { signal: AbortSignal.timeout(3000) })
+          .then(r => r.json())
+          .then(data => {
+            const t3 = (data.registers || []).find((r: any) => r.terminalId === 'T3');
+            const now = Date.now();
+            const isT3BusyOnOtherDevice = Boolean(
+              t3 && 
+              t3.isOnline && 
+              t3.clientUuid && 
+              t3.clientUuid !== myClientUuid && 
+              (now - (t3.lastSeen || 0) < 40000)
+            );
+            const currentStored = localStorage.getItem('terminal_id');
+            if (isT3BusyOnOtherDevice) {
+              if (!currentStored || currentStored === 'T3' || currentStored === 'T1' || currentStored === 'SUNMI-D2-REG01' || currentStored === '1') {
+                console.log(`⚡ [Fleet Guard] Counter 3 is active on another machine (${t3.clientUuid}). Auto-assigning Counter 4 (Desktop 2).`);
+                localStorage.setItem('terminal_id', 'T4');
+                localStorage.setItem('REGISTER_PREFIX', 'T4');
+                window.dispatchEvent(new CustomEvent('terminal-switched', { detail: { terminalId: 'T4' } }));
+              }
+            } else {
+              if (!currentStored || currentStored === 'T1' || currentStored === 'SUNMI-D2-REG01' || currentStored === '1') {
+                localStorage.setItem('terminal_id', 'T3');
+                localStorage.setItem('REGISTER_PREFIX', 'T3');
+                window.dispatchEvent(new CustomEvent('terminal-switched', { detail: { terminalId: 'T3' } }));
+              }
+            }
+          })
+          .catch(() => {
+            const currentStored = localStorage.getItem('terminal_id');
+            if (!currentStored || currentStored === 'T1' || currentStored === 'SUNMI-D2-REG01' || currentStored === '1') {
+              localStorage.setItem('terminal_id', 'T3');
+              localStorage.setItem('REGISTER_PREFIX', 'T3');
+            }
+          });
+      } else if (isMobile && !isNative) {
+        // Mobile phone browser (iPhone / Android Web POS)
+        const existing = localStorage.getItem('terminal_id');
+        if (!existing || existing === 'T1' || existing === 'T3') {
+          localStorage.setItem('terminal_id', 'M1');
+          localStorage.setItem('REGISTER_PREFIX', 'M1');
+        }
+      } else {
+        // Native or Android device defaults to Sunmi T1 unless configured
+        if (!localStorage.getItem('terminal_id')) {
+          localStorage.setItem('terminal_id', 'T1');
+          localStorage.setItem('REGISTER_PREFIX', 'T1');
+        }
+      }
+    }
+  }, [isF100Device]);
 
   const statementCustomerId = typeof window !== 'undefined'
     ? (new URLSearchParams(window.location.search).get('id') ||
@@ -81,27 +264,12 @@ export default function App() {
         return 'MANAGER';
       }
       const saved = localStorage.getItem('askar_role') as any;
-      if (saved === 'CASHIER') return 'CASHIER';
+      if (saved === 'CASHIER' || saved === 'MANAGER') return saved;
     }
     return 'NONE';
   });
 
-  const [apiBase] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const custom = localStorage.getItem('master_server_url') || localStorage.getItem('ASKAR_FALLBACK_IP');
-      if (custom) return custom.replace(/\/+$/, '');
-      const savedIp = localStorage.getItem('server_ip');
-      if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
-      const isNative = Boolean(
-        (window as any).Capacitor?.isNativePlatform?.() ||
-        (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent))
-      );
-      if (isNative) return 'http://192.168.8.7:3000';
-      const host = window.location.hostname || 'localhost';
-      return `http://${host}:3000`;
-    }
-    return 'http://192.168.8.7:3000';
-  });
+  const [apiBase] = useState(() => getApiBaseUrl());
 
   // Disaster Recovery Protocol: Cloud Traffic Light & Physical Backup
   const {
@@ -163,6 +331,7 @@ export default function App() {
   }, []);
 
   // Single Connection State (Dispatched via useNetworkSync over WebSocket)
+  useNetworkSync(getServerIp());
   const [activeLock, setActiveLock] = useState<any>(null);
   const [managerScanLocked, setManagerScanLocked] = useState(false);
   const [managerScanMessage, setManagerScanMessage] = useState("");
@@ -173,27 +342,110 @@ export default function App() {
     try {
       playNfcChime();
     } catch {}
-    const candidateBases = [
-      apiBase,
-      'http://192.168.8.7:3000',
-      'http://localhost:3000'
-    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+    const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
+      (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
+    );
     for (const base of candidateBases) {
       fetch(`${base}/api/nfc/relay`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag_id: cleanId, id: cleanId, customer: customerData || null })
+        headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
+        body: JSON.stringify({ tag_id: cleanId, id: cleanId, terminalId: 'Sunmi POS', customer: customerData || null })
       }).catch(() => {});
     }
   };
 
+  const latestCartRef = useRef<any>({ items: [], total: 0, customer: null, activeCartId: '1' });
+  const processedPrintJobsRef = useRef<Map<string, number>>(new Map());
+
+  const getResolvedTerminalInfo = () => {
+    let resolvedTerminalId = (typeof window !== 'undefined' && localStorage.getItem('terminal_id')) || 'T1';
+    if (resolvedTerminalId === 'LAPTOP-01' || resolvedTerminalId === 'WEB-POS') resolvedTerminalId = 'T3';
+    if (resolvedTerminalId === 'LAPTOP-02' || resolvedTerminalId === 'WEB-POS-2') resolvedTerminalId = 'T4';
+    if (resolvedTerminalId === 'SUNMI-D2-REG01' || resolvedTerminalId === '1') resolvedTerminalId = 'T1';
+    if (resolvedTerminalId === 'F100' || resolvedTerminalId === '2') resolvedTerminalId = 'T2';
+    if (resolvedTerminalId === '3') resolvedTerminalId = 'T3';
+    if (resolvedTerminalId === '4') resolvedTerminalId = 'T4';
+
+    // If on a desktop browser and not Capacitor native, automatically resolve legacy T1 to T3
+    if (typeof window !== 'undefined') {
+      const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+      const isMobile = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (!isMobile && !isNative && (resolvedTerminalId === 'T1' || resolvedTerminalId === 'SUNMI-D2-REG01')) {
+        resolvedTerminalId = 'T3';
+      }
+      if (isF100Device) {
+        resolvedTerminalId = 'T2';
+      }
+    }
+
+    let resolvedTerminalName = 'Counter 1 (Sunmi D2 Mini)';
+    if (resolvedTerminalId === 'T2') resolvedTerminalName = 'Counter 2 (Feitian F100)';
+    if (resolvedTerminalId === 'T3') resolvedTerminalName = 'Counter 3 (Desktop Web POS 1)';
+    if (resolvedTerminalId === 'T4') resolvedTerminalName = 'Counter 4 (Desktop Web POS 2)';
+    if (resolvedTerminalId === 'M1') resolvedTerminalName = 'Floor Phone 1 (Mobile Web POS)';
+    if (resolvedTerminalId === 'M2') resolvedTerminalName = 'Floor Phone 2 (Mobile Web POS)';
+
+    const cashierName = (typeof window !== 'undefined' && (localStorage.getItem('cashier_name') || localStorage.getItem('askar_cashier_name'))) || 'Cashier 1';
+    return { resolvedTerminalId, resolvedTerminalName, cashierName };
+  };
+
+  const processRemoteCommands = (commands: any[]) => {
+    if (!Array.isArray(commands) || commands.length === 0) return;
+    for (const rawCmd of commands) {
+      let cmdName = '';
+      let payload: any = {};
+
+      if (typeof rawCmd === 'string') {
+        if (rawCmd.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(rawCmd);
+            cmdName = parsed.command || parsed.type || '';
+            payload = parsed.payload || parsed;
+          } catch {
+            cmdName = rawCmd;
+          }
+        } else if (rawCmd.includes('::')) {
+          const [name, jsonStr] = rawCmd.split('::');
+          cmdName = name;
+          try { payload = JSON.parse(jsonStr); } catch {}
+        } else {
+          cmdName = rawCmd;
+        }
+      } else if (typeof rawCmd === 'object' && rawCmd !== null) {
+        cmdName = rawCmd.command || rawCmd.type || '';
+        payload = rawCmd.payload || rawCmd;
+      }
+
+      const cmd = String(cmdName || '').toUpperCase().replace(/^REMOTE_/, '');
+      console.log(`⚡ [Fleet Remote Command] Executing: ${cmd}`, payload);
+
+      if (cmd === 'DRAWER_KICK') {
+        window.dispatchEvent(new CustomEvent('sunmi-remote-drawer-kick', { detail: payload }));
+      } else if (cmd === 'CLEAR_CART') {
+        window.dispatchEvent(new CustomEvent('sunmi-remote-clear-cart'));
+      } else if (cmd === 'LOCK_REGISTER') {
+        window.dispatchEvent(new CustomEvent('sunmi-remote-lock'));
+      } else if (cmd === 'BENEFIT_PAY_SUCCESS') {
+        console.log('⚡ [BenefitPay Webhook] Incoming Fawri+ auto-settlement event:', payload);
+        window.dispatchEvent(new CustomEvent('sunmi-remote-benefit-success', { detail: payload }));
+      } else if (cmd === 'PRINT' || cmd === 'PRINT_REQUEST' || cmd === 'PRINT_RECEIPT') {
+        console.log('🖨️ [Sunmi Print Station] Incoming network print request:', payload);
+        window.dispatchEvent(new CustomEvent('sunmi-remote-print', { detail: payload }));
+      }
+    }
+  };
+
   const broadcastCartState = (cart: any[], total: number, customer?: any, activeCartId: string = '1') => {
+    latestCartRef.current = { cart, total, customer, activeCartId };
+    const { resolvedTerminalId, resolvedTerminalName, cashierName } = getResolvedTerminalInfo();
+
     const cartPayload = {
       items: (cart || []).map((item) => ({
-        id: item.id,
-        name: item.name,
+        id: item.id || item.barcode,
+        barcode: item.barcode,
+        name: item.name || item.name_en || 'Item',
+        quantity: item.quantity || 1,
         price: item.price ?? item.sellingPrice ?? 0,
-        quantity: item.quantity,
         total: (item.price ?? item.sellingPrice ?? 0) * (item.quantity ?? 1),
         is_weighed_item: !!item.is_weighed_item
       })),
@@ -208,22 +460,111 @@ export default function App() {
         mess_id: customer.mess_id
       } : null,
       activeCartId,
-      terminalId: 'SUNMI-D2-REG01',
+      terminalId: resolvedTerminalId,
+      terminalName: resolvedTerminalName,
+      cashierName,
+      status: (cart && cart.length > 0) ? 'ACTIVE_CART' : (isF100Device && f100Mode === 'pim' ? 'PIM_ACTIVE' : 'IDLE'),
       updatedAt: new Date().toISOString()
     };
-    const candidateBases = [
-      apiBase,
-      'http://192.168.8.7:3000',
-      'http://localhost:3000'
-    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+    const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
+      (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
+    );
     for (const base of candidateBases) {
       fetch(`${base}/api/register/cart/live`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
         body: JSON.stringify(cartPayload)
-      }).catch(() => {});
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.commands) processRemoteCommands(data.commands);
+      })
+      .catch(() => {});
     }
   };
+
+  // ⚡ Autonomous Multi-Terminal Register Spy Heartbeat (Guarantees ONLINE status across fleet)
+  useEffect(() => {
+    const sendAutonomousHeartbeat = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const { resolvedTerminalId, resolvedTerminalName, cashierName } = getResolvedTerminalInfo();
+      const current = latestCartRef.current || {};
+      const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
+        (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
+      );
+      const myClientUuid = (typeof window !== 'undefined' && localStorage.getItem('pos_browser_client_uuid')) || undefined;
+      const heartbeatPayload = {
+        terminalId: resolvedTerminalId,
+        terminalName: resolvedTerminalName,
+        cashierName,
+        clientUuid: myClientUuid,
+        items: (current.cart || []).map((item: any) => ({
+          id: item.id || item.barcode,
+          barcode: item.barcode,
+          name: item.name || item.name_en || 'Item',
+          quantity: item.quantity || 1,
+          price: item.price ?? item.sellingPrice ?? 0,
+          total: (item.price ?? item.sellingPrice ?? 0) * (item.quantity ?? 1),
+          is_weighed_item: !!item.is_weighed_item
+        })),
+        itemCount: (current.cart || []).reduce((sum: number, item: any) => sum + (item.quantity || 1), 0),
+        total: Number(current.total || 0),
+        customer: current.customer || null,
+        activeCartId: current.activeCartId || '1',
+        status: (current.cart && current.cart.length > 0) ? 'ACTIVE_CART' : (isF100Device && f100Mode === 'pim' ? 'PIM_ACTIVE' : 'IDLE'),
+        updatedAt: new Date().toISOString()
+      };
+
+      for (const base of candidateBases) {
+        fetch(`${base}/api/register/cart/live`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
+          body: JSON.stringify(heartbeatPayload),
+          signal: AbortSignal.timeout(3000)
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data?.serverEpoch) updateClockOffsetFromHeartbeat(data.serverEpoch);
+          if (data && data.commands) processRemoteCommands(data.commands);
+          // Collision Guard: If this desktop is T3 but another device claimed T3, step to T4
+          const isNativePlatform = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+          const isMobileDevice = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+          if (data?.registers && typeof window !== 'undefined' && !isMobileDevice && !isNativePlatform) {
+            const currentTerm = localStorage.getItem('terminal_id');
+            if (currentTerm === 'T3' && myClientUuid) {
+              const t3 = (data.registers || []).find((r: any) => r.terminalId === 'T3');
+              const now = Date.now();
+              if (t3 && t3.isOnline && t3.clientUuid && t3.clientUuid !== myClientUuid && (now - (t3.lastSeen || 0) < 40000)) {
+                console.log(`⚡ [Fleet Collision Detected] Re-assigning to Counter 4 (Desktop 2).`);
+                localStorage.setItem('terminal_id', 'T4');
+                localStorage.setItem('REGISTER_PREFIX', 'T4');
+                window.dispatchEvent(new CustomEvent('terminal-switched', { detail: { terminalId: 'T4' } }));
+              }
+            }
+          }
+        })
+        .catch(() => {});
+      }
+    };
+
+    sendAutonomousHeartbeat();
+    syncClockWithMasterServer().catch(() => {});
+    const interval = setInterval(sendAutonomousHeartbeat, 15000);
+    const clockSyncInterval = setInterval(() => {
+      syncClockWithMasterServer().catch(() => {});
+    }, 60000);
+
+    const handleTerminalSwitched = () => {
+      sendAutonomousHeartbeat();
+    };
+    window.addEventListener('terminal-switched', handleTerminalSwitched);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(clockSyncInterval);
+      window.removeEventListener('terminal-switched', handleTerminalSwitched);
+    };
+  }, [apiBase, isF100Device, f100Mode]);
 
   useEffect(() => {
     const handleMasterWsMessage = (e: any) => {
@@ -247,6 +588,12 @@ export default function App() {
 
   useEffect(() => {
     const handleNfcBroadcast = (e: any) => {
+      // Guard against echoed / relayed events to prevent infinite loop
+      if (e?.detail?.isRelayed || e?.detail?.fromRelay) return;
+      // Guard: Only native Android POS devices with physical RF transceivers should broadcast scans
+      const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+      if (!isNative) return;
+
       const nfcId = e?.detail?.nfcId || e?.detail;
       if (nfcId) {
         broadcastNfcScan(nfcId);
@@ -263,7 +610,43 @@ export default function App() {
     const handleRemotePrint = (e: any) => {
       const payload = e?.detail;
       if (payload) {
-        printFullReceipt(payload).catch((err) => console.warn('Remote print error:', err));
+        // Prevent duplicate printing from concurrent WebSocket push and HTTP polling fallback
+        const dedupKey = payload.jobId || payload.invoiceNo || (payload.items?.[0]?.name + '_' + payload.total);
+        const now = Date.now();
+        if (dedupKey && processedPrintJobsRef.current.has(dedupKey)) {
+          const lastPrinted = processedPrintJobsRef.current.get(dedupKey) || 0;
+          if (now - lastPrinted < 25000) {
+            console.log('🖨️ [Sunmi Print Station] Skipping duplicate print job:', dedupKey);
+            return;
+          }
+        }
+        if (dedupKey) {
+          processedPrintJobsRef.current.set(dedupKey, now);
+        }
+
+        console.log('🖨️ [Sunmi Print Station] Printing receipt for invoice:', payload.invoiceNo);
+        showToast('🖨️ Printing: ' + (payload.invoiceNo || 'Receipt'));
+        printNativeSunmiReceipt(payload)
+          .then((printed) => {
+            if (printed && (payload.paymentMode === 'CASH' || payload.paymentMethod === 'CASH')) {
+              openCashDrawer(payload.changeDue || 0).catch(() => {});
+            }
+          })
+          .catch((err) => console.warn('Remote print error:', err));
+
+        // Acknowledge print completion to central server
+        if (payload.jobId) {
+          const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
+            (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
+          );
+          for (const base of candidateBases) {
+            fetch(`${base}/api/print/complete`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jobId: payload.jobId })
+            }).catch(() => {});
+          }
+        }
       }
     };
 
@@ -286,20 +669,29 @@ export default function App() {
       handleLockTerminal();
     };
 
+    const handleRemoteDrawerKick = (e: any) => {
+      console.log('⚡ [App] Remote Cash Drawer Kick received across network:', e?.detail);
+      openCashDrawer(e?.detail?.saleTotal).catch((err) => console.warn('App drawer kick error:', err));
+    };
+
     window.addEventListener('sunmi-nfc-broadcast', handleNfcBroadcast);
+    window.addEventListener('sunmi-nfc-scan', handleNfcBroadcast);
     window.addEventListener('sunmi-cart-broadcast', handleCartBroadcast);
     window.addEventListener('sunmi-remote-print', handleRemotePrint);
     window.addEventListener('sunmi-remote-print-statement', handleRemotePrintStatement);
     window.addEventListener('sunmi-nfc-assigned', handleNfcAssigned);
     window.addEventListener('sunmi-remote-lock', handleRemoteLock);
+    window.addEventListener('sunmi-remote-drawer-kick', handleRemoteDrawerKick);
 
     return () => {
       window.removeEventListener('sunmi-nfc-broadcast', handleNfcBroadcast);
+      window.removeEventListener('sunmi-nfc-scan', handleNfcBroadcast);
       window.removeEventListener('sunmi-cart-broadcast', handleCartBroadcast);
       window.removeEventListener('sunmi-remote-print', handleRemotePrint);
       window.removeEventListener('sunmi-remote-print-statement', handleRemotePrintStatement);
       window.removeEventListener('sunmi-nfc-assigned', handleNfcAssigned);
       window.removeEventListener('sunmi-remote-lock', handleRemoteLock);
+      window.removeEventListener('sunmi-remote-drawer-kick', handleRemoteDrawerKick);
     };
   }, [broadcastNfcScan, broadcastCartState]);
 
@@ -332,6 +724,11 @@ export default function App() {
   const handleLogin = (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string }) => {
     setUserRole(role);
     localStorage.setItem('askar_role', role);
+    if (role === 'MANAGER') {
+      localStorage.setItem('askar_manager_pin', '9999');
+      localStorage.setItem('manager_pin', '9999');
+      localStorage.setItem('askar_admin_pin', '9999');
+    }
     if (employee) {
       localStorage.setItem('active_employee_id', employee.id);
       localStorage.setItem('active_shift_cashier', employee.name);
@@ -345,6 +742,9 @@ export default function App() {
     localStorage.removeItem('active_employee_id');
     localStorage.removeItem('askar_shift_id');
     localStorage.removeItem('active_shift_id');
+    localStorage.removeItem('askar_manager_pin');
+    localStorage.removeItem('manager_pin');
+    localStorage.removeItem('askar_admin_pin');
   };
 
   const handleShiftStart = (newShiftId: string) => {
@@ -353,9 +753,39 @@ export default function App() {
     localStorage.setItem('active_shift_id', newShiftId);
   };
 
-  // --- VIEW 0C: FEITIAN F100 BULK PIM INVENTORY INTAKE NODE ---
-  if (isF100PimRoute) {
-    return <F100Pim />;
+  // --- VIEW 0D: IPHONE 16 PRO MOBILE TAP PAD & RELAY STATION (/tap) ---
+  if (isTapPadRoute) {
+    return <MobileTapPad />;
+  }
+
+  // --- VIEW 0E: DAILY FRESH PRODUCE & VEGGIE COMMANDER (/produce, /veggies, /price-change) ---
+  if (isPriceChangeRoute) {
+    return <ProducePriceCommander apiBase={apiBase} initialMode="60s" />;
+  }
+  if (isProduceRoute) {
+    return <ProducePriceCommander apiBase={apiBase} initialMode="catalog" />;
+  }
+
+  // --- VIEW 0C: FEITIAN F100 TERMINAL 02 (PIM vs MOBILE KHATA POS) ---
+  if (isF100Device) {
+    if (f100Mode === 'pim') {
+      return (
+        <F100Pim
+          onSwitchToPos={() => {
+            setF100Mode('pos');
+            try { localStorage.setItem('f100_active_mode', 'pos'); } catch {}
+          }}
+        />
+      );
+    }
+    return (
+      <MobileKhataScreen
+        onSwitchToPim={() => {
+          setF100Mode('pim');
+          try { localStorage.setItem('f100_active_mode', 'pim'); } catch {}
+        }}
+      />
+    );
   }
 
   if (isCustomerDisplayRoute) {
@@ -376,8 +806,8 @@ export default function App() {
     return <CorporateSponsorDashboard apiBase={apiBase} />;
   }
 
-  // --- VIEW 3: THE ASKAR BACK-OFFICE MANAGER SUITE (Migrated to Master Laptop) ---
-  if (userRole === 'MANAGER' || isManagerPort) {
+  // --- VIEW 3: THE ASKAR BACK-OFFICE MANAGER SUITE (When explicitly accessing manager port / route) ---
+  if (isManagerPort) {
     const dashboardUrl = `http://${typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'}:5177`;
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-8 text-center select-none">
@@ -445,8 +875,8 @@ export default function App() {
     );
   }
 
-  // --- VIEW 2: THE CASHIER ENVIRONMENT ---
-  if (userRole === 'CASHIER') {
+  // --- VIEW 2: THE POS REGISTER ENVIRONMENT (Cashier or Store Manager) ---
+  if (userRole === 'CASHIER' || userRole === 'MANAGER') {
     return (
       <div className="h-screen w-full relative bg-slate-900 overflow-hidden">
         {renderManagerScanOverlay()}
@@ -456,18 +886,17 @@ export default function App() {
             <span>Khata Customer [{activeLock.customerName || activeLock.customerId}] locked by Back-Office Laptop.</span>
           </div>
         )}
-        {/* FIX: Only ask the CASHIER for the floating cash, and only if a shift hasn't started */}
         {!activeShiftId ? (
           <StartShiftModal
-            cashierName={typeof window !== 'undefined' ? (localStorage.getItem('active_shift_cashier') || 'Cashier 1') : 'Cashier 1'}
-            employeeId={typeof window !== 'undefined' ? (localStorage.getItem('active_employee_id') || 'emp_cashier_1') : 'emp_cashier_1'}
+            cashierName={typeof window !== 'undefined' ? (localStorage.getItem('active_shift_cashier') || (userRole === 'MANAGER' ? 'Store Manager' : 'Cashier 1')) : 'Cashier 1'}
+            employeeId={typeof window !== 'undefined' ? (localStorage.getItem('active_employee_id') || (userRole === 'MANAGER' ? 'emp_manager_1' : 'emp_cashier_1')) : 'emp_cashier_1'}
             apiBase={apiBase}
             onShiftStart={handleShiftStart}
             onCancel={handleLockTerminal}
           />
         ) : (
           <CheckoutScreen
-            isCashierTrapped={true}
+            isCashierTrapped={userRole === 'CASHIER'}
             onLockTerminal={handleLockTerminal}
             shiftId={activeShiftId}
             disasterRecovery={{

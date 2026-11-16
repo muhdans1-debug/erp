@@ -32,6 +32,15 @@ platform-tools/
 logs/
 **/logs/
 
+# Archives and forensic snapshots
+archives/
+**/archives/
+sunmi_grabbed_db/
+old layali/
+*.lnk
+.agents/
+skills-lock.json
+
 # Environment and sensitive keys
 .env
 .env.*

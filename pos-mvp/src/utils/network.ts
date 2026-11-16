@@ -1,5 +1,7 @@
 // pos-mvp/src/utils/network.ts
 
+import { DEFAULT_EDGE_API_URL } from './apiConfig';
+
 /**
  * Resolves the Master Server base URL with zero-config mDNS discovery
  * Priority Order:
@@ -47,8 +49,8 @@ export const resolveMasterServer = async (): Promise<string> => {
   const fallback = localStorage.getItem('ASKAR_FALLBACK_IP');
   if (fallback) return fallback.replace(/\/+$/, '');
 
-  // Default to zero-config mDNS domain
-  return 'http://askar-master.local:3000';
+  // Default to Sovereign Cloudflare Edge Gateway
+  return DEFAULT_EDGE_API_URL;
 };
 
 /**
@@ -65,7 +67,7 @@ export const getApiBaseUrl = (): string => {
       return `http://${host}:3000`;
     }
   }
-  return 'http://askar-master.local:3000';
+  return DEFAULT_EDGE_API_URL;
 };
 
 /**

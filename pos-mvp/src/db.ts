@@ -2,7 +2,7 @@
 // Supports both Node.js (local.db file replica) and Browser (Local Sunmi Chip Bridge + 0ms Cache + Turso Sync)
 
 import { createClient } from '@libsql/client';
-import { saveSaleOffline } from './utils/nativeDb';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
 
 export interface DbExecuteResult {
   columns?: string[];
@@ -159,6 +159,8 @@ export const db: LibsqlDatabase = {
       try {
         const host = (window && window.location && window.location.hostname) || '192.168.8.7';
         const candidateBases = [
+          getApiBaseUrl(),
+          DEFAULT_EDGE_API_URL,
           localStorage.getItem('master_server_url'),
           'http://192.168.8.7:3000',
           `http://${host}:3000`,
@@ -187,25 +189,6 @@ export const db: LibsqlDatabase = {
       };
     }
 
-    // If writing sale offline:
-    if (sql.trim().toUpperCase().startsWith('INSERT INTO SALEITEM')) {
-      const totalVal = args.length > 0 ? Number(args[0]) : 0;
-      const offlineSale = {
-        id: 'si_offline_' + Date.now(),
-        total_price: totalVal,
-        createdAt: new Date().toISOString()
-      };
-      saveSaleOffline(offlineSale).catch(() => {});
-
-      console.log('⚡ Sale saved locally in native hardware storage (offline queue)!');
-      return {
-        columns: ['id', 'total_price'],
-        rows: [],
-        rowsAffected: 1,
-        insertedId: offlineSale.id
-      };
-    }
-
     return { columns: [], rows: [], rowsAffected: 0 };
   },
 
@@ -219,9 +202,10 @@ export const db: LibsqlDatabase = {
 
     const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
     const host = (isBrowser && window.location.hostname) || (isAndroid ? '192.168.8.7' : 'localhost');
-    const masterBase = customBase || (isBrowser && localStorage.getItem('master_server_url')) || (isAndroid ? 'http://192.168.8.7:3000' : `http://${host}:3000`);
+    const masterBase = customBase || (isBrowser && getApiBaseUrl()) || DEFAULT_EDGE_API_URL;
     const endpoints = [
       masterBase,
+      DEFAULT_EDGE_API_URL,
       'http://192.168.8.7:3000',
       `http://${host}:3000`, 
       'http://localhost:3000', 

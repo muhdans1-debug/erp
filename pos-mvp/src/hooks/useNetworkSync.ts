@@ -1,6 +1,8 @@
 // pos-mvp/src/hooks/useNetworkSync.ts
 import { useEffect, useState, useRef } from 'react';
 import { pushOfflineSales } from '../services/syncService';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
+import { syncClockWithMasterServer, updateClockOffsetFromHeartbeat } from '../utils/time';
 
 /**
  * Robust network probe that never crashes on older Android WebViews
@@ -47,13 +49,15 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
   const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
   let cleanIp = (masterIp || '').replace(/^https?:\/\//, '').replace(/:[0-9]+.*$/, '').replace(/\/.*$/, '').trim();
   if (!cleanIp || (isAndroid && (cleanIp === 'localhost' || cleanIp === '127.0.0.1'))) {
-    cleanIp = '192.168.8.7';
+    cleanIp = 'askar-edge-api.layali-askar-pos.workers.dev';
   }
 
   const getProbeCandidates = () => {
     return [
-      `http://${cleanIp}:3000`,
-      'http://192.168.8.7:3000'
+      getApiBaseUrl(),
+      CLOUD_GATEWAY_URL,
+      DEFAULT_EDGE_API_URL,
+      LAN_SERVER_URL
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
   };
 
@@ -72,14 +76,23 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
     let isMounted = true;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    // 1. Establish WebSocket Connection
+    // Check if connecting directly to Cloudflare Edge Gateway
+    const isEdgeGateway = cleanIp.includes('.workers.dev') || cleanIp.includes('layali-askar-pos');
+
+    // 1. Establish WebSocket Connection (Only when connecting to local Master POS with dedicated WS daemon)
     const connectWs = () => {
-      if (!isMounted) return;
+      if (!isMounted || isEdgeGateway) return;
 
       try {
-        const ws = new WebSocket(`ws://${cleanIp}:3000/ws`);
+        const isDomain = cleanIp.includes('.workers.dev') || cleanIp.includes('.app') || cleanIp.includes('.com');
+        const wsUrl = isDomain ? `wss://${cleanIp}/ws` : `ws://${cleanIp}:3000/ws`;
+        const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
+          if (typeof window !== 'undefined') {
+            (window as any).__posWebSocket = ws;
+          }
+          syncClockWithMasterServer().catch(() => {});
           if (isMounted) {
             setIsServerOnline(true);
             setShowDrPrompt(false);
@@ -91,6 +104,9 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
         };
 
         ws.onclose = async () => {
+          if (typeof window !== 'undefined' && (window as any).__posWebSocket === ws) {
+            (window as any).__posWebSocket = null;
+          }
           if (!isMounted) return;
 
           // Before declaring server offline, probe local HTTP health across candidates
@@ -139,9 +155,12 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
+            if (data?.serverEpoch) {
+              updateClockOffsetFromHeartbeat(data.serverEpoch);
+            }
             if (data.type === 'PING') {
               try {
-                ws.send(JSON.stringify({ type: 'PONG' }));
+                ws.send(JSON.stringify({ type: 'PONG', clientEpoch: Date.now() }));
               } catch {}
               return;
             }
@@ -151,14 +170,24 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('master-ws-message', { detail: data }));
 
+              const currentTerm = localStorage.getItem('terminal_id') || 'T1';
+              const targetTerm = data.terminalId || data.payload?.terminalId || 'ALL';
+              const isTargetedToUs = targetTerm === 'ALL' || targetTerm === currentTerm;
+
               if (data.type === 'PRINT_REQUEST') {
                 window.dispatchEvent(new CustomEvent('sunmi-remote-print', { detail: data.payload }));
               } else if (data.type === 'PRINT_KHATA_STATEMENT') {
                 window.dispatchEvent(new CustomEvent('sunmi-remote-print-statement', { detail: data.payload }));
               } else if (data.type === 'NFC_ASSIGNED') {
                 window.dispatchEvent(new CustomEvent('sunmi-nfc-assigned', { detail: data.payload }));
-              } else if (data.type === 'REMOTE_LOCK_REGISTER') {
+              } else if (isTargetedToUs && (data.type === 'REMOTE_DRAWER_KICK' || data.type === 'DRAWER_KICK' || data.command === 'DRAWER_KICK')) {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-drawer-kick', { detail: data.payload || data }));
+              } else if (isTargetedToUs && data.type === 'REMOTE_CLEAR_CART') {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-clear-cart'));
+              } else if (isTargetedToUs && data.type === 'REMOTE_LOCK_REGISTER') {
                 window.dispatchEvent(new CustomEvent('sunmi-remote-lock'));
+              } else if (data.type === 'BENEFIT_PAY_SUCCESS' || data.type === 'REMOTE_BENEFIT_PAY_SUCCESS') {
+                window.dispatchEvent(new CustomEvent('sunmi-remote-benefit-success', { detail: data.payload || data }));
               }
             }
             onMessageRef.current?.(data);
@@ -179,12 +208,14 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
       }
     };
 
-    connectWs();
+    if (!isEdgeGateway) {
+      connectWs();
+    }
 
     // 2. Background Offline Sync Polling (10 seconds)
     const syncInterval = setInterval(async () => {
       if (typeof navigator !== 'undefined' && navigator.onLine) {
-        const canSync = isCloudModeActive || wsRef.current?.readyState === WebSocket.OPEN;
+        const canSync = isCloudModeActive || isServerOnline || (typeof navigator !== 'undefined' && navigator.onLine);
         if (canSync) {
           const syncedCount = await pushOfflineSales(isCloudModeActive ? 'cloud-dr' : cleanIp);
           if (syncedCount > 0) {
@@ -194,7 +225,7 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
       }
     }, 10000);
 
-    // 2b. Background HTTP Heartbeat (5 seconds) to ensure POS never shows false offline alerts
+    // 2b. Background HTTP Heartbeat (30s) to keep status accurate without burning cloud request quotas
     const checkHealth = async () => {
       if (!isMounted) return;
       const isHealthy = await checkServerHealth();
@@ -210,7 +241,7 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
       }
     };
     checkHealth();
-    const httpHealthInterval = setInterval(checkHealth, 5000);
+    const httpHealthInterval = setInterval(checkHealth, 30000);
 
     // 3. Cleanup on unmount
     return () => {
@@ -229,14 +260,8 @@ export const useNetworkSync = (masterIp: string, onMessage?: (data: any) => void
     };
   }, [cleanIp, isCloudModeActive]);
 
-  // Determine active API base dynamically
-  const cloudUrl = typeof window !== 'undefined'
-    ? (localStorage.getItem('DR_CLOUD_URL') || 'https://askar-emergency-api.yourdomain.workers.dev')
-    : 'https://askar-emergency-api.yourdomain.workers.dev';
-
-  const activeApiBase = isCloudModeActive
-    ? cloudUrl
-    : `http://${cleanIp}:3000`;
+  // Determine active API base dynamically from unified config
+  const activeApiBase = getApiBaseUrl();
 
   const toggleCloudMode = (active: boolean) => {
     setIsCloudModeActive(active);

@@ -519,7 +519,11 @@ export function KhataStatement() {
         }
       } catch {}
 
-      setError(t.networkErr);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setError(t.networkErr || 'No internet connection detected.');
+      } else {
+        setError(err.message && !err.message.includes('fetch') ? err.message : 'Cannot reach server. The central service may be temporarily unavailable or updating.');
+      }
       setLoading(false);
       return false;
     }

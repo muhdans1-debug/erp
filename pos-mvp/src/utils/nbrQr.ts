@@ -8,6 +8,7 @@
  * - Tag 5 (0x05): Total VAT Amount (Formatted to 3 decimal places e.g. 0.114)
  */
 import QRCode from 'qrcode';
+import { getRegionalIsoString } from './time';
 
 export interface NbrInvoiceQrParams {
   sellerName?: string;
@@ -23,8 +24,7 @@ export interface NbrInvoiceQrParams {
 export function generateNbrTlvBase64(params: NbrInvoiceQrParams): string {
   const seller = (params.sellerName || 'ASKAR SUPERMARKET').trim();
   const vatNo = (params.vatNumber || '200012345678901').trim();
-  const dateObj = params.timestamp ? new Date(params.timestamp) : new Date();
-  const isoDate = !isNaN(dateObj.getTime()) ? dateObj.toISOString() : new Date().toISOString();
+  const isoDate = getRegionalIsoString(params.timestamp);
   const totalStr = Number(params.total || 0).toFixed(3);
   const vatStr = params.vatAmount !== undefined
     ? Number(params.vatAmount).toFixed(3)

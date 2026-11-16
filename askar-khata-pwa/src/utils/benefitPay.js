@@ -7,11 +7,11 @@
 export const DEFAULT_BENEFIT_CONFIG = {
   accountType: 'MOBILE_FAWRI',
   merchantId: '97300182',
-  merchantName: 'ASKAR SUPERMARKET',
-  mobileNumber: '+973 32067388',
-  iban: 'BH67NBOB00000012345678',
-  cprOrCr: '200012345678901',
-  branchId: 'POS-01',
+  merchantName: 'layali sbi',
+  mobileNumber: '+973 33843855',
+  iban: 'BH77SBIN02740045310001',
+  cprOrCr: '790614189',
+  branchId: 'MAIN-01',
   notes: 'Scan with BenefitPay app to pay directly via Fawri+'
 };
 
@@ -59,7 +59,7 @@ export const calculateEMVCoCRC16 = (payload) => {
  * @param {object} [customConfig] - Merchant configuration override
  * @returns {string} Fully signed EMVCo MPM compliant string
  */
-export const generateBenefitPayPayload = (amount, invoiceNo, customConfig) => {
+export const generateBenefitPayPayload = (amount, invoiceNo, customConfig, formatOverride) => {
   const isDynamic = typeof amount === 'number' && amount > 0;
   const formattedAmount = isDynamic ? Number(amount).toFixed(3) : '0.000';
   const cleanInvoice = (invoiceNo || `INV-${Date.now().toString().slice(-6)}`).trim();
@@ -69,38 +69,44 @@ export const generateBenefitPayPayload = (amount, invoiceNo, customConfig) => {
     ...(customConfig || {})
   };
 
-  // 1. Tag 00: Payload Format Indicator (01)
-  let emv = formatEMVCoTag('00', '01');
+  const cleanIban = (config.iban || '').replace(/\s+/g, '').toUpperCase();
 
-  // 2. Tag 01: Point of Initiation Method (12 = Dynamic with preset amount, 11 = Static)
-  emv += formatEMVCoTag('01', isDynamic ? '12' : '11');
+  // 1. Raw IBAN
+  if (formatOverride === 'RAW_IBAN') {
+    return cleanIban || 'BH77SBIN02740045310001';
+  }
 
-  // 3. Tag 26: Bahrain BENEFIT Scheme Merchant Account Information
-  let sub26 = '';
-  // Subtag 00: Globally Unique Scheme Identifier for Bahrain
-  sub26 += formatEMVCoTag('00', 'bh.benefit');
-
-  if (config.accountType === 'MOBILE_FAWRI') {
+  // 2. Mobile Fawri+ / IBAN Mode: Authentic BenefitPay app scannable JSON payload {"iban": "BH..."}
+  if (formatOverride === 'BENEFIT_JSON' || (config.accountType === 'MOBILE_FAWRI' && formatOverride !== 'EMV_MERCHANT')) {
+    if (cleanIban && cleanIban.startsWith('BH')) {
+      return JSON.stringify({ iban: cleanIban });
+    }
     let cleanMobile = (config.mobileNumber || '').replace(/[^\d]/g, '');
     if (cleanMobile.length === 8 && !cleanMobile.startsWith('973')) {
       cleanMobile = `973${cleanMobile}`;
     }
-    sub26 += formatEMVCoTag('01', cleanMobile || '97339000000');
-  } else {
-    const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
-    sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
+    if (cleanMobile) {
+      return JSON.stringify({ mobile: cleanMobile });
+    }
   }
+
+  // 3. Official Corporate/Commercial Merchant Account Mode (EMVCo MPM QRCPS)
+  let emv = formatEMVCoTag('00', '01');
+  emv += formatEMVCoTag('01', isDynamic ? '12' : '11');
+
+  let sub26 = '';
+  sub26 += formatEMVCoTag('00', 'bh.benefit');
+
+  const cleanMerchant = (config.merchantId || '97300182').replace(/[^\w-]/g, '').trim();
+  sub26 += formatEMVCoTag('01', cleanMerchant || '97300182');
 
   const branch = (config.branchId || 'POS-01').trim();
   if (branch) {
     sub26 += formatEMVCoTag('02', branch);
   }
 
-  if (config.iban) {
-    const cleanIban = config.iban.replace(/\s+/g, '').toUpperCase();
-    if (cleanIban) {
-      sub26 += formatEMVCoTag('03', cleanIban);
-    }
+  if (cleanIban) {
+    sub26 += formatEMVCoTag('03', cleanIban);
   }
 
   emv += formatEMVCoTag('26', sub26);

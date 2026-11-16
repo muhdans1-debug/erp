@@ -46,7 +46,7 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
   isPositionSwapActive = false,
   swapSourceProduct = null,
   onAddQuickProduct,
-  onSelectAllCategory,
+  onSelectAllCategory: _onSelectAllCategory,
   getCategoryTheme = defaultGetCategoryTheme
 }) => {
   return (
@@ -59,8 +59,8 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
         const currentStock = catalogItem?.stockQuantity !== undefined
           ? Number(catalogItem.stockQuantity)
           : (prod.stockQuantity !== undefined ? Number(prod.stockQuantity) : null);
-        const isOutOfStock = currentStock !== null && currentStock <= 0;
-        const isLowStock = currentStock !== null && currentStock > 0 && currentStock <= ((prod as any).minThreshold ?? (prod as any).min_stock ?? 5);
+        const isOutOfStock = false; // Unlimited stock mode
+        const isLowStock = false;
         const isSelectedForSwap = swapSourceProduct?.id === prod.id;
 
         return (
@@ -148,18 +148,13 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
         </button>
       )}
 
-      {products.length === 0 && (
-        <div className="col-span-full text-center py-12 text-slate-400">
-          <p className="font-bold text-sm">No items in this category</p>
-          {onSelectAllCategory && (
-            <button
-              type="button"
-              onClick={onSelectAllCategory}
-              className="mt-2 text-xs font-bold text-blue-600 underline cursor-pointer"
-            >
-              View All Quick Items
-            </button>
-          )}
+      {products.length === 0 && !isEditMode && (
+        <div className="col-span-full text-center py-12 px-4 bg-white/60 border border-dashed border-slate-300 rounded-3xl my-4">
+          <div className="text-3xl mb-2">⚡</div>
+          <p className="font-black text-slate-700 text-sm">Quick Grid is Empty</p>
+          <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+            Ready for your selective items. Tap <strong className="text-amber-700">"Edit Grid"</strong> in the top-right header to add your specific items.
+          </p>
         </div>
       )}
     </div>

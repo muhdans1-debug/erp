@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Download, TrendingUp, TrendingDown, Banknote, Activity, RefreshCw, ArrowLeft, CheckCircle2, Trash2, Database, AlertCircle } from 'lucide-react';
 import LogWastageModal from './LogWastageModal';
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
+import { getAdminPin } from './utils/auth';
+import { getApiBaseUrl } from './utils/apiConfig';
+import { fetchUnifiedReportData } from './services/dataService';
 
 interface MasterReportProps {
   apiBase?: string;
@@ -9,7 +12,7 @@ interface MasterReportProps {
 }
 
 export default function MasterReport({ apiBase: propApiBase, onBackToPos }: MasterReportProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || getApiBaseUrl();
   
   const todayStr = new Date().toISOString().split('T')[0];
   const [dateRange, setDateRange] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'CUSTOM' | 'YESTERDAY' | 'ALL' | string>('TODAY');
@@ -26,16 +29,8 @@ export default function MasterReport({ apiBase: propApiBase, onBackToPos }: Mast
   const fetchUnifiedData = async () => {
     setLoading(true);
     try {
-      const url = (dateRange === 'CUSTOM' && startDate && endDate)
-        ? `${apiBase}/api/reports/unified?range=CUSTOM&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
-        : `${apiBase}/api/reports/unified?range=${dateRange}`;
-      const res = await fetch(url, {
-        headers: {
-          'x-manager-pin': '9999'
-        }
-      });
-      const data = await res.json();
-      if (data.success && data.kpis && Array.isArray(data.transactions)) {
+      const data = await fetchUnifiedReportData(apiBase, dateRange, startDate, endDate);
+      if (data && data.success && data.kpis && Array.isArray(data.transactions)) {
         setTransactions(data.transactions);
         setKpis({
           sales: Number(data.kpis.sales || 0),
@@ -46,35 +41,18 @@ export default function MasterReport({ apiBase: propApiBase, onBackToPos }: Mast
           netCash: Number(data.kpis.netCash || 0),
         });
       } else {
-        throw new Error(data.error || 'Failed to load report');
+        throw new Error('Failed to load report data');
       }
     } catch (err) {
-      console.warn("Falling back to demo/local unified ledger data:", err);
-      // Graceful fallback with realistic demonstration data if offline
-      const dummyUnifiedData = [
-        { id: '1', time: '08:15 AM', dateStr: new Date().toLocaleDateString('en-GB'), type: 'SALE', desc: 'Invoice #1042 (Cash)', amount: 15.500, direction: 'IN' },
-        { id: '2', time: '09:30 AM', dateStr: new Date().toLocaleDateString('en-GB'), type: 'EXPENSE', desc: 'Shop Electricity Bill [Business]', amount: 45.000, direction: 'OUT' },
-        { id: '3', time: '10:05 AM', dateStr: new Date().toLocaleDateString('en-GB'), type: 'SALE', desc: 'Invoice #1043 (Card)', amount: 4.200, direction: 'IN' },
-        { id: '4', time: '11:20 AM', dateStr: new Date().toLocaleDateString('en-GB'), type: 'KHATA_PAYMENT', desc: 'Ali Ahmed - Debt Settle', amount: 20.000, direction: 'IN' },
-        { id: '5', time: '01:15 PM', dateStr: new Date().toLocaleDateString('en-GB'), type: 'EXPENSE', desc: 'Owner Cash Draw [Personal Draw]', amount: 10.000, direction: 'OUT' },
-      ];
-
-      setTransactions(dummyUnifiedData);
-
-      let sales = 0, expenses = 0, khata = 0;
-      dummyUnifiedData.forEach(t => {
-        if (t.type === 'SALE') sales += t.amount;
-        if (t.type === 'EXPENSE') expenses += t.amount;
-        if (t.type === 'KHATA_PAYMENT') khata += t.amount;
-      });
-
+      console.warn("Unified ledger report fetch error:", err);
+      setTransactions([]);
       setKpis({
-        sales,
-        expenses,
-        khataCollected: khata,
+        sales: 0,
+        expenses: 0,
+        khataCollected: 0,
         wastageLoss: 0,
-        grossProfit: sales,
-        netCash: (sales + khata) - expenses
+        grossProfit: 0,
+        netCash: 0
       });
     } finally {
       setLoading(false);

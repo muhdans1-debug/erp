@@ -15,135 +15,136 @@ import {
   AlertCircle,
   Download,
   RefreshCw,
-  WifiOff
+  WifiOff,
+  Lock
 } from 'lucide-react';
 
 const TRANSLATIONS = {
   en: {
-    title: 'Customer Khata Portal',
-    subtitle: 'View your digital grocery tab, itemized receipts & settle online.',
-    searchPlaceholder: 'Enter Phone, Name, CPR, or ID',
-    searchBtn: 'Find My Account',
-    recentTab: 'Previously Viewed Accounts',
-    noRecent: 'No accounts saved on this device yet.',
-    orScan: 'Or scan the QR code printed on your Askar receipt.',
-    scanReceiptBtn: 'Scan Receipt QR',
+    title: 'Private Customer Khata',
+    subtitle: 'Direct & secure grocery ledger access. Public searching is disabled for your privacy.',
+    privacyBadge: 'Strict Privacy Active',
+    privacyNote: 'To protect your financial privacy, searching other customers is disabled. Access your Khata directly by scanning your receipt QR code.',
+    scanReceiptBtn: 'Scan Receipt QR to Open My Khata',
+    passkeyPlaceholder: 'Enter Phone (e.g. 39991234), CPR, or UUID',
+    orScan: 'Or scan the receipt QR code to open your account directly',
+    openAccountBtn: 'Open My Khata',
     scanModalTitle: 'Scan Receipt QR Code',
-    pointCameraHint: 'Point your camera at the QR code printed on the bottom of your receipt.',
+    pointCameraHint: 'Point your camera at the private QR code printed on your Askar receipt.',
     orUploadPhoto: 'Upload receipt photo',
     closeBtn: 'Close Scanner',
     cameraPermissionErr: 'Unable to access camera. Please allow camera permissions or upload an image.',
-    needHelp: 'Need help with your account?',
+    needHelp: 'Need help opening your account?',
     callStore: 'Call Store Hotline',
     whatsappHelp: 'WhatsApp Support',
     secureNote: '100% Protected by BenefitPay & Fawri+',
-    notFound: 'No active Khata account found. Please check your number or contact the cashier.',
+    notFound: 'No private account found matching this key. Please scan your receipt QR code or ask the cashier.',
     networkErr: 'No internet connection detected. Please check your mobile data or Wi-Fi.',
-    offlineNotice: 'Offline Mode Active — You can open previously saved accounts below.',
+    offlineNotice: 'Offline Mode Active.',
     installAppBtn: 'Install Askar Khata App (1-Click)',
     updateAvailable: 'New version available! Refresh to update.',
     refreshNow: 'Refresh',
     currency: 'BHD'
   },
   ar: {
-    title: 'بوابة دفتر حسابات الزبائن',
-    subtitle: 'عرض فواتير البقالة الرقمية، تفاصيل الحساب والسداد إلكترونياً.',
-    searchPlaceholder: 'أدخل رقم الهاتف أو الاسم أو الرقم السكاني',
-    searchBtn: 'البحث عن حسابي',
-    recentTab: 'الحسابات السابقة على هذا الجهاز',
-    noRecent: 'لا توجد حسابات محفوظة حتى الآن.',
-    orScan: 'أو امسح رمز الاستجابة السريعة (QR) المطبوع على إيصال أسكر.',
-    scanReceiptBtn: 'مسح رمز الإيصال (QR)',
+    title: 'دفتر حسابات الزبائن الخاص',
+    subtitle: 'وصول مباشر وآمن لحسابك. تم إيقاف البحث العام لحماية خصوصيتك المالية.',
+    privacyBadge: 'حماية الخصوصية مفعلة',
+    privacyNote: 'لحماية خصوصيتك المالية، تم إلغاء البحث عن حسابات الآخرين. يمكنك الدخول المباشر لحسابك بمسح رمز QR من إيصالك.',
+    scanReceiptBtn: 'مسح رمز QR من الإيصال لفتح حسابي',
+    passkeyPlaceholder: 'أدخل رقم الهاتف (مثال: 39991234) أو الرقم الشخصي أو المعرف',
+    orScan: 'أو امسح رمز الاستجابة السريعة (QR) على الإيصال للدخول المباشر',
+    openAccountBtn: 'فتح حسابي',
     scanModalTitle: 'مسح رمز الاستجابة السريعة للإيصال',
-    pointCameraHint: 'وجّه الكاميرا بثبات نحو رمز الاستجابة السريعة أسفل الإيصال.',
+    pointCameraHint: 'وجّه الكاميرا بثبات نحو رمز QR المطبوع أسفل إيصال الشراء.',
     orUploadPhoto: 'رفع صورة الإيصال',
     closeBtn: 'إغلاق الكاميرا',
     cameraPermissionErr: 'تعذر الوصول إلى الكاميرا. يرجى السماح بالإذن أو رفع صورة.',
-    needHelp: 'هل تحتاج مساعدة في حسابك؟',
+    needHelp: 'هل تحتاج مساعدة في فتح حسابك؟',
     callStore: 'الاتصال بالفرع مباشرة',
     whatsappHelp: 'دعم واتساب الفوري',
     secureNote: 'محمي بالكامل عبر بنفت بي وفوري+',
-    notFound: 'لم يتم العثور على حساب نشط. يرجى التأكد من الرقم أو مراجعة الكاشير.',
+    notFound: 'لم يتم العثور على حساب مطابق. يرجى مسح رمز QR من الإيصال أو مراجعة الكاشير.',
     networkErr: 'لا يوجد اتصال بالإنترنت. يرجى التحقق من بيانات الهاتف أو الواي فاي.',
-    offlineNotice: 'وضع عدم الاتصال مفعل — يمكنك فتح الحسابات المحفوظة أدناه.',
+    offlineNotice: 'وضع عدم الاتصال مفعل.',
     installAppBtn: 'تثبيت تطبيق أسكر خاتا على هاتفك',
     updateAvailable: 'يتوفر تحديث جديد للتطبيق! اضغط للتحديث.',
     refreshNow: 'تحديث',
     currency: 'د.ب'
   },
   ml: {
-    title: 'കസ്റ്റമർ ഖാത്ത പോർട്ടൽ',
-    subtitle: 'നിങ്ങളുടെ ഗ്രോസറി ബില്ലുകളും കുടിശ്ശിക വിവരങ്ങളും ഓൺലൈനിൽ കാണുക.',
-    searchPlaceholder: 'ഫോൺ നമ്പർ അല്ലെങ്കിൽ കസ്റ്റമർ ഐഡി നൽകുക',
-    searchBtn: 'അക്കൗണ്ട് കണ്ടെത്തുക',
-    recentTab: 'ഈ ഫോണിൽ നേരത്തെ തുറന്ന അക്കൗണ്ടുകൾ',
-    noRecent: 'സേവ് ചെയ്ത അക്കൗണ്ടുകൾ ലഭ്യമല്ല.',
-    orScan: 'അല്ലെങ്കിൽ അസ്കർ ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക.',
-    scanReceiptBtn: 'ബില്ലിലെ QR സ്കാൻ ചെയ്യുക',
+    title: 'സ്വകാര്യ കസ്റ്റമർ ഖാത്ത',
+    subtitle: 'നിങ്ങളുടെ സ്വന്തം അക്കൗണ്ടിലേക്ക് നേരിട്ട് പ്രവേശിക്കുക. സ്വകാര്യതയ്ക്കായി സെർച്ച് ഒഴിവാക്കിയിരിക്കുന്നു.',
+    privacyBadge: 'സ്വകാര്യത സുരക്ഷിതം',
+    privacyNote: 'മറ്റുള്ളവരുടെ അക്കൗണ്ടുകൾ തിരയുന്നത് ഒഴിവാക്കിയിരിക്കുന്നു. ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്ത് സ്വന്തം അക്കൗണ്ട് നേരിട്ട് തുറക്കാം.',
+    scanReceiptBtn: 'ബില്ലിലെ QR സ്കാൻ ചെയ്ത് തുറക്കുക',
+    passkeyPlaceholder: 'മൊബൈൽ നമ്പർ (ഉദാ: 39991234) അല്ലെങ്കിൽ ഐഡി നൽകുക',
+    orScan: 'അല്ലെങ്കിൽ ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക',
+    openAccountBtn: 'എന്റെ ഖാത്ത തുറക്കുക',
     scanModalTitle: 'ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക',
     pointCameraHint: 'ബില്ലിന്റെ അടിയിലുള്ള QR കോഡിന് നേരെ ക്യാമറ പിടിക്കുക.',
     orUploadPhoto: 'ഫോട്ടോ അപ്‌ലോഡ് ചെയ്യുക',
     closeBtn: 'അടയ്ക്കുക',
-    cameraPermissionErr: 'ക്യാമറ ആക്‌സസ് ചെയ്യാൻ കഴിഞ്ഞില്ല. അനുമതി നൽകുക അല്ലെങ്കിൽ ഫോട്ടോ എടുക്കുക.',
+    cameraPermissionErr: 'ക്യാമറ ആക്‌സസ് ചെയ്യാൻ കഴിഞ്ഞില്ല. അനുമതി നൽകുക.',
     needHelp: 'സഹായം ആവശ്യമുണ്ടോ?',
     callStore: 'കടയിലേക്ക് വിളിക്കുക',
     whatsappHelp: 'വാട്ട്സ്ആപ്പ് സഹായം',
     secureNote: 'ബെനിഫിറ്റ് പേ വഴി സുരക്ഷിതമായ പേയ്‌മെന്റ്',
-    notFound: 'അക്കൗണ്ട് കണ്ടെത്താൻ കഴിഞ്ഞില്ല. ദയവായി നമ്പർ പരിശോധിക്കുക.',
+    notFound: 'അക്കൗണ്ട് കണ്ടെത്താൻ കഴിഞ്ഞില്ല. ദയവായി ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക.',
     networkErr: 'ഇന്റർനെറ്റ് കണക്ഷൻ ലഭ്യമല്ല. ദയവായി പരിശോധിക്കുക.',
-    offlineNotice: 'ഓഫ്‌ലൈൻ മോഡ് — സേവ് ചെയ്ത അക്കൗണ്ടുകൾ താഴെ ലഭ്യമാണ്.',
+    offlineNotice: 'ഓഫ്‌ലൈൻ മോഡ്.',
     installAppBtn: 'ആപ്പ് ഫോണിൽ ഇൻസ്റ്റാൾ ചെയ്യുക',
     updateAvailable: 'പുതിയ അപ്ഡേറ്റ് ലഭ്യമാണ്! റീഫ്രഷ് ചെയ്യുക.',
     refreshNow: 'റീഫ്രഷ്',
     currency: 'BHD'
   },
   bn: {
-    title: 'গ্রাহক খাতা পোর্টাল',
-    subtitle: 'আপনার ডিজিটাল মুদির বাকি হিসাব দেখুন এবং অনলাইনে পরিশোধ করুন।',
-    searchPlaceholder: 'ফোন নম্বর, নাম বা কাস্টমার আইডি লিখুন',
-    searchBtn: 'অ্যাকাউন্ট খুঁজুন',
-    recentTab: 'পূর্বে দেখা অ্যাকাউন্টসমূহ',
-    noRecent: 'এখনও কোনো অ্যাকাউন্ট সংরক্ষিত নেই।',
-    orScan: 'অথবা রশিদে থাকা QR কোড স্ক্যান করুন।',
-    scanReceiptBtn: 'রসিদের QR স্ক্যান করুন',
+    title: 'ব্যক্তিগত খাতা পোর্টাল',
+    subtitle: 'সরাসরি আপনার ব্যক্তিগত হিসাবে প্রবেশ করুন। গোপনীয়তার স্বার্থে অন্য কারও হিসাব খোঁজা বন্ধ রাখা হয়েছে।',
+    privacyBadge: 'গোপনীয়তা সুরক্ষিত',
+    privacyNote: 'অন্যের হিসাব খোঁজা বন্ধ রাখা হয়েছে। আপনার ব্যক্তিগত হিসাব দেখতে রশিদের QR কোড স্ক্যান করুন।',
+    scanReceiptBtn: 'রশিদের QR স্ক্যান করে খাতা খুলুন',
+    passkeyPlaceholder: 'মোবাইল নম্বর (যেমন 39991234) বা আইডি লিখুন',
+    orScan: 'বা রসিদের QR কোড সরাসরি স্ক্যান করুন',
+    openAccountBtn: 'আমার খাতা খুলুন',
     scanModalTitle: 'রসিদের QR কোড স্ক্যান',
     pointCameraHint: 'রসিদের নিচের QR কোডের দিকে ক্যামেরা তাক করুন।',
     orUploadPhoto: 'রসিদের ছবি আপলোড করুন',
     closeBtn: 'বন্ধ করুন',
-    cameraPermissionErr: 'ক্যামেরা চালু করা যায়নি। অনুগ্রহ করে অনুমতি দিন অথবা ছবি আপলোড করুন।',
+    cameraPermissionErr: 'ক্যামেরা চালু করা যায়নি। অনুগ্রহ করে অনুমতি দিন।',
     needHelp: 'কোনো সাহায্য প্রয়োজন?',
     callStore: 'দোকানে সরাসরি কল করুন',
     whatsappHelp: 'হোয়াটসঅ্যাপ সহায়তা',
     secureNote: 'বেনিফিট পে দ্বারা ১০০% সুরক্ষিত',
-    notFound: 'কোনো খাতা অ্যাকাউন্ট পাওয়া যায়নি।',
+    notFound: 'কোনো খাতা অ্যাকাউন্ট পাওয়া যায়নি। অনুগ্রহ করে রসিদের QR স্ক্যান করুন।',
     networkErr: 'ইন্টারনেট সংযোগ নেই। দয়া করে সংযোগ পরীক্ষা করুন।',
-    offlineNotice: 'অফলাইন মোড — পূর্বে সংরক্ষিত অ্যাকাউন্ট নিচে দেখুন।',
+    offlineNotice: 'অফলাইন মোড।',
     installAppBtn: 'ফোনে অ্যাপ ইনস্টল করুন',
     updateAvailable: 'নতুন আপডেট পাওয়া গেছে! রিফ্রেশ করুন।',
     refreshNow: 'রিফ্রেশ',
     currency: 'BHD'
   },
   hi: {
-    title: 'ग्राहक खाता पोर्टल',
-    subtitle: 'अपना किराना हिसाब, बिल विवरण देखें और ऑनलाइन भुगतान करें।',
-    searchPlaceholder: 'फ़ोन नंबर, नाम या ग्राहक आईडी दर्ज करें',
-    searchBtn: 'मेरा खाता ढूंढें',
-    recentTab: 'हाल ही में देखे गए खाते',
-    noRecent: 'इस डिवाइस पर कोई खाता सहेजा नहीं गया है।',
-    orScan: 'या अपनी रसीद पर मुद्रित QR कोड स्कैन करें।',
-    scanReceiptBtn: 'रसीद का QR स्कैन करें',
+    title: 'निजी ग्राहक खाता',
+    subtitle: 'सीधे अपने निजी खाते में प्रवेश करें। आपकी गोपनीयता के लिए अन्य खाते खोजना बंद है।',
+    privacyBadge: 'गोपनीयता सुरक्षित',
+    privacyNote: 'दूसरों के खाते खोजना बंद कर दिया गया है। अपना खाता देखने के लिए रसीद का QR कोड स्कैन करें।',
+    scanReceiptBtn: 'रसीद का QR स्कैन करके खाता खोलें',
+    passkeyPlaceholder: 'मोबाइल नंबर (जैसे 39991234), CPR या आईडी दर्ज करें',
+    orScan: 'या सीधे खाता खोलने के लिए रसीद का QR कोड स्कैन करें',
+    openAccountBtn: 'मेरा खाता खोलें',
     scanModalTitle: 'रसीद का QR कोड स्कैन करें',
     pointCameraHint: 'रसीद के नीचे दिए गए QR कोड पर कैमरा सीधा रखें।',
     orUploadPhoto: 'रसीद की फोटो अपलोड करें',
     closeBtn: 'कैमरा बंद करें',
-    cameraPermissionErr: 'कैमरा शुरू नहीं हो सका। कृपया अनुमति दें या फोटो अपलोड करें।',
+    cameraPermissionErr: 'कैमरा शुरू नहीं हो सका। कृपया अनुमति दें।',
     needHelp: 'क्या आपको सहायता चाहिए?',
     callStore: 'दुकान पर कॉल करें',
     whatsappHelp: 'व्हाट्सएप सहायता',
     secureNote: 'बेनिफिट पे और फॉरी+ द्वारा सुरक्षित',
-    notFound: 'कोई खाता नहीं मिला। कृपया नंबर जांचें या कैशियर से संपर्क करें।',
+    notFound: 'कोई खाता नहीं मिला। कृपया रसीद का QR कोड स्कैन करें।',
     networkErr: 'इंटरनेट कनेक्शन नहीं है। कृपया मोबाइल डेटा या वाई-फाई जांचें।',
-    offlineNotice: 'ऑफलाइन मोड — नीचे सहेजे गए खाते उपलब्ध हैं।',
+    offlineNotice: 'ऑफलाइन मोड।',
     installAppBtn: 'फोन में ऐप इंस्टॉल करें',
     updateAvailable: 'नया अपडेट उपलब्ध है! रिफ्रेश करें।',
     refreshNow: 'रिफ्रेश',
@@ -163,12 +164,38 @@ function normalizeArabicNumerals(str) {
 export default function HomeLookup() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isResetMode = searchParams.get('switch') === '1' || searchParams.get('reset') === '1';
+
   const [lang, setLang] = useState('en');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isOffline, setIsOffline] = useState(() => !navigator.onLine);
+
+  // If in switch/reset mode, clear previously saved phone binding so shop owner can re-configure
+  useEffect(() => {
+    if (isResetMode) {
+      try {
+        localStorage.removeItem('my_khata_customer_id');
+        document.cookie = 'khata_customer_id=; path=/; max-age=0; SameSite=Lax';
+      } catch (e) {
+        console.warn('Reset mode clear error:', e);
+      }
+    }
+  }, [isResetMode]);
+
+  // Permanent Device Binding: locks phone directly to customer tab
+  const bindAndNavigate = useCallback((targetCustomerId, targetPath = null) => {
+    if (!targetCustomerId) return;
+    try {
+      localStorage.setItem('my_khata_customer_id', targetCustomerId);
+      document.cookie = `khata_customer_id=${encodeURIComponent(targetCustomerId)}; path=/; max-age=315360000; SameSite=Lax`;
+    } catch (e) {
+      console.warn('Binding error:', e);
+    }
+    navigate(targetPath || `/tab/${encodeURIComponent(targetCustomerId)}`);
+  }, [navigate]);
 
   // In-App PWA Installation Prompt State (Resolved PWA-OFF-03)
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -180,6 +207,58 @@ export default function HomeLookup() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  // Store Manager / Cashier Directory View States
+  const [showManagerModal, setShowManagerModal] = useState(false);
+  const [managerPinInput, setManagerPinInput] = useState('');
+  const [isManagerUnlocked, setIsManagerUnlocked] = useState(false);
+  const [managerCustomers, setManagerCustomers] = useState([]);
+  const [managerLoading, setManagerLoading] = useState(false);
+  const [managerSearch, setManagerSearch] = useState('');
+  const [managerError, setManagerError] = useState('');
+
+  const unlockManagerDirectory = async (e) => {
+    e?.preventDefault();
+    if (managerPinInput.trim() !== '9999') {
+      setManagerError('Invalid Manager PIN. Access Denied.');
+      return;
+    }
+    setManagerError('');
+    setIsManagerUnlocked(true);
+    setManagerLoading(true);
+
+    try {
+      const candidates = [
+        'https://askar-edge-api.layali-askar-pos.workers.dev/khata/ledger',
+        '/api/customers',
+        'http://192.168.8.7:3000/khata/ledger'
+      ];
+      let loaded = false;
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, {
+            headers: { 'x-pos-client': 'store-pos', 'x-manager-pin': '9999' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const list = data?.customers || (Array.isArray(data) ? data : []);
+            if (Array.isArray(list) && list.length > 0) {
+              setManagerCustomers(list);
+              loaded = true;
+              break;
+            }
+          }
+        } catch {}
+      }
+      if (!loaded) {
+        setManagerError('Failed to load Khata Directory. Please check store network.');
+      }
+    } catch (err) {
+      setManagerError(err.message);
+    } finally {
+      setManagerLoading(false);
+    }
+  };
 
   // Synchronize HTML document lang & dir for screen readers (Resolved PWA-ACC-03)
   useEffect(() => {
@@ -271,16 +350,17 @@ export default function HomeLookup() {
       const data = await res.json();
 
       if (res.ok && data.matches && data.matches.length > 0) {
-        if (data.matches.length === 1) {
-          navigate(`/tab/${data.matches[0].id}`);
-        } else {
-          setSearchResults(data.matches);
-        }
+        // Direct match: bind phone to this private account and go directly to tab
+        bindAndNavigate(data.matches[0].id);
       } else {
         setError(t.notFound);
       }
     } catch {
-      setError(t.networkErr);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setError(t.networkErr);
+      } else {
+        setError('Cannot reach server. The central service may be temporarily unavailable or updating. Please try again shortly.');
+      }
     } finally {
       setLoading(false);
     }
@@ -312,14 +392,25 @@ export default function HomeLookup() {
       }
     }
 
+    let detectedId = '';
+    const match = str.match(/\/(tab|statement|khata|customer|pay)\/([a-zA-Z0-9_\-%]+)/i);
+    if (match) {
+      detectedId = match[2];
+    } else if (targetRoute) {
+      const parts = targetRoute.split('?')[0].split('/');
+      detectedId = parts[parts.length - 1];
+    } else {
+      detectedId = normalizeArabicNumerals(str);
+    }
+
     if (targetRoute) {
-      navigate(targetRoute);
+      bindAndNavigate(detectedId, targetRoute);
       return;
     }
 
     // Direct fallback for plain customer phone or UUID string
-    navigate(`/tab/${encodeURIComponent(normalizeArabicNumerals(str))}`);
-  }, [navigate]);
+    bindAndNavigate(detectedId);
+  }, [bindAndNavigate]);
 
   // Start Camera Stream when Scanner opens
   useEffect(() => {
@@ -512,7 +603,53 @@ export default function HomeLookup() {
             </p>
           </div>
 
-          {/* Search Form */}
+          {/* Shopkeeper Setup Mode Banner */}
+          {isResetMode && (
+            <div className="mb-4 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-2xl text-amber-300 text-xs font-semibold flex items-center gap-2.5 text-left">
+              <span className="text-xl shrink-0">⚙️</span>
+              <div>
+                <p className="font-bold text-amber-200">Device Link Mode</p>
+                <p className="text-[11px] text-amber-300/80 font-normal leading-relaxed">
+                  Scan the customer's receipt QR code to bind this phone directly to their private account.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Privacy Guarantee Pill */}
+          <div className="mb-5 p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl text-left flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold text-emerald-300">{t.privacyBadge}</p>
+              <p className="text-[11px] text-slate-300 leading-relaxed mt-0.5">
+                {t.privacyNote}
+              </p>
+            </div>
+          </div>
+
+          {/* Primary Action: One-Touch Embedded Camera QR Scanner */}
+          <div className="space-y-3 no-print">
+            <button
+              type="button"
+              onClick={() => setIsScannerOpen(true)}
+              className="w-full min-h-[56px] py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-black rounded-2xl text-sm transition-all flex items-center justify-center gap-3 cursor-pointer shadow-lg shadow-emerald-950/60"
+            >
+              <Camera className="w-5 h-5 text-white shrink-0" />
+              <span>{t.scanReceiptBtn}</span>
+            </button>
+          </div>
+
+          {/* Subtle Divider */}
+          <div className="relative my-6 text-center no-print">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-800" />
+            </div>
+            <span className="relative px-3 bg-slate-900 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+              Direct Passcode
+            </span>
+          </div>
+
+          {/* Direct Key Form (Exact Token / UUID Only — No Directory Search) */}
           <form onSubmit={handleSearch} className="space-y-3 no-print">
             <div className="relative">
               <input
@@ -522,50 +659,37 @@ export default function HomeLookup() {
                   setQuery(e.target.value);
                   if (error) setError('');
                 }}
-                placeholder={t.searchPlaceholder}
-                className={`w-full py-4 bg-slate-950 border border-slate-700 rounded-2xl text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium ${
-                  isRtl ? 'pr-11 pl-4' : 'pl-11 pr-4'
+                placeholder={t.passkeyPlaceholder}
+                className={`w-full py-3.5 bg-slate-950 border border-slate-800 rounded-2xl text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${
+                  isRtl ? 'pr-11 pl-4 text-right' : 'pl-11 pr-4 text-left'
                 }`}
-                autoFocus
               />
-              <Phone className={`w-5 h-5 text-slate-500 absolute top-1/2 -translate-y-1/2 pointer-events-none ${isRtl ? 'right-4' : 'left-4'}`} />
+              <Lock className={`w-4 h-4 text-slate-500 absolute top-1/2 -translate-y-1/2 pointer-events-none ${isRtl ? 'right-4' : 'left-4'}`} />
             </div>
 
             <button
               type="submit"
               disabled={loading || query.trim().length < 2}
-              className="w-full min-h-[52px] py-3.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 text-white font-bold rounded-2xl text-base transition-all shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[46px] py-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] disabled:opacity-40 text-slate-200 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700/80"
             >
               {loading ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <Search className="w-5 h-5" />
-                  <span>{t.searchBtn}</span>
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>{t.openAccountBtn}</span>
                 </>
               )}
             </button>
           </form>
 
-          {/* One-Touch Embedded Camera QR Scanner Launch Button (ADV-11) */}
-          <div className="mt-3 no-print">
-            <button
-              type="button"
-              onClick={() => setIsScannerOpen(true)}
-              className="w-full min-h-[48px] py-3 px-4 bg-slate-950/80 hover:bg-slate-800 border border-emerald-500/40 text-emerald-400 font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-xs active:scale-[0.99]"
-            >
-              <Camera className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>{t.scanReceiptBtn}</span>
-            </button>
-          </div>
-
-          {/* PWA In-App 1-Click Install Banner (Resolved PWA-OFF-03) */}
+          {/* PWA In-App 1-Click Install Banner */}
           {installPrompt && (
-            <div className="mt-3 no-print">
+            <div className="mt-4 no-print">
               <button
                 type="button"
                 onClick={handleInstallClick}
-                className="w-full min-h-[48px] py-3 px-4 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-xs"
+                className="w-full min-h-[46px] py-2.5 px-4 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
                 <Download className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>{t.installAppBtn}</span>
@@ -577,63 +701,6 @@ export default function HomeLookup() {
           {error && (
             <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-center">
               <p className="text-xs font-semibold text-red-400">{error}</p>
-            </div>
-          )}
-
-          {/* Multiple Matches Selection */}
-          {searchResults.length > 1 && (
-            <div className="mt-4 space-y-2">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Select Account:</p>
-              {searchResults.map((cust) => {
-                const custBal = Number(cust.balance || 0);
-                const isCredit = custBal < -0.0005;
-                const isSettled = Math.abs(custBal) < 0.0005;
-                const absBalance = Math.abs(custBal).toFixed(3);
-                return (
-                  <button
-                    key={cust.id}
-                    type="button"
-                    onClick={() => navigate(`/tab/${cust.id}`)}
-                    className="w-full p-3.5 bg-slate-950 hover:bg-slate-800 border border-slate-700 rounded-2xl flex items-center justify-between text-left transition-all"
-                  >
-                    <div>
-                      <p className="text-sm font-bold text-white">{cust.name}</p>
-                      {cust.maskedPhone && (
-                        <p className="text-[10px] text-slate-400 font-mono">{cust.maskedPhone}</p>
-                      )}
-                    </div>
-                    <div className="text-right flex items-center gap-2">
-                      <span className={`text-xs font-mono font-bold ${isCredit || isSettled ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {isCredit ? `+${t.currency} ${absBalance}` : `${t.currency} ${absBalance}`}
-                      </span>
-                      <ArrowRight className={`w-4 h-4 text-slate-400 ${isRtl ? 'rotate-180' : ''}`} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Deduplicated Previously Viewed Accounts on this Device (Resolved PWA-ACC-04) */}
-          {recentAccounts.length > 0 && searchResults.length === 0 && (
-            <div className="mt-6 pt-5 border-t border-slate-800">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                <User className="w-4 h-4 text-emerald-400" />
-                <span>{t.recentTab}</span>
-              </p>
-              <div className="space-y-2">
-                {recentAccounts.map((acc) => (
-                  <button
-                    key={acc.id}
-                    type="button"
-                    onClick={() => navigate(`/tab/${acc.id}`)}
-                    className="w-full min-h-[46px] p-3 bg-slate-950/60 hover:bg-slate-800 border border-slate-800/80 rounded-xl flex items-center justify-between text-left text-xs transition"
-                  >
-                    <span className="font-semibold text-slate-200">{acc.name}</span>
-                    <span className="text-emerald-400 text-xs font-mono font-bold">Open →</span>
-                  </button>
-                ))}
-              </div>
             </div>
           )}
 
@@ -667,6 +734,18 @@ export default function HomeLookup() {
               <span>{t.whatsappHelp}</span>
             </a>
           </div>
+
+          {/* Store Owner / Cashier Directory View Unlock Button */}
+          <div className="mt-3 pt-3 border-t border-slate-800/60 text-center">
+            <button
+              type="button"
+              onClick={() => setShowManagerModal(true)}
+              className="text-[11px] font-bold text-slate-400 hover:text-emerald-400 flex items-center justify-center gap-1.5 mx-auto transition cursor-pointer"
+            >
+              <Lock className="w-3 h-3 text-slate-500" />
+              <span>Store Manager Directory View</span>
+            </button>
+          </div>
         </div>
       </main>
 
@@ -677,6 +756,121 @@ export default function HomeLookup() {
           <span>{t.secureNote}</span>
         </p>
       </footer>
+
+      {/* Manager Directory Modal (Strict PIN 9999 Protected) */}
+      {showManagerModal && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-in fade-in duration-200 no-print">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                <h2 className="text-base font-bold text-white">Store Khata Directory</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManagerModal(false);
+                  setIsManagerUnlocked(false);
+                  setManagerPinInput('');
+                  setManagerError('');
+                }}
+                className="w-8 h-8 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {!isManagerUnlocked ? (
+              <form onSubmit={unlockManagerDirectory} className="my-auto py-6 space-y-4">
+                <div className="text-center space-y-1">
+                  <p className="text-xs text-slate-400">Enter Manager PIN to view all customer accounts:</p>
+                </div>
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={managerPinInput}
+                  onChange={(e) => setManagerPinInput(e.target.value)}
+                  placeholder="Manager PIN (e.g. 9999)"
+                  className="w-full py-3 px-4 bg-slate-950 border border-slate-800 rounded-2xl text-white text-center text-lg font-mono tracking-widest focus:ring-2 focus:ring-emerald-500 outline-none"
+                  autoFocus
+                />
+                {managerError && (
+                  <p className="text-xs font-semibold text-rose-400 text-center">{managerError}</p>
+                )}
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition"
+                >
+                  Unlock Directory
+                </button>
+              </form>
+            ) : (
+              <div className="flex flex-col flex-1 overflow-hidden pt-3">
+                <div className="relative mb-3 shrink-0">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={managerSearch}
+                    onChange={(e) => setManagerSearch(e.target.value)}
+                    placeholder="Search customer name, phone, CPR..."
+                    className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {managerLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1 divide-y divide-slate-800/60">
+                    {managerCustomers
+                      .filter((c) => {
+                        const s = (managerSearch || '').toLowerCase().trim();
+                        if (!s) return true;
+                        return (
+                          (c.name && c.name.toLowerCase().includes(s)) ||
+                          (c.phone && c.phone.includes(s)) ||
+                          (c.cpr && c.cpr.includes(s))
+                        );
+                      })
+                      .map((cust) => {
+                        const bal = Number(cust.currentBalance ?? cust.balance ?? 0);
+                        return (
+                          <div
+                            key={cust.id}
+                            onClick={() => {
+                              setShowManagerModal(false);
+                              bindAndNavigate(cust.id);
+                            }}
+                            className="pt-2 pb-2 px-2 flex items-center justify-between hover:bg-slate-800/60 rounded-xl cursor-pointer transition"
+                          >
+                            <div className="min-w-0 pr-2">
+                              <p className="text-xs font-bold text-white truncate">{cust.name}</p>
+                              <p className="text-[10px] text-slate-400 font-mono">{cust.phone || 'No phone'}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className={`text-xs font-black font-mono ${bal > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                BD {bal.toFixed(3)}
+                              </p>
+                              <span className="text-[9px] text-emerald-500 hover:underline flex items-center gap-0.5 justify-end">
+                                View Tab <ArrowRight className="w-2.5 h-2.5" />
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+                <div className="pt-2 border-t border-slate-800 text-center shrink-0">
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    Total {managerCustomers.length} registered customers in store database
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Embedded Barcode & QR Camera Scanner Modal (ADV-11) */}
       {isScannerOpen && (

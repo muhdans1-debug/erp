@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Trash2, ScanBarcode, AlertTriangle, X } from 'lucide-react';
+import { getApiBaseUrl } from './utils/apiConfig';
 
 interface LogWastageModalProps {
   onClose: () => void;
@@ -8,7 +9,7 @@ interface LogWastageModalProps {
 }
 
 export default function LogWastageModal({ onClose, onSuccess, apiBase: propApiBase }: LogWastageModalProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || getApiBaseUrl();
   const [formData, setFormData] = useState({
     barcode: '',
     quantity: '1',

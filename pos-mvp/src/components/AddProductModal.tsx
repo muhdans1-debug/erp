@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Save, X, Barcode, Truck, Percent, Scale, AlertCircle, RotateCcw, Search, RefreshCw } from 'lucide-react';
 import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -109,13 +110,13 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
   };
 
   const getCandidateUrls = () => {
-    const list = [
-      apiBase,
-      typeof localStorage !== 'undefined' ? localStorage.getItem('master_server_url') : null,
-      'http://localhost:3000',
-      'http://192.168.8.7:3000'
-    ];
-    return list.filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
+    return [
+      apiBase && !apiBase.includes('localhost') ? apiBase : null,
+      getApiBaseUrl(),
+      CLOUD_GATEWAY_URL,
+      DEFAULT_EDGE_API_URL,
+      LAN_SERVER_URL
+    ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
   };
 
   useEffect(() => {
@@ -221,13 +222,14 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
 
     // ⚡ Push to Master Server (await with 3.5s timeout)
     const candidates = getCandidateUrls();
+    let pushed = false;
     for (const url of candidates) {
       try {
         const res = await fetch(`${url}/api/products`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': '9999',
+            'x-manager-pin': (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('MANAGER_PIN'))) || '9999',
             'x-pos-client': 'store-pos'
           },
           body: JSON.stringify(payload),
@@ -235,11 +237,22 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success || data.id) break;
+          if (data.success || data.id) {
+            pushed = true;
+            break;
+          }
         }
       } catch {
         // Fall through to next candidate or queue offline
       }
+    }
+
+    if (!pushed) {
+      try {
+        const pending = JSON.parse(localStorage.getItem('askar_pending_products') || '[]');
+        pending.push({ payload, ts: Date.now() });
+        localStorage.setItem('askar_pending_products', JSON.stringify(pending));
+      } catch { }
     }
 
     // ⚡ UI UNBLOCK: Dismiss modal and notify immediately

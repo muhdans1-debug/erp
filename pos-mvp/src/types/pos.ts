@@ -5,10 +5,18 @@ export interface Product {
   barcode: string;
   name: string;
   nameAr?: string;
+  name_ar?: string;
+  plu_code?: string | null;
+  pluCode?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
   price: number;        // REPLACES sellingPrice
+  sellingPrice?: number;
   unitCost: number;     // REPLACES purchasePrice
+  purchasePrice?: number;
   vatRate: number;      // REPLACES taxRate
   isScaleItem: boolean; // REPLACES is_weighed_item
+  is_weighed_item?: boolean | number;
   stockQuantity: number;
   category?: string;
   isQuickProduct?: boolean;
@@ -35,18 +43,26 @@ export interface Customer {
   phone?: string | null;
   cpr?: string | null;
   cardUid?: string | null;
+  nfcCardId?: string | null;
   currentBalance: number;
   balance?: number;
   personalBalance?: number;
   creditLimit?: number;
+  credit_limit?: number;
   isStale?: boolean;
   isOverLimit?: boolean;
   daysSinceLastPayment?: number;
+  is_active?: number | boolean;
+  isActive?: boolean;
+  isFrozen?: boolean;
   isMess?: boolean;
   hasMessGroup?: boolean;
   isDual?: boolean;
   card_type?: string;
-  mess_id?: string;
+  mess_id?: string | null;
+  messName?: string | null;
+  mess_name?: string | null;
+  isMessGroup?: boolean;
   tag_id?: string;
   group_name?: string;
   messGroup?: {

@@ -3,6 +3,8 @@ import {
   DollarSign, TrendingUp, TrendingDown, Receipt, Calendar, 
   RefreshCw, ShieldCheck, FileText, CheckCircle2, AlertTriangle, Layers, Percent 
 } from 'lucide-react';
+import { getAdminPin } from './utils/auth';
+import { fetchPnlStatement, fetchVatStatement, fetchUnifiedReportData } from './services/dataService';
 
 export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' }) {
   const [period, setPeriod] = useState('month');
@@ -17,34 +19,21 @@ export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' 
     setError(null);
     try {
       // 1. Fetch P&L
-      const pnlRes = await fetch(`${apiBase}/api/reports/pnl?period=${period}`, {
-        headers: { 'x-manager-pin': '9999' }
-      });
-      const pnlJson = await pnlRes.json();
-      if (pnlJson.success && pnlJson.data) {
-        setPnlData(pnlJson.data);
-      }
+      const pnl = await fetchPnlStatement(apiBase, period);
+      if (pnl) setPnlData(pnl);
 
       // 2. Fetch NBR VAT Return
-      const vatRes = await fetch(`${apiBase}/api/reports/vat-return`, {
-        headers: { 'x-manager-pin': import.meta.env.VITE_MANAGER_PIN || '9999' }
-      });
-      const vatJson = await vatRes.json();
-      if (vatJson.success) {
-        setVatData(vatJson);
-      }
+      const vat = await fetchVatStatement(apiBase);
+      if (vat && vat.success) setVatData(vat);
 
       // 3. Fetch Sequential Invoice Ledger (Transactions)
-      const unifiedRes = await fetch(`${apiBase}/api/reports/unified?range=TODAY`, {
-        headers: { 'x-manager-pin': '9999' }
-      });
-      const unifiedJson = await unifiedRes.json();
-      if (unifiedJson.success && Array.isArray(unifiedJson.transactions)) {
-        setTransactions(unifiedJson.transactions);
+      const unified = await fetchUnifiedReportData(apiBase, 'TODAY');
+      if (unified && Array.isArray(unified.transactions)) {
+        setTransactions(unified.transactions);
       }
     } catch (err) {
-      console.warn('⚠️ Financial API query error:', err);
-      setError('Could not connect to POS Fastify server on port 3000. Displaying cached records.');
+      console.warn('⚠️ Financial data error:', err);
+      setError('Could not calculate financial records.');
     } finally {
       setLoading(false);
     }
@@ -54,20 +43,20 @@ export default function FinancialsVatReturn({ apiBase = 'http://localhost:3000' 
     fetchData();
   }, [period, apiBase]);
 
-  // Derived or fallback numbers
-  const rev = Number(pnlData?.totalRevenue || 6165.500);
-  const cogs = Number(pnlData?.totalCogs || 2131.410);
-  const grossProfit = Number(pnlData?.grossProfit || (rev - cogs));
+  // Derived genuine store numbers (Zero mock phantoms)
+  const rev = Number(pnlData?.totalRevenue ?? 0);
+  const cogs = Number(pnlData?.totalCogs ?? 0);
+  const grossProfit = Number(pnlData?.grossProfit ?? (rev - cogs));
   const grossMargin = rev > 0 ? ((grossProfit / rev) * 100).toFixed(1) : '0.0';
-  const expenses = Number(pnlData?.businessExpenses || 621.000);
-  const netProfit = Number(pnlData?.operatingProfit || (grossProfit - expenses));
+  const expenses = Number(pnlData?.businessExpenses ?? 0);
+  const netProfit = Number(pnlData?.operatingProfit ?? (grossProfit - expenses));
 
-  const standardSales = Number(vatData?.standardRatedSales || 5316.183);
-  const zeroRatedSales = Number(vatData?.zeroRatedSales || 317.900);
-  const outputVat = Number(vatData?.outputVatCollected || 184.017);
-  const inputVat = Number(vatData?.inputVatPaid || 0.000);
-  const netVatDue = Number(vatData?.netVatDueToNBR || 184.017);
-  const vatAcc = vatData?.vatAccountNumber || '200012345678901';
+  const standardSales = Number(vatData?.standardRatedSales ?? (vatData?.totalStandardSupplies ?? 0));
+  const zeroRatedSales = Number(vatData?.zeroRatedSales ?? 0);
+  const outputVat = Number(vatData?.outputVatCollected ?? (vatData?.outputVatDue ?? 0));
+  const inputVat = Number(vatData?.inputVatPaid ?? 0);
+  const netVatDue = Number(vatData?.netVatDueToNBR ?? (outputVat - inputVat));
+  const vatAcc = vatData?.vatAccountNumber || 'TRN-200000000000002';
 
   return (
     <div className="space-y-8 font-sans">

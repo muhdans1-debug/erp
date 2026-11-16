@@ -3,6 +3,7 @@ import { Coins, CheckCircle, Calculator, Lock, AlertTriangle, Unlock } from 'luc
 import { printShiftCloseout } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { db } from '../db';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 interface BlindCloseShiftModalProps {
   shiftId: string;
@@ -19,17 +20,11 @@ export default function BlindCloseShiftModal({
   onSuccess,
   onCancel
 }: BlindCloseShiftModalProps) {
-  const isNative = typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.();
   const getCandidateApiBases = (): string[] => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : null;
-    const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
     return [
-      saved,
       propApiBase,
-      isNative ? 'http://192.168.8.7:3000' : null,
-      `http://${host}:3000`,
-      'http://192.168.8.7:3000',
-      'http://localhost:3000'
+      getApiBaseUrl(),
+      DEFAULT_EDGE_API_URL
     ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
   };
 
@@ -132,14 +127,20 @@ export default function BlindCloseShiftModal({
 
           let attempt = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'x-pos-client': 'store-pos'
+            },
             body: JSON.stringify(payload)
           });
 
           if (attempt.status === 404 && url !== `${base}/api/shifts/close`) {
             attempt = await fetch(`${base}/api/shifts/close`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-pos-client': 'store-pos'
+              },
               body: JSON.stringify(payload)
             });
           }
@@ -156,24 +157,40 @@ export default function BlindCloseShiftModal({
       try {
         const localShiftId = targetId || `shift_${Date.now().toString(36)}`;
         await db.execute({
-          sql: `INSERT INTO ShiftSession (
-                  id, tenantId, employee_id, opened_at, closed_at,
-                  starting_cash, expected_cash, actual_cash, variance, status
-                ) VALUES (?, 'tenant_1', 'emp_cashier_1', datetime('now'), CURRENT_TIMESTAMP, 50, 50, ?, 0, 'CLOSED')
+          sql: `INSERT INTO Shift (
+                  id, tenantId, employeeId, openedAt, closedAt,
+                  openingCash, closingCash, status
+                ) VALUES (?, 'tenant_askar_01', 'emp_cashier_1', datetime('now'), CURRENT_TIMESTAMP, 50, ?, 'CLOSED')
                 ON CONFLICT(id) DO UPDATE SET
-                  closed_at = CURRENT_TIMESTAMP,
-                  actual_cash = excluded.actual_cash,
-                  variance = ROUND(excluded.actual_cash - COALESCE(ShiftSession.expected_cash, 50), 3),
+                  closedAt = CURRENT_TIMESTAMP,
+                  closingCash = excluded.closingCash,
                   status = 'CLOSED'`,
           args: [localShiftId, actualCashTotal]
         });
         await db.sync(usedBase);
       } catch (localErr) {
-        console.warn('Local db shift session save notice:', localErr);
+        console.warn('Local db shift save notice:', localErr);
       }
 
+      // Clear local session state immediately so cashier is never trapped
+      localStorage.removeItem('active_shift_id');
+      localStorage.removeItem('askar_shift_id');
+      localStorage.removeItem('active_shift_cashier');
+      localStorage.removeItem('active_shift_opening_cash');
+
       if (!res) {
-        throw new Error('Could not reach POS server at any candidate endpoint.');
+        // Offline closeout fallback
+        console.warn('POS server unreachable during shift close; shift closed locally.');
+        const fallbackRecon = {
+          shiftId: targetId,
+          actualCash: actualCashTotal,
+          variance: 0,
+          status: 'BALANCED',
+          offline: true
+        };
+        broadcastShiftClosed({ shiftId: targetId, actualCash: actualCashTotal, reconciliation: fallbackRecon, offline: true });
+        onSuccess(fallbackRecon);
+        return;
       }
 
       const data = await res.json();
@@ -200,22 +217,7 @@ export default function BlindCloseShiftModal({
           };
           broadcastShiftClosed(shiftClosedPayload);
 
-          // Direct socket ping fallback to host machine(s)
-          const bridgeHost = typeof window !== 'undefined' 
-            ? ((window as any).Capacitor?.isNativePlatform?.() ? '192.168.8.7' : (window.location.hostname || 'localhost')) 
-            : '192.168.8.7';
-          const candidateHosts = [bridgeHost, '192.168.8.7', 'localhost'].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
-          
-          candidateHosts.forEach((host) => {
-            try {
-              const ws = new WebSocket(`ws://${host}:3000/ws`);
-              ws.onopen = () => {
-                ws.send(JSON.stringify({ type: 'SHIFT_CLOSED', payload: shiftClosedPayload }));
-                setTimeout(() => ws.close(), 1000);
-              };
-              ws.onerror = () => {};
-            } catch {}
-          });
+          // Broadcast shift closed event locally
         } catch (wsErr) {
           console.warn('⚡ [Shift Close] RJ45 WebSocket ping notice:', wsErr);
         }

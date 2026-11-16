@@ -6,6 +6,12 @@ import {
   setLocalInvoiceCounter,
   previewNextInvoiceNumber,
 } from '../utils/nbrInvoice';
+import {
+  getNetworkPrinterConfig,
+  setNetworkPrinterConfig,
+  testSunmiNetworkPrint,
+  isNativeSunmiHardware
+} from '../utils/networkPrinter';
 
 export interface ServerConfigModalProps {
   isOpen: boolean;
@@ -23,6 +29,9 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
   const [customServerIp, setCustomServerIp] = useState(activeServerIp);
   const [registerPrefix, setRegPrefixState] = useState(getRegisterPrefix());
   const [invoiceCounter, setInvCounterState] = useState(getLocalInvoiceCounter().toString());
+  const [netPrinter, setNetPrinter] = useState(getNetworkPrinterConfig);
+  const [testingSunmi, setTestingSunmi] = useState(false);
+  const isNative = isNativeSunmiHardware();
 
   if (!isOpen) return null;
 
@@ -103,6 +112,21 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '12px', color: '#64748b', alignSelf: 'center' }}>Presets:</span>
           <button
+            onClick={() => setCustomServerIp('https://askar-edge-api.layali-askar-pos.workers.dev')}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid #38bdf8',
+              backgroundColor: '#f0f9ff',
+              color: '#0369a1',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            ☁️ Cloudflare Edge (Global)
+          </button>
+          <button
             onClick={() => setCustomServerIp('http://askar-master.local:3000')}
             style={{
               padding: '4px 10px',
@@ -115,7 +139,7 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
               cursor: 'pointer',
             }}
           >
-            📡 mDNS Auto-Discovery
+            📡 mDNS
           </button>
           <button
             onClick={() => setCustomServerIp('http://192.168.8.7:3000')}
@@ -202,6 +226,84 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           </div>
         </div>
 
+        {/* 🖨️ Sunmi Network Printer Across Central Server */}
+        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#0f172a' }}>
+                🖨️ Sunmi Network Printer (Laptop Billing → Sunmi Receipt)
+              </h4>
+              <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                Bills completed on this laptop automatically print on the remote Sunmi terminal.
+              </p>
+            </div>
+            <span style={{
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '6px',
+              backgroundColor: isNative ? '#f1f5f9' : (netPrinter.mode === 'SUNMI_NETWORK' ? '#ecfdf5' : '#f8fafc'),
+              color: isNative ? '#64748b' : (netPrinter.mode === 'SUNMI_NETWORK' ? '#047857' : '#475569'),
+              fontWeight: 'bold'
+            }}>
+              {isNative ? 'Physical Sunmi Device' : (netPrinter.mode === 'SUNMI_NETWORK' ? 'Network Sunmi Active' : 'Laptop Print')}
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', alignItems: 'center' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                Target Sunmi Terminal ID:
+              </label>
+              <input
+                type="text"
+                value={netPrinter.targetTerminal}
+                onChange={(e) => setNetPrinter({ ...netPrinter, targetTerminal: e.target.value.toUpperCase() })}
+                placeholder="T1"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '13px',
+                  fontFamily: 'monospace',
+                }}
+              />
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Default: <strong>T1</strong> (Counter 1 Sunmi)</span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  setTestingSunmi(true);
+                  try {
+                    await testSunmiNetworkPrint(netPrinter.targetTerminal);
+                  } finally {
+                    setTestingSunmi(false);
+                  }
+                }}
+                disabled={testingSunmi}
+                style={{
+                  padding: '9px 14px',
+                  borderRadius: '6px',
+                  border: '1px solid #0284c7',
+                  backgroundColor: '#f0f9ff',
+                  color: '#0284c7',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>{testingSunmi ? 'Sending Test...' : '⚡ Test Sunmi Print'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
           <button
             onClick={onClose}
@@ -222,6 +324,7 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
             onClick={() => {
               setRegisterPrefix(registerPrefix);
               setLocalInvoiceCounter(invoiceCounter);
+              setNetworkPrinterConfig(netPrinter);
               onSaveServerIp(customServerIp);
               onClose();
             }}

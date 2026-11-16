@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getApiBaseUrl } from './utils/apiConfig';
 import {
   Truck,
   Send,
@@ -57,7 +58,7 @@ interface ProcurementPanelProps {
 }
 
 export const ProcurementPanel: React.FC<ProcurementPanelProps> = ({
-  apiBase = 'http://localhost:3000'
+  apiBase = getApiBaseUrl()
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

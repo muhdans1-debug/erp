@@ -6,6 +6,11 @@ export interface CartItem {
   barcode?: string;
   name: string;
   nameAr?: string;
+  name_ar?: string;
+  plu_code?: string | null;
+  pluCode?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
   price: number;
   sellingPrice: number;
   qty: number;
@@ -42,34 +47,39 @@ export interface CartTotals {
 }
 
 export function calculateCartTotals(cartItems: CartItem[]): CartTotals {
-  let subtotal = 0;
-  let totalVat = 0;
-  let finalTotal = 0;
-  let totalSavings = 0;
+  let subtotalFils = 0;
+  let totalVatFils = 0;
+  let finalTotalFils = 0;
+  let totalSavingsFils = 0;
 
   cartItems.forEach((item) => {
     const qty = Number(item.qty ?? (item as any).quantity ?? 1);
     const unitPrice = Number(item.price ?? (item as any).sellingPrice ?? 0);
     const origPrice = Number(item.originalPrice ?? unitPrice);
     if (origPrice > unitPrice) {
-      totalSavings += (origPrice - unitPrice) * qty;
+      totalSavingsFils += Math.round((origPrice - unitPrice) * qty * 1000);
     }
-    const lineTotal = Number((unitPrice * qty).toFixed(3));
-    finalTotal += lineTotal;
+    const lineTotalFils = Math.round(unitPrice * qty * 1000);
+    finalTotalFils += lineTotalFils;
 
-    // Bahrain NBR Tax Rules: 10% standard, basic food items are 0% (Zero-Rated)
+    // Bahrain NBR Tax Rules: 10% standard inclusive VAT, basic food items are 0% (Zero-Rated)
     const rate = item.vatRate !== undefined
       ? Number(item.vatRate)
       : ((item as any).taxRate !== undefined && (item as any).taxRate === 0 ? 0 : 10);
 
     if (rate === 10) {
-      const lineTax = lineTotal - (lineTotal / 1.10);
-      totalVat += lineTax;
-      subtotal += (lineTotal - lineTax);
+      const lineTaxFils = Math.round(lineTotalFils - Math.round(lineTotalFils / 1.10));
+      totalVatFils += lineTaxFils;
+      subtotalFils += (lineTotalFils - lineTaxFils);
     } else {
-      subtotal += lineTotal;
+      subtotalFils += lineTotalFils;
     }
   });
+
+  const subtotal = subtotalFils / 1000;
+  const totalVat = totalVatFils / 1000;
+  const finalTotal = finalTotalFils / 1000;
+  const totalSavings = totalSavingsFils / 1000;
 
   return {
     subtotal: Number(subtotal.toFixed(3)),
@@ -128,19 +138,20 @@ export const useCartStore = create<CartState>((set, get) => ({
       const existing = state.items[existingIndex];
       const newQty = Number(((existing.quantity ?? 1) + qtyModifier).toFixed(3));
 
-      if (newQty <= 0) {
+      // In return mode, only remove if net return count reaches exactly 0
+      const shouldRemove = isReturnMode ? newQty === 0 : newQty <= 0;
+
+      if (shouldRemove) {
         updatedItems = state.items.filter((_, idx) => idx !== existingIndex);
       } else {
-        updatedItems = state.items.map((item, idx) =>
-          idx === existingIndex
-            ? {
-                ...item,
-                qty: newQty,
-                quantity: newQty,
-                total_price: Number((unitPrice * newQty).toFixed(3))
-              }
-            : item
-        );
+        const updatedItem: CartItem = {
+          ...existing,
+          qty: newQty,
+          quantity: newQty,
+          total_price: Number((unitPrice * newQty).toFixed(3))
+        };
+        // Move updated item to the very top (index 0) so the newly scanned/added item is shown top-by-top
+        updatedItems = [updatedItem, ...state.items.filter((_, idx) => idx !== existingIndex)];
       }
     } else {
       const newItem: CartItem = {
@@ -165,7 +176,8 @@ export const useCartStore = create<CartState>((set, get) => ({
         total_price: Number((unitPrice * qtyModifier).toFixed(3)),
         category: product.category
       };
-      updatedItems = [...state.items, newItem];
+      // Place newly added item at the top of the cart (top-by-top ordering)
+      updatedItems = [newItem, ...state.items];
     }
 
     const updatedCarts = state.carts.map((c) =>

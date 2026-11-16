@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { getAdminPin } from './utils/auth';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
+import { fetchSalesReport, fetchFinancialMetrics } from './services/dataService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import {
   LayoutDashboard, Users, TrendingUp, Package, ArrowLeft, Receipt, X, Clock,
   CheckCircle, ShoppingCart, RefreshCw, AlertCircle, Check, Truck, PackageCheck,
   Printer, Search, FileText, Activity, MessageCircle, ShieldAlert, ArrowUpDown,
-  Layers, Eye, Scale, Send, CreditCard
+  Layers, Eye, Scale, Send, CreditCard, UserPlus, Trash2
 } from 'lucide-react';
 // --- LAZY-LOADED PAGES (never downloaded until the manager navigates to them) ---
 const BarcodeGenerator = lazy(() => import('./BarcodeGenerator'));
@@ -12,6 +15,7 @@ const StockManagement = lazy(() => import('./StockManagement'));
 const FinancialDashboard = lazy(() => import('./FinancialDashboard'));
 const MasterReport = lazy(() => import('./MasterReport'));
 const ProductManagement = lazy(() => import('./ProductManagement'));
+const ProducePriceCommander = lazy(() => import('./ProducePriceCommander'));
 const RegisterSpyWidget = lazy(() => import('./RegisterSpyWidget'));
 const ProcurementLogistics = lazy(() => import('./ProcurementLogistics'));
 const FinancialsVatReturn = lazy(() => import('./FinancialsVatReturn'));
@@ -30,15 +34,15 @@ interface ManagerDashboardProps {
 
 export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: ManagerDashboardProps) {
   const { remoteDrawerKick, remoteClearCart, remoteLockRegister } = useLaptopBridge();
-  const apiBase = propApiBase || (typeof window !== 'undefined'
-    ? (localStorage.getItem('master_server_url') || `http://${window.location.hostname || 'localhost'}:3000`)
-    : 'http://localhost:3000');
-  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'pim' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts' | 'benefitpay'>(() => {
+  const apiBase = propApiBase || getApiBaseUrl();
+  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'pim' | 'produce' | 'price_change' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts' | 'benefitpay'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get('tab');
+      const tabParam = params.get('tab') || params.get('view');
+      if (tabParam === 'price_change' || tabParam === 'price-change' || tabParam === '60s' || tabParam === 'flash-pricing') return 'price_change';
       if (tabParam === 'master' || tabParam === 'ledger' || tabParam === 'command') return 'master';
       if (tabParam === 'pim' || tabParam === 'products' || tabParam === 'catalog') return 'pim';
+      if (tabParam === 'produce' || tabParam === 'vegetables' || tabParam === 'veggies') return 'produce';
       if (tabParam === 'pnl' || tabParam === 'financials') return 'pnl';
       if (tabParam === 'stock' || tabParam === 'logistics') return 'stock';
       if (tabParam === 'orders') return 'orders';
@@ -126,26 +130,8 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
 
     connectWs();
 
-    // 2. Dual-channel fallback: poll Fastify /api/nfc/latest only if WS is disconnected
-    pollInterval = setInterval(async () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        return; // Active WebSocket push handles real-time scans; skip polling
-      }
-      try {
-        const res = await fetch(`${apiBase}/api/nfc/latest`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.latest?.tag_id && data.latest.timestamp > lastProcessedTagTimestamp.current) {
-            lastProcessedTagTimestamp.current = data.latest.timestamp;
-            handleNfcScan(data.latest.tag_id, data.latest.customer);
-          }
-        }
-      } catch { }
-    }, 4000);
-
     return () => {
       unmounted = true;
-      clearInterval(pollInterval);
       ws?.close();
     };
   }, [apiBase]);
@@ -258,6 +244,50 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
           >
             <Layers size={19} />
             <span>Product Catalog (PIM)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('price_change')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              fontWeight: 700,
+              fontSize: '14px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'price_change' ? '#f59e0b' : 'transparent',
+              color: activeTab === 'price_change' ? '#0f172a' : '#cbd5e1',
+            }}
+          >
+            <span style={{ fontSize: '18px' }}>⚡</span>
+            <span>60-Sec Price Change</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('produce')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '14px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'produce' ? '#059669' : 'transparent',
+              color: activeTab === 'produce' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <span style={{ fontSize: '18px' }}>🥦</span>
+            <span>Daily Produce & Veggies</span>
           </button>
 
           <button
@@ -616,8 +646,8 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
       </div>
 
       {/* Main Content Area with ml-[288px] and max-w-7xl containment */}
-      <main className={`ml-[288px] flex-1 h-screen overflow-y-auto bg-slate-50 ${activeTab === 'barcodes' || activeTab === 'pim' ? 'p-0' : 'p-6 lg:p-8'}`}>
-        <div className={activeTab === 'barcodes' || activeTab === 'pim' ? 'w-full' : 'max-w-7xl mx-auto w-full'}>
+      <main className={`ml-[288px] flex-1 h-screen overflow-y-auto bg-slate-50 ${activeTab === 'barcodes' || activeTab === 'pim' || activeTab === 'produce' || activeTab === 'price_change' ? 'p-0' : 'p-6 lg:p-8'}`}>
+        <div className={activeTab === 'barcodes' || activeTab === 'pim' || activeTab === 'produce' || activeTab === 'price_change' ? 'w-full h-full' : 'max-w-7xl mx-auto w-full'}>
           {/* Sleek Toast when an NFC Card is tapped on Sunmi while on another tab */}
           {activeTab !== 'nfc' && (activeNfcCustomer || unknownNfcTag) && (
             <div className="mb-5 px-5 py-3.5 bg-slate-900 border-2 border-emerald-500 rounded-2xl shadow-xl flex items-center justify-between gap-4 text-white animate-in slide-in-from-top-3">
@@ -661,6 +691,8 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
           <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading...</div>}>
             {activeTab === 'master' && <MasterReport apiBase={apiBase} />}
             {activeTab === 'pim' && <ProductManagement apiBase={apiBase} />}
+            {activeTab === 'produce' && <ProducePriceCommander apiBase={apiBase} initialMode="catalog" />}
+            {activeTab === 'price_change' && <ProducePriceCommander apiBase={apiBase} initialMode="60s" />}
             {activeTab === 'pnl' && <FinancialDashboard apiBase={apiBase} />}
             {activeTab === 'khata' && <KhataLedger apiBase={apiBase} />}
             {activeTab === 'nfc' && (
@@ -720,14 +752,8 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
   const fetchSales = async () => {
     setLoadingSales(true);
     try {
-      // Laptop Network Fetch: Loads sales from Fastify master server over HTTP
-      const response = await fetch(`${apiBase}/api/reports/sales`, {
-        headers: { 'x-manager-pin': '9999' }
-      });
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setSales(data);
-      }
+      const salesList = await fetchSalesReport(apiBase);
+      setSales(salesList);
     } catch (err) {
       console.warn('Sales report fetch notice:', err);
     } finally {
@@ -737,7 +763,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     fetchSales();
-    const interval = setInterval(fetchSales, 5000);
+    const interval = setInterval(fetchSales, 30000);
 
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     let ws: WebSocket | null = null;
@@ -775,29 +801,37 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
   }, []);
 
   useEffect(() => {
-    const loadFinancials = () => {
-      fetch(`${apiBase}/api/reports/financials?period=${period}`, {
-        headers: { 'x-manager-pin': '9999' }
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-          return res.json();
-        })
-        .then((data) => {
+    const loadFinancials = async () => {
+      try {
+        const data = await fetchFinancialMetrics(apiBase, period);
+        if (data) {
           if (data.metrics) {
             setMetrics(data.metrics);
+          } else if (data.financials) {
+            const rev = Number(data.financials.grossRevenue || 0);
+            const cogs = Number(data.financials.cogs || (rev * 0.78));
+            const profit = Number(data.financials.netProfit || (rev - cogs));
+            setMetrics({
+              revenue: rev.toFixed(3),
+              cogs: cogs.toFixed(3),
+              netProfit: profit.toFixed(3),
+              profitMargin: rev > 0 ? `${((profit / rev) * 100).toFixed(1)}%` : '0%'
+            });
           }
           if (Array.isArray(data.chartData) && data.chartData.length > 0) {
             setChartData(data.chartData);
           }
-        })
-        .catch((err) => console.warn('Financials report notice:', err))
-        .finally(() => setLoading(false));
+        }
+      } catch (err) {
+        console.warn('Financials report notice:', err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     setLoading(true);
     loadFinancials();
-    const interval = setInterval(loadFinancials, 5000);
+    const interval = setInterval(loadFinancials, 30000);
     return () => clearInterval(interval);
   }, [period, apiBase]);
 
@@ -925,21 +959,39 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
         </div>
       </div>
 
-      {/* Live Sales Activity Table (From Fastify /api/reports/sales) */}
+      {/* Live Sales Activity Table (From Cloudflare Edge API /api/reports/sales) */}
       <div className="mt-8 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="font-bold text-slate-900 text-base">Recent Register Sales</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Live transactions synchronized from Sunmi POS terminals via Fastify API</p>
+            <div className="flex items-center gap-2.5">
+              <h3 className="font-bold text-slate-900 text-base">Recent Register Sales</h3>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                DUAL LANE LIVE
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live transactions synchronized from Dual Terminals (T1 Sunmi Express Counter & T2 F100 Mobile Khata) via Cloudflare Edge API
+            </p>
           </div>
-          <button
-            onClick={fetchSales}
-            disabled={loadingSales}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
-          >
-            <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
-            <span>Refresh</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+              T1 Express (Sunmi)
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-cyan-50 text-cyan-700 border border-cyan-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse"></span>
+              T2 Khata (F100)
+            </span>
+            <button
+              onClick={fetchSales}
+              disabled={loadingSales}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+            >
+              <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -947,6 +999,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-bold">
                 <th className="py-3 px-4">Invoice #</th>
+                <th className="py-3 px-4">Register</th>
                 <th className="py-3 px-4">Customer</th>
                 <th className="py-3 px-4">Payment Method</th>
                 <th className="py-3 px-4 text-right">Total Amount</th>
@@ -957,17 +1010,30 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
             <tbody className="divide-y divide-slate-100">
               {loadingSales && sales.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">Loading sales from server...</td>
+                  <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">Loading sales from server...</td>
                 </tr>
               ) : sales.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">No sales recorded yet.</td>
+                  <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">No sales recorded yet.</td>
                 </tr>
               ) : (
-                sales.slice(0, 20).map((sale) => (
-                  <tr key={sale.id || sale.invoice_number} className="hover:bg-slate-50/80 transition">
+                sales.slice(0, 25).map((sale) => (
+                  <tr key={sale.id || sale.invoice_number || sale.invoiceNo} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">
                       #{sale.invoice_number || sale.invoiceNo || sale.id}
+                    </td>
+                    <td className="py-3 px-4">
+                      {sale.terminalId === 'T2' || String(sale.invoiceNo || sale.invoice_number || '').includes('T2') ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-50 text-cyan-800 border border-cyan-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-600 animate-pulse"></span>
+                          T2 KHATA (F100)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                          T1 EXPRESS (Sunmi)
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 font-medium text-slate-700">
                       {sale.customerName || sale.customer_name || 'Walk-in Cash Customer'}
@@ -978,7 +1044,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
-                      BD {Number(sale.total || sale.grandTotal || 0).toFixed(3)}
+                      BD {Number(sale.total || sale.grandTotal || sale.totalAmount || 0).toFixed(3)}
                     </td>
                     <td className="py-3 px-4 text-center">
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
@@ -999,66 +1065,167 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
   );
 }
 
-function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }) {
+function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
   const { sendStatementPrintRequest } = useLaptopBridge();
   const [customers, setCustomers] = useState<any[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [search, setSearch] = useState('');
   const [sortParam, setSortParam] = useState<'highest' | 'lowest' | 'alpha' | 'stale' | 'overlimit'>('highest');
   const [onlyDebtors, setOnlyDebtors] = useState(false);
+  const [onlyMess, setOnlyMess] = useState(false);
   const [statementCustomer, setStatementCustomer] = useState<any | null>(null);
   const [statementSales, setStatementSales] = useState<any[]>([]);
+  const [statementMessGroup, setStatementMessGroup] = useState<any | null>(null);
+  const [statementTab, setStatementTab] = useState<'PERSONAL' | 'MESS'>('PERSONAL');
+  const [selectedMessMemberFilter, setSelectedMessMemberFilter] = useState<string | null>(null);
   const [loadingStatement, setLoadingStatement] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [remotePrintNotification, setRemotePrintNotification] = useState<string | null>(null);
   const [thermalSlipCustomer, setThermalSlipCustomer] = useState<any | null>(null);
   const [thermalSlipEntries, setThermalSlipEntries] = useState<any[]>([]);
+  const [thermalSlipIsMess, setThermalSlipIsMess] = useState<boolean>(false);
+  const [thermalSlipMessGroup, setThermalSlipMessGroup] = useState<any | null>(null);
 
-  const print58mmLocalSlip = (customer: any, entries: any[]) => {
+  // New Khata Customer Modal State (Supports Previous Book Balance)
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
+  const [newCustForm, setNewCustForm] = useState({
+    name: '',
+    phone: '',
+    cpr: '',
+    cardUid: '',
+    creditLimit: '30.000',
+    previousBalance: '',
+    description: ''
+  });
+
+  const handleCreateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCustForm.name.trim()) return;
+    setIsCreatingCustomer(true);
+    try {
+      const prevBal = parseFloat(newCustForm.previousBalance);
+      const limit = parseFloat(newCustForm.creditLimit);
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const res = await fetch(`${targetBase}/api/customers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': getAdminPin() || '1234',
+          'x-pos-client': 'dashboard'
+        },
+        body: JSON.stringify({
+          name: newCustForm.name.trim(),
+          phone: newCustForm.phone.trim() || undefined,
+          cpr: newCustForm.cpr.trim() || undefined,
+          cardUid: newCustForm.cardUid.trim() || undefined,
+          creditLimit: !isNaN(limit) && limit > 0 ? limit : 30.0,
+          previousBalance: !isNaN(prevBal) && prevBal > 0 ? prevBal : 0,
+          description: newCustForm.description.trim() || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok && (data.success || data.customer)) {
+        setWriteOffToast({
+          type: 'success',
+          message: `✅ Khata customer "${newCustForm.name}" registered successfully${prevBal > 0 ? ` with opening balance BD ${prevBal.toFixed(3)}` : ''}!`
+        });
+        setTimeout(() => setWriteOffToast(null), 5000);
+        setShowAddCustomerModal(false);
+        setNewCustForm({
+          name: '',
+          phone: '',
+          cpr: '',
+          cardUid: '',
+          creditLimit: '30.000',
+          previousBalance: '',
+          description: ''
+        });
+        await loadCustomers();
+      } else {
+        alert(data.error || 'Failed to create customer');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error creating customer');
+    } finally {
+      setIsCreatingCustomer(false);
+    }
+  };
+
+  const print58mmLocalSlip = (customer: any, entries: any[], isMess: boolean = false, messGroup: any = null) => {
     if (!customer) return;
+    const sanitizedMessGroup = (isMess && messGroup) ? {
+      ...messGroup,
+      equalSplitShare: messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members?.length || 1)),
+      members: (messGroup.members || []).map((m: any) => ({
+        ...m,
+        equalSplitShare: m.equalSplitShare || messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members?.length || 1))
+      }))
+    } : null;
     setThermalSlipCustomer(customer);
     setThermalSlipEntries(entries);
+    setThermalSlipIsMess(isMess);
+    setThermalSlipMessGroup(sanitizedMessGroup);
     setTimeout(() => {
       window.print();
     }, 150);
   };
 
-  const print58mmRemoteSunmi = (customer: any, entries: any[]) => {
+  const print58mmRemoteSunmi = (customer: any, entries: any[], isMess: boolean = false, messGroup: any = null) => {
     if (!customer) return;
+    const sanitizedMessGroup = (isMess && messGroup) ? {
+      ...messGroup,
+      equalSplitShare: messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members?.length || 1)),
+      members: (messGroup.members || []).map((m: any) => ({
+        ...m,
+        equalSplitShare: m.equalSplitShare || messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members?.length || 1))
+      }))
+    } : undefined;
+
     const formattedStatement = entries.map((s: any) => ({
       id: s.id,
       amount: Number(s.amount ?? s.total ?? 0),
       type: s.type || s.paymentType || 'CHARGE',
       reference: s.reference || s.invoiceNo || 'Store Purchase',
+      shopperName: s.shopperName || s.memberName,
       formattedDate: s.formattedDate || new Date(s.created_at || s.timestamp || s.createdAt || Date.now()).toLocaleDateString(),
       formattedTime: s.formattedTime || new Date(s.created_at || s.timestamp || s.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       runningBalance: Number(s.running_balance ?? s.runningBalance ?? s.total ?? 0)
     }));
 
     const payload = {
-      shopName: "ASKAR SUPERMARKET",
-      customerName: customer.name,
+      shopName: isMess && messGroup ? `ASKAR - MESS: ${messGroup.group_name}` : "ASKAR SUPERMARKET",
+      customerName: isMess && messGroup ? messGroup.group_name : customer.name,
       customerPhone: customer.phone,
       customerCpr: customer.cpr,
       statement: formattedStatement,
-      currentBalance: Number(customer.currentBalance || customer.balance || 0)
+      currentBalance: isMess && messGroup ? Number(messGroup.totalBalance || 0) : Number(customer.currentBalance || customer.balance || 0),
+      isMessStatement: isMess,
+      messGroup: sanitizedMessGroup
     };
 
     const sent = sendStatementPrintRequest(payload);
     if (sent) {
-      setRemotePrintNotification(`🖨️ Statement beamed to Sunmi POS built-in 58mm printer for ${customer.name}!`);
+      setRemotePrintNotification(`🖨️ Statement beamed to Sunmi POS built-in 58mm printer for ${payload.customerName}!`);
       setTimeout(() => setRemotePrintNotification(null), 4500);
     } else {
       alert("Sunmi POS bridge not connected. Ensure Sunmi POS is powered on and connected to the network, or use Local 58mm Print.");
     }
   };
 
-  // Client-side date range filtering for dispute resolution & targeted monthly thermal printing
+  // Client-side date range & member filtering for dispute resolution & targeted monthly thermal printing
   const filteredStatement = useMemo(() => {
-    if (!statementSales) return [];
+    let source = statementSales;
+    if (statementTab === 'MESS' && statementMessGroup?.messLedger) {
+      source = statementMessGroup.messLedger;
+      if (selectedMessMemberFilter) {
+        source = source.filter((tx: any) => tx.customerId === selectedMessMemberFilter);
+      }
+    }
+    if (!source || !Array.isArray(source)) return [];
 
-    return statementSales.filter((tx) => {
+    return source.filter((tx: any) => {
       if (!startDate && !endDate) return true;
 
       const dateStr = tx.created_at || tx.timestamp || tx.createdAt;
@@ -1070,7 +1237,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
 
       return txDate >= start && txDate <= end;
     });
-  }, [statementSales, startDate, endDate]);
+  }, [statementSales, startDate, endDate, statementTab, statementMessGroup, selectedMessMemberFilter]);
 
   // Customer Settle Modal State (Receive Payment)
   const [settleCustomer, setSettleCustomer] = useState<any | null>(null);
@@ -1086,6 +1253,12 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
   const [writeOffToast, setWriteOffToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
 
+  // Khata Customer Delete Authorization State
+  const [deletingCustomer, setDeletingCustomer] = useState<any | null>(null);
+  const [deleteManagerPin, setDeleteManagerPin] = useState('');
+  const [deletePinError, setDeletePinError] = useState<string | null>(null);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
+
   const handleExecuteSettle = async () => {
     if (!settleCustomer) return;
     const amt = parseFloat(settleAmount);
@@ -1096,9 +1269,14 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
 
     setIsSettling(true);
     try {
-      const res = await fetch(`${apiBase}/api/customers/${settleCustomer.id}/settle`, {
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const res = await fetch(`${targetBase}/api/customers/${settleCustomer.id}/settle`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos',
+          'x-manager-pin': getAdminPin() || '9999'
+        },
         body: JSON.stringify({
           amount: amt,
           paymentMethod: settleMethod,
@@ -1125,24 +1303,106 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
     }
   };
 
-  const loadCustomers = () => {
+  const loadCustomers = async () => {
     setLoadingCustomers(true);
     const query = new URLSearchParams({
       sort: sortParam,
       ...(onlyDebtors ? { onlyDebtors: 'true' } : {}),
     });
 
-    fetch(`${apiBase}/khata/ledger?${query.toString()}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.customers)) {
-          setCustomers(data.customers);
-        } else if (Array.isArray(data)) {
-          setCustomers(data);
+    const headers = {
+      'x-pos-client': 'store-pos',
+      'x-manager-pin': getAdminPin() || '9999'
+    };
+
+    const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+    const candidates = [
+      targetBase,
+      'http://192.168.8.7:3000',
+      'http://localhost:3000',
+      DEFAULT_EDGE_API_URL
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+    let loaded = false;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/khata/ledger?${query.toString()}`, { headers, signal: AbortSignal.timeout(4000) });
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data && data.customers) || (Array.isArray(data) ? data : (data?.data || []));
+          if (Array.isArray(list) && list.length > 0) {
+            setCustomers(list);
+            loaded = true;
+            break;
+          }
         }
-      })
-      .catch(console.error)
-      .finally(() => setLoadingCustomers(false));
+      } catch (err) {}
+    }
+
+    if (!loaded) {
+      for (const url of candidates) {
+        try {
+          const res = await fetch(`${url}/api/customers`, { headers, signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            const data = await res.json();
+            const list = (data && data.customers) || (Array.isArray(data) ? data : (data?.data || []));
+            if (Array.isArray(list) && list.length > 0) {
+              setCustomers(list);
+              loaded = true;
+              break;
+            }
+          }
+        } catch (err) {}
+      }
+    }
+    setLoadingCustomers(false);
+  };
+
+  const [isRebalancingMess, setIsRebalancingMess] = useState(false);
+
+  const handleRebalanceMessCards = async () => {
+    if (!statementMessGroup || !statementMessGroup.id) return;
+    const targetMessId = statementMessGroup.id;
+    const groupName = statementMessGroup.group_name || 'Camp Mess';
+    const memberCount = statementMessGroup.members?.length || 1;
+    const eqShare = (statementMessGroup.equalSplitShare || (statementMessGroup.totalBalance / Math.max(1, memberCount))).toFixed(3);
+
+    const confirmed = window.confirm(
+      `⚖️ Split Camp Debt Equally Across All Cards?\n\n` +
+      `Mess Group: ${groupName}\n` +
+      `Total Debt: BHD ${Number(statementMessGroup.totalBalance || 0).toFixed(3)}\n` +
+      `Active Cards: ${memberCount}\n` +
+      `Target Equal Share per Card: BHD ${eqShare}\n\n` +
+      `This will update the ledger so that every member card account has an exact balance of BHD ${eqShare}.\n\n` +
+      `Proceed?`
+    );
+    if (!confirmed) return;
+
+    setIsRebalancingMess(true);
+    try {
+      const res = await fetch(`${apiBase}/api/khata/mess/${encodeURIComponent(targetMessId)}/rebalance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': getAdminPin() || '9999',
+          'x-pos-client': 'admin-dashboard'
+        }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to rebalance mess group debt');
+      }
+
+      alert(`✅ Success: ${data.message || 'Camp balance split equally across all cards'}`);
+      if (data.messGroup) {
+        setStatementMessGroup(data.messGroup);
+      }
+      loadCustomers();
+    } catch (err: any) {
+      alert(`❌ Error: ${err?.message || 'Could not rebalance cards'}`);
+    } finally {
+      setIsRebalancingMess(false);
+    }
   };
 
   useEffect(() => {
@@ -1157,9 +1417,14 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
   const totalDebtors = customers.filter((c) => Number(c.currentBalance || 0) > 0).length;
   const staleCustomers = customers.filter((c) => c.isStale);
   const staleDebtTotal = staleCustomers.reduce((sum, c) => sum + (Number(c.currentBalance || 0) > 0 ? Number(c.currentBalance || 0) : 0), 0);
-  const overLimitCustomers = customers.filter((c) => c.isOverLimit);
+  const overLimitCustomers = customers.filter((c) => {
+    const bal = Number(c.currentBalance || c.balance || 0);
+    const lim = Number(c.creditLimit) > 0 ? Number(c.creditLimit) : 30.0;
+    return c.isOverLimit !== undefined ? c.isOverLimit : bal > lim;
+  });
 
   const filtered = customers.filter((c) => {
+    if (onlyMess && !(c.isMessGroup || c.isMess || c.messName || c.mess_name || c.mess_id)) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -1167,7 +1432,8 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
       (c.phone && c.phone.toLowerCase().includes(q)) ||
       (c.cpr && c.cpr.toLowerCase().includes(q)) ||
       (c.batchNo && c.batchNo.toLowerCase().includes(q)) ||
-      (c.cardUid && c.cardUid.toLowerCase().includes(q))
+      (c.cardUid && c.cardUid.toLowerCase().includes(q)) ||
+      ((c.messName || c.mess_name) && (c.messName || c.mess_name).toLowerCase().includes(q))
     );
   });
 
@@ -1200,25 +1466,88 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
     document.body.removeChild(link);
   };
 
-  const viewStatement = async (customer: any) => {
+  const viewStatement = async (customer: any, forceMessMode: boolean = false) => {
     setStatementCustomer(customer);
     setLoadingStatement(true);
+    setStatementTab(forceMessMode ? 'MESS' : 'PERSONAL');
+    setSelectedMessMemberFilter(null);
     try {
-      const res = await fetch(`${apiBase}/khata/${customer.id}/statement`);
-      const data = await res.json();
-      setStatementSales(data.statement || data.sales || []);
+      let data: any = null;
+      const targetId = (forceMessMode && customer.mess_id) ? customer.mess_id : customer.id;
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const candidates = [
+        targetBase,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      const headers = {
+        'x-manager-pin': getAdminPin() || '9999',
+        'x-pos-client': 'store-pos'
+      };
+
+      for (const url of candidates) {
+        try {
+          const res = await fetch(`${url}/api/customers/${targetId}/statement`, { headers, signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            data = await res.json();
+            if (data && (data.statement || data.entries || data.sales)) break;
+          }
+        } catch {}
+
+        try {
+          const res2 = await fetch(`${url}/khata/${targetId}/statement`, { headers, signal: AbortSignal.timeout(4000) });
+          if (res2.ok) {
+            data = await res2.json();
+            if (data && (data.statement || data.entries || data.sales)) break;
+          }
+        } catch {}
+      }
+
+      const entries = data?.statement || data?.entries || data?.sales || [];
+      setStatementSales(entries);
+      if (data?.messGroup) {
+        setStatementMessGroup(data.messGroup);
+        if (forceMessMode || data.isMessStatement) {
+          setStatementTab('MESS');
+        }
+      } else {
+        setStatementMessGroup(null);
+      }
     } catch (e) {
       console.error(e);
       setStatementSales([]);
+      setStatementMessGroup(null);
     } finally {
       setLoadingStatement(false);
     }
   };
 
+  // Deep-link query param auto-open for Mess Statement Modal (?mess=... or ?statement=...)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && customers.length > 0 && !statementCustomer) {
+      const p = new URLSearchParams(window.location.search);
+      const targetParam = p.get('statement') || p.get('mess') || p.get('customer');
+      if (targetParam) {
+        const found = customers.find(c =>
+          c.id === targetParam ||
+          c.mess_id === targetParam ||
+          (c.name && c.name.toLowerCase() === targetParam.toLowerCase()) ||
+          ((c.messName || c.mess_name) && (c.messName || c.mess_name).toLowerCase() === targetParam.toLowerCase())
+        );
+        if (found) {
+          viewStatement(found, Boolean(p.get('mess') || p.get('messMode') === 'true' || found.isMessGroup));
+        }
+      }
+    }
+  }, [customers]);
+
   const handleExecuteWriteOff = async () => {
     if (!writeOffCustomer) return;
-    if (writeOffPin !== '9999') {
-      alert('Unauthorized: Invalid Manager PIN. Please enter PIN 9999.');
+    const adminPin = getAdminPin();
+    if (writeOffPin !== adminPin) {
+      alert('Unauthorized: Invalid Manager PIN.');
       return;
     }
 
@@ -1226,7 +1555,10 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
     try {
       const res = await fetch(`${apiBase}/api/khata/write-off`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': writeOffPin
+        },
         body: JSON.stringify({
           customerId: writeOffCustomer.id,
           reason: writeOffReason,
@@ -1253,11 +1585,133 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
     }
   };
 
+  const handleDeleteCustomerClick = (customer: any) => {
+    const bal = Number(customer.currentBalance ?? customer.balance ?? 0);
+    if (bal > 0.001) {
+      alert(`⛔ Deletion Blocked: Customer "${customer.name}" has an unpaid balance of BD ${bal.toFixed(3)}.\n\nSupermarket policy requires all dues to be settled to BD 0.000 before an account can be deleted.`);
+      return;
+    }
+    setDeletingCustomer(customer);
+    setDeleteManagerPin('');
+    setDeletePinError(null);
+  };
+
+  const handleConfirmDeleteCustomer = async () => {
+    if (!deletingCustomer) return;
+    const pin = deleteManagerPin.trim();
+    if (!pin) {
+      setDeletePinError('Manager PIN is required');
+      return;
+    }
+
+    setIsDeletingCustomer(true);
+    setDeletePinError(null);
+
+    try {
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const candidates = [
+        targetBase,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      let success = false;
+      let lastErrMsg = '';
+
+      for (const url of candidates) {
+        try {
+          const res = await fetch(`${url}/api/customers/${deletingCustomer.id}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-manager-pin': pin,
+              'x-pos-client': 'admin-dashboard'
+            },
+            signal: AbortSignal.timeout(5000)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.success) {
+            success = true;
+            break;
+          } else if (data.error) {
+            lastErrMsg = data.error;
+            if (res.status === 400 || res.status === 401 || res.status === 403) break;
+          }
+        } catch (e: any) {
+          lastErrMsg = e.message;
+        }
+
+        try {
+          const res2 = await fetch(`${url}/khata/${deletingCustomer.id}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-manager-pin': pin,
+              'x-pos-client': 'admin-dashboard'
+            },
+            signal: AbortSignal.timeout(5000)
+          });
+          const data2 = await res2.json().catch(() => ({}));
+          if (res2.ok && data2.success) {
+            success = true;
+            break;
+          } else if (data2.error) {
+            lastErrMsg = data2.error;
+            if (res2.status === 400 || res2.status === 401 || res2.status === 403) break;
+          }
+        } catch (e: any) {
+          lastErrMsg = e.message;
+        }
+      }
+
+      if (success) {
+        setWriteOffToast({
+          type: 'success',
+          message: `✅ Khata customer "${deletingCustomer.name}" deleted successfully. Unbound card and updated master ledger.`
+        });
+        setTimeout(() => setWriteOffToast(null), 5000);
+        setDeletingCustomer(null);
+        setDeleteManagerPin('');
+        loadCustomers();
+      } else {
+        setDeletePinError(lastErrMsg || 'Failed to authorize customer deletion');
+      }
+    } catch (e: any) {
+      setDeletePinError(`Network error: ${e.message}`);
+    } finally {
+      setIsDeletingCustomer(false);
+    }
+  };
+
   const formatPhoneForWhatsApp = (rawPhone?: string | null) => {
     if (!rawPhone) return '';
     const digits = String(rawPhone).replace(/[^0-9]/g, '');
     if (digits.length === 8) return `973${digits}`; // Bahrain 8-digit mobile
     return digits;
+  };
+
+  const buildFawriPlusWhatsAppReminder = (cName: string, cId: string, bal: number, groupName?: string) => {
+    const formattedBal = bal.toFixed(3);
+    const statementUrl = `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(cId)}`;
+    return (
+      `*ASKAR SUPERMARKET - PAYMENT STATEMENT / كشف حساب أسواق عسكر*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `👤 *Customer / العميل:* ${cName}\n` +
+      (groupName ? `🏢 *Mess Group:* ${groupName}\n` : '') +
+      `💰 *Outstanding Balance / المبلغ المستحق:* *BHD ${formattedBal}*\n\n` +
+      `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
+      `${statementUrl}\n\n` +
+      `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
+      `• Registered Mobile: *+973 33843855*\n` +
+      `• Beneficiary Name: *layali sbi*\n` +
+      `• IBAN: *BH77SBIN02740045310001*\n\n` +
+      `💡 *سدد فوراً عبر تطبيق بنفت بت (فوري+)*\n` +
+      `• رقم الهاتف: *33843855*\n` +
+      `• الاسم: *layali sbi*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
+    );
   };
 
   return (
@@ -1286,6 +1740,13 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowAddCustomerModal(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 cursor-pointer shadow-xs active:scale-95 transition-all text-sm"
+            title="Register a new Khata customer with optional paper book balance"
+          >
+            <UserPlus size={16} /> Add Khata Customer
+          </button>
           <button
             onClick={() => setShowBroadcastModal(true)}
             disabled={totalDebtors === 0}
@@ -1427,6 +1888,21 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                 <span>Only Active Debts (&gt;BD 0)</span>
               </label>
 
+              {/* Only Mess Groups Toggle */}
+              <button
+                type="button"
+                onClick={() => setOnlyMess(!onlyMess)}
+                className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer transition-all select-none border ${
+                  onlyMess
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                    : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50 shadow-2xs'
+                }`}
+                title="Filter to only bachelor camp and labor mess groups"
+              >
+                <Users size={13} />
+                <span>👥 Mess Groups</span>
+              </button>
+
               <span className="text-xs text-slate-400 font-bold font-mono">
                 {filtered.length} Parties
               </span>
@@ -1448,9 +1924,9 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filtered.map((customer) => {
                   const balance = Number(customer.currentBalance || 0);
-                  const limit = Number(customer.creditLimit || 30.0);
+                  const limit = Number(customer.creditLimit) > 0 ? Number(customer.creditLimit) : 30.0;
                   const isStale = customer.isStale || (balance > 0 && customer.daysSinceLastPayment > 45);
-                  const isOver = customer.isOverLimit || balance > limit;
+                  const isOver = customer.isOverLimit !== undefined ? customer.isOverLimit : balance > limit;
                   const phoneDigits = formatPhoneForWhatsApp(customer.phone);
 
                   return (
@@ -1465,11 +1941,16 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                         onClick={() => viewStatement(customer)}
                         title="Click to view full Khata statement ledger"
                       >
-                        <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center gap-2">
+                        <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center gap-2 flex-wrap">
                           <span className="underline decoration-slate-300 group-hover:decoration-blue-500 underline-offset-4">{customer.name}</span>
                           {customer.batchNo && (
                             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded uppercase tracking-wider font-extrabold no-underline">
                               {customer.batchNo}
+                            </span>
+                          )}
+                          {(customer.messName || customer.mess_name) && (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-bold no-underline">
+                              <Users size={11} /> {customer.messName || customer.mess_name}
                             </span>
                           )}
                         </div>
@@ -1553,16 +2034,16 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                       <td className="px-5 py-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
 
-                          {/* Idea 1: 1-Click WhatsApp Reminder */}
+                          {/* Idea 1: 1-Click WhatsApp Reminder with Fawri+ & Digital Statement */}
                           {balance > 0 && phoneDigits ? (
                             <a
                               href={`https://wa.me/${phoneDigits}?text=${encodeURIComponent(
-                                `Hello ${customer.name}, your current Khata credit balance at Askar Supermarket is BHD ${balance.toFixed(3)}. Please arrange a payment soon. Thank you!`
+                                buildFawriPlusWhatsAppReminder(customer.name, customer.id, balance)
                               )}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 font-bold text-xs shadow-xs transition-transform active:scale-95 cursor-pointer"
-                              title="Open WhatsApp chat with prefilled debt reminder"
+                              title="Send 1-Click WhatsApp reminder with Fawri+ settlement details and live digital statement"
                             >
                               <MessageCircle size={14} className="fill-white/20" /> WhatsApp
                             </a>
@@ -1591,6 +2072,18 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                             Statement
                           </button>
 
+                          {/* Mess Split Button */}
+                          {(customer.messName || customer.mess_name || customer.mess_id) && (
+                            <button
+                              onClick={() => viewStatement(customer, true)}
+                              className="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                              title={`View Mess Split Statement for ${customer.messName || customer.mess_name || 'Mess'}`}
+                            >
+                              <Users size={12} />
+                              <span>Mess Split</span>
+                            </button>
+                          )}
+
                           {/* Stale Debt Write-Off Action */}
                           {isStale && balance > 0 && (
                             <button
@@ -1605,6 +2098,25 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                               Write-Off
                             </button>
                           )}
+
+                          {/* Khata Customer Delete Option (Requires Balance == 0 and Manager PIN) */}
+                          <button
+                            onClick={() => handleDeleteCustomerClick(customer)}
+                            disabled={balance > 0.001}
+                            className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 shadow-2xs ${
+                              balance > 0.001
+                                ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed opacity-50'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 cursor-pointer active:scale-95'
+                            }`}
+                            title={
+                              balance > 0.001
+                                ? `Cannot delete: Customer has an outstanding balance of BD ${balance.toFixed(3)}. Settle to BD 0.000 first.`
+                                : 'Delete Khata customer (requires Manager PIN authorization)'
+                            }
+                          >
+                            <Trash2 size={13} />
+                            <span>Delete</span>
+                          </button>
 
                         </div>
                       </td>
@@ -1697,6 +2209,264 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                 {isWritingOff ? 'Recording...' : 'Confirm Write-Off'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manager Authorization Delete Customer Modal */}
+      {deletingCustomer && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b">
+              <h3 className="font-black text-rose-700 flex items-center gap-2 text-base">
+                <Trash2 size={20} className="text-rose-600" />
+                <span>Delete Khata Customer</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDeletingCustomer(null)}
+                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center font-bold cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-2">
+              <div className="flex justify-between font-bold text-slate-800">
+                <span>Customer:</span>
+                <span className="font-extrabold">{deletingCustomer.name}</span>
+              </div>
+              <div className="flex justify-between font-bold text-emerald-700">
+                <span>Account Balance:</span>
+                <span className="font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black">
+                  BD {Number(deletingCustomer.currentBalance || deletingCustomer.balance || 0).toFixed(3)} (PAID IN FULL)
+                </span>
+              </div>
+              {deletingCustomer.cardUid && (
+                <div className="flex justify-between text-slate-500 font-mono">
+                  <span>Linked NFC Card:</span>
+                  <span className="font-bold text-slate-700">{deletingCustomer.cardUid} (Will Unbind)</span>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-500 font-medium">
+              Supermarket security policy requires <strong>Manager PIN authorization</strong> to permanently archive or delete a settled credit account.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">
+                Enter Manager PIN (Default: 9999) *
+              </label>
+              <input
+                type="password"
+                maxLength={4}
+                autoFocus
+                value={deleteManagerPin}
+                onChange={(e) => {
+                  setDeleteManagerPin(e.target.value);
+                  setDeletePinError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && deleteManagerPin.length >= 4) {
+                    handleConfirmDeleteCustomer();
+                  }
+                }}
+                placeholder="••••"
+                className="w-full text-center text-2xl tracking-widest font-mono p-2.5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-rose-500"
+              />
+              {deletePinError && (
+                <p className="text-xs text-rose-600 font-bold mt-1.5 flex items-center gap-1">
+                  <AlertCircle size={13} /> {deletePinError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingCustomer(null)}
+                className="flex-1 py-2.5 border border-slate-300 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCustomer}
+                disabled={isDeletingCustomer || deleteManagerPin.length < 4}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs disabled:opacity-50 shadow-sm cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Trash2 size={14} />
+                <span>{isDeletingCustomer ? 'Authorizing...' : 'Authorize & Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Register New Khata Customer Modal (With Previous Book Balance) */}
+      {showAddCustomerModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                  <UserPlus className="text-blue-600" size={22} />
+                  <span>Register Khata Customer</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  Enrolls a new credit customer and migrates existing paper book balances into their live ledger.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddCustomerModal(false)}
+                className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center font-bold"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomer} className="mt-4 space-y-4 overflow-y-auto pr-1 flex-1">
+              {/* Row 1: Name & Phone */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Customer Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Mohammed Bucheeri"
+                    value={newCustForm.name}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, name: e.target.value })}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-semibold focus:border-blue-500 outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="+973 XXXXXXXX"
+                    value={newCustForm.phone}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, phone: e.target.value })}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono focus:border-blue-500 outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    CPR Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={9}
+                    placeholder="XXXXXXXXX"
+                    value={newCustForm.cpr}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, cpr: e.target.value })}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono focus:border-blue-500 outline-none transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Row 2: NFC Card UID & Credit Limit */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    NFC Card ID (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 04:A2:3B:11"
+                    value={newCustForm.cardUid}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, cardUid: e.target.value.toUpperCase() })}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-mono uppercase focus:border-blue-500 outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Credit Limit (BD)
+                  </label>
+                  <input
+                    type="number"
+                    step="5"
+                    min="1"
+                    placeholder="30.000"
+                    value={newCustForm.creditLimit}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, creditLimit: e.target.value })}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-bold font-mono focus:border-blue-500 outline-none transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Previous Book Balance (HIGHLIGHTED) */}
+              <div className="p-4 bg-rose-50/80 border-2 border-rose-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black text-rose-900 uppercase tracking-wider">
+                    📖 Previous Book Balance he has in our book (BD)
+                  </label>
+                  <span className="text-[10px] font-bold uppercase bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full">
+                    Opening Debt
+                  </span>
+                </div>
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 font-bold text-rose-600 text-base">BD</span>
+                  <input
+                    type="number"
+                    step="0.005"
+                    min="0"
+                    placeholder="0.000 (Existing balance in paper register)"
+                    value={newCustForm.previousBalance}
+                    onChange={(e) => setNewCustForm({ ...newCustForm, previousBalance: e.target.value })}
+                    className="w-full pl-12 pr-4 py-2.5 bg-white border-2 border-rose-300 rounded-xl text-base font-black font-mono text-rose-700 outline-none focus:border-rose-500 shadow-2xs"
+                  />
+                </div>
+                <p className="text-[11px] text-rose-800 font-medium">
+                  If this customer already owes money recorded in the physical shop notebook, enter the balance here. It will immediately generate an <strong>Opening Balance</strong> entry in their Khata ledger.
+                </p>
+              </div>
+
+              {/* Row 4: Notes / Migration Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Notes / Physical Book Reference
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Migrated from physical store paper ledger Page 42..."
+                  value={newCustForm.description}
+                  onChange={(e) => setNewCustForm({ ...newCustForm, description: e.target.value })}
+                  className="w-full px-3.5 py-2 border-2 border-slate-200 rounded-xl text-sm focus:border-blue-500 outline-none transition-colors resize-none"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCustomerModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newCustForm.name.trim() || isCreatingCustomer}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl font-bold text-sm cursor-pointer shadow-sm active:scale-95 transition-all flex items-center gap-2"
+                >
+                  {isCreatingCustomer ? (
+                    <>
+                      <RefreshCw className="animate-spin" size={16} /> Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} /> Register Khata Party
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1848,44 +2618,80 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
             {/* Modal Header */}
             <div
               style={{
-                padding: '20px 24px',
+                padding: '16px 20px',
                 borderBottom: '1px solid #e2e8f0',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 backgroundColor: '#f8fafc',
+                flexWrap: 'wrap',
+                gap: '12px'
               }}
             >
               <div>
-                <h3
-                  style={{
-                    fontSize: '18px',
-                    fontWeight: 'bold',
-                    color: '#0f172a',
-                    margin: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                  }}
-                >
+                <div className="flex items-center gap-2">
                   <Receipt size={20} color="#059669" />
-                  <span>Khata Statement: {statementCustomer.name}</span>
-                </h3>
-                <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 0 0', display: 'flex', gap: '12px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#0f172a', margin: 0 }}>
+                    {statementTab === 'MESS' && (statementMessGroup || statementCustomer.messName || statementCustomer.mess_name)
+                      ? `Mess Statement: ${statementMessGroup?.group_name || statementCustomer.messName || statementCustomer.mess_name || 'Mess Group'}`
+                      : `Khata Statement: ${statementCustomer.name}`}
+                  </h3>
+                  {(statementMessGroup || statementCustomer.messName || statementCustomer.mess_name || statementCustomer.mess_id) && (
+                    <span className="text-[11px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
+                      👥 {statementMessGroup?.group_name || statementCustomer.messName || statementCustomer.mess_name || 'Mess Camp'}
+                    </span>
+                  )}
+                </div>
+                <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 0 0', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <span>Customer: <strong>{statementCustomer.name}</strong></span>
+                  <span>•</span>
                   <span>Card UID: <strong>{statementCustomer.cardUid || 'None'}</strong></span>
                   <span>•</span>
                   <span>
-                    Current Debt:{' '}
+                    {statementTab === 'MESS' && statementMessGroup ? 'Camp Total Debt: ' : 'Current Debt: '}
                     <strong style={{ color: '#dc2626' }}>
-                      BD {Number(statementCustomer.currentBalance || 0).toFixed(3)}
+                      BD {Number(statementTab === 'MESS' && statementMessGroup ? statementMessGroup.totalBalance : (statementCustomer.currentBalance || 0)).toFixed(3)}
                     </strong>
                   </span>
                 </p>
+
+                {/* Personal vs Mess Statement Tab Switcher */}
+                {(statementMessGroup || statementCustomer.messName || statementCustomer.mess_name || statementCustomer.mess_id) && (
+                  <div className="inline-flex mt-2 bg-slate-200 p-0.5 rounded-lg text-xs font-bold">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatementTab('PERSONAL');
+                        setSelectedMessMemberFilter(null);
+                      }}
+                      className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                        statementTab === 'PERSONAL'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      👤 Personal Ledger
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatementTab('MESS')}
+                      className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                        statementTab === 'MESS'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Users size={12} />
+                      <span>👥 Mess Group Split</span>
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement)}
+                  onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement, statementTab === 'MESS', statementMessGroup)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
                   title="Send 58mm thermal statement directly to Sunmi POS built-in printer"
                 >
@@ -1893,7 +2699,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                 </button>
                 <button
                   type="button"
-                  onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement)}
+                  onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement, statementTab === 'MESS', statementMessGroup)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
                   title="Print official 58mm thermal receipt roll using Windows/browser printer"
                 >
@@ -1905,6 +2711,8 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                     setStartDate('');
                     setEndDate('');
                     setRemotePrintNotification(null);
+                    setStatementMessGroup(null);
+                    setSelectedMessMemberFilter(null);
                   }}
                   style={{
                     background: 'none',
@@ -1929,10 +2737,288 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                 </div>
               )}
 
+              {/* Mess Camp Transparency Overview & Member Debt Breakdown */}
+              {statementTab === 'MESS' && statementMessGroup && (
+                <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 text-white p-5 rounded-2xl shadow-xl border border-indigo-800 space-y-4">
+                  {/* Top Header & Fast Action Buttons */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300">
+                          Camp Mess Group Statement
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                          {statementMessGroup.members?.length || 0} Members
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-black text-white mt-0.5 flex items-center gap-2">
+                        <Users size={20} className="text-indigo-400" />
+                        <span>{statementMessGroup.group_name}</span>
+                      </h3>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* One-Click Split Balance Equally Across All Cards */}
+                      <button
+                        type="button"
+                        onClick={handleRebalanceMessCards}
+                        disabled={isRebalancingMess}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer border border-indigo-400/40 disabled:opacity-50"
+                        title="Distribute total camp debt equally across all member cards in the database"
+                      >
+                        <Scale size={14} className="text-amber-300" />
+                        <span>{isRebalancingMess ? 'Splitting...' : '⚡ Split Balance to Cards'}</span>
+                      </button>
+
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(
+                          `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
+                          `🏢 *Mess Group:* ${statementMessGroup.group_name}\n` +
+                          `💰 *Total Camp Balance:* BD ${Number(statementMessGroup.totalBalance || 0).toFixed(3)}\n` +
+                          `👥 *Members:* ${statementMessGroup.members?.length || 0}\n` +
+                          `⚖️ *EQUAL SPLIT SHARE:* BD ${(statementMessGroup.equalSplitShare || (statementMessGroup.totalBalance / Math.max(1, statementMessGroup.members?.length || 1))).toFixed(3)} / member\n` +
+                          `----------------------------------------\n` +
+                          `*Room Members Equal Split Balances:*\n` +
+                          (statementMessGroup.members || []).map((m: any) => {
+                            const mEq = (m.equalSplitShare || statementMessGroup.equalSplitShare || (statementMessGroup.totalBalance / Math.max(1, statementMessGroup.members?.length || 1))).toFixed(3);
+                            return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
+                          }).join('\n') +
+                          `\n----------------------------------------\n` +
+                          `📲 *BenefitPay Fawri+ Settlement Coordinates:*\n` +
+                          `• Registered Mobile: *+973 33843855*\n` +
+                          `• Beneficiary Name: *layali sbi*\n` +
+                          `• IBAN: *BH77SBIN02740045310001*\n\n` +
+                          `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        title="Share full mess debt breakdown to WhatsApp group"
+                      >
+                        <MessageCircle size={14} className="fill-white/20" />
+                        <span>WhatsApp Group Split</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* 3 Prominent KPI Stat Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                    <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Total Camp Debt</span>
+                        <CreditCard size={14} className="text-emerald-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-emerald-400">
+                          BD {Number(statementMessGroup.totalBalance || 0).toFixed(3)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Collective room debt</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-emerald-500/50 rounded-xl p-3 flex flex-col justify-between shadow-xs ring-1 ring-emerald-500/20">
+                      <div className="flex items-center justify-between text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Equal Share / Card</span>
+                        <Scale size={14} className="text-emerald-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-emerald-300">
+                          BD {(statementMessGroup.equalSplitShare || (statementMessGroup.totalBalance / Math.max(1, statementMessGroup.members?.length || 1))).toFixed(3)}
+                        </span>
+                        <span className="text-[10px] text-emerald-400/80 block mt-0.5 font-medium">
+                          BD {Number(statementMessGroup.totalBalance || 0).toFixed(3)} ÷ {statementMessGroup.members?.length || 1} members
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Active Camp Cards</span>
+                        <Users size={14} className="text-indigo-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-white">
+                          {statementMessGroup.members?.length || 0} Cards
+                        </span>
+                        <span className="text-[10px] text-indigo-300/80 block mt-0.5 font-medium">
+                          Registered camp members
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Member Cards Splitting Balance Equally */}
+                  {Array.isArray(statementMessGroup.members) && statementMessGroup.members.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-indigo-800/60">
+                      <div className="flex items-center justify-between text-xs font-bold text-indigo-200 px-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <CreditCard size={14} className="text-emerald-400" />
+                          <span>Member Cards • Balance Split Equally ({statementMessGroup.members.length})</span>
+                        </div>
+                        {selectedMessMemberFilter ? (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMessMemberFilter(null)}
+                            className="text-amber-300 hover:underline text-[11px] font-bold cursor-pointer"
+                          >
+                            ✕ Showing 1 member • Click to clear filter
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-indigo-400">Click card to filter transactions below</span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-72 overflow-y-auto pr-1">
+                        {statementMessGroup.members.map((m: any) => {
+                          const isSelected = selectedMessMemberFilter === m.id;
+                          const isMe = m.id === statementCustomer.id;
+                          const memberEqShare = Number(
+                            m.equalSplitShare ||
+                            statementMessGroup.equalSplitShare ||
+                            (statementMessGroup.totalBalance / Math.max(1, statementMessGroup.members?.length || 1))
+                          );
+                          const cardBalance = Number(m.currentBalance || 0);
+                          const diff = Number((cardBalance - memberEqShare).toFixed(3));
+
+                          return (
+                            <div
+                              key={m.id}
+                              onClick={() => setSelectedMessMemberFilter(isSelected ? null : m.id)}
+                              className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                                isSelected
+                                  ? 'bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-900 border-emerald-400 shadow-lg ring-2 ring-emerald-400/40'
+                                  : 'bg-gradient-to-br from-slate-900/95 via-indigo-950/70 to-slate-900/95 border-indigo-700/60 hover:border-emerald-500/60 hover:shadow-md'
+                              }`}
+                            >
+                              {/* Card Header: NFC Icon + Member Name + Split Status Badge */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                                    <CreditCard size={15} className="text-emerald-400" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-white text-xs flex items-center gap-1.5 leading-tight truncate">
+                                      <span className="truncate">{m.name}</span>
+                                      {isMe && (
+                                        <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">
+                                          You
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
+                                      {m.cardUid || m.nfcCardId ? `💳 ${m.cardUid || m.nfcCardId}` : 'Card: Linked'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <span
+                                  className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
+                                    Math.abs(diff) <= 0.001
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                      : diff > 0
+                                      ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                      : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  }`}
+                                >
+                                  {Math.abs(diff) <= 0.001
+                                    ? 'Balanced'
+                                    : diff > 0
+                                    ? `+BD ${diff.toFixed(3)} Paid`
+                                    : `-BD ${Math.abs(diff).toFixed(3)} Due`}
+                                </span>
+                              </div>
+
+                              {/* Card Middle: EQUAL SPLIT DUE (Hero Box) */}
+                              <div className="my-2.5 p-2 bg-indigo-950/80 rounded-xl border border-indigo-800/60 flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider block">
+                                    Equal Split Due
+                                  </span>
+                                  <span className="text-sm font-black font-mono text-emerald-400">
+                                    BD {memberEqShare.toFixed(3)}
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                    Card Spent
+                                  </span>
+                                  <span className="text-xs font-bold font-mono text-slate-300">
+                                    BD {cardBalance.toFixed(3)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Spend share progress bar */}
+                              <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden mb-2">
+                                <div
+                                  className="h-full bg-emerald-400 rounded-full transition-all"
+                                  style={{ width: `${Math.min(100, m.spendPercentage || 0)}%` }}
+                                />
+                              </div>
+
+                              {/* Card Actions: Settle Equal Share & WhatsApp */}
+                              <div className="pt-1.5 border-t border-indigo-800/40 flex items-center justify-between gap-1 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSettleCustomer({ ...m, currentBalance: memberEqShare });
+                                    setSettleAmount(memberEqShare.toFixed(3));
+                                    setSettleMethod('CASH');
+                                  }}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                                  title={`Settle ${m.name}'s equal split share (BD ${memberEqShare.toFixed(3)})`}
+                                >
+                                  <CreditCard size={11} />
+                                  <span>Settle Equal (BD {memberEqShare.toFixed(3)})</span>
+                                </button>
+
+                                {Math.abs(cardBalance - memberEqShare) > 0.001 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSettleCustomer({ ...m, currentBalance: cardBalance });
+                                      setSettleAmount(cardBalance.toFixed(3));
+                                      setSettleMethod('CASH');
+                                    }}
+                                    className="px-1.5 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 rounded-lg text-[9px] font-medium active:scale-95 transition-all cursor-pointer"
+                                    title={`Settle card purchases: BD ${cardBalance.toFixed(3)}`}
+                                  >
+                                    <span>Card (BD {cardBalance.toFixed(3)})</span>
+                                  </button>
+                                )}
+
+                                {m.phone && (
+                                  <a
+                                    href={`https://wa.me/${m.phone.replace(/[^0-9]/g, '').length === 8 ? `973${m.phone.replace(/[^0-9]/g, '')}` : m.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                                      buildFawriPlusWhatsAppReminder(m.name, m.id, memberEqShare, statementMessGroup.group_name)
+                                    )}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1 bg-indigo-800 hover:bg-indigo-700 text-white rounded-lg active:scale-95 transition-all cursor-pointer"
+                                    title="WhatsApp Fawri+ statement reminder"
+                                  >
+                                    <MessageCircle size={12} />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Admin Control Bar */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap justify-between items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-bold text-slate-800">Ledger History</h4>
+                  <h4 className="text-sm font-bold text-slate-800">
+                    {statementTab === 'MESS' ? 'Mess Itemized Ledger' : 'Ledger History'}
+                  </h4>
                   <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">
                     {filteredStatement.length} Entries
                   </span>
@@ -1959,6 +3045,46 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                     />
                   </div>
 
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const todayStr = new Date().toISOString().slice(0, 10);
+                        setStartDate(todayStr);
+                        setEndDate(todayStr);
+                      }}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                        const todayStr = now.toISOString().slice(0, 10);
+                        setStartDate(firstDay);
+                        setEndDate(todayStr);
+                      }}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                    >
+                      This Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+                        const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+                        setStartDate(firstDay);
+                        setEndDate(lastDay);
+                      }}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                    >
+                      Last Month
+                    </button>
+                  </div>
+
                   {(startDate || endDate) && (
                     <button
                       type="button"
@@ -1972,7 +3098,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   {/* Pass the FILTERED statement to 58mm thermal printer functions */}
                   <button
                     type="button"
-                    onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement)}
+                    onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement, statementTab === 'MESS', statementMessGroup)}
                     className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
                     title="Send filtered 58mm statement to Sunmi POS printer"
                   >
@@ -1981,7 +3107,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   </button>
                   <button
                     type="button"
-                    onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement)}
+                    onClick={() => print58mmLocalSlip(statementCustomer, filteredStatement, statementTab === 'MESS', statementMessGroup)}
                     className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
                     title="Print filtered 58mm slip using local browser / Windows printer"
                   >
@@ -1993,7 +3119,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
 
               {loadingStatement ? (
                 <div style={{ padding: '40px 0', textAlign: 'center', color: '#64748b' }}>
-                  Loading customer transactions...
+                  Loading transactions...
                 </div>
               ) : (
                 /* Admin Data Table */
@@ -2003,6 +3129,9 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Ref / Invoice</th>
+                        {statementTab === 'MESS' && (
+                          <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Shopper</th>
+                        )}
                         <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Charge/Credit</th>
                         <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Running Balance</th>
                       </tr>
@@ -2015,6 +3144,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                         const refText = tx.reference || (tx.type === 'CHARGE' ? (tx.invoiceNo || `INV-${String(tx.id).slice(0, 6)}`) : (isWriteOff ? 'Bad Debt Write-Off' : 'Cash Payment'));
                         const amtVal = Number(tx.amount ?? tx.total ?? 0);
                         const balVal = Number(tx.running_balance ?? tx.runningBalance ?? 0);
+                        const shopperText = tx.shopperName || tx.memberName;
 
                         return (
                           <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
@@ -2029,6 +3159,17 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                                 </span>
                               )}
                             </td>
+                            {statementTab === 'MESS' && (
+                              <td className="px-4 py-3 whitespace-nowrap text-xs text-indigo-700 font-bold">
+                                {shopperText ? (
+                                  <span className="inline-flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                                    👤 {shopperText}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-normal">-</span>
+                                )}
+                              </td>
+                            )}
                             <td className={`px-4 py-3 whitespace-nowrap text-xs font-bold text-right font-mono ${isPayment || isWriteOff ? 'text-green-600' : 'text-red-600'}`}>
                               {isPayment || isWriteOff ? '-' : '+'}{amtVal.toFixed(3)}
                             </td>
@@ -2100,7 +3241,7 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
                   const balance = Number(c.currentBalance || 0);
                   const phoneDigits = formatPhoneForWhatsApp(c.phone);
                   const reminderText = encodeURIComponent(
-                    `Hello ${c.name}, this is a friendly reminder from Askar Supermarket regarding your Khata credit balance of BD ${balance.toFixed(3)}. You can settle in-store or via BenefitPay. Thank you!`
+                    buildFawriPlusWhatsAppReminder(c.name, c.id, balance)
                   );
                   return (
                     <div key={c.id} className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-xl transition-colors">
@@ -2230,6 +3371,47 @@ function KhataLedger({ apiBase = 'http://localhost:3000' }: { apiBase?: string }
               {thermalSlipCustomer.cpr && <div><strong>CPR:</strong> {thermalSlipCustomer.cpr}</div>}
               {thermalSlipCustomer.cardUid && <div><strong>Card:</strong> {thermalSlipCustomer.cardUid}</div>}
             </div>
+
+            {thermalSlipIsMess && thermalSlipMessGroup && (
+              <div style={{ margin: '4px 0', padding: '4px', background: '#f1f5f9', borderRadius: '4px' }}>
+                <div className="slip-bold" style={{ fontSize: '11px', textAlign: 'center' }}>
+                  CAMP MESS: {thermalSlipMessGroup.group_name}
+                </div>
+                <div style={{ fontSize: '9px', textAlign: 'center', color: '#475569' }}>
+                  Members: {thermalSlipMessGroup.members?.length || 0} • Equal Share: BD {(thermalSlipMessGroup.equalSplitShare || (thermalSlipMessGroup.totalBalance / Math.max(1, thermalSlipMessGroup.members?.length || 1))).toFixed(3)}
+                </div>
+                <div className="slip-divider" />
+                <div style={{ fontSize: '9px' }}>
+                  <div className="slip-bold" style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px' }}>
+                    <span>MEMBER EQUAL SPLIT:</span>
+                    <span>DUE (BD)</span>
+                  </div>
+                  {(thermalSlipMessGroup.members || []).map((m: any) => {
+                    const eqShare = Number(
+                      m.equalSplitShare ||
+                      thermalSlipMessGroup.equalSplitShare ||
+                      (thermalSlipMessGroup.totalBalance / Math.max(1, thermalSlipMessGroup.members?.length || 1))
+                    );
+                    return (
+                      <div key={m.id} style={{ marginBottom: '4px', paddingBottom: '3px', borderBottom: '1px dashed #f1f5f9' }}>
+                        <div className="slip-row" style={{ fontSize: '9px', fontWeight: 700 }}>
+                          <span>{m.name}</span>
+                          <span style={{ color: '#059669' }}>BD {eqShare.toFixed(3)}</span>
+                        </div>
+                        <div className="slip-row" style={{ fontSize: '8px', color: '#64748b' }}>
+                          <span>Equal Split Due:</span>
+                          <span>BD {eqShare.toFixed(3)}</span>
+                        </div>
+                        <div className="slip-row" style={{ fontSize: '8px', color: '#94a3b8' }}>
+                          <span>Actual Card Spent:</span>
+                          <span>BD {Number(m.currentBalance || 0).toFixed(3)} ({m.spendPercentage || 0}%)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="slip-divider" />
 

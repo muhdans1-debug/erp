@@ -17,12 +17,15 @@ import { pipeline } from 'stream/promises';
 import { db, initDatabase, localDbPath } from './db.js';
 import { SaleRepository } from './repositories/SaleRepository.js';
 import { startSyncEngine, syncNow, getSyncStatus, setMasterBaseUrl, getMasterBaseUrl } from './syncEngine.js';
+import { startCloudSyncDaemon } from './services/cloudSync.js';
 import { startReorderCron, runReorderCheck, snoozedDistributors } from './src/automation/reorderJob.js';
 import { startBackupCron, createDatabaseBackup, getLatestBackup } from './src/automation/backupJob.js';
+import { startPaydayCron } from './src/automation/paydayJob.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getCurrentInvoiceSequence, setStartingInvoiceSequence, formatInvoiceNumber } from './services/invoiceSequence.js';
+import { getMasterServerTimeInfo, getRegionalIsoString, REGIONAL_TIMEZONE } from './utils/time.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,15 +103,6 @@ if (process.platform === 'win32') {
   });
 }
 
-// 🟢 Register Modular Domain Route Plugins
-fastify.register(salesRoutes);
-fastify.register(productRoutes);
-fastify.register(khataRoutes);
-fastify.register(hardwareRoutes);
-fastify.register(shiftRoutes);
-fastify.register(reportRoutes);
-fastify.register(procurementRoutes);
-
 // APK Direct Download Endpoint for Sunmi Terminal Installation
 fastify.get('/api/download/apk', async (request, reply) => {
   const candidateApks = [
@@ -156,56 +150,6 @@ process.on('unhandledRejection', (reason) => {
 // Singleton LibSQL Client used for all database queries & background Turso sync
 const tursoDb = db;
 
-// Ensure Sales view and triggers exist on local.db for backward & forward compatibility
-if (tursoDb?.execute) {
-  try {
-    tursoDb.execute(`
-    CREATE VIEW IF NOT EXISTS Sales AS 
-    SELECT 
-      id,
-      invoiceNo AS invoice_number,
-      total,
-      paymentType AS payment_type,
-      status,
-      employeeId AS employee_id,
-      shiftId AS shift_id,
-      customerId AS khata_id,
-      createdAt AS created_at
-    FROM Sale;
-  `).catch(() => { });
-
-    tursoDb.execute(`
-    CREATE TRIGGER IF NOT EXISTS sales_insert_trigger
-    INSTEAD OF INSERT ON Sales
-    BEGIN
-      INSERT INTO Sale (id, invoiceNo, total, subtotal, paymentType, status, shiftId, createdAt)
-      VALUES (
-        NEW.id,
-        NEW.invoice_number,
-        NEW.total,
-        COALESCE(NEW.total, 0),
-        NEW.payment_type,
-        NEW.status,
-        NEW.shift_id,
-        datetime('now')
-      );
-    END;
-  `).catch(() => { });
-
-    tursoDb.execute(`
-    CREATE TRIGGER IF NOT EXISTS sales_update_trigger
-    INSTEAD OF UPDATE ON Sales
-    BEGIN
-      UPDATE Sale
-      SET status = NEW.status
-      WHERE invoiceNo = NEW.invoice_number OR id = NEW.id;
-    END;
-  `).catch(() => { });
-  } catch (e) {
-    console.warn('Sales view setup notice:', e?.message);
-  }
-}
-
 const _transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_APP_PASS },
@@ -220,18 +164,25 @@ await fastify.register(cors, {
     try {
       const url = new URL(origin);
       const hostname = url.hostname;
-      // Allow localhost, loopback, private store subnets, and trusted deployment domains
-      if (
+      // Allow localhost, loopback, private store subnets (RFC 1918), and trusted deployment domains
+      const isRfc1918 = (
         hostname === 'localhost' ||
         hostname === '127.0.0.1' ||
         hostname === '::1' ||
         hostname.startsWith('192.168.') ||
         hostname.startsWith('10.') ||
-        hostname.startsWith('172.') ||
+        (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname))
+      );
+      const isTrustedOrigin = (
         origin.startsWith('capacitor://') ||
         origin.startsWith('ionic://') ||
-        origin.includes('vercel.app')
-      ) {
+        hostname.endsWith('.workers.dev') ||
+        hostname.endsWith('.pages.dev') ||
+        hostname.endsWith('.vercel.app') ||
+        hostname === 'askar-khata-pwa.vercel.app' ||
+        hostname.endsWith('.askar-khata-pwa.vercel.app')
+      );
+      if (isRfc1918 || isTrustedOrigin) {
         return cb(null, true);
       }
     } catch {}
@@ -262,6 +213,15 @@ await fastify.register(fastifyWebsocket, {
   }
 });
 
+// 🟢 Register Modular Domain Route Plugins (With fastify.websocketServer fully available)
+fastify.register(salesRoutes);
+fastify.register(productRoutes);
+fastify.register(khataRoutes);
+fastify.register(hardwareRoutes);
+fastify.register(shiftRoutes);
+fastify.register(reportRoutes);
+fastify.register(procurementRoutes);
+
 // WebSocket Keepalive Monitor: Graceful keep-alive without aggressively killing local POS hardware
 const heartbeatInterval = setInterval(() => {
   if (!fastify.websocketServer?.clients) return;
@@ -279,7 +239,7 @@ const heartbeatInterval = setInterval(() => {
     try {
       ws.ping();
       // Also send a lightweight JSON heartbeat for clients whose WebView handles message events better than raw control frames
-      ws.send(JSON.stringify({ type: 'PING' }));
+      ws.send(JSON.stringify({ type: 'PING', serverEpoch: Date.now() }));
     } catch {}
   });
 }, 30000);
@@ -348,14 +308,43 @@ fastify.register(async function (fastifyWsInstance) {
         return; // Heartbeat handled
       }
 
-      // Intercept and block unauthorized hardware actuation
-      const restrictedCommands = ['REMOTE_DRAWER_KICK', 'REMOTE_LOCK_REGISTER'];
-      if (restrictedCommands.includes(event.type)) {
-        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET || '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06';
-        if (!event.token || event.token !== managerSecret) {
-          fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized hardware command "${event.type}" from IP: ${remoteIp}`);
+      // Intercept and block unauthorized hardware actuation or spoofed payment events
+      const restrictedCommands = ['REMOTE_LOCK_REGISTER'];
+      const systemReservedEvents = ['BENEFIT_PAY_SUCCESS'];
+
+      // Allow local store POS terminals (LAN / localhost / authorized) to trigger drawer kick freely
+      if (event.type === 'REMOTE_DRAWER_KICK' || event.type === 'DRAWER_KICK') {
+        const isLocalOrStore = remoteIp.includes('127.0.0.1') || 
+                               remoteIp.includes('::1') || 
+                               remoteIp.startsWith('192.168.') || 
+                               remoteIp.startsWith('10.') || 
+                               remoteIp.startsWith('172.') ||
+                               event.source === 'LAPTOP_POS' ||
+                               event.source === 'STORE_POS' ||
+                               event.authorized === true;
+        if (!isLocalOrStore) {
+          const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
+          if (!managerSecret || !event.token || typeof event.token !== 'string') {
+            fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized remote drawer kick from external IP: ${remoteIp}`);
+            return;
+          }
+        }
+        fastify.log.info(`⚡ [Unified WS Bus] Relaying drawer kick from ${remoteIp} to Sunmi (${event.terminalId || 'T1'})`);
+      } else if (restrictedCommands.includes(event.type) || systemReservedEvents.includes(event.type)) {
+        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
+        if (!managerSecret || !event.token || typeof event.token !== 'string') {
+          fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized command "${event.type}" from IP: ${remoteIp}`);
           try {
-            ws.send(JSON.stringify({ type: 'ERROR', message: 'Unauthorized hardware command blocked.' }));
+            ws.send(JSON.stringify({ type: 'ERROR', message: 'Unauthorized WebSocket command blocked.' }));
+          } catch {}
+          return;
+        }
+        const bufA = Buffer.from(event.token);
+        const bufB = Buffer.from(managerSecret);
+        if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) {
+          fastify.log.warn(`🚨 [Unified WS Bus] Invalid credentials for "${event.type}" from IP: ${remoteIp}`);
+          try {
+            ws.send(JSON.stringify({ type: 'ERROR', message: 'Invalid manager credentials.' }));
           } catch {}
           return;
         }
@@ -579,6 +568,10 @@ await fastify.register(fastifyMultipart, {
 
 // Helper: Seed sample distributors if missing
 const seedDistributors = async () => {
+  const existingDistributors = await db.orm.Distributor.all();
+  if (existingDistributors && existingDistributors.length >= 4) {
+    return;
+  }
   const defaultDistributors = [
     { id: 'dist_almarai', name: 'Almarai Dairy Co.', whatsappNumber: '97339123456', contactEmail: 'orders@almarai.bh', minimumOrderValue: 50.0, deliveryDays: 'SUN,TUE,THU' },
     { id: 'dist_arla', name: 'Arla Foods Logistics', whatsappNumber: '97339234567', contactEmail: 'supply@arlafoods.bh', minimumOrderValue: 40.0, deliveryDays: 'MON,WED' },
@@ -590,28 +583,12 @@ const seedDistributors = async () => {
     const existing = await db.orm.Distributor.where({ id: d.id }).all().first();
     if (!existing) {
       await db.orm.Distributor.create(d);
-    } else if (!existing.whatsappNumber || existing.whatsappNumber === '97339000000') {
-      await db.orm.Distributor.where({ id: d.id }).update({ whatsappNumber: d.whatsappNumber });
     }
   }
 
-  // Ensure all products are linked to a Distributor
-  const products = await db.orm.Product.all();
-  for (const p of products) {
-    if (!p.distributorId) {
-      let distId = 'dist_local';
-      const sName = (p.supplierName || '').toLowerCase();
-      const pName = (p.name || '').toLowerCase();
-      if (sName.includes('almarai') || pName.includes('almarai')) {
-        distId = 'dist_almarai';
-      } else if (sName.includes('arla') || pName.includes('lurpak')) {
-        distId = 'dist_arla';
-      } else if (sName.includes('jameel') || pName.includes('rice')) {
-        distId = 'dist_aljameel';
-      }
-      await db.orm.Product.where({ id: p.id }).update({ distributorId: distId });
-    }
-  }
+  try {
+    await db.execute("UPDATE Product SET distributorId = 'dist_local' WHERE distributorId IS NULL OR distributorId = ''");
+  } catch {}
 };
 
 // Helper: Seed sample products if missing (with Bahrain VAT compliance: 0% basic food, 10% standard)
@@ -739,13 +716,20 @@ fastify.get('/', async (request, reply) => {
   };
 });
 
+// Master Central Server Regional Clock Endpoints (Kingdom of Bahrain Asia/Bahrain +03:00)
+const getServerTimeHandler = async () => getMasterServerTimeInfo();
+fastify.get('/api/time', getServerTimeHandler);
+fastify.get('/api/server-time', getServerTimeHandler);
+fastify.get('/server-time', getServerTimeHandler);
+
 // Rapid Health & Discovery Route (for mDNS / Zero-Config fallback pinging)
 fastify.get('/api/health', async () => {
   return {
     status: 'ok',
     service: 'Askar-POS-Master',
     hostname: 'askar-master.local',
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    masterTime: getMasterServerTimeInfo()
   };
 });
 
@@ -981,31 +965,35 @@ fastify.get('/api/system/backups', { preHandler: managerAuth }, async (request, 
 });
 
 // 4. Invoice Sequence Counter Status (Bahrain NBR VAT Compliance)
-fastify.get('/api/system/invoice-sequence', async () => {
-  const current = await getCurrentInvoiceSequence('Sale');
+fastify.get('/api/system/invoice-sequence', async (request) => {
+  const terminalId = request.query?.terminalId || request.query?.terminal || 'T1';
+  const current = await getCurrentInvoiceSequence(terminalId);
   const next = current + 1;
   return {
     success: true,
+    terminalId,
     currentSeq: current,
     nextInvoiceNumber: next,
-    formattedNextInvoice: formatInvoiceNumber(next),
+    formattedNextInvoice: formatInvoiceNumber(next, terminalId),
     compliance: 'Bahrain NBR VAT Article 53 - Strictly Sequential & Gapless'
   };
 });
 
 // 5. Seed / Set Starting Invoice Sequence (e.g. migrate to starting at #5000)
 fastify.post('/api/system/invoice-sequence/seed', { preHandler: managerAuth }, async (request, reply) => {
-  const { startingNumber } = request.body || {};
+  const { startingNumber, terminalId } = request.body || {};
   const num = parseInt(startingNumber, 10);
   if (isNaN(num) || num < 1) {
     return reply.status(400).send({ error: 'Invalid startingNumber. Must be an integer >= 1.' });
   }
-  await setStartingInvoiceSequence(num, 'Sale');
+  const tid = terminalId || 'T1';
+  await setStartingInvoiceSequence(num, tid);
   return {
     success: true,
-    message: `Starting invoice sequence configured to #${num}`,
+    terminalId: tid,
+    message: `Starting invoice sequence for terminal ${tid} configured to #${num}`,
     nextInvoiceNumber: num,
-    formattedNextInvoice: formatInvoiceNumber(num)
+    formattedNextInvoice: formatInvoiceNumber(num, tid)
   };
 });
 
@@ -1039,7 +1027,12 @@ export const syncKhataBalancesToTurso = async () => {
 // Tap Payments Webhook Receiver & Cryptographically Secured Debt Settlement
 fastify.post('/api/webhook/tap', async (request, reply) => {
   const signatureHeader = request.headers['x-tap-signature'];
-  const webhookSecret = process.env.TAP_WEBHOOK_SECRET || 'tap_webhook_secret_placeholder';
+  const webhookSecret = process.env.TAP_WEBHOOK_SECRET;
+
+  if (!webhookSecret) {
+    request.log.error('TAP_WEBHOOK_SECRET is not configured on the server.');
+    return reply.code(500).send({ error: 'Webhook processing misconfigured' });
+  }
 
   if (!signatureHeader) {
     return reply.code(401).send({ error: 'Unauthorized: Missing Tap signature' });
@@ -1110,8 +1103,16 @@ fastify.route({
       isTursoSyncRunning = true;
       (async () => {
         try {
-          await tursoDb.sync();
-          await syncKhataBalancesToTurso();
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Turso sync timeout after 15s')), 15000)
+          );
+          await Promise.race([
+            (async () => {
+              await tursoDb.sync();
+              await syncKhataBalancesToTurso();
+            })(),
+            timeoutPromise
+          ]);
           lastTursoSyncTime = Date.now();
         } catch (err) {
           fastify.log.warn('Background Turso sync notice: ' + (err?.message || err));
@@ -1136,7 +1137,7 @@ fastify.route({
 // ============================================================================
 
 // 1. List All Multi-Tenant Client Databases in Organization
-fastify.get('/api/super-admin/tenants', async (_request, reply) => {
+fastify.get('/api/super-admin/tenants', { preHandler: managerAuth }, async (_request, reply) => {
   try {
     const databases = await listTenantDatabases();
     return { success: true, count: databases.length, databases };
@@ -1217,7 +1218,7 @@ fastify.post('/api/super-admin/query', { preHandler: verifyManagerPin }, async (
 });
 
 // 4. Fleet Telemetry Matrix (All 50+ Terminals)
-fastify.get('/api/super-admin/fleet', async (_request, reply) => {
+fastify.get('/api/super-admin/fleet', { preHandler: managerAuth }, async (_request, reply) => {
   try {
     const fleet = getFleetMatrix();
     return { success: true, count: fleet.length, fleet };
@@ -1242,7 +1243,7 @@ fastify.post('/api/super-admin/kill-switch', { preHandler: managerAuth }, async 
 });
 
 // 6. Global Audit Log Stream
-fastify.get('/api/super-admin/audit-logs', async (_request, reply) => {
+fastify.get('/api/super-admin/audit-logs', { preHandler: managerAuth }, async (_request, reply) => {
   try {
     const localDb = db.orm;
     let logs = [];
@@ -1353,10 +1354,19 @@ fastify.get('/api/fleet/version', async (request, reply) => {
   };
 });
 
-// 7b. Store Heartbeat Telemetry Receiver
+// 7b. Store Heartbeat Telemetry Receiver (Bounded Map & Sanitized Store IDs)
+const MAX_TELEMETRY_ENTRIES = 100;
 const handleTelemetry = async (request, reply) => {
   const body = request.body || {};
-  const storeId = body.storeId || 'ASKAR_UNKNOWN';
+  const rawStoreId = String(body.storeId || 'ASKAR_UNKNOWN').trim().slice(0, 64);
+  const storeId = rawStoreId.replace(/[^a-zA-Z0-9_-]/g, '') || 'ASKAR_UNKNOWN';
+
+  // Evict oldest entry if map exceeds capacity
+  if (storeTelemetryMap.size >= MAX_TELEMETRY_ENTRIES && !storeTelemetryMap.has(storeId)) {
+    const firstKey = storeTelemetryMap.keys().next().value;
+    if (firstKey) storeTelemetryMap.delete(firstKey);
+  }
+
   const existing = storeTelemetryMap.get(storeId) || {};
 
   const record = {
@@ -1445,23 +1455,8 @@ export default async function handler(req, res) {
 // Standalone Server Execution (For Local POS Terminal & LAN)
 const start = async () => {
   try {
-    // 1. Initialize and verify native LibSQL schema on local.db
     await initDatabase();
 
-    try {
-      await seedDistributors();
-      await seedProducts();
-      await seedNfcCustomers();
-    } catch (seedErr) {
-      console.warn('⚠️ Seeding notice (non-fatal):', seedErr?.message || seedErr);
-    }
-    try {
-      startSyncEngine();
-      startReorderCron();
-      startBackupCron();
-    } catch (cronErr) {
-      console.warn('⚠️ Background jobs notice (non-fatal):', cronErr?.message || cronErr);
-    }
     await fastify.listen({ port: 3000, host: '0.0.0.0' });
     console.log('POS Backend running on port 3000');
 
@@ -1478,6 +1473,26 @@ const start = async () => {
     } catch (mdnsErr) {
       console.warn('⚠️ mDNS Beacon notice (non-fatal):', mdnsErr?.message || mdnsErr);
     }
+
+    // Run seeding and background cron in background non-blocking
+    setImmediate(async () => {
+      try {
+        await seedDistributors();
+        await seedProducts();
+        await seedNfcCustomers();
+      } catch (seedErr) {
+        console.warn('⚠️ Seeding notice (non-fatal):', seedErr?.message || seedErr);
+      }
+      try {
+        startSyncEngine();
+        startCloudSyncDaemon();
+        startReorderCron();
+        startBackupCron();
+        startPaydayCron();
+      } catch (cronErr) {
+        console.warn('⚠️ Background jobs notice (non-fatal):', cronErr?.message || cronErr);
+      }
+    });
   } catch (err) {
     if (err?.code === 'EADDRINUSE' || err?.message?.includes('EADDRINUSE')) {
       console.log('⚠️ Port 3000 already running existing server. Connected to active instance.');

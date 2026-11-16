@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X, Printer, Lock, RefreshCw, AlertCircle, Coins, ArrowDownRight, ArrowUpRight, Copy } from 'lucide-react';
 import { printZReport } from '../utils/printer';
+import { getApiBaseUrl } from '../utils/apiConfig';
+import { getManagerPin } from '../utils/authUtils';
 
 interface ZReportData {
   date: string;
@@ -32,10 +34,11 @@ interface ZReportModalProps {
 
 export default function ZReportModal({ 
   onClose, 
-  apiBase = 'http://localhost:3000',
+  apiBase: propApiBase,
   shiftId: propShiftId,
   onShiftClosed 
 }: ZReportModalProps) {
+  const apiBase = (propApiBase && propApiBase !== 'http://localhost:3000') ? propApiBase : getApiBaseUrl();
   const [report, setReport] = useState<ZReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +53,11 @@ export default function ZReportModal({
       ? `${apiBase}/api/reports/z-report/${activeId}`
       : `${apiBase}/api/reports/z-report`;
 
-    fetch(endpoint)
+    fetch(endpoint, {
+      headers: {
+        'x-manager-pin': getManagerPin()
+      }
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.report) {
@@ -118,8 +125,7 @@ export default function ZReportModal({
           expectedDrawerCash: report.expectedDrawerCash
         });
       } catch (err) {
-        console.warn('Physical thermal print warning, attempting browser print:', err);
-        window.print();
+        console.warn('Physical thermal print warning:', err);
       }
     }
 
@@ -149,26 +155,6 @@ export default function ZReportModal({
           })
         });
       }
-
-      // Broadcast SHIFT_CLOSED to Bridge
-      const bridgeHost = typeof window !== 'undefined' 
-        ? ((window as any).Capacitor?.isNativePlatform?.() ? '192.168.8.7' : (window.location.hostname || 'localhost')) 
-        : '192.168.8.7';
-      const candidateHosts = [bridgeHost, '192.168.8.7', 'localhost'].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
-      
-      candidateHosts.forEach((host) => {
-        try {
-          const ws = new WebSocket(`ws://${host}:3000/ws`);
-          ws.onopen = () => {
-            ws.send(JSON.stringify({ 
-              type: 'SHIFT_CLOSED', 
-              payload: { shiftId: targetShiftId, actualCash: report?.expectedDrawerCash, timestamp: new Date().toISOString() } 
-            }));
-            setTimeout(() => ws.close(), 1000);
-          };
-          ws.onerror = () => {};
-        } catch {}
-      });
     } catch (e) {
       console.error('Failed to mark shift as closed on backend:', e);
     }

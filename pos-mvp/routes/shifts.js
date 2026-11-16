@@ -2,6 +2,13 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
+import { 
+  getRegionalIsoString, 
+  ensureRegionalIso, 
+  getRegionalDayRange, 
+  getRegionalFormattedDate, 
+  getRegionalFormattedTime 
+} from '../utils/time.js';
 
 export default async function shiftRoutes(fastify, options) {
   // --- Shift Management, Blind Reconciliation, Cashier Login & Z-Reports ---
@@ -116,7 +123,7 @@ fastify.post('/api/employees', { preHandler: managerAuth }, async (request, repl
     const empName = String(name).trim();
     const empRole = String(role).toUpperCase();
     const activeVal = is_active !== false ? 1 : 0;
-    const resolvedTenant = tenantId || 'askar_main';
+    const resolvedTenant = tenantId || 'tenant_askar_01';
 
     // Hash PIN if not already hashed
     const hashedPin = (cleanPin.startsWith('$2b$') || cleanPin.startsWith('$2a$'))
@@ -175,6 +182,7 @@ fastify.post('/api/shifts/start', async (request, reply) => {
 
   const shiftId = `shift_${crypto.randomUUID().slice(0, 8)}`;
   const empId = employeeId || 'emp_cashier_1';
+  const nowIso = getRegionalIsoString();
 
   const newShift = {
     id: shiftId,
@@ -182,7 +190,7 @@ fastify.post('/api/shifts/start', async (request, reply) => {
     openingCash: Number(floatAmount.toFixed(3)),
     status: 'OPEN',
     tenantId: 'tenant_1',
-    openedAt: new Date(),
+    openedAt: nowIso,
     closedAt: null,
     closingCash: null,
     notes: null
@@ -194,8 +202,8 @@ fastify.post('/api/shifts/start', async (request, reply) => {
   try {
     await queryLocalDevDb(`
       INSERT INTO ShiftSession (id, tenantId, employee_id, starting_cash, status, opened_at)
-      VALUES (?, 'tenant_1', ?, ?, 'OPEN', datetime('now'))
-    `, [shiftId, empId, Number(floatAmount.toFixed(3))]);
+      VALUES (?, 'tenant_1', ?, ?, 'OPEN', ?)
+    `, [shiftId, empId, Number(floatAmount.toFixed(3)), nowIso]);
   } catch (e) {
     fastify.log.warn(`Local ShiftSession insert error: ${e.message}`);
   }
@@ -204,8 +212,8 @@ fastify.post('/api/shifts/start', async (request, reply) => {
   try {
     await db.execute({
       sql: `INSERT INTO ShiftSession (id, tenantId, employee_id, starting_cash, status, opened_at)
-            VALUES (?, 'tenant_1', ?, ?, 'OPEN', CURRENT_TIMESTAMP)`,
-      args: [shiftId, empId, Number(floatAmount.toFixed(3))]
+            VALUES (?, 'tenant_1', ?, ?, 'OPEN', ?)`,
+      args: [shiftId, empId, Number(floatAmount.toFixed(3)), nowIso]
     });
   } catch { }
 
@@ -267,17 +275,9 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
     }
   }
 
-  // 4. CRITICAL FIX: If NO shift is currently OPEN, create a brand-new shift session!
-  // NEVER overwrite an already closed shift from the past!
+  // 4. If NO shift is currently OPEN, reject close request
   if (!shift) {
-    const newSessionId = `shift_${crypto.randomUUID().slice(0, 8)}`;
-    shift = await db.orm.Shift.create({
-      id: newSessionId,
-      cashierName: 'Cashier 1',
-      status: 'OPEN',
-      openingCash: 50.0,
-      openedAt: new Date()
-    });
+    return reply.status(400).send({ error: 'No active open shift found to close.' });
   }
 
   const id = shift.id;
@@ -303,9 +303,12 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
   const declaredCash = Number((isNaN(countedCash) ? 0 : countedCash).toFixed(3));
   const variance = Number((declaredCash - expectedCash).toFixed(3));
 
+  const nowIso = getRegionalIsoString();
+  const shiftOpenIso = shift.openedAt ? ensureRegionalIso(shift.openedAt) : nowIso;
+
   const updateData = {
     status: 'CLOSED',
-    closedAt: new Date(),
+    closedAt: nowIso,
     closingCash: declaredCash,
     notes: notes ? String(notes).trim() : null
   };
@@ -320,12 +323,12 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
         starting_cash, expected_cash, actual_cash, variance,
         denominations, notes, status
       ) VALUES (
-        ?, 'tenant_1', ?, ?, CURRENT_TIMESTAMP,
+        ?, 'tenant_1', ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, 'CLOSED'
       )
       ON CONFLICT(id) DO UPDATE SET
-        closed_at = CURRENT_TIMESTAMP,
+        closed_at = excluded.closed_at,
         expected_cash = excluded.expected_cash,
         actual_cash = excluded.actual_cash,
         variance = excluded.variance,
@@ -335,7 +338,8 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
     `, [
       id,
       shift.employeeId || 'emp_cashier_1',
-      shift.openedAt ? new Date(shift.openedAt).toISOString() : new Date().toISOString(),
+      shiftOpenIso,
+      nowIso,
       startingFloat,
       expectedCash,
       declaredCash,
@@ -354,9 +358,9 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
               id, tenantId, employee_id, opened_at, closed_at,
               starting_cash, expected_cash, actual_cash, variance,
               denominations, notes, status
-            ) VALUES (?, 'tenant_1', 'emp_cashier_1', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, 'CLOSED')
+            ) VALUES (?, 'tenant_1', 'emp_cashier_1', ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED')
             ON CONFLICT(id) DO UPDATE SET
-              closed_at = CURRENT_TIMESTAMP,
+              closed_at = excluded.closed_at,
               expected_cash = excluded.expected_cash,
               actual_cash = excluded.actual_cash,
               variance = excluded.variance,
@@ -365,7 +369,8 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
               status = 'CLOSED'`,
       args: [
         id,
-        shift.openedAt ? new Date(shift.openedAt).toISOString() : new Date().toISOString(),
+        shiftOpenIso,
+        nowIso,
         startingFloat,
         expectedCash,
         declaredCash,
@@ -422,8 +427,8 @@ fastify.post('/api/shifts/close', async (request, reply) => {
   return performShiftClose(null, request.body, fastify, reply);
 });
 
-// 4. List all Shift Sessions with full Reconciliation Statement for Manager Back-Office
-fastify.get('/api/shifts/reconciliation', async (request, reply) => {
+// 4. List all Shift Sessions with full Reconciliation Statement for Manager Back-Office (Secured to protect blind count)
+fastify.get('/api/shifts/reconciliation', { preHandler: managerAuth }, async (request, reply) => {
   try {
     let rows = [];
     try {
@@ -431,21 +436,18 @@ fastify.get('/api/shifts/reconciliation', async (request, reply) => {
         SELECT 
           s.id,
           s.id as shift_id,
-          COALESCE(e.name, 'Cashier 1') as cashier_name,
+          COALESCE(e.name, s.cashierName, 'Cashier 1') as cashier_name,
           COALESCE(e.role, 'CASHIER') as cashier_role,
-          COALESCE(e.id, 'emp_cashier_1') as employee_id,
-          s.opened_at,
-          s.closed_at,
-          s.starting_cash,
-          s.actual_cash,
-          s.expected_cash,
-          s.variance,
-          s.denominations,
+          COALESCE(e.id, s.employeeId, 'emp_cashier_1') as employee_id,
+          s.openedAt as opened_at,
+          s.closedAt as closed_at,
+          COALESCE(s.openingCash, 50.0) as starting_cash,
+          s.closingCash as actual_cash,
           s.notes,
           s.status
-        FROM ShiftSession s
-        LEFT JOIN Employee e ON s.employee_id = e.id
-        ORDER BY COALESCE(s.closed_at, s.opened_at) DESC
+        FROM Shift s
+        LEFT JOIN Employee e ON s.employeeId = e.id
+        ORDER BY COALESCE(s.closedAt, s.openedAt) DESC
         LIMIT 50;
       `);
 
@@ -497,55 +499,8 @@ fastify.get('/api/shifts/reconciliation', async (request, reply) => {
         });
       }
     } catch (err) {
-      fastify.log.warn(`Shift reconciliation dev.db error: ${err.message}`);
+      fastify.log.warn(`Shift reconciliation query error: ${err.message}`);
     }
-
-    const sessionIds = new Set(rows.map(r => r.id));
-
-    // Also merge any historical shifts from Shift table that are not yet in ShiftSession
-    try {
-      const allShifts = await db.orm.Shift.all();
-      for (const shift of allShifts) {
-        if (!sessionIds.has(shift.id)) {
-          const starting = Number(shift.openingCash || 0);
-          const actual = shift.closingCash !== null && shift.closingCash !== undefined ? Number(shift.closingCash) : null;
-          let cashSales = 0;
-          let digitalSales = 0;
-          let khataSales = 0;
-
-          try {
-            const zData = await calculateZReport(shift.id);
-            cashSales = Number(zData.cashSales || 0);
-            digitalSales = Number(zData.benefitSales || 0) + Number(zData.cardSales || 0);
-          } catch { }
-
-          const expected = starting + cashSales;
-          const variance = actual !== null ? Number((actual - expected).toFixed(3)) : null;
-
-          rows.push({
-            id: shift.id,
-            shift_id: shift.id,
-            opened_at: shift.openedAt ? new Date(shift.openedAt).toISOString() : new Date().toISOString(),
-            closed_at: shift.closedAt ? new Date(shift.closedAt).toISOString() : null,
-            starting_cash: starting,
-            expected_cash: expected,
-            actual_cash: actual,
-            variance: variance,
-            cash_sales: cashSales,
-            digital_sales: digitalSales,
-            khata_sales: khataSales,
-            denominations: null,
-            notes: shift.notes || null,
-            status: shift.status || 'CLOSED',
-            cashier_name: shift.cashierName || 'Cashier 1',
-            cashier_role: 'CASHIER',
-            employee_name: shift.cashierName || 'Cashier 1',
-            employee_role: 'CASHIER',
-            employee_id: 'emp_cashier_1'
-          });
-        }
-      }
-    } catch { }
 
     const parseTime = (dateStr) => {
       if (!dateStr) return 0;
@@ -597,17 +552,11 @@ const calculateZReport = async (shiftId = null) => {
   }
 
   const openingCash = shift ? Number(shift.openingCash || 0) : 50.0;
-  const startTime = shift ? new Date(shift.openedAt) : (() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
-  const endTime = shift && shift.closedAt ? new Date(shift.closedAt) : new Date();
+  const startIso = shift && shift.openedAt ? ensureRegionalIso(shift.openedAt) : getRegionalDayRange().startIso;
+  const endIso = shift && shift.closedAt ? ensureRegionalIso(shift.closedAt) : getRegionalIsoString();
 
   // 1. Fetch sales for the shift period using high-performance SQL index seek
   let shiftSales = [];
-  const startIso = startTime.toISOString();
-  const endIso = endTime.toISOString();
 
   if (shift && shift.id) {
     try {
@@ -624,8 +573,10 @@ const calculateZReport = async (shiftId = null) => {
   if (shiftSales.length === 0) {
     try {
       const res = await db.execute({
-        sql: `SELECT total, paymentType, status FROM Sale WHERE createdAt BETWEEN ? AND ? AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
-        args: [startIso, endIso]
+        sql: `SELECT total, paymentType, status FROM Sale 
+              WHERE ((createdAt BETWEEN ? AND ?) OR (datetime(createdAt) BETWEEN datetime(?) AND datetime(?))) 
+                AND (status IS NULL OR status NOT IN ('VOIDED', 'CANCELLED'))`,
+        args: [startIso, endIso, startIso, endIso]
       });
       shiftSales = res.rows || [];
     } catch {
@@ -657,12 +608,12 @@ const calculateZReport = async (shiftId = null) => {
     }
   });
 
-  // 2. Fetch cash drawer payouts during shift (e.g., Almarai/Coca-Cola supplier invoices, petty cash)
+  // 2. Fetch cash drawer payouts during shift (excluding non-cash accounting adjustments like BAD_DEBT)
   let shiftExpenses = [];
   let supplierPayments = 0;
   try {
     const expRes = await db.execute({
-      sql: `SELECT amount FROM Expense WHERE createdAt BETWEEN ? AND ?`,
+      sql: `SELECT amount FROM Expense WHERE createdAt BETWEEN ? AND ? AND (category IS NULL OR category != 'BAD_DEBT')`,
       args: [startIso, endIso]
     });
     shiftExpenses = expRes.rows || [];
@@ -693,15 +644,15 @@ const calculateZReport = async (shiftId = null) => {
   // 3. THE MASTER FORMULA:
   // expectedDrawerCash = openingCash + cashSales + shiftKhataCash - refunds - supplierPayments
   const rawExpected = openingCash + cashSales + shiftKhataCash - refunds - supplierPayments;
-  const expectedDrawerCash = Number(Math.max(0, rawExpected).toFixed(3));
+  const expectedDrawerCash = Number(rawExpected.toFixed(3));
 
   return {
-    date: new Date().toLocaleDateString('en-GB'),
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    date: getRegionalFormattedDate(),
+    time: getRegionalFormattedTime(),
     shiftId: shift ? shift.id : null,
     cashierName: shift ? shift.cashierName : 'Cashier 1',
     shiftStatus: shift ? shift.status : 'OPEN',
-    openedAt: shift ? shift.openedAt : startTime.toISOString(),
+    openedAt: shift ? shift.openedAt : startIso,
     closedAt: shift ? shift.closedAt : null,
     openingCash: Number(openingCash.toFixed(3)),
     totalSales: Number((cashSales + benefitSales + cardSales + khataSales).toFixed(3)),

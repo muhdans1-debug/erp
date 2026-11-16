@@ -1,6 +1,7 @@
 import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { Capacitor } from '@capacitor/core';
-import { ASKAR_OFFLINE_SALES_KEY, ASKAR_OFFLINE_KHATA_KEY } from '../constants/storage';
+import { ASKAR_OFFLINE_SALES_KEY, ASKAR_OFFLINE_KHATA_KEY, ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY } from '../constants/storage';
+import { getRegionalIsoString } from './time';
 
 let sqliteConnection: SQLiteConnection | null = null;
 let dbInstance: SQLiteDBConnection | null = null;
@@ -31,11 +32,24 @@ export const initNativeOfflineStorage = async (): Promise<SQLiteDBConnection | n
       }
 
       const dbName = 'askar_offline';
-      const isConn = await sqliteConnection.isConnection(dbName, false);
-      if (isConn.result) {
+      let connRes = false;
+      try {
+        const isConn = await sqliteConnection.isConnection(dbName, false);
+        connRes = Boolean(isConn?.result);
+      } catch {}
+
+      if (connRes) {
         dbInstance = await sqliteConnection.retrieveConnection(dbName, false);
       } else {
-        dbInstance = await sqliteConnection.createConnection(dbName, false, 'no-encryption', 1, false);
+        try {
+          dbInstance = await sqliteConnection.createConnection(dbName, false, 'no-encryption', 1, false);
+        } catch (createErr: any) {
+          if (String(createErr?.message || createErr).includes('already exists')) {
+            dbInstance = await sqliteConnection.retrieveConnection(dbName, false);
+          } else {
+            throw createErr;
+          }
+        }
       }
 
       const isOpen = await dbInstance.isDBOpen();
@@ -58,6 +72,12 @@ export const initNativeOfflineStorage = async (): Promise<SQLiteDBConnection | n
           synced INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS offline_khata (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          synced INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS offline_khata_settlements (
           id TEXT PRIMARY KEY,
           payload TEXT NOT NULL,
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -99,7 +119,7 @@ export const saveSaleOffline = async (salePayload: any, providedDb?: SQLiteDBCon
   const normalizedPayload = {
     ...salePayload,
     id: saleId,
-    offlineTimestamp: salePayload.offlineTimestamp || new Date().toISOString()
+    offlineTimestamp: salePayload.offlineTimestamp || getRegionalIsoString()
   };
 
   if (db && Capacitor.isNativePlatform()) {
@@ -137,7 +157,7 @@ export const getOfflineSales = async (providedDb?: SQLiteDBConnection | null): P
   // 1. Read from Native SQLite if on device
   if (db && Capacitor.isNativePlatform()) {
     try {
-      const res = await db.query('SELECT id, payload, timestamp FROM offline_sales WHERE synced = 0 ORDER BY timestamp ASC;');
+      const res = await db.query('SELECT id, payload, timestamp FROM offline_sales WHERE synced = 0 ORDER BY timestamp ASC;', []);
       if (res.values && Array.isArray(res.values)) {
         for (const row of res.values) {
           try {
@@ -199,8 +219,12 @@ export const markOfflineSalesSynced = async (saleIds: string[], providedDb?: SQL
       const localQueue = JSON.parse(rawLocal);
       if (Array.isArray(localQueue)) {
         const idSet = new Set(saleIds);
-        const remaining = localQueue.filter((item: any) => !idSet.has(item.id));
-        localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(remaining));
+        const remaining = localQueue.filter((item: any) => !idSet.has(item.id) && !idSet.has(item.invoiceNo));
+        if (remaining.length === 0) {
+          localStorage.removeItem(ASKAR_OFFLINE_SALES_KEY);
+        } else {
+          localStorage.setItem(ASKAR_OFFLINE_SALES_KEY, JSON.stringify(remaining));
+        }
       }
     }
   } catch {}
@@ -226,7 +250,7 @@ export const saveOfflineKhataCharge = async (
   const normalizedPayload = {
     ...chargePayload,
     id: eventId,
-    timestamp: chargePayload.timestamp || new Date().toISOString()
+    timestamp: chargePayload.timestamp || getRegionalIsoString()
   };
 
   if (db && Capacitor.isNativePlatform()) {
@@ -265,7 +289,7 @@ export const getOfflineKhataEvents = async (providedDb?: SQLiteDBConnection | nu
   // 1. Native SQLite
   if (db && Capacitor.isNativePlatform()) {
     try {
-      const res = await db.query('SELECT id, payload, timestamp FROM offline_khata WHERE synced = 0 ORDER BY timestamp ASC;');
+      const res = await db.query('SELECT id, payload, timestamp FROM offline_khata WHERE synced = 0 ORDER BY timestamp ASC;', []);
       if (res.values && Array.isArray(res.values)) {
         for (const row of res.values) {
           try {
@@ -331,5 +355,141 @@ export const markOfflineKhataSynced = async (eventId: string, providedDb?: SQLit
     }
   } catch {}
 };
+
+/**
+ * ⚡ Save Offline Khata Settlement / Repayment (Append-Only Payment Delta)
+ * Guarantees cash and BenefitPay debt settlements are never lost when offline.
+ */
+export const saveOfflineKhataSettlement = async (
+  settlementPayload: {
+    id?: string;
+    customerId: string;
+    amount: number;
+    paymentMethod?: string;
+    reference?: string;
+    receiptNo?: string;
+    timestamp?: string;
+  },
+  providedDb?: SQLiteDBConnection | null
+): Promise<string> => {
+  const db = providedDb || dbInstance || (await getNativeDb());
+  const settlementId = settlementPayload.id || `khata_settle_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const normalizedPayload = {
+    ...settlementPayload,
+    id: settlementId,
+    timestamp: settlementPayload.timestamp || getRegionalIsoString()
+  };
+
+  if (db && Capacitor.isNativePlatform()) {
+    try {
+      const sql = `INSERT OR REPLACE INTO offline_khata_settlements (id, payload, synced) VALUES (?, ?, 0);`;
+      await db.run(sql, [settlementId, JSON.stringify(normalizedPayload)]);
+      console.log(`⚡ [Native SQLite] Khata settlement ${settlementId} saved to Android flash memory.`);
+      return settlementId;
+    } catch (sqliteErr) {
+      console.warn('⚠️ [Native SQLite] Error saving Khata settlement, falling back to localStorage:', sqliteErr);
+    }
+  }
+
+  // Web fallback (used on Desktop / Web POS browsers)
+  try {
+    const queue = JSON.parse(localStorage.getItem(ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY) || '[]');
+    const filtered = queue.filter((item: any) => item.id !== settlementId);
+    filtered.push(normalizedPayload);
+    localStorage.setItem(ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY, JSON.stringify(filtered));
+    console.log(`💾 [LocalStorage Fallback] Khata settlement ${settlementId} saved to browser queue.`);
+  } catch (storageErr) {
+    console.error('❌ CRITICAL: Failed to save Khata settlement to offline queue:', storageErr);
+  }
+
+  return settlementId;
+};
+
+/**
+ * Fetch all pending offline Khata settlements
+ */
+export const getOfflineKhataSettlements = async (providedDb?: SQLiteDBConnection | null): Promise<any[]> => {
+  const db = providedDb || dbInstance || (await getNativeDb());
+  const combined: any[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. Native SQLite
+  if (db && Capacitor.isNativePlatform()) {
+    try {
+      const res = await db.query('SELECT id, payload, timestamp FROM offline_khata_settlements WHERE synced = 0 ORDER BY timestamp ASC;', []);
+      if (res.values && Array.isArray(res.values)) {
+        for (const row of res.values) {
+          try {
+            const item = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+            const sId = item.id || row.id;
+            if (sId && !seenIds.has(sId)) {
+              combined.push({ ...item, id: sId, dbId: row.id });
+              seenIds.add(sId);
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [Native SQLite] Error reading offline Khata settlements:', err);
+    }
+  }
+
+  // 2. LocalStorage Fallback
+  try {
+    const rawLocal = localStorage.getItem(ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY);
+    if (rawLocal) {
+      const localQueue = JSON.parse(rawLocal);
+      if (Array.isArray(localQueue)) {
+        for (const item of localQueue) {
+          if (item && item.id && !seenIds.has(item.id)) {
+            combined.push(item);
+            seenIds.add(item.id);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return combined;
+};
+
+/**
+ * Mark offline Khata settlement as synced
+ */
+export const markOfflineKhataSettlementSynced = async (settlementId: string, providedDb?: SQLiteDBConnection | null): Promise<void> => {
+  if (!settlementId) return;
+  const db = providedDb || dbInstance || (await getNativeDb());
+
+  // 1. Native SQLite
+  if (db && Capacitor.isNativePlatform()) {
+    try {
+      await db.run('UPDATE offline_khata_settlements SET synced = 1 WHERE id = ?;', [settlementId]);
+      console.log(`⚡ [Native SQLite] Khata settlement ${settlementId} marked as synced.`);
+    } catch (err) {
+      console.warn('⚠️ [Native SQLite] Error updating settlement synced status:', err);
+    }
+  }
+
+  // 2. LocalStorage Fallback
+  try {
+    const rawLocal = localStorage.getItem(ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY);
+    if (rawLocal) {
+      const localQueue = JSON.parse(rawLocal);
+      if (Array.isArray(localQueue)) {
+        const remaining = localQueue.filter((item: any) => item.id !== settlementId);
+        localStorage.setItem(ASKAR_OFFLINE_KHATA_SETTLEMENTS_KEY, JSON.stringify(remaining));
+      }
+    }
+  } catch {}
+};
+
+/**
+ * Get count of pending offline settlements
+ */
+export const getOfflineKhataSettlementsCount = async (providedDb?: SQLiteDBConnection | null): Promise<number> => {
+  const settlements = await getOfflineKhataSettlements(providedDb);
+  return settlements.length;
+};
+
 
 

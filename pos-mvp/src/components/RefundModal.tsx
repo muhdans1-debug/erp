@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
 import { kickCashDrawer } from '../services/cashDrawerService';
+import { getManagerPin } from '../utils/authUtils';
+import { printRefundReceipt } from '../utils/printer';
 import { 
   X, 
   Search, 
@@ -242,7 +244,7 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
     });
 
     try {
-      let managerPin = (localStorage.getItem('manager_pin') || '').trim();
+      let managerPin = (getManagerPin() || localStorage.getItem('manager_pin') || '').trim();
       if (!managerPin) {
         managerPin = (window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter PIN to process refund:") || '').trim();
       }
@@ -256,7 +258,8 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': managerPin
+          'x-manager-pin': managerPin,
+          'x-pos-client': 'store-pos'
         },
         body: JSON.stringify({
           invoiceNo: sale.invoiceNo,
@@ -291,9 +294,21 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
     }
   };
 
-  // Print function using window.print()
-  const handlePrintCreditNote = () => {
-    window.print();
+  // Print function using isolated thermal slip engine
+  const handlePrintCreditNote = async () => {
+    try {
+      if (completedRefund) {
+        const invNo = completedRefund.sale?.invoiceNo || completedRefund.refund?.invoiceNo || 'INV-000000';
+        const refundAmt = Number(completedRefund.refund?.amount ?? completedRefund.refund?.totalAmount ?? 0);
+        await printRefundReceipt(invNo, {
+          totalAmount: refundAmt,
+          creditNoteNo: completedRefund.creditNoteNo,
+          cashierName: 'POS Register'
+        });
+      }
+    } catch (e) {
+      console.warn('Credit note print error:', e);
+    }
   };
 
   return (
@@ -314,6 +329,10 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
       {/* EMBEDDED PRINT CSS FOR CREDIT NOTE */}
       <style>{`
         @media print {
+          @page {
+            size: auto;
+            margin: 0mm;
+          }
           body * {
             visibility: hidden !important;
           }
@@ -321,19 +340,22 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
             visibility: visible !important;
           }
           #credit-note-print-area {
-            position: fixed !important;
+            position: absolute !important;
             left: 0 !important;
             top: 0 !important;
-            width: 78mm !important;
-            margin: 0 !important;
-            padding: 8px !important;
+            width: 54mm !important;
+            max-width: 54mm !important;
+            margin: 0 auto !important;
+            padding: 2mm !important;
             background: #ffffff !important;
             color: #000000 !important;
             box-shadow: none !important;
             border: none !important;
-            font-family: 'Courier New', Courier, monospace !important;
-            font-size: 12px !important;
-            line-height: 1.3 !important;
+            font-family: 'Roboto Mono', Consolas, 'Courier New', monospace !important;
+            font-size: 9.5px !important;
+            line-height: 1.25 !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .no-print {
             display: none !important;

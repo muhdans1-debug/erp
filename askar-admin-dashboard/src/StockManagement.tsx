@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getApiBaseUrl } from './utils/apiConfig';
 import { 
   AlertTriangle, 
   Clock, 
@@ -26,6 +27,7 @@ import AddProductModal from './AddProductModal';
 import POReviewModal from './POReviewModal';
 import LogWastageModal from './LogWastageModal';
 import { TableSkeleton } from './Skeleton';
+import { fetchStockDashboardData } from './services/dataService';
 
 interface StockManagementProps {
   apiBase?: string;
@@ -34,7 +36,7 @@ interface StockManagementProps {
 }
 
 export default function StockManagement({ apiBase: propApiBase, onBackToPos, initialTab = 'PENDING' }: StockManagementProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+  const apiBase = propApiBase || getApiBaseUrl();
   const [activeTab, setActiveTab] = useState<'THRESHOLDS' | 'PENDING' | 'IN_TRANSIT' | 'DISTRIBUTORS'>(initialTab);
 
   useEffect(() => {
@@ -110,34 +112,11 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [productsRes, draftsRes, transitRes, distRes, cronRes] = await Promise.all([
-        fetch(`${apiBase}/api/products`),
-        fetch(`${apiBase}/api/purchase-orders/drafts`),
-        fetch(`${apiBase}/api/purchase-orders/transit`),
-        fetch(`${apiBase}/api/distributors`),
-        fetch(`${apiBase}/api/cron/auto-restock`)
-      ]);
-
-      const products = await productsRes.json();
-      if (Array.isArray(products)) {
-        setLowStockItems(products.filter((p: any) => p.stockQuantity <= (p.minThreshold ?? 20)));
-      }
-      
-      const drafts = await draftsRes.json();
-      setDraftOrders(drafts.drafts || drafts.orders || []);
-
-      const transit = await transitRes.json();
-      setTransitOrders(transit.orders || []);
-
-      const distData = await distRes.json();
-      if (distData.distributors) {
-        setDistributors(distData.distributors);
-      }
-
-      const cronData = await cronRes.json();
-      if (cronData.skipped) {
-        setSkippedMovList(cronData.skipped);
-      }
+      const data = await fetchStockDashboardData(apiBase);
+      setLowStockItems(data.lowStockItems);
+      setDraftOrders(data.draftOrders);
+      setTransitOrders(data.transitOrders);
+      setDistributors(data.distributors);
     } catch (error) {
       console.error("Failed to fetch stock data", error);
       showNotification("Could not connect to back-office server. Verify server is running on port 3000.", "error");

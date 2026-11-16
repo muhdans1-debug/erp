@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Delete
 } from 'lucide-react';
+import { getManagerPin } from '../utils/authUtils';
 
 export interface POItem {
   id: string;
@@ -174,7 +175,8 @@ export default function ReceivingDrawer({
     setPinError(false);
 
     if (nextPin.length === 4) {
-      if (nextPin === '9999') {
+      const managerPin = getManagerPin();
+      if (nextPin === managerPin) {
         setIsUnlocked(true);
         playBeep(true);
       } else {
@@ -308,7 +310,10 @@ export default function ReceivingDrawer({
 
       const res = await fetch(`${apiBase}/api/purchase-orders/${selectedPO.id}/receive`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-manager-pin': pinInput || getManagerPin()
+        },
         body: JSON.stringify(payload)
       });
 
@@ -378,7 +383,7 @@ export default function ReceivingDrawer({
             </div>
             <h3 className="text-base font-bold text-white mb-1">Manager PIN Required</h3>
             <p className="text-xs text-slate-400 text-center mb-6">
-              Enter 4-digit Manager PIN (9999) to unlock delivery receiving & stock ingestion.
+              Enter 4-digit Manager PIN to unlock delivery receiving & stock ingestion.
             </p>
 
             {/* PIN Dots */}
@@ -397,7 +402,7 @@ export default function ReceivingDrawer({
 
             {pinError && (
               <p className="text-xs font-bold text-rose-400 mb-3 flex items-center gap-1">
-                <AlertCircle size={14} /> Incorrect Manager PIN. Try 9999.
+                <AlertCircle size={14} /> Incorrect Manager PIN.
               </p>
             )}
 

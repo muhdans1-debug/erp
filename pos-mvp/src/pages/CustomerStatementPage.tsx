@@ -15,12 +15,14 @@ import {
   Sparkles,
   Lock,
   KeyRound,
-  Zap
+  Zap,
+  Scale
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement } from '../utils/printer';
 import { playThankYouVoice } from '../utils/sound';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 interface LedgerEntry {
   id: string;
@@ -44,9 +46,12 @@ interface MessMember {
   id: string;
   name: string;
   phone?: string | null;
+  cpr?: string | null;
+  cardUid?: string | null;
   batchNo?: string | null;
   currentBalance: number;
   spendPercentage?: number;
+  equalSplitShare?: number;
 }
 
 interface MessGroupData {
@@ -54,6 +59,7 @@ interface MessGroupData {
   group_name: string;
   memberCount: number;
   totalBalance: number;
+  equalSplitShare?: number;
   members: MessMember[];
   messLedger?: LedgerEntry[];
 }
@@ -67,6 +73,9 @@ interface CustomerData {
   currentBalance: number;
   creditLimit?: number;
   mess_id?: string | null;
+  messName?: string | null;
+  mess_name?: string | null;
+  isMessGroup?: boolean;
   description?: string | null;
 }
 
@@ -77,7 +86,7 @@ interface CustomerStatementPageProps {
 
 export default function CustomerStatementPage({
   customerId: initialCustomerId,
-  apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://192.168.8.7:3000'
+  apiBase = getApiBaseUrl()
 }: CustomerStatementPageProps) {
   // Resolve customer ID from prop, URL search param (?id=...), path (/tab/:id), or persistent localStorage
   const [customerId] = useState<string>(() => {
@@ -128,9 +137,9 @@ export default function CustomerStatementPage({
   const [pinError, setPinError] = useState<string>('');
   const [isVerifyingPin, setIsVerifyingPin] = useState<boolean>(false);
 
-  // Dynamic API Base Resolver (Supports Cloudflare Tunnel, custom domains, and local LAN)
+  // Dynamic API Base Resolver (Supports Cloudflare Edge, tunnels, custom domains)
   const resolveApiBase = (): string => {
-    if (typeof window === 'undefined') return apiBase;
+    if (typeof window === 'undefined') return apiBase || getApiBaseUrl();
     
     // 1. Explicit override saved in query param (?tunnel= or ?api=)
     const urlApi = new URLSearchParams(window.location.search).get('api') || new URLSearchParams(window.location.search).get('tunnel');
@@ -139,40 +148,13 @@ export default function CustomerStatementPage({
       return urlApi.replace(/\/+$/, '');
     }
 
-    // 2. Saved API override in localStorage (Master server URL or IP)
+    // 2. Saved API override in localStorage (if it is a valid cloud/tunnel URL)
     const masterUrl = localStorage.getItem('master_server_url');
-    if (masterUrl && masterUrl.trim()) return masterUrl.trim().replace(/\/+$/, '');
-
-    const savedIp = localStorage.getItem('server_ip');
-    if (savedIp && savedIp.trim()) return `http://${savedIp.trim()}:3000`;
-
-    const savedApi = localStorage.getItem('khata_api_base') || localStorage.getItem('khata_tunnel_api');
-    if (savedApi) return savedApi.replace(/\/+$/, '');
-
-    // 3. Environment variable from Vite
-    const envApi = (import.meta as any).env?.VITE_KHATA_API_BASE;
-    if (envApi) return envApi.replace(/\/+$/, '');
-
-    // 4. If running on HTTPS (such as trycloudflare.com, Cloudflare Pages, or Vercel)
-    if (window.location.protocol === 'https:') {
-      if (window.location.hostname.endsWith('.trycloudflare.com') || window.location.hostname.endsWith('.vercel.app')) {
-        return ''; // Direct relative proxy through HTTPS origin
-      }
-      return '';
+    if (masterUrl && masterUrl.trim() && !masterUrl.includes('localhost') && !masterUrl.includes('192.168.')) {
+      return masterUrl.trim().replace(/\/+$/, '');
     }
 
-    // 5. If running on local Wi-Fi or LAN
-    if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      return `http://${window.location.hostname}:3000`;
-    }
-
-    // 6. Native Android Capacitor check (Default to Supermarket Laptop)
-    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
-    if (isNative) {
-      return 'http://192.168.8.7:3000';
-    }
-
-    return apiBase || 'http://192.168.8.7:3000';
+    return getApiBaseUrl();
   };
 
   const handleVerifyPin = async (e?: React.FormEvent) => {
@@ -214,31 +196,7 @@ export default function CustomerStatementPage({
     setPin('');
   };
 
-  const handlePrintStatement = async () => {
-    if (!customer) return;
-    const formattedStatement = statement.map((item) => ({
-      id: item.id,
-      amount: Number(item.amount || item.raw_amount || 0),
-      type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
-      reference: item.reference || item.invoiceNo || 'Store Purchase',
-      formattedDate: item.formattedDate || new Date(item.created_at || item.timestamp || Date.now()).toLocaleDateString(),
-      formattedTime: item.formattedTime || new Date(item.created_at || item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
-    }));
 
-    try {
-      await printKhataStatement({
-        shopName: "ASKAR STORE - KHATA STATEMENT",
-        customerName: customer.name,
-        customerPhone: customer.phone,
-        customerCpr: customer.cpr,
-        statement: formattedStatement,
-        currentBalance: currentBalance
-      });
-    } catch {
-      window.print();
-    }
-  };
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -252,6 +210,30 @@ export default function CustomerStatementPage({
   const [activeTab, setActiveTab] = useState<'PERSONAL' | 'MESS'>('PERSONAL');
   const [selectedMemberFilter, setSelectedMemberFilter] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'CHARGES' | 'PAYMENTS'>('ALL');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
+  const setQuickRange = (preset: 'TODAY' | 'THIS_MONTH' | 'LAST_MONTH' | 'ALL') => {
+    const now = new Date();
+    if (preset === 'ALL') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'TODAY') {
+      const todayStr = now.toISOString().slice(0, 10);
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === 'THIS_MONTH') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      const todayStr = now.toISOString().slice(0, 10);
+      setStartDate(firstDay);
+      setEndDate(todayStr);
+    } else if (preset === 'LAST_MONTH') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+      const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+      setStartDate(firstDay);
+      setEndDate(lastDay);
+    }
+  };
 
   // BenefitPay Payment Modal State
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
@@ -294,10 +276,21 @@ export default function CustomerStatementPage({
         throw new Error(data.error || 'Failed to retrieve account records');
       }
 
+      const entries = data.statement || data.entries || data.sales || [];
       setCustomer(data.customer);
-      setStatement(data.statement || []);
-      setCurrentBalance(data.currentBalance || 0);
+      setStatement(entries);
+      setCurrentBalance(data.currentBalance ?? data.customer?.balance ?? data.customer?.currentBalance ?? 0);
       setMessGroup(data.messGroup || null);
+
+      // Auto-switch to MESS tab if requested by param, mess ID, or isMessStatement
+      if (typeof window !== 'undefined') {
+        const tabParam = new URLSearchParams(window.location.search).get('tab');
+        if (tabParam === 'mess' || data.isMessStatement || data.isMessGroup || customerId.startsWith('mess_') || customerId.startsWith('mg_')) {
+          setActiveTab('MESS');
+        }
+      } else if (data.isMessStatement || data.isMessGroup) {
+        setActiveTab('MESS');
+      }
 
       try {
         const fcRes = await fetch(`${resolvedApiBase}/api/khata/flash-recovery`);
@@ -317,6 +310,50 @@ export default function CustomerStatementPage({
       setError(err?.message || 'Could not connect to Askar Khata API');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [isRebalancingMess, setIsRebalancingMess] = useState(false);
+
+  const handleRebalanceMessCards = async () => {
+    if (!messGroup || !messGroup.id) return;
+    const targetMessId = messGroup.id;
+    const groupName = messGroup.group_name || 'Camp Mess';
+    const memberCount = messGroup.members?.length || 1;
+    const eqShare = (messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, memberCount))).toFixed(3);
+
+    const confirmed = window.confirm(
+      `⚖️ Split Camp Debt Equally Across All Cards?\n\n` +
+      `Mess Group: ${groupName}\n` +
+      `Total Debt: BHD ${Number(messGroup.totalBalance || 0).toFixed(3)}\n` +
+      `Active Cards: ${memberCount}\n` +
+      `Target Equal Share per Card: BHD ${eqShare}\n\n` +
+      `This will update the ledger so that every member card account has an exact balance of BHD ${eqShare}.\n\n` +
+      `Proceed?`
+    );
+    if (!confirmed) return;
+
+    setIsRebalancingMess(true);
+    try {
+      const res = await fetch(`${apiBase}/api/khata/mess/${encodeURIComponent(targetMessId)}/rebalance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': '9999',
+          'x-pos-client': 'store-pos'
+        }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to rebalance mess group debt');
+      }
+
+      alert(`✅ Success: ${data.message || 'Camp balance split equally across all cards'}`);
+      fetchStatement();
+    } catch (err: any) {
+      alert(`❌ Error: ${err?.message || 'Could not rebalance cards'}`);
+    } finally {
+      setIsRebalancingMess(false);
     }
   };
 
@@ -409,15 +446,70 @@ export default function CustomerStatementPage({
     }
 
     if (typeFilter === 'CHARGES') {
-      return source.filter((item) => item.type === 'CHARGE');
+      source = source.filter((item) => item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount || 0) > 0);
     }
     if (typeFilter === 'PAYMENTS') {
-      return source.filter((item) => item.type === 'PAYMENT' || item.type === 'WRITE_OFF');
+      source = source.filter((item) => item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || item.amount || 0) < 0);
     }
+
+    if (startDate || endDate) {
+      const start = startDate ? new Date(startDate) : new Date('2000-01-01');
+      const end = endDate ? new Date(endDate) : new Date('2100-01-01');
+      if (endDate) end.setHours(23, 59, 59, 999);
+      source = source.filter((item) => {
+        const dStr = item.created_at || item.timestamp || (item as any).createdAt;
+        if (!dStr) return true;
+        const txDate = new Date(dStr);
+        return txDate >= start && txDate <= end;
+      });
+    }
+
     return source;
   };
 
   const filteredList = displayedTransactions();
+
+  const filteredChargesTotal = filteredList.reduce((acc, item) => {
+    const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount || 0) > 0;
+    return isCharge ? acc + Number(item.amount || item.raw_amount || 0) : acc;
+  }, 0);
+
+  const filteredPaymentsTotal = filteredList.reduce((acc, item) => {
+    const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || item.amount || 0) < 0;
+    return isPayment ? acc + Number(item.amount || item.raw_amount || 0) : acc;
+  }, 0);
+
+  const handlePrintStatement = async () => {
+    if (!customer) return;
+    const isMess = activeTab === 'MESS' && Boolean(messGroup);
+    const formattedStatement = filteredList.map((item) => ({
+      id: item.id,
+      amount: Number(item.amount || item.raw_amount || 0),
+      type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
+      reference: item.reference || item.invoiceNo || 'Store Purchase',
+      formattedDate: item.formattedDate || new Date(item.created_at || item.timestamp || Date.now()).toLocaleDateString(),
+      formattedTime: item.formattedTime || new Date(item.created_at || item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
+    }));
+
+    try {
+      await printKhataStatement({
+        shopName: isMess ? `ASKAR - MESS: ${messGroup!.group_name}` : "ASKAR STORE - KHATA STATEMENT",
+        customerName: isMess ? messGroup!.group_name : customer.name,
+        customerPhone: customer.phone,
+        customerCpr: customer.cpr,
+        statement: formattedStatement,
+        currentBalance: isMess ? messGroup!.totalBalance : currentBalance,
+        isMessStatement: isMess,
+        messGroup: isMess ? (messGroup as any) : undefined,
+        dateRange: (startDate || endDate)
+          ? `${startDate || 'Start'} to ${endDate || 'Today'}`
+          : undefined
+      });
+    } catch (e) {
+      console.warn("Khata statement printing notice:", e);
+    }
+  };
 
   // ──────────────────────────────────────────────────────────────────────────
   // KHATA AUTH GATEWAY: 4-DIGIT PIN & DEVICE TRUST LOCK SCREEN
@@ -692,14 +784,22 @@ export default function CustomerStatementPage({
               </p>
             </div>
 
-            {messGroup && (
-              <div className="text-right">
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  <Users className="w-3 h-3" />
-                  {messGroup.group_name}
-                </span>
-                <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                  {messGroup.memberCount} Mess Members
+            {(messGroup || customer.messName || customer.mess_name) && (
+              <div className="text-right flex flex-col items-end gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(activeTab === 'MESS' ? 'PERSONAL' : 'MESS');
+                    setSelectedMemberFilter(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 cursor-pointer active:scale-95 transition-all shadow-xs"
+                  title="Click to view shared Mess Camp Split Statement"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>{messGroup?.group_name || customer.messName || customer.mess_name}</span>
+                </button>
+                <p className="text-[10px] text-slate-400 font-medium">
+                  {messGroup ? `${messGroup.memberCount} Camp Members • Tap to split` : 'Camp Mess Member'}
                 </p>
               </div>
             )}
@@ -827,21 +927,117 @@ export default function CustomerStatementPage({
         {activeTab === 'MESS' && messGroup && (
           <div className="space-y-3 animate-in fade-in duration-200">
             {/* Mess Header Explainer */}
-            <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-4">
-              <div className="flex items-center justify-between mb-2">
+            {/* Mess Group Transparency Overview & Room Member Split Cards */}
+            <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 border border-indigo-500/40 rounded-2xl p-5 space-y-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-black text-indigo-200">
-                    Shared Labor Camp Transparency
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      👥 Camp Mess Group Statement
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                      {messGroup.members.length} Members
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-black text-white flex items-center gap-2">
+                    <Users className="w-5 h-5 text-indigo-400" />
+                    <span>{messGroup.group_name}</span>
                   </h3>
-                  <p className="text-[11px] text-indigo-300/80">
-                    End-of-month audit: Review exactly who bought what grocery supplies
-                  </p>
                 </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Camp Debt</span>
-                  <p className="text-base font-black font-mono text-indigo-300">
-                    BD {messGroup.totalBalance.toFixed(3)}
-                  </p>
+
+                {/* Action Buttons inside Mess Statement */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRebalanceMessCards}
+                    disabled={isRebalancingMess}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-indigo-400/40 disabled:opacity-50"
+                    title="Split total camp debt equally across all member cards in the database"
+                  >
+                    <Scale className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isRebalancingMess ? 'Splitting...' : '⚡ Split Balance to Cards'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePrintStatement}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-slate-700"
+                    title="Print 58mm Mess Statement Slip"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-indigo-300" />
+                    <span>🖨️ Print (58mm)</span>
+                  </button>
+
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(
+                      `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
+                      `🏢 *Mess Group:* ${messGroup.group_name}\n` +
+                      `💰 *Total Camp Balance:* BD ${messGroup.totalBalance.toFixed(3)}\n` +
+                      `👥 *Room Members:* ${messGroup.members.length}\n` +
+                      `⚖️ *EQUAL SPLIT SHARE:* BD ${(messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members.length))).toFixed(3)} / member\n` +
+                      `----------------------------------------\n` +
+                      `*Room Members Equal Split Balances:*\n` +
+                      messGroup.members.map((m) => {
+                        const mEq = (m.equalSplitShare || messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members.length))).toFixed(3);
+                        return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
+                      }).join('\n') +
+                      `\n----------------------------------------\n` +
+                      `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                    title="Share full mess debt breakdown to WhatsApp group"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>📱 WhatsApp Split</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* 3 Prominent KPI Stat Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                    <span>Total Camp Debt</span>
+                    <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <div className="mt-1">
+                    <span className="text-xl font-black font-mono text-emerald-400">
+                      BD {messGroup.totalBalance.toFixed(3)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Collective room debt</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/80 border border-emerald-500/50 rounded-xl p-3 flex flex-col justify-between shadow-xs ring-1 ring-emerald-500/20">
+                  <div className="flex items-center justify-between text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
+                    <span>Equal Share / Card</span>
+                    <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <div className="mt-1">
+                    <span className="text-xl font-black font-mono text-emerald-300">
+                      BD {(messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, messGroup.members.length))).toFixed(3)}
+                    </span>
+                    <span className="text-[10px] text-emerald-400/80 block mt-0.5 font-medium">
+                      BD {messGroup.totalBalance.toFixed(3)} ÷ {messGroup.members.length} members
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                    <span>Active Camp Cards</span>
+                    <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  </div>
+                  <div className="mt-1">
+                    <span className="text-xl font-black font-mono text-white">
+                      {messGroup.members.length} Cards
+                    </span>
+                    <span className="text-[10px] text-indigo-300/80 block mt-0.5 font-medium">
+                      Registered camp members
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -849,83 +1045,166 @@ export default function CustomerStatementPage({
             {/* Member Comparison Cards */}
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
-                <span>Room Members ({messGroup.members.length})</span>
+                <span>Room Member Cards • Balance Split Equally ({messGroup.members.length})</span>
                 {selectedMemberFilter && (
                   <button
                     onClick={() => setSelectedMemberFilter(null)}
-                    className="text-[11px] text-emerald-400 hover:underline"
+                    className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
                   >
                     Clear Filter
                   </button>
                 )}
               </div>
 
-              {messGroup.members.map((member) => {
-                const isSelected = selectedMemberFilter === member.id;
-                const isMe = member.id === customer.id;
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {messGroup.members.map((member) => {
+                  const isSelected = selectedMemberFilter === member.id;
+                  const isMe = member.id === customer.id;
+                  const memberEqShare = Number(
+                    member.equalSplitShare ||
+                    messGroup.equalSplitShare ||
+                    (messGroup.totalBalance / Math.max(1, messGroup.members.length))
+                  );
+                  const cardBalance = Number(member.currentBalance || 0);
+                  const diff = Number((cardBalance - memberEqShare).toFixed(3));
 
-                return (
-                  <div
-                    key={member.id}
-                    onClick={() =>
-                      setSelectedMemberFilter(isSelected ? null : member.id)
-                    }
-                    className={`cursor-pointer border rounded-2xl p-3.5 transition-all ${
-                      isSelected
-                        ? 'bg-indigo-900/40 border-indigo-400 shadow-lg'
-                        : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${
-                            isMe
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-slate-800 text-slate-300'
+                  return (
+                    <div
+                      key={member.id}
+                      onClick={() =>
+                        setSelectedMemberFilter(isSelected ? null : member.id)
+                      }
+                      className={`cursor-pointer border rounded-2xl p-4 transition-all flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-900 border-emerald-400 shadow-lg ring-2 ring-emerald-400/40'
+                          : 'bg-gradient-to-br from-slate-900/95 via-indigo-950/70 to-slate-900/95 border-slate-800 hover:border-emerald-500/60 hover:shadow-md'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${
+                              isMe
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                            }`}
+                          >
+                            <CreditCard className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="text-sm font-bold text-white leading-tight">
+                                {member.name}
+                              </h4>
+                              {isMe && (
+                                <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-400 font-mono">
+                              {member.phone ? `📱 ${member.phone}` : '💳 NFC Card Linked'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span
+                          className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
+                            Math.abs(diff) <= 0.001
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : diff > 0
+                              ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                           }`}
                         >
-                          {member.name.slice(0, 1).toUpperCase()}
-                        </div>
+                          {Math.abs(diff) <= 0.001
+                            ? 'Balanced'
+                            : diff > 0
+                            ? `+BD ${diff.toFixed(3)} Paid`
+                            : `-BD ${Math.abs(diff).toFixed(3)} Due`}
+                        </span>
+                      </div>
+
+                      {/* Card Middle: Equal Split Hero */}
+                      <div className="my-3 p-2.5 bg-indigo-950/80 rounded-xl border border-indigo-800/60 flex items-center justify-between">
                         <div>
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-bold text-white leading-tight">
-                              {member.name}
-                            </h4>
-                            {isMe && (
-                              <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                You
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-slate-400 font-mono">
-                            {member.phone || 'Mess Account Member'}
-                          </p>
+                          <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider block">
+                            Equal Split Due
+                          </span>
+                          <span className="text-base font-black font-mono text-emerald-400">
+                            BD {memberEqShare.toFixed(3)}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Card Spent
+                          </span>
+                          <span className="text-xs font-bold font-mono text-slate-300">
+                            BD {cardBalance.toFixed(3)}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="text-right">
-                        <p className="text-sm font-black font-mono text-white">
-                          BD {member.currentBalance.toFixed(3)}
-                        </p>
-                        <p className="text-[10px] text-indigo-300 font-bold">
-                          {member.spendPercentage || 0}% of Camp Debt
-                        </p>
+                      {/* Spend Share Visual Bar */}
+                      <div className="w-full h-1 bg-slate-950 rounded-full mb-3 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-400 rounded-full transition-all"
+                          style={{ width: `${member.spendPercentage || 0}%` }}
+                        />
+                      </div>
+
+                      {/* Member Quick Actions: Settle Equal Share & Card Spent & WhatsApp */}
+                      <div className="pt-2 border-t border-indigo-800/40 flex items-center justify-between gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCustomPayAmount(memberEqShare.toFixed(3));
+                              setIsPayModalOpen(true);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                            title={`Settle ${member.name}'s equal split share (BD ${memberEqShare.toFixed(3)})`}
+                          >
+                            <CreditCard className="w-3 h-3" />
+                            <span>Settle Equal (BD {memberEqShare.toFixed(3)})</span>
+                          </button>
+
+                          {Math.abs(cardBalance - memberEqShare) > 0.001 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCustomPayAmount(cardBalance.toFixed(3));
+                                setIsPayModalOpen(true);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 active:scale-95 text-[10px] font-medium transition-all cursor-pointer"
+                              title={`Settle actual card purchases: BD ${cardBalance.toFixed(3)}`}
+                            >
+                              <span>Card (BD {cardBalance.toFixed(3)})</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {member.phone && (
+                          <a
+                            href={`https://wa.me/${member.phone.replace(/[^0-9]/g, '').length === 8 ? `973${member.phone.replace(/[^0-9]/g, '')}` : member.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                              `Hello ${member.name}, your equal split share of ${messGroup.group_name} at Askar Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${messGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1.5 bg-indigo-800 hover:bg-indigo-700 text-white rounded-lg active:scale-95 transition-all cursor-pointer"
+                            title="WhatsApp reminder"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                          </a>
+                        )}
                       </div>
                     </div>
-
-                    {/* Spend Share Visual Bar */}
-                    <div className="w-full h-1.5 rounded-full bg-slate-800 mt-2.5 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          isMe ? 'bg-emerald-400' : 'bg-indigo-400'
-                        }`}
-                        style={{ width: `${member.spendPercentage || 0}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -974,6 +1253,81 @@ export default function CustomerStatementPage({
               >
                 Payments
               </button>
+            </div>
+          </div>
+
+          {/* Date to Date Filter Bar */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">FROM</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="text-xs font-bold text-white bg-transparent outline-none cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">TO</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="text-xs font-bold text-white bg-transparent outline-none cursor-pointer"
+                  />
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setQuickRange('TODAY')}
+                    className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
+                      startDate && startDate === endDate && startDate === new Date().toISOString().slice(0, 10)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickRange('THIS_MONTH')}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-bold text-[11px] transition-all cursor-pointer"
+                  >
+                    This Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickRange('LAST_MONTH')}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-bold text-[11px] transition-all cursor-pointer"
+                  >
+                    Last Month
+                  </button>
+                  {(startDate || endDate || typeFilter !== 'ALL') && (
+                    <button
+                      type="button"
+                      onClick={() => { setStartDate(''); setEndDate(''); setTypeFilter('ALL'); }}
+                      className="px-2 py-1 text-red-400 hover:text-red-300 font-bold text-[11px] transition-all cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Filtered Range Debits & Credits Totals */}
+              <div className="flex items-center gap-3 font-mono text-[11px]">
+                <span className="text-rose-400 font-bold">
+                  Charges: +BD {filteredChargesTotal.toFixed(3)}
+                </span>
+                <span className="text-emerald-400 font-bold">
+                  Paid: -BD {filteredPaymentsTotal.toFixed(3)}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1090,7 +1444,7 @@ export default function CustomerStatementPage({
           </button>
 
           <a
-            href="https://wa.me/97339123456?text=Hello%20Askar%20Supermarket%2C%20I%20have%20a%20question%20regarding%20my%20Khata%20account."
+            href="https://wa.me/97333843855?text=Hello%20Askar%20Supermarket%2C%20I%20have%20a%20question%20regarding%20my%20Khata%20account."
             target="_blank"
             rel="noopener noreferrer"
             className="w-full py-2.5 px-4 bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/40 active:scale-95 text-emerald-300 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2"

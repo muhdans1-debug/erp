@@ -65,7 +65,9 @@ export default function SyncTrafficLight({
               ? `⚠️ Warning: Offline for ${offlineHours || 24}+ hours! Tap to check router & backup.`
               : status === 'SYNCING'
                 ? '🔄 Synchronizing with cloud edge...'
-                : '🔴 Offline Mode: Operating on motherboard local.db. Tap to inspect.'
+                : (typeof navigator !== 'undefined' && navigator.onLine)
+                  ? '🟡 Local Chip Mode: Wi-Fi connected, cloud sync queued. Tap to inspect.'
+                  : '🔴 Offline Mode: Operating on motherboard local.db. Tap to inspect.'
         }
       >
         {status === 'ONLINE' && (
@@ -77,11 +79,19 @@ export default function SyncTrafficLight({
         )}
 
         {status === 'OFFLINE' && (
-          <>
-            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
-            <CloudOff size={15} className="text-rose-600 shrink-0" />
-            <span className="font-mono text-[11px] whitespace-nowrap">Offline</span>
-          </>
+          (typeof navigator !== 'undefined' && navigator.onLine) ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+              <HardDrive size={15} className="text-amber-700 shrink-0" />
+              <span className="font-mono text-[11px] whitespace-nowrap text-amber-800">Local Chip</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+              <CloudOff size={15} className="text-rose-600 shrink-0" />
+              <span className="font-mono text-[11px] whitespace-nowrap">Offline</span>
+            </>
+          )
         )}
 
         {status === 'OFFLINE_WARNING' && (
@@ -147,14 +157,18 @@ export default function SyncTrafficLight({
                       ? '🟢 Cloud Sync Active (Online)'
                       : status === 'OFFLINE_WARNING'
                         ? `⚠️ Warning: Offline for ${offlineHours || 24}+ Hours`
-                        : '🔴 Pure Motherboard Offline Mode (Wi-Fi Down)'}
+                        : (typeof navigator !== 'undefined' && navigator.onLine)
+                          ? '🟡 Local Chip Mode (Wi-Fi Connected, Cloud Sync Queued)'
+                          : '🔴 Pure Motherboard Offline Mode (No Network)'}
                   </h4>
                   <p className="text-xs mt-1 leading-relaxed text-slate-600">
                     {status === 'ONLINE'
                       ? 'All sales and Khata entries are saved locally to local.db on this device and synced to Turso Cloud (AWS ap-south-1).'
                       : status === 'OFFLINE_WARNING'
                         ? 'The terminal has been offline for over 24 hours. Sales are safely saved on the motherboard, but check your Wi-Fi router so customer Khata balances can sync!'
-                        : 'The Wi-Fi is currently down. Sales continue with 0ms latency directly on local.db. Offline sales will sync automatically when Wi-Fi returns.'}
+                        : (typeof navigator !== 'undefined' && navigator.onLine)
+                          ? 'Wi-Fi network is connected. The central cloud server is currently busy or rate-limited. Sales continue with 0ms latency directly on local.db and will sync automatically.'
+                          : 'Network connection is currently down. Sales continue with 0ms latency directly on local.db. Offline sales will sync automatically when network returns.'}
                   </p>
                   <p className="text-[11px] text-slate-500 font-mono mt-2">
                     Last Cloud Sync: {lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'Never'}

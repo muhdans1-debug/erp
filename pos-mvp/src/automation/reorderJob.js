@@ -63,7 +63,7 @@ export const runReorderCheck = async (options = {}) => {
         const maxThresh = product.maxThreshold ?? 100;
         const currentStock = product.stockQuantity ?? 0;
         const orderQty = Math.max(1, maxThresh - currentStock);
-        const unitCost = Number(product.purchasePrice ?? 0);
+        const unitCost = Number(product.purchasePrice || product.unitCost || (Number(product.sellingPrice || 0) * 0.75));
         const lineTotal = orderQty * unitCost;
 
         totalOrderCost += lineTotal;
@@ -163,7 +163,7 @@ export const runReorderCheck = async (options = {}) => {
       let unassignedTotal = 0;
       const unassignedOrderItems = unassignedLowStock.map((p) => {
         const orderQty = Math.max(1, (p.maxThreshold ?? 100) - (p.stockQuantity ?? 0));
-        const unitCost = Number(p.purchasePrice ?? 0);
+        const unitCost = Number(p.purchasePrice || p.unitCost || (Number(p.sellingPrice || 0) * 0.75));
         const lineTotal = orderQty * unitCost;
         unassignedTotal += lineTotal;
         return {

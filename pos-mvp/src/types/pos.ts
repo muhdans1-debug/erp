@@ -58,6 +58,7 @@ export interface Customer {
   isMess?: boolean;
   hasMessGroup?: boolean;
   isDual?: boolean;
+  isMultiMess?: boolean;
   card_type?: string;
   mess_id?: string | null;
   messName?: string | null;
@@ -65,6 +66,7 @@ export interface Customer {
   isMessGroup?: boolean;
   tag_id?: string;
   group_name?: string;
+  messes?: any[];
   messGroup?: {
     id: string;
     group_name: string;

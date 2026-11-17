@@ -1574,19 +1574,30 @@ export default function NfcManager({
                               <Users size={15} className="text-indigo-600 shrink-0" />
                             )}
                             <span>{card.name}</span>
-                            {card.card_type === 'DUAL' && card.group_name && (
-                              <button
-                                onClick={() => {
-                                  const mg = messGroupsList.find(g => g.id === card.mess_id) || { id: card.mess_id, group_name: card.group_name };
-                                  handleOpenMessRosterModal(mg);
-                                }}
-                                className="text-[10px] font-bold px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-full border border-indigo-200 cursor-pointer transition flex items-center gap-1"
-                                title="View Mess Group Roster"
-                              >
-                                <Users size={11} />
-                                <span>{card.group_name}</span>
-                              </button>
-                            )}
+                            {(() => {
+                              const linkedMesses = messGroupsList.filter(g => 
+                                g.id === card.mess_id || (card.customer_id && (g.members || []).some((m: any) => m.id === card.customer_id))
+                              );
+                              if (linkedMesses.length > 0 && card.card_type !== 'MESS') {
+                                return (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    {linkedMesses.map((mg) => (
+                                      <button
+                                        key={mg.id}
+                                        type="button"
+                                        onClick={() => handleOpenMessRosterModal(mg)}
+                                        className="text-[10px] font-bold px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-full border border-indigo-200 cursor-pointer transition flex items-center gap-1"
+                                        title={`View Roster for ${mg.group_name}`}
+                                      >
+                                        <Users size={11} />
+                                        <span>{mg.group_name}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                             {card.card_type === 'MESS' && card.memberCount ? (
                               <button
                                 onClick={() => {

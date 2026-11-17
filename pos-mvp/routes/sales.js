@@ -491,7 +491,17 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
       const gRes = await db.execute({ sql: `SELECT id, group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [messId] });
       group = (gRes.rows && gRes.rows.length > 0) ? gRes.rows[0] : null;
       if (group) {
-        const mRes = await db.execute({ sql: `SELECT id, name, phone, batchNo FROM Customer WHERE mess_id = ?`, args: [messId] });
+        const mRes = await db.execute({
+          sql: `SELECT DISTINCT c.id, c.name, c.phone, c.batchNo
+                FROM Customer c
+                JOIN MessMember mm ON c.id = mm.customer_id
+                WHERE mm.mess_id = ? AND mm.is_active = 1
+                UNION
+                SELECT c.id, c.name, c.phone, c.batchNo
+                FROM Customer c
+                WHERE c.mess_id = ? AND NOT EXISTS (SELECT 1 FROM MessMember WHERE mess_id = ?)`,
+          args: [messId, messId, messId]
+        });
         memberRows = mRes.rows || [];
       }
     } catch { }
@@ -573,16 +583,24 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
         const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
 
         const ledgerEntryId = crypto.randomUUID();
-        await tx.orm.KhataLedger.create({
-          id: ledgerEntryId,
-          customerId: member.id,
-          amount: memberCharge,
-          type: 'CHARGE',
-          reference: ledgerRef,
-          syncStatus: 'SYNCED',
-          timestamp: getRegionalIsoString(),
-          tenantId: 'tenant_1'
-        });
+        try {
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, tenantId, mess_id, sale_id, group_total, member_count)
+                  VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, 'tenant_1', ?, ?, ?, ?)`,
+            args: [ledgerEntryId, member.id, memberCharge, ledgerRef, getRegionalIsoString(), messId, saleId, finalTotal, memberRows.length]
+          });
+        } catch {
+          await tx.orm.KhataLedger.create({
+            id: ledgerEntryId,
+            customerId: member.id,
+            amount: memberCharge,
+            type: 'CHARGE',
+            reference: ledgerRef,
+            syncStatus: 'SYNCED',
+            timestamp: getRegionalIsoString(),
+            tenantId: 'tenant_1'
+          });
+        }
 
         await tx.execute({
           sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ?, updatedAt = datetime('now') WHERE id = ?`,

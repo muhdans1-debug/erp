@@ -350,8 +350,16 @@ salesRouter.post('/mess-checkout', requirePosOrManagerAuth, async (c) => {
     const group = gRes.rows[0];
 
     const mRes = await db.execute({
-      sql: `SELECT id, name, phone, cpr, balance FROM Customer WHERE mess_id = ? AND (is_active = 1 OR is_active IS NULL)`,
-      args: [messId]
+      sql: `SELECT DISTINCT c.id, c.name, c.phone, c.cpr, c.balance
+            FROM Customer c
+            JOIN MessMember mm ON c.id = mm.customer_id
+            WHERE mm.mess_id = ? AND mm.is_active = 1
+            UNION
+            SELECT c.id, c.name, c.phone, c.cpr, c.balance
+            FROM Customer c
+            WHERE c.mess_id = ? AND (c.is_active = 1 OR c.is_active IS NULL)
+              AND NOT EXISTS (SELECT 1 FROM MessMember WHERE mess_id = ?)`,
+      args: [messId, messId, messId]
     });
     const memberRows = mRes.rows || [];
 
@@ -437,10 +445,10 @@ salesRouter.post('/mess-checkout', requirePosOrManagerAuth, async (c) => {
       const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
 
       batchStatements.push({
-        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, tenantId)
-              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?)
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, tenantId, mess_id, sale_id, group_total, member_count)
+              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO NOTHING`,
-        args: [ledgerEntryId, member.id, memberCharge, ledgerRef, nowIso, tenantId]
+        args: [ledgerEntryId, member.id, memberCharge, ledgerRef, nowIso, tenantId, messId, saleId, finalTotal, memberRows.length]
       });
 
       batchStatements.push({

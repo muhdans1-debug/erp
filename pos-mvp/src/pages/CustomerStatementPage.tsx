@@ -64,6 +64,18 @@ interface MessGroupData {
   messLedger?: LedgerEntry[];
 }
 
+interface WalletBreakdown {
+  personal: number;
+  messes: {
+    id: string;
+    name: string;
+    memberShare: number;
+    groupTotal: number;
+    memberCount: number;
+    equalSplitShare: number;
+  }[];
+}
+
 interface CustomerData {
   id: string;
   name: string;
@@ -203,6 +215,8 @@ export default function CustomerStatementPage({
   const [customer, setCustomer] = useState<CustomerData | null>(null);
   const [statement, setStatement] = useState<LedgerEntry[]>([]);
   const [messGroup, setMessGroup] = useState<MessGroupData | null>(null);
+  const [messes, setMesses] = useState<MessGroupData[]>([]);
+  const [wallets, setWallets] = useState<WalletBreakdown | null>(null);
   const [currentBalance, setCurrentBalance] = useState<number>(0);
   const [flashCampaign, setFlashCampaign] = useState<any | null>(null);
 
@@ -281,6 +295,8 @@ export default function CustomerStatementPage({
       setStatement(entries);
       setCurrentBalance(data.currentBalance ?? data.customer?.balance ?? data.customer?.currentBalance ?? 0);
       setMessGroup(data.messGroup || null);
+      setMesses(data.messes || (data.messGroup ? [data.messGroup] : []));
+      setWallets(data.wallets || null);
 
       // Auto-switch to MESS tab if requested by param, mess ID, or isMessStatement
       if (typeof window !== 'undefined') {
@@ -487,6 +503,8 @@ export default function CustomerStatementPage({
       amount: Number(item.amount || item.raw_amount || 0),
       type: item.type === 'SALE' || item.type === 'CHARGE' ? 'SALE' : 'PAYMENT',
       reference: item.reference || item.invoiceNo || 'Store Purchase',
+      walletName: (item as any).walletName || (item as any).messName,
+      messName: (item as any).messName,
       formattedDate: item.formattedDate || new Date(item.created_at || item.timestamp || Date.now()).toLocaleDateString(),
       formattedTime: item.formattedTime || new Date(item.created_at || item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
@@ -502,6 +520,7 @@ export default function CustomerStatementPage({
         currentBalance: isMess ? messGroup!.totalBalance : currentBalance,
         isMessStatement: isMess,
         messGroup: isMess ? (messGroup as any) : undefined,
+        wallets: !isMess ? (wallets as any) : undefined,
         dateRange: (startDate || endDate)
           ? `${startDate || 'Start'} to ${endDate || 'Today'}`
           : undefined
@@ -890,16 +909,69 @@ export default function CustomerStatementPage({
         </div>
 
         {/* ──────────────────────────────────────────────────────────────────────────
+            SUB-LEDGER WALLET ATTRIBUTION PANEL (MULTI-MESS / PERSONAL BREAKDOWN)
+            ────────────────────────────────────────────────────────────────────────── */}
+        {wallets && (wallets.messes?.length > 0 || wallets.personal > 0) && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                Wallet Breakdown (تفاصيل الحسابات والجروبات)
+              </span>
+              <span className="text-[10px] font-bold text-slate-400 font-mono">
+                {wallets.messes.length} Mess Group{wallets.messes.length > 1 ? 's' : ''} + Personal
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* Personal Tab */}
+              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                    <span>👤</span> Personal Tab (حساب شخصي)
+                  </p>
+                  <p className="text-[10px] text-slate-400">Direct top-ups & snacks</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-black font-mono text-emerald-400">
+                    BD {Number(wallets.personal || 0).toFixed(3)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Mess Groups */}
+              {wallets.messes.map((w) => (
+                <div key={w.id} className="bg-slate-950/60 border border-indigo-950/60 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-indigo-300 flex items-center gap-1">
+                      <span>🥘</span> {w.name}
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      Your Share • (Camp Total: BD {Number(w.groupTotal || 0).toFixed(3)} / {w.memberCount} members)
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black font-mono text-indigo-400">
+                      BD {Number(w.memberShare || 0).toFixed(3)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ──────────────────────────────────────────────────────────────────────────
             MESS GROUP TRANSPARENCY BREAKDOWN TAB SELECTOR (IF IN MESS)
             ────────────────────────────────────────────────────────────────────────── */}
-        {messGroup && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-1 flex items-center gap-1">
+        {(messes.length > 0 || messGroup) && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-1 flex items-center gap-1 overflow-x-auto">
             <button
               onClick={() => {
                 setActiveTab('PERSONAL');
                 setSelectedMemberFilter(null);
               }}
-              className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${
+              className={`flex-1 min-w-[120px] py-2 rounded-xl text-xs font-black transition-all ${
                 activeTab === 'PERSONAL'
                   ? 'bg-emerald-600 text-slate-950 shadow-md'
                   : 'text-slate-400 hover:text-white'
@@ -907,17 +979,23 @@ export default function CustomerStatementPage({
             >
               My Statement (حسابي)
             </button>
-            <button
-              onClick={() => setActiveTab('MESS')}
-              className={`flex-1 py-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                activeTab === 'MESS'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Mess Breakdown ({messGroup.group_name})</span>
-            </button>
+            {(messes.length > 0 ? messes : [messGroup!]).map((m) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  setMessGroup(m);
+                  setActiveTab('MESS');
+                }}
+                className={`flex-1 min-w-[140px] py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                  activeTab === 'MESS' && messGroup?.id === m.id
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span className="truncate">{m.group_name}</span>
+              </button>
+            ))}
           </div>
         )}
 
@@ -1393,9 +1471,20 @@ export default function CustomerStatementPage({
                           <p className="text-sm font-bold text-white truncate leading-tight">
                             {entry.reference || entry.invoiceNo || 'Store Purchase'}
                           </p>
+                          {((entry as any).messName || (entry as any).walletName) && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              🥘 {(entry as any).messName || (entry as any).walletName}
+                              {(entry as any).member_count ? ` (1/${(entry as any).member_count})` : ''}
+                            </span>
+                          )}
+                          {(entry as any).group_total && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                              Total: BD {Number((entry as any).group_total).toFixed(3)}
+                            </span>
+                          )}
                           {entry.memberName && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              👤 {entry.memberName}
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              👤 Shopper: {entry.memberName}
                             </span>
                           )}
                         </div>

@@ -1428,6 +1428,10 @@ export interface KhataStatementItem {
   formattedDate: string;
   formattedTime: string;
   runningBalance: number;
+  walletName?: string;
+  messName?: string;
+  reference?: string;
+  invoiceNo?: string;
 }
 
 export interface MessGroupMemberPrintInfo {
@@ -1447,6 +1451,20 @@ export interface MessGroupPrintInfo {
   members?: MessGroupMemberPrintInfo[];
 }
 
+export interface WalletBreakdownItem {
+  id?: string;
+  name: string;
+  memberShare: number;
+  groupTotal?: number;
+  memberCount?: number;
+  equalSplitShare?: number;
+}
+
+export interface MultiWalletPrintInfo {
+  personal: number;
+  messes: WalletBreakdownItem[];
+}
+
 export const printKhataStatement = async ({
   shopName = "ASKAR STORE - KHATA STATEMENT",
   customerName,
@@ -1456,7 +1474,8 @@ export const printKhataStatement = async ({
   currentBalance = 0,
   dateRange,
   messGroup = null,
-  isMessStatement = false
+  isMessStatement = false,
+  wallets = null
 }: {
   shopName?: string;
   customerName: string;
@@ -1467,6 +1486,7 @@ export const printKhataStatement = async ({
   dateRange?: string;
   messGroup?: MessGroupPrintInfo | null;
   isMessStatement?: boolean;
+  wallets?: MultiWalletPrintInfo | null;
 }) => {
   let fullText = "";
   try {
@@ -1512,6 +1532,22 @@ export const printKhataStatement = async ({
       if (customerCpr) fullText += `CPR: ${customerCpr}\n`;
       if (dateRange) fullText += `Period: ${dateRange}\n`;
       fullText += "================================\n";
+
+      if (wallets && wallets.messes && wallets.messes.length > 0) {
+        fullText += "ACCOUNT BREAKDOWN BY WALLET:\n";
+        fullText += "--------------------------------\n";
+        fullText += formatTwoCols("• PERSONAL TAB:", `BD ${Number(wallets.personal || 0).toFixed(3)}`) + "\n";
+        for (const w of wallets.messes) {
+          fullText += formatTwoCols(`• ${w.name}:`, `BD ${Number(w.memberShare || 0).toFixed(3)}`) + "\n";
+          if (w.groupTotal !== undefined && w.memberCount) {
+            fullText += `  (Camp Total: BD ${Number(w.groupTotal).toFixed(3)} / ${w.memberCount})\n`;
+          }
+        }
+        fullText += "--------------------------------\n";
+        fullText += formatTwoCols("TOTAL CONSOLIDATED DUE:", `BD ${Number(currentBalance).toFixed(3)}`) + "\n";
+        fullText += "================================\n";
+      }
+
       fullText += formatTwoCols("DATE / DESC", "BAL (BD)") + "\n";
       fullText += "--------------------------------\n";
     }
@@ -1519,16 +1555,17 @@ export const printKhataStatement = async ({
     // Print history (oldest to newest or top entries)
     const printList = [...statement].reverse();
     for (const item of printList) {
-      const typeStr = item.type === 'SALE' ? '+GROCERY' : '-PAYMENT';
+      const typeStr = item.type === 'SALE' ? '+GROCERY' : (item.type === 'CHARGE' ? '+CHARGE' : '-PAYMENT');
       const amtStr = item.amount > 0 ? `+${item.amount.toFixed(3)}` : `${item.amount.toFixed(3)}`;
-      fullText += `${item.formattedDate} ${item.formattedTime}\n`;
+      const tag = item.messName || item.walletName ? ` [${item.messName || item.walletName}]` : '';
+      fullText += `${item.formattedDate} ${item.formattedTime}${tag}\n`;
       fullText += formatTwoCols(`${typeStr} (${amtStr})`, `BD ${item.runningBalance.toFixed(3)}`) + "\n";
     }
 
     fullText += "================================\n";
     fullText += formatTwoCols(isMessStatement ? "TOTAL OUTSTANDING:" : "OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
     fullText += `Printed: ${new Date().toLocaleString()}\n`;
-    fullText += isMessStatement ? "Camp Room Shared Khata Statement\n" : "Official Store Account Ledger\n";
+    fullText += isMessStatement ? "Camp Room Shared Khata Statement\n" : (wallets && wallets.messes?.length ? "Unified Multi-Mess Khata Statement\n" : "Official Store Account Ledger\n");
     fullText += "\n\n\n";
 
     // Execute a single IPC bridge call

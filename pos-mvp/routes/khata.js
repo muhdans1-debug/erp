@@ -241,8 +241,18 @@ const fetchMessGroupDetails = async (messId) => {
     group = gRes.rows[0] || null;
     if (group) {
       const mRes = await db.execute({
-        sql: `SELECT id, name, phone, cpr, cardUid, nfcCardId, batchNo FROM Customer WHERE mess_id = ?`,
-        args: [group.id]
+        sql: `SELECT DISTINCT c.id, c.name, c.phone, c.cpr, c.cardUid, c.nfcCardId, c.batchNo,
+                              COALESCE(mm.role, 'MEMBER') as role,
+                              COALESCE(mm.is_active, 1) as is_active
+              FROM Customer c
+              JOIN MessMember mm ON c.id = mm.customer_id
+              WHERE mm.mess_id = ?
+              UNION
+              SELECT c.id, c.name, c.phone, c.cpr, c.cardUid, c.nfcCardId, c.batchNo,
+                     'MEMBER' as role, 1 as is_active
+              FROM Customer c
+              WHERE c.mess_id = ? AND NOT EXISTS (SELECT 1 FROM MessMember WHERE mess_id = ?)`,
+        args: [group.id, group.id, group.id]
       });
       memberRows = mRes.rows || [];
     }
@@ -511,20 +521,44 @@ const handleGetCustomerStatement = async (request, reply) => {
       };
     }
 
-    // Fetch mess group details if customer belongs to a shared mess
-    let messId = customer.mess_id;
-    if (!messId) {
-      try {
-        const tRes = await db.execute({ sql: 'SELECT mess_id FROM Customer WHERE id = ?', args: [id] });
-        if (tRes.rows[0]?.mess_id) messId = tRes.rows[0].mess_id;
-      } catch { }
+    // Fetch all mess groups this customer belongs to
+    let customerMesses = [];
+    try {
+      const mmRes = await db.execute({
+        sql: `SELECT DISTINCT mg.id, mg.group_name 
+              FROM MessMember mm 
+              JOIN MessGroup mg ON mm.mess_id = mg.id 
+              WHERE mm.customer_id = ?
+              UNION
+              SELECT mg.id, mg.group_name 
+              FROM Customer c 
+              JOIN MessGroup mg ON c.mess_id = mg.id 
+              WHERE c.id = ?`,
+        args: [id, id]
+      });
+      customerMesses = mmRes.rows || [];
+    } catch (e) {
+      console.warn('Error fetching customer messes in statement:', e.message);
     }
 
-    if (messId) {
+    const detailedMesses = [];
+    for (const m of customerMesses) {
       try {
-        messGroup = await fetchMessGroupDetails(messId);
+        const details = await fetchMessGroupDetails(m.id);
+        if (details) detailedMesses.push(details);
       } catch (err) {
-        console.warn('Error fetching messGroup in statement:', err.message);
+        console.warn(`Error fetching mess details for ${m.id}:`, err.message);
+      }
+    }
+
+    if (detailedMesses.length > 0) {
+      messGroup = detailedMesses[0];
+    } else if (customer.mess_id) {
+      try {
+        messGroup = await fetchMessGroupDetails(customer.mess_id);
+        if (messGroup) detailedMesses.push(messGroup);
+      } catch (err) {
+        console.warn('Error fetching fallback messGroup in statement:', err.message);
       }
     }
 
@@ -585,6 +619,10 @@ const handleGetCustomerStatement = async (request, reply) => {
       const displayAmount = Math.abs(numAmount);
       const ref = entry.reference || (txType === 'OPENING_BALANCE' ? 'Opening Balance (Previous Physical Book)' : txType === 'CHARGE' ? (entry.id ? `INV-${entry.id.slice(0, 6)}` : 'Store Purchase') : (txType === 'WRITE_OFF' ? 'Bad Debt Write-Off' : 'Cash Payment'));
 
+      const matchedMess = detailedMesses.find(dm => dm.id === entry.mess_id);
+      const messName = matchedMess ? matchedMess.group_name : (entry.mess_id ? 'Room Mess' : null);
+      const walletName = messName || 'Personal Tab';
+
       return {
         ...entry,
         id: entry.id,
@@ -600,12 +638,45 @@ const handleGetCustomerStatement = async (request, reply) => {
         running_balance: Number(runningBalance.toFixed(3)),
         runningBalance: Number(runningBalance.toFixed(3)),
         reference: ref,
+        mess_id: entry.mess_id || null,
+        messName: messName,
+        walletName: walletName,
+        group_total: entry.group_total ? Number(entry.group_total) : null,
+        member_count: entry.member_count ? Number(entry.member_count) : null,
         created_at: d.toISOString(),
         timestamp: d.toISOString(),
         formattedDate: d.toLocaleDateString(),
         formattedTime: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
     });
+
+    // Sub-wallet balances aggregation
+    let personalBalance = 0;
+    const messBalances = {};
+    for (const dm of detailedMesses) {
+      messBalances[dm.id] = 0;
+    }
+
+    for (const entry of history) {
+      const amt = Number(entry.amount || 0);
+      if (entry.mess_id && messBalances[entry.mess_id] !== undefined) {
+        messBalances[entry.mess_id] += amt;
+      } else if (!entry.mess_id) {
+        personalBalance += amt;
+      }
+    }
+
+    const wallets = {
+      personal: Number(personalBalance.toFixed(3)),
+      messes: detailedMesses.map(dm => ({
+        id: dm.id,
+        name: dm.group_name,
+        memberShare: Number((messBalances[dm.id] || 0).toFixed(3)),
+        groupTotal: Number(dm.totalBalance || 0),
+        memberCount: dm.memberCount || dm.members?.length || 1,
+        equalSplitShare: Number((dm.equalSplitShare || (dm.totalBalance / Math.max(1, dm.memberCount || 1))).toFixed(3))
+      }))
+    };
 
     // Newest transactions at the top
     const statement = [...enriched].reverse();
@@ -621,9 +692,14 @@ const handleGetCustomerStatement = async (request, reply) => {
         messName: messGroup?.group_name || enrichedCust?.messName || null,
         mess_name: messGroup?.group_name || enrichedCust?.mess_name || null,
         currentBalance: enrichedCust?.currentBalance !== undefined ? enrichedCust.currentBalance : Math.max(0, Number(runningBalance.toFixed(3))),
+        isMultiMess: detailedMesses.length > 1,
+        messes: detailedMesses.map(dm => ({ id: dm.id, name: dm.group_name }))
       },
       currentBalance: enrichedCust?.currentBalance !== undefined ? enrichedCust.currentBalance : Math.max(0, Number(runningBalance.toFixed(3))),
       messGroup,
+      messes: detailedMesses,
+      wallets,
+      isMultiMess: detailedMesses.length > 1
     };
   } catch (error) {
     fastify.log.error(error);

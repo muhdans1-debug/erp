@@ -97,11 +97,17 @@ CREATE TABLE IF NOT EXISTS "KhataLedger" (
   "syncStatus" TEXT NOT NULL DEFAULT 'PENDING',
   "timestamp" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   "created_at" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY ("customerId") REFERENCES "Customer" ("id")
+  "mess_id" TEXT,
+  "sale_id" TEXT,
+  "group_total" REAL,
+  "member_count" INTEGER,
+  FOREIGN KEY ("customerId") REFERENCES "Customer" ("id"),
+  FOREIGN KEY ("mess_id") REFERENCES "MessGroup" ("id")
 );
 
 CREATE INDEX IF NOT EXISTS "idx_ledger_customer" ON "KhataLedger" ("customerId");
 CREATE INDEX IF NOT EXISTS "idx_khataledger_customer" ON "KhataLedger" ("customerId");
+CREATE INDEX IF NOT EXISTS "idx_khataledger_mess" ON "KhataLedger" ("mess_id");
 
 -- 4. MESS GROUPS & NFC CARDS
 CREATE TABLE IF NOT EXISTS "MessGroup" (
@@ -110,6 +116,22 @@ CREATE TABLE IF NOT EXISTS "MessGroup" (
   "group_name" TEXT NOT NULL,
   "createdAt" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+CREATE TABLE IF NOT EXISTS "MessMember" (
+  "id" TEXT PRIMARY KEY,
+  "tenantId" TEXT NOT NULL DEFAULT 'tenant_1',
+  "mess_id" TEXT NOT NULL,
+  "customer_id" TEXT NOT NULL,
+  "role" TEXT NOT NULL DEFAULT 'MEMBER',
+  "is_active" INTEGER NOT NULL DEFAULT 1,
+  "joined_at" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY ("mess_id") REFERENCES "MessGroup" ("id") ON DELETE CASCADE,
+  FOREIGN KEY ("customer_id") REFERENCES "Customer" ("id") ON DELETE CASCADE,
+  UNIQUE("mess_id", "customer_id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_messmember_cust" ON "MessMember" ("customer_id");
+CREATE INDEX IF NOT EXISTS "idx_messmember_mess" ON "MessMember" ("mess_id");
 
 CREATE TABLE IF NOT EXISTS "NfcCard" (
   "tag_id" TEXT PRIMARY KEY,

@@ -4041,28 +4041,44 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     <span>🚫 KHATA FROZEN: In-store credit locked by customer</span>
                   </div>
                 ) : customer.hasMessGroup && customer.isDual ? (
-                  // DUAL-WALLET BUTTONS: Cashier chooses Personal Khata vs Shared Mess Split
-                  <div className="grid grid-cols-2 gap-2">
+                  // MULTI-MESS or DUAL-WALLET BUTTONS: Cashier chooses Personal Khata vs Specific Shared Mess Split
+                  <div className={`grid gap-2 ${customer.messes && customer.messes.length > 1 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'}`}>
                     <button
                       type="button"
                       onClick={() => processCheckout('CREDIT_PERSONAL')}
                       disabled={cart.length === 0}
-                      className="py-2.5 px-1 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
-                      title={`Charge entirely to ${customer.name}'s Personal Khata (Balance: BD ${(customer.personalBalance ?? customer.currentBalance).toFixed(3)})`}
+                      className="py-2.5 px-2 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
+                      title={`Charge entirely to ${customer.name}'s Personal Khata (Balance: BD ${(customer.personalBalance ?? customer.currentBalance ?? 0).toFixed(3)})`}
                     >
                       <span className="text-[10px] opacity-90 font-normal">Personal [F1]</span>
                       <span className="truncate w-full text-center">👤 {customer.name}</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => processCheckout('CREDIT_MESS')}
-                      disabled={cart.length === 0}
-                      className="py-2.5 px-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
-                      title={`Split equally across ${customer.group_name} (${customer.members?.length || 0} members) with ${customer.name} as shopper`}
-                    >
-                      <span className="text-[10px] opacity-90 font-normal">Split Mess [F3]</span>
-                      <span className="truncate w-full text-center">👥 {customer.group_name || 'Mess'}</span>
-                    </button>
+                    {((customer.messes && customer.messes.length > 0) 
+                      ? customer.messes 
+                      : [customer.messGroup || { id: customer.mess_id, group_name: customer.group_name, members: customer.members, memberCount: customer.memberCount }]
+                    ).map((mg: any, idx: number) => (
+                      <button
+                        key={mg.id || idx}
+                        type="button"
+                        onClick={() => {
+                          setCustomer((prev: any) => ({
+                            ...prev,
+                            mess_id: mg.id,
+                            group_name: mg.group_name,
+                            messGroup: mg,
+                            members: mg.members,
+                            memberCount: mg.memberCount || mg.members?.length || 0
+                          }));
+                          processCheckout('CREDIT_MESS');
+                        }}
+                        disabled={cart.length === 0}
+                        className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
+                        title={`Split equally across ${mg.group_name} (${mg.members?.length || mg.memberCount || 0} members) with ${customer.name} as shopper`}
+                      >
+                        <span className="text-[10px] opacity-90 font-normal">Split Mess</span>
+                        <span className="truncate w-full text-center">👥 {mg.group_name}</span>
+                      </button>
+                    ))}
                   </div>
                 ) : (
                   // SINGLE WALLET (Pure Mess or Pure Personal)

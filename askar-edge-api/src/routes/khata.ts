@@ -523,8 +523,18 @@ const fetchMessGroupDetails = async (db: any, messId: string) => {
     group = gRes.rows?.[0] || null;
     if (group) {
       const mRes = await db.execute({
-        sql: `SELECT id, name, phone, cpr, balance, nfcCardId, mess_id FROM Customer WHERE mess_id = ?`,
-        args: [group.id]
+        sql: `SELECT DISTINCT c.id, c.name, c.phone, c.cpr, c.balance, c.nfcCardId,
+                              COALESCE(mm.role, 'MEMBER') as role,
+                              COALESCE(mm.is_active, 1) as is_active
+              FROM Customer c
+              JOIN MessMember mm ON c.id = mm.customer_id
+              WHERE mm.mess_id = ?
+              UNION
+              SELECT c.id, c.name, c.phone, c.cpr, c.balance, c.nfcCardId,
+                     'MEMBER' as role, 1 as is_active
+              FROM Customer c
+              WHERE c.mess_id = ? AND NOT EXISTS (SELECT 1 FROM MessMember WHERE mess_id = ?)`,
+        args: [group.id, group.id, group.id]
       });
       memberRows = mRes.rows || [];
     }
@@ -695,12 +705,44 @@ const handleCustomerStatement = async (c: any) => {
 
     const realId = customer.id;
 
-    // Fetch Mess Group details if customer is part of a mess
-    if (customer.mess_id) {
+    // Fetch all Mess Groups customer belongs to
+    let customerMesses: any[] = [];
+    try {
+      const mmRes = await db.execute({
+        sql: `SELECT DISTINCT mg.id, mg.group_name 
+              FROM MessMember mm 
+              JOIN MessGroup mg ON mm.mess_id = mg.id 
+              WHERE mm.customer_id = ?
+              UNION
+              SELECT mg.id, mg.group_name 
+              FROM Customer c 
+              JOIN MessGroup mg ON c.mess_id = mg.id 
+              WHERE c.id = ?`,
+        args: [realId, realId]
+      });
+      customerMesses = mmRes.rows ? [...mmRes.rows] : [];
+    } catch (e: any) {
+      console.warn('Error fetching customer messes on edge:', e?.message);
+    }
+
+    const detailedMesses: any[] = [];
+    for (const m of customerMesses) {
+      try {
+        const details = await fetchMessGroupDetails(db, m.id);
+        if (details) detailedMesses.push(details);
+      } catch (err: any) {
+        console.warn(`Error fetching mess details on edge for ${m.id}:`, err?.message);
+      }
+    }
+
+    if (detailedMesses.length > 0) {
+      messGroup = detailedMesses[0];
+    } else if (customer.mess_id) {
       try {
         messGroup = await fetchMessGroupDetails(db, customer.mess_id);
+        if (messGroup) detailedMesses.push(messGroup);
       } catch (err: any) {
-        console.warn('Error fetching customer messGroup on edge:', err?.message);
+        console.warn('Error fetching customer fallback messGroup on edge:', err?.message);
       }
     }
 
@@ -763,6 +805,10 @@ const handleCustomerStatement = async (c: any) => {
       const displayAmount = Math.abs(numAmount);
       const ref = entry.reference || (txType === 'OPENING_BALANCE' ? 'Opening Balance (Previous Physical Book)' : txType === 'CHARGE' ? (entry.id ? `INV-${String(entry.id).slice(0, 6)}` : 'Store Purchase') : (txType === 'WRITE_OFF' ? 'Bad Debt Write-Off' : 'Cash Payment'));
 
+      const matchedMess = detailedMesses.find((dm: any) => dm.id === entry.mess_id);
+      const messName = matchedMess ? matchedMess.group_name : (entry.mess_id ? 'Room Mess' : null);
+      const walletName = messName || 'Personal Tab';
+
       return {
         ...entry,
         id: entry.id,
@@ -780,11 +826,44 @@ const handleCustomerStatement = async (c: any) => {
         running_balance: Number(runningBalance.toFixed(3)),
         runningBalance: Number(runningBalance.toFixed(3)),
         reference: ref,
+        mess_id: entry.mess_id || null,
+        messName: messName,
+        walletName: walletName,
+        group_total: entry.group_total ? Number(entry.group_total) : null,
+        member_count: entry.member_count ? Number(entry.member_count) : null,
         storeName: entry.storeName || 'Askar Supermarket - Main Store',
         formattedDate: d.toLocaleDateString('en-GB'),
         formattedTime: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
     });
+
+    // Sub-wallet balances aggregation
+    let personalBalance = 0;
+    const messBalances: Record<string, number> = {};
+    for (const dm of detailedMesses) {
+      messBalances[dm.id] = 0;
+    }
+
+    for (const entry of history) {
+      const amt = Number(entry.amount || 0);
+      if (entry.mess_id && messBalances[entry.mess_id] !== undefined) {
+        messBalances[entry.mess_id] += amt;
+      } else if (!entry.mess_id) {
+        personalBalance += amt;
+      }
+    }
+
+    const wallets = {
+      personal: Number(personalBalance.toFixed(3)),
+      messes: detailedMesses.map((dm: any) => ({
+        id: dm.id,
+        name: dm.group_name,
+        memberShare: Number((messBalances[dm.id] || 0).toFixed(3)),
+        groupTotal: Number(dm.totalBalance || 0),
+        memberCount: dm.memberCount || dm.members?.length || 1,
+        equalSplitShare: Number((dm.equalSplitShare || (dm.totalBalance / Math.max(1, dm.memberCount || 1))).toFixed(3))
+      }))
+    };
 
     const statement = [...enriched].reverse();
     const currentBalance = customer.balance !== null && customer.balance !== undefined 
@@ -798,14 +877,19 @@ const handleCustomerStatement = async (c: any) => {
         messName: messGroup?.group_name || null,
         mess_name: messGroup?.group_name || null,
         currentBalance,
-        balance: currentBalance
+        balance: currentBalance,
+        isMultiMess: detailedMesses.length > 1,
+        messes: detailedMesses.map((dm: any) => ({ id: dm.id, name: dm.group_name }))
       },
       currentBalance,
       statement,
       sales: statement,
       entries: statement,
       count: statement.length,
-      messGroup
+      messGroup,
+      messes: detailedMesses,
+      wallets,
+      isMultiMess: detailedMesses.length > 1
     });
   } catch (err: any) {
     return c.json({ error: 'Failed to fetch statement', details: err?.message }, 500);
@@ -1342,7 +1426,12 @@ khataRouter.post('/nfc/mess-groups', requirePosOrManagerAuth, async (c) => {
 
     for (const mId of memberIds) {
       statements.push({
-        sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+        sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+              VALUES (?, ?, ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+        args: [`mm_${Date.now()}_${mId.slice(-4)}`, tenantId, id, mId]
+      });
+      statements.push({
+        sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
         args: [id, mId]
       });
     }
@@ -1396,15 +1485,20 @@ khataRouter.put('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) => {
     }
 
     if (memberIds !== undefined) {
-      // Clear previous members
+      // Clear previous members from MessMember for this group
       statements.push({
-        sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`,
+        sql: `DELETE FROM MessMember WHERE mess_id = ?`,
         args: [groupId]
       });
-      // Set new members
+      // Set new members in MessMember
       for (const mId of memberIds) {
         statements.push({
-          sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+          sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+          args: [`mm_${Date.now()}_${mId.slice(-4)}`, groupId, mId]
+        });
+        statements.push({
+          sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
           args: [groupId, mId]
         });
       }
@@ -1453,6 +1547,10 @@ khataRouter.delete('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) =>
 
   try {
     await db.batch([
+      {
+        sql: `DELETE FROM MessMember WHERE mess_id = ?`,
+        args: [groupId]
+      },
       {
         sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`,
         args: [groupId]

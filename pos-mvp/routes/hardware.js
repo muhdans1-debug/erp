@@ -61,40 +61,49 @@ const resolveNfcTagDetails = async (uid) => {
     }
   }
 
-  // Look up mess_id directly from LibSQL
-  let customerMessId = null;
+  // Look up all messes this customer belongs to (from MessMember and legacy mess_id)
+  let customerMesses = [];
   if (customer) {
     try {
-      const cRes = await db.execute({ sql: 'SELECT mess_id FROM Customer WHERE id = ? LIMIT 1', args: [customer.id] });
-      if (cRes.rows && cRes.rows.length > 0 && cRes.rows[0].mess_id) {
-        customerMessId = cRes.rows[0].mess_id;
+      const mRes = await db.execute({
+        sql: `SELECT DISTINCT g.id, g.group_name 
+              FROM MessMember mm
+              JOIN MessGroup g ON mm.mess_id = g.id
+              WHERE mm.customer_id = ? AND mm.is_active = 1
+              UNION
+              SELECT g.id, g.group_name
+              FROM Customer c
+              JOIN MessGroup g ON c.mess_id = g.id
+              WHERE c.id = ?`,
+        args: [customer.id, customer.id]
+      });
+      for (const row of mRes.rows || []) {
+        const d = await fetchMessGroupDetails(row.id);
+        if (d) customerMesses.push(d);
       }
     } catch { }
   }
 
-  // 4. Determine mess group ID (from customerMessId OR nfcCard.mess_id)
-  const messId = customerMessId || nfcCard?.mess_id;
-  let messDetails = null;
-  if (messId) {
-    messDetails = await fetchMessGroupDetails(messId);
-  }
+  // 4. Determine mess group ID (from customerMesses OR nfcCard.mess_id)
+  const primaryMess = customerMesses[0] || (nfcCard?.mess_id ? await fetchMessGroupDetails(nfcCard.mess_id) : null);
 
-  // CASE A: DUAL-WALLET (Customer identified AND belongs to a Mess Group)
-  // One card holds both their Personal Khata and their shared Mess Group!
-  if (customer && messDetails) {
+  // CASE A: DUAL-WALLET or MULTI-MESS (Customer identified AND belongs to 1 or more Mess Groups)
+  if (customer && (customerMesses.length > 0 || primaryMess)) {
     return {
       ...customer,
       personalBalance: customer.currentBalance,
       hasMessGroup: true,
       isDual: true,
+      isMultiMess: customerMesses.length > 1,
+      messes: customerMesses,
       isMess: false, // Default to personal or ready to choose
-      card_type: 'DUAL',
+      card_type: customerMesses.length > 1 ? 'MULTI_MESS' : 'DUAL',
       tag_id: cleanUid,
-      mess_id: messDetails.id,
-      group_name: messDetails.group_name,
-      messGroup: messDetails,
-      members: messDetails.members,
-      memberCount: messDetails.memberCount,
+      mess_id: primaryMess?.id,
+      group_name: primaryMess?.group_name,
+      messGroup: primaryMess,
+      members: primaryMess?.members,
+      memberCount: primaryMess?.memberCount,
       shopper: {
         id: customer.id,
         name: customer.name
@@ -103,12 +112,14 @@ const resolveNfcTagDetails = async (uid) => {
   }
 
   // CASE B: Pure Personal Customer (Not linked to any Mess Group)
-  if (customer && !messDetails) {
+  if (customer && customerMesses.length === 0 && !primaryMess) {
     return {
       ...customer,
       personalBalance: customer.currentBalance,
       hasMessGroup: false,
       isDual: false,
+      isMultiMess: false,
+      messes: [],
       isMess: false,
       card_type: 'PERSONAL',
       tag_id: cleanUid
@@ -116,20 +127,22 @@ const resolveNfcTagDetails = async (uid) => {
   }
 
   // CASE C: Pure Mess Group Card (Generic group card, no specific individual assigned)
-  if (!customer && messDetails) {
+  if (!customer && primaryMess) {
     return {
       isMess: true,
       hasMessGroup: true,
       isDual: false,
+      isMultiMess: false,
+      messes: [primaryMess],
       card_type: 'MESS',
       tag_id: cleanUid,
-      mess_id: messDetails.id,
-      group_name: messDetails.group_name,
-      id: `mess_${messDetails.id}`,
-      name: `👥 ${messDetails.group_name}`,
-      members: messDetails.members,
-      memberCount: messDetails.memberCount,
-      currentBalance: messDetails.totalBalance
+      mess_id: primaryMess.id,
+      group_name: primaryMess.group_name,
+      id: `mess_${primaryMess.id}`,
+      name: `👥 ${primaryMess.group_name}`,
+      members: primaryMess.members,
+      memberCount: primaryMess.memberCount,
+      currentBalance: primaryMess.totalBalance
     };
   }
 
@@ -828,8 +841,15 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
       });
       if (Array.isArray(member_ids)) {
         for (const mId of member_ids) {
+          // 1. Insert into MessMember junction table
           await db.execute({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+            sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                  VALUES (?, 'tenant_1', ?, ?, 'MEMBER', 1, datetime('now'))`,
+            args: ['mm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), messId, mId]
+          });
+          // 2. Backward compatibility fallback
+          await db.execute({
+            sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
             args: [messId, mId]
           });
         }
@@ -872,13 +892,20 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
       }
 
       if (Array.isArray(member_ids)) {
+        // Synchronize MessMember junction roster
         await db.execute({
-          sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`,
+          sql: `DELETE FROM MessMember WHERE mess_id = ?`,
           args: [id]
         });
         for (const mId of member_ids) {
           await db.execute({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+            sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                  VALUES (?, 'tenant_1', ?, ?, 'MEMBER', 1, datetime('now'))`,
+            args: ['mm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), id, mId]
+          });
+          // Backward compatibility
+          await db.execute({
+            sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
             args: [id, mId]
           });
         }
@@ -919,6 +946,7 @@ fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
     }
 
     try {
+      await db.execute({ sql: `DELETE FROM MessMember WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM NfcCard WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM MessGroup WHERE id = ?`, args: [id] });
@@ -929,6 +957,28 @@ fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
     fastify.log.error(err);
     return reply.status(500).send({ success: false, error: err.message });
   }
+});
+
+// GET /api/customers/:id/messes - Returns all mess groups a customer is currently enrolled in
+fastify.get('/api/customers/:id/messes', async (request, reply) => {
+  try {
+    const { id } = request.params;
+    const res = await db.execute({
+      sql: `SELECT DISTINCT g.id, g.group_name, COALESCE(mm.role, 'MEMBER') as role, 
+                            COALESCE(mm.is_active, 1) as is_active, 
+                            COALESCE(mm.joined_at, g.createdAt) as joined_at,
+                            (SELECT COUNT(*) FROM MessMember WHERE mess_id = g.id AND is_active = 1) as activeMemberCount
+            FROM MessGroup g
+            LEFT JOIN MessMember mm ON g.id = mm.mess_id AND mm.customer_id = ?
+            WHERE mm.customer_id = ? OR g.id IN (SELECT mess_id FROM Customer WHERE id = ?)
+            ORDER BY g.group_name ASC`,
+      args: [id, id, id]
+    });
+    return { success: true, messes: res.rows || [] };
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
 });
 
 

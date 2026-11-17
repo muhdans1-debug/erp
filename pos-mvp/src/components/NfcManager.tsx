@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   CreditCard, Users, User, Search, RefreshCw, CheckCircle, AlertCircle, 
   Trash2, Copy, Check, ArrowUpDown, Plus, X, Radio, 
   ExternalLink, Banknote, FileText
 } from 'lucide-react';
-import { getApiBaseUrl } from '../utils/apiConfig';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 interface NfcCardItem {
   tag_id: string;
@@ -41,6 +41,10 @@ export default function NfcManager({
 }: NfcManagerProps) {
   // Navigation Tab
   const [activeTab, setActiveTab] = useState<'CARDS' | 'MESS_GROUPS'>(initialTab);
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Standard POS Authorization Headers
   const getHeaders = (hasBody = false) => {
@@ -149,11 +153,41 @@ export default function NfcManager({
     setTimeout(() => setNotificationMsg(null), 3500);
   };
 
+  // Resilient Multi-Candidate API Fetch Helper (prioritizes working Cloudflare Edge 24/7)
+  const resilientApiFetch = useCallback(async (path: string, options: RequestInit = {}): Promise<Response> => {
+    const candidates = [
+      apiBase,
+      DEFAULT_EDGE_API_URL,
+      getApiBaseUrl(),
+      'https://askar-edge-api.layali-askar-pos.workers.dev'
+    ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+    for (const base of candidates) {
+      const cleanBase = base.trim().replace(/\/$/, '');
+      const cleanPath = path.startsWith('/') ? path : `/${path}`;
+      const url = `${cleanBase}${cleanPath}`;
+      try {
+        const isLocal = cleanBase.includes('192.168.') || cleanBase.includes('10.') || cleanBase.includes('localhost') || cleanBase.includes('127.0.0.1');
+        const timeoutMs = isLocal ? 1500 : 4000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(url, {
+          ...options,
+          signal: options.signal || controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (res.ok) return res;
+      } catch {}
+    }
+    const primaryUrl = `${(apiBase || DEFAULT_EDGE_API_URL).replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+    return fetch(primaryUrl, options);
+  }, [apiBase]);
+
   // 1. Fetch Enrolled Cards & Metadata
-  const loadCardsData = async () => {
+  const loadCardsData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${apiBase}/api/nfc/cards?t=${Date.now()}`, {
+      const res = await resilientApiFetch(`/api/nfc/cards?t=${Date.now()}`, {
         headers: getHeaders()
       });
       if (res.ok) {
@@ -161,7 +195,11 @@ export default function NfcManager({
         if (data && data.success && Array.isArray(data.cards)) {
           setCards(data.cards);
           if (data.stats) {
-            setStats(data.stats);
+            const accurateMessCards = data.cards.filter((c: any) => c.card_type === 'MESS' || c.card_type === 'DUAL' || Boolean(c.mess_id)).length;
+            setStats({
+              ...data.stats,
+              messCards: Math.max(data.stats.messCards || 0, accurateMessCards)
+            });
           }
         }
       }
@@ -170,12 +208,12 @@ export default function NfcManager({
     } finally {
       setLoading(false);
     }
-  };
+  }, [resilientApiFetch]);
 
   // 2. Fetch Customer Directory for Assignment
-  const loadCustomers = async () => {
+  const loadCustomers = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/khata/ledger?sort=alpha`, {
+      const res = await resilientApiFetch('/khata/ledger?sort=alpha', {
         headers: getHeaders()
       });
       if (res.ok) {
@@ -184,26 +222,51 @@ export default function NfcManager({
         else if (data?.customers) setCustomersList(data.customers);
       }
     } catch {}
-  };
+  }, [resilientApiFetch]);
 
   // 3. Fetch Mess Groups
-  const loadMessGroups = async () => {
+  const loadMessGroups = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/api/nfc/mess-groups`, {
+      const res = await resilientApiFetch('/api/nfc/mess-groups', {
         headers: getHeaders()
       });
       if (res.ok) {
         const data = await res.json();
-        if (data?.messGroups) setMessGroupsList(data.messGroups);
+        const rawGroups = data?.messGroups || data?.groups || (Array.isArray(data) ? data : []);
+        const normalized = rawGroups.map((g: any) => ({
+          ...g,
+          group_name: g.group_name || g.name || 'Unnamed Mess Group',
+          assignedCard: g.assignedCard || g.cardTag || g.tag_id || null,
+          cardTag: g.cardTag || g.assignedCard || g.tag_id || null,
+          members: Array.isArray(g.members) ? g.members : [],
+          memberCount: g.memberCount ?? (Array.isArray(g.members) ? g.members.length : 0),
+          totalBalance: Number(g.totalBalance ?? g.balance ?? 0)
+        }));
+        setMessGroupsList(normalized);
       }
-    } catch {}
-  };
+    } catch (err: any) {
+      console.warn('Failed to fetch mess groups:', err);
+    }
+  }, [resilientApiFetch]);
+
+  // Unified Refresh All
+  const handleRefreshAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      await Promise.all([loadCardsData(), loadCustomers(), loadMessGroups()]);
+      showNotification('success', 'NFC Directory & Mess Groups refreshed!');
+    } catch {
+      showNotification('error', 'Failed to refresh directory');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadCardsData, loadCustomers, loadMessGroups]);
 
   useEffect(() => {
     loadCardsData();
     loadCustomers();
     loadMessGroups();
-  }, [apiBase]);
+  }, [loadCardsData, loadCustomers, loadMessGroups]);
 
   // 4. WebSocket & HTTP Bridge Listener for Sunmi Hardware NFC Taps
   useEffect(() => {
@@ -240,7 +303,7 @@ export default function NfcManager({
 
       // Lookup details
       try {
-        const res = await fetch(`${apiBase}/api/customers/nfc/${encodeURIComponent(cleanId)}`, {
+        const res = await resilientApiFetch(`/api/customers/nfc/${encodeURIComponent(cleanId)}`, {
           headers: getHeaders()
         });
         if (res.ok) {
@@ -354,7 +417,7 @@ export default function NfcManager({
     const pollRelay = async () => {
       if (scanStatusRef.current !== 'WAITING' || (typeof document !== 'undefined' && document.hidden)) return;
       try {
-        const res = await fetch(`${apiBase}/api/nfc/latest`, {
+        const res = await resilientApiFetch('/api/nfc/latest', {
           headers: getHeaders(),
           signal: AbortSignal.timeout(2000)
         });
@@ -369,7 +432,7 @@ export default function NfcManager({
             await handleHardwareTap(tag, cust);
 
             // Consume and clear on Cloud Edge so it is received once and never loops
-            fetch(`${apiBase}/api/nfc/latest/clear`, {
+            resilientApiFetch('/api/nfc/latest/clear', {
               method: 'POST',
               headers: getHeaders(true)
             }).catch(() => {});
@@ -387,13 +450,13 @@ export default function NfcManager({
       ws?.close();
       wsRef.current = null;
     };
-  }, [apiBase, cards]);
+  }, [apiBase, cards, resilientApiFetch]);
 
   // Handle Manual Simulator
   const handleSimulateTap = () => {
     if (!simulatedTagInput.trim()) return;
     const clean = simulatedTagInput.trim().toUpperCase();
-    fetch(`${apiBase}/api/nfc/relay`, {
+    resilientApiFetch('/api/nfc/relay', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
       body: JSON.stringify({ tag_id: clean, terminalId: 'Laptop Simulator' })
@@ -429,7 +492,7 @@ export default function NfcManager({
             return;
           }
 
-          const createRes = await fetch(`${apiBase}/api/customers`, {
+          const createRes = await resilientApiFetch('/api/customers', {
             method: 'POST',
             headers: getHeaders(true),
             body: JSON.stringify({
@@ -456,7 +519,7 @@ export default function NfcManager({
           return;
         }
 
-        const assignRes = await fetch(`${apiBase}/api/nfc/assign`, {
+        const assignRes = await resilientApiFetch('/api/nfc/assign', {
           method: 'POST',
           headers: getHeaders(true),
           body: JSON.stringify({
@@ -488,7 +551,7 @@ export default function NfcManager({
           return;
         }
 
-        const assignRes = await fetch(`${apiBase}/api/nfc/assign`, {
+        const assignRes = await resilientApiFetch('/api/nfc/assign', {
           method: 'POST',
           headers: getHeaders(true),
           body: JSON.stringify({
@@ -530,7 +593,7 @@ export default function NfcManager({
     } else {
       setSelectedMessGroupForEdit(group);
       setEditGroupName(group.group_name || '');
-      setEditGroupTagId(group.assignedCard || '');
+      setEditGroupTagId(group.assignedCard || group.cardTag || '');
       setEditGroupMembers(Array.isArray(group.members) ? group.members.map((m: any) => m.id) : []);
     }
     setMemberSearchQuery('');
@@ -547,12 +610,12 @@ export default function NfcManager({
     setActionLoading(true);
     try {
       const isNew = selectedMessGroupForEdit.id === 'new';
-      const url = isNew 
-        ? `${apiBase}/api/nfc/mess-groups`
-        : `${apiBase}/api/nfc/mess-groups/${selectedMessGroupForEdit.id}`;
+      const path = isNew 
+        ? '/api/nfc/mess-groups'
+        : `/api/nfc/mess-groups/${selectedMessGroupForEdit.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
-      const res = await fetch(url, {
+      const res = await resilientApiFetch(path, {
         method,
         headers: getHeaders(true),
         body: JSON.stringify({
@@ -587,7 +650,7 @@ export default function NfcManager({
     }
     setActionLoading(true);
     try {
-      const res = await fetch(`${apiBase}/api/nfc/mess-groups/${groupId}`, {
+      const res = await resilientApiFetch(`/api/nfc/mess-groups/${groupId}`, {
         method: 'DELETE',
         headers: getHeaders()
       });
@@ -613,7 +676,7 @@ export default function NfcManager({
     }
 
     try {
-      const res = await fetch(`${apiBase}/api/nfc/unlink`, {
+      const res = await resilientApiFetch('/api/nfc/unlink', {
         method: 'POST',
         headers: getHeaders(true),
         body: JSON.stringify({ tag_id: tagId })
@@ -668,7 +731,7 @@ export default function NfcManager({
     if (typeFilter === 'PERSONAL') {
       result = result.filter(c => c.card_type === 'PERSONAL');
     } else if (typeFilter === 'MESS') {
-      result = result.filter(c => c.card_type === 'MESS');
+      result = result.filter(c => c.card_type === 'MESS' || c.card_type === 'DUAL' || Boolean(c.mess_id));
     } else if (typeFilter === 'DUAL') {
       result = result.filter(c => c.card_type === 'DUAL');
     } else if (typeFilter === 'DEBTORS') {
@@ -706,11 +769,16 @@ export default function NfcManager({
     let result = [...messGroupsList];
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+      const q = searchQuery.toLowerCase().trim();
       result = result.filter(g => 
         (g.group_name || '').toLowerCase().includes(q) ||
         (g.assignedCard || '').toLowerCase().includes(q) ||
-        (Array.isArray(g.members) && g.members.some((m: any) => (m.name || '').toLowerCase().includes(q) || (m.cpr && m.cpr.includes(q))))
+        (g.cardTag || '').toLowerCase().includes(q) ||
+        (Array.isArray(g.members) && g.members.some((m: any) => 
+          (m.name || '').toLowerCase().includes(q) || 
+          (m.cpr && String(m.cpr).toLowerCase().includes(q)) ||
+          (m.phone && String(m.phone).toLowerCase().includes(q))
+        ))
       );
     }
 
@@ -727,7 +795,7 @@ export default function NfcManager({
         case 'alpha_desc':
           return (b.group_name || '').localeCompare(a.group_name || '');
         case 'uid':
-          return (a.assignedCard || '').localeCompare(b.assignedCard || '');
+          return (a.assignedCard || a.cardTag || '').localeCompare(b.assignedCard || b.cardTag || '');
         default:
           return balB - balA;
       }
@@ -1196,9 +1264,9 @@ export default function NfcManager({
           </select>
 
           <button
-            onClick={loadCardsData}
+            onClick={handleRefreshAll}
             className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition cursor-pointer"
-            title="Refresh Card Directory"
+            title="Refresh Directory & Mess Groups"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -1228,7 +1296,13 @@ export default function NfcManager({
           </div>
 
           {/* Mess Groups Grid */}
-          {messGroupsList.length === 0 ? (
+          {loading && messGroupsList.length === 0 ? (
+            <div className="bg-white rounded-2xl p-16 text-center border border-slate-200 shadow-sm text-slate-400">
+              <RefreshCw size={36} className="mx-auto mb-3 animate-spin text-indigo-500 opacity-60" />
+              <p className="font-bold text-slate-700">Loading Mess Groups...</p>
+              <p className="text-xs mt-1 text-slate-400">Fetching worker dining rosters from Cloud Edge</p>
+            </div>
+          ) : messGroupsList.length === 0 ? (
             <div className="bg-white rounded-2xl p-16 text-center border border-slate-200 shadow-sm text-slate-400">
               <Users size={40} className="mx-auto mb-3 opacity-30 text-indigo-500" />
               <p className="font-bold text-slate-700">No Mess Groups Registered Yet</p>
@@ -1240,11 +1314,24 @@ export default function NfcManager({
                 Create Mess Group Now
               </button>
             </div>
+          ) : filteredAndSortedMessGroups.length === 0 ? (
+            <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-sm text-slate-400">
+              <Search size={36} className="mx-auto mb-3 opacity-30 text-indigo-500" />
+              <p className="font-bold text-slate-700">No Matching Mess Groups</p>
+              <p className="text-xs mt-1">No mess group matched "{searchQuery}".</p>
+              <button
+                onClick={() => setSearchQuery('')}
+                className="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                Clear Search Filter
+              </button>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredAndSortedMessGroups.map((group) => {
                 const totalDebt = Number(group.totalBalance || 0);
                 const memberList = Array.isArray(group.members) ? group.members : [];
+                const boundCard = group.assignedCard || group.cardTag || '';
 
                 return (
                   <div key={group.id} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm hover:border-indigo-300 transition flex flex-col justify-between">
@@ -1285,17 +1372,17 @@ export default function NfcManager({
                           <CreditCard size={15} className="text-slate-400 shrink-0" />
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider text-[10px]">Assigned NFC:</span>
                         </div>
-                        {group.assignedCard ? (
+                        {boundCard ? (
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-xs font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
-                              {group.assignedCard}
+                              {boundCard}
                             </span>
                             <button
-                              onClick={() => handleCopyTag(group.assignedCard)}
+                              onClick={() => handleCopyTag(boundCard)}
                               className="text-slate-400 hover:text-slate-600"
                               title="Copy UID"
                             >
-                              {copiedTagId === group.assignedCard ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                              {copiedTagId === boundCard ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
                             </button>
                           </div>
                         ) : (

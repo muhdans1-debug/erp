@@ -1232,7 +1232,7 @@ khataRouter.get('/nfc/cards', async (c) => {
 
     const totalCards = enrichedCards.length;
     const personalCards = enrichedCards.filter(c => c.card_type === 'PERSONAL').length;
-    const messCards = enrichedCards.filter(c => c.card_type === 'MESS').length;
+    const messCards = enrichedCards.filter(c => c.card_type === 'MESS' || c.card_type === 'DUAL' || Boolean(c.mess_id)).length;
     const dualCards = enrichedCards.filter(c => c.card_type === 'DUAL').length;
     const totalOutstanding = Number(enrichedCards.reduce((sum, c) => sum + (c.balance > 0 ? c.balance : 0), 0).toFixed(3));
 
@@ -1270,7 +1270,7 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
         args: []
       }),
       db.execute({
-        sql: `SELECT tag_id, mess_id FROM NfcCard WHERE mess_id IS NOT NULL AND card_type = 'MESS'`,
+        sql: `SELECT tag_id, mess_id FROM NfcCard WHERE mess_id IS NOT NULL`,
         args: []
       })
     ]);
@@ -1301,6 +1301,7 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
         totalBalance,
         balance: totalBalance,
         cardTag,
+        assignedCard: cardTag,
         members: members.map(m => ({ id: m.id, name: m.name, phone: m.phone, cpr: m.cpr, balance: Number(m.balance ?? 0) }))
       };
     });

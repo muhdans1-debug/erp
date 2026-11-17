@@ -599,7 +599,7 @@ fastify.get('/api/nfc/cards', async (request, reply) => {
 
     const totalCards = enrichedCards.length;
     const personalCards = enrichedCards.filter(c => c.card_type === 'PERSONAL').length;
-    const messCards = enrichedCards.filter(c => c.card_type === 'MESS').length;
+    const messCards = enrichedCards.filter(c => c.card_type === 'MESS' || c.card_type === 'DUAL' || Boolean(c.mess_id)).length;
     const dualCards = enrichedCards.filter(c => c.card_type === 'DUAL').length;
     const totalOutstanding = enrichedCards.reduce((sum, c) => sum + (c.balance > 0 ? c.balance : 0), 0);
 
@@ -785,7 +785,7 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
       let cardTag = null;
       try {
         const cRes = await db.execute({
-          sql: `SELECT tag_id FROM NfcCard WHERE mess_id = ? AND card_type = 'MESS' LIMIT 1`,
+          sql: `SELECT tag_id FROM NfcCard WHERE mess_id = ? LIMIT 1`,
           args: [group.id]
         });
         if (cRes.rows && cRes.rows.length > 0) cardTag = cRes.rows[0].tag_id;
@@ -798,11 +798,12 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
         memberCount: details?.memberCount || 0,
         members: details?.members || [],
         totalBalance: details?.totalBalance || 0,
-        assignedCard: cardTag
+        assignedCard: cardTag,
+        cardTag: cardTag
       });
     }
 
-    return { success: true, messGroups: enrichedGroups };
+    return { success: true, messGroups: enrichedGroups, groups: enrichedGroups };
   } catch (err) {
     fastify.log.error(err);
     return reply.status(500).send({ success: false, error: err.message });

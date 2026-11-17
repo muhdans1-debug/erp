@@ -11,6 +11,8 @@ interface NfcCardItem {
   card_type: 'PERSONAL' | 'MESS' | 'DUAL';
   customer_id?: string;
   mess_id?: string;
+  mess_ids?: string[];
+  messes?: any[];
   group_name?: string | null;
   name: string;
   balance: number;
@@ -122,6 +124,7 @@ export default function NfcManager({
   const [customersList, setCustomersList] = useState<any[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [personalMessGroupId, setPersonalMessGroupId] = useState('');
+  const [selectedMessGroupIds, setSelectedMessGroupIds] = useState<string[]>([]);
   const [messGroupsList, setMessGroupsList] = useState<any[]>([]);
   const [selectedMessGroupId, setSelectedMessGroupId] = useState('');
   const [newMessGroupName, setNewMessGroupName] = useState('');
@@ -500,7 +503,9 @@ export default function NfcManager({
               phone: newCustPhone.trim() || null,
               cpr: newCustCpr.trim() || null,
               batchNo: newCustBatch.trim() || null,
-              creditLimit: 30.0
+              creditLimit: 30.0,
+              mess_ids: selectedMessGroupIds,
+              mess_id: selectedMessGroupIds[0] || personalMessGroupId || null
             })
           });
 
@@ -526,7 +531,8 @@ export default function NfcManager({
             tag_id: cleanTag,
             card_type: 'PERSONAL',
             customer_id: finalCustomerId,
-            mess_id: personalMessGroupId || null
+            mess_ids: selectedMessGroupIds,
+            mess_id: selectedMessGroupIds[0] || personalMessGroupId || null
           })
         });
 
@@ -702,6 +708,7 @@ export default function NfcManager({
     setSelectedMessGroupId('');
     setNewMessGroupName('');
     setPersonalMessGroupId('');
+    setSelectedMessGroupIds([]);
     setMessMemberIds([]);
     setAssignMemberSearch('');
     setShowQuickCreateCustomer(false);
@@ -1071,9 +1078,11 @@ export default function NfcManager({
                       if (activeScannedCard.customer_id || activeScannedCard.id) {
                         setSelectedCustomerId(activeScannedCard.customer_id || activeScannedCard.id);
                       }
-                      if (activeScannedCard.mess_id) {
-                        setSelectedMessGroupId(activeScannedCard.mess_id);
-                        setPersonalMessGroupId(activeScannedCard.mess_id);
+                      const existingMessIds = activeScannedCard.mess_ids || (activeScannedCard.messes?.map((m: any) => m.id)) || (activeScannedCard.mess_id ? [activeScannedCard.mess_id] : []);
+                      setSelectedMessGroupIds(existingMessIds);
+                      if (activeScannedCard.mess_id || existingMessIds.length > 0) {
+                        setSelectedMessGroupId(existingMessIds[0] || activeScannedCard.mess_id || '');
+                        setPersonalMessGroupId(existingMessIds[0] || activeScannedCard.mess_id || '');
                       }
                       setShowAssignModal(true);
                     }}
@@ -1721,9 +1730,11 @@ export default function NfcManager({
                                 setAssignTagId(card.tag_id);
                                 setAssignType(card.card_type === 'MESS' ? 'MESS' : 'PERSONAL');
                                 if (card.customer_id) setSelectedCustomerId(card.customer_id);
-                                if (card.mess_id) {
-                                  setSelectedMessGroupId(card.mess_id);
-                                  setPersonalMessGroupId(card.mess_id);
+                                const existingMessIds = card.mess_ids || (card.messes?.map((m: any) => m.id)) || (card.mess_id ? [card.mess_id] : []);
+                                setSelectedMessGroupIds(existingMessIds);
+                                if (card.mess_id || existingMessIds.length > 0) {
+                                  setSelectedMessGroupId(existingMessIds[0] || card.mess_id || '');
+                                  setPersonalMessGroupId(existingMessIds[0] || card.mess_id || '');
                                 }
                                 setShowAssignModal(true);
                               }}
@@ -1874,7 +1885,21 @@ export default function NfcManager({
 
                       <select
                         value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        onChange={(e) => {
+                          const cId = e.target.value;
+                          setSelectedCustomerId(cId);
+                          if (cId) {
+                            const found = customersList.find((c) => c.id === cId);
+                            if (found) {
+                              const mIds = found.mess_ids || (found.messes?.map((m: any) => m.id)) || (found.mess_id ? [found.mess_id] : []);
+                              setSelectedMessGroupIds(mIds);
+                              setPersonalMessGroupId(mIds[0] || '');
+                            }
+                          } else {
+                            setSelectedMessGroupIds([]);
+                            setPersonalMessGroupId('');
+                          }
+                        }}
                         className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       >
                         <option value="">-- Choose Customer from Directory --</option>
@@ -1933,26 +1958,66 @@ export default function NfcManager({
                     </div>
                   )}
 
-                  {/* Dual-Wallet Link Dropdown */}
-                  <div className="pt-2 border-t border-slate-100">
-                    <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-1">
-                      Link to Mess / Camp Group (Optional Dual-Wallet)
-                    </label>
-                    <select
-                      value={personalMessGroupId}
-                      onChange={(e) => setPersonalMessGroupId(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    >
-                      <option value="">-- No Mess Group (Personal Khata Only) --</option>
-                      {messGroupsList.map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.group_name} ({g.memberCount || 0} members)
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Linking to a mess group enables Dual-Wallet checkout at the Sunmi POS.
+                  {/* Multi-Mess / Dual-Wallet Membership Checklist */}
+                  <div className="pt-2 border-t border-slate-100 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-black uppercase tracking-wider text-slate-700">
+                        Enroll in Mess / Camp Accounts (Multiple Allowed)
+                      </label>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                        {selectedMessGroupIds.length} enrolled
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Select all communal groups this customer eats with. A single member can belong to 2 or more mess accounts simultaneously.
                     </p>
+
+                    {messGroupsList.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">No mess groups found. Create one under Mess Mode.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 border border-slate-200 rounded-xl bg-slate-50/50">
+                        {messGroupsList.map((g) => {
+                          const isEnrolled = selectedMessGroupIds.includes(g.id);
+                          return (
+                            <button
+                              key={g.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedMessGroupIds((prev) => {
+                                  const next = isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id];
+                                  setPersonalMessGroupId(next[0] || '');
+                                  return next;
+                                });
+                              }}
+                              className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
+                                isEnrolled
+                                  ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
+                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div
+                                  className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
+                                    isEnrolled
+                                      ? 'bg-purple-600 border-purple-600 text-white'
+                                      : 'border-slate-300 bg-white'
+                                  }`}
+                                >
+                                  {isEnrolled && <Check size={12} strokeWidth={3} />}
+                                </div>
+                                <div className="truncate">
+                                  <div className="text-xs truncate">{g.group_name}</div>
+                                  <div className="text-[10px] text-slate-400 font-normal">
+                                    {g.memberCount || 0} members
+                                  </div>
+                                </div>
+                              </div>
+                              <Users size={14} className={isEnrolled ? 'text-purple-600 shrink-0' : 'text-slate-300 shrink-0'} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

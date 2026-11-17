@@ -138,11 +138,13 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
 
     // 1. Instant synchronous read from localStorage
     const local = getRecentSales();
-    setSales(local);
+    if (local && local.length > 0) {
+      setSales(local);
+    }
 
-    // 2. Fetch latest bills from DB/API in background
+    // 2. Fetch full historical bills from DB/API in background
     setLoading(true);
-    fetchRecentSalesFromDb(60)
+    fetchRecentSalesFromDb({ limit: 500, forceRefresh: true })
       .then((dbSales) => {
         if (Array.isArray(dbSales) && dbSales.length > 0) {
           setSales(dbSales);
@@ -186,6 +188,21 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
   const handleSelectDateFilter = async (preset: DateFilterPreset, pickedCustomDate?: string) => {
     setDateFilter(preset);
     let targetDateKey: string | null = null;
+
+    if (preset === 'ALL') {
+      setLoading(true);
+      try {
+        const fetched = await fetchRecentSalesFromDb({ limit: 500, forceRefresh: true });
+        if (fetched && fetched.length > 0) {
+          setSales(fetched);
+        }
+      } catch (err) {
+        console.warn('Failed to load all sales:', err);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     if (preset === 'TODAY') {
       targetDateKey = todayKey;
@@ -232,13 +249,14 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
       if (dateFilter === 'TODAY') targetDate = todayKey;
       else if (dateFilter === 'YESTERDAY') targetDate = yesterdayKey;
       else if (dateFilter === 'CUSTOM' && customDate) targetDate = customDate;
+      // If dateFilter === 'ALL', targetDate is undefined, fetching full history
 
-      const freshSales = await fetchRecentSalesFromDb({ date: targetDate, limit: 100, forceRefresh: true });
+      const freshSales = await fetchRecentSalesFromDb({ date: targetDate, limit: 500, forceRefresh: true });
       if (freshSales && freshSales.length > 0) {
         setSales(freshSales);
         showToast(`✅ Loaded ${freshSales.length} bills`);
       } else {
-        showToast('ℹ️ No newer bills found');
+        showToast('ℹ️ No bills found');
       }
     } catch {
       showToast('❌ Refresh failed');

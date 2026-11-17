@@ -17,9 +17,13 @@ import {
   QrCode,
   Eye,
   EyeOff,
-  ShieldAlert
+  ShieldAlert,
+  Menu
 } from 'lucide-react';
 import BenefitPayModal from '../components/BenefitPayModal';
+import HamburgerDrawer from '../components/HamburgerDrawer';
+import ReceiptModal from '../components/ReceiptModal';
+import TransactionItemCard from '../components/TransactionItemCard';
 import { generateBenefitPayPayload } from '../utils/benefitPay';
 
 const TAB_TEXTS = {
@@ -339,6 +343,8 @@ export default function CustomerTab() {
     }
   });
   const [freezeLoading, setFreezeLoading] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
 
   const abortControllerRef = useRef(null);
   const [showSuccessBanner, setShowSuccessBanner] = useState(() => 
@@ -721,17 +727,6 @@ export default function CustomerTab() {
     window.open(`https://wa.me/?text=${encodeURIComponent(textStr)}`, '_blank');
   };
 
-  if (loading && !ledger) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-xl p-8 w-full max-w-md text-center">
-          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-400 font-medium text-sm">Loading Khata Ledger...</p>
-        </div>
-      </div>
-    );
-  }
-
   if (error && !ledger) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white">
@@ -750,6 +745,17 @@ export default function CustomerTab() {
     );
   }
 
+  if (loading || !ledger) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-xl p-8 w-full max-w-md text-center">
+          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 font-medium text-sm">Loading Khata Ledger...</p>
+        </div>
+      </div>
+    );
+  }
+
   const balanceNum = Number(ledger?.balance || 0);
   const isDebt = balanceNum > 0.0005;
   const isCredit = balanceNum < -0.0005;
@@ -761,29 +767,53 @@ export default function CustomerTab() {
       dir={isRtl ? 'rtl' : 'ltr'}
       className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-between p-4 pt-safe pb-safe selection:bg-emerald-500 selection:text-white"
     >
-      {/* Top Header & Navigation */}
-      <div className="w-full max-w-md mb-2 flex items-center justify-between px-1 no-print">
-        <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 py-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span>{t.brand}</span>
+      {/* Clean Top Header & Slide-out Drawer Navigation */}
+      <header className="w-full max-w-md mb-3 flex items-center justify-between px-1 no-print">
+        {/* Left: Clean Hamburger Drawer Button */}
+        <button
+          type="button"
+          onClick={() => setShowDrawer(true)}
+          className="min-h-[44px] px-3.5 bg-slate-900 hover:bg-slate-800 active:scale-95 border border-slate-800 rounded-2xl flex items-center gap-2 text-slate-200 hover:text-white transition cursor-pointer shadow-xs"
+          title="Open Menu & Tools"
+        >
+          <Menu className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="text-xs font-bold font-mono tracking-wider">MENU</span>
+        </button>
+
+        {/* Center: Brand & Bilingual Title */}
+        <div className="flex flex-col items-center">
+          <span className="text-xs font-black tracking-wider text-white">
+            ASKAR <span className="text-emerald-400">KHATA</span>
+          </span>
+          <span className="text-[10px] text-slate-400 font-sans">أسواق أسكر</span>
         </div>
 
-        {/* Language Switcher (Min 44px Height) */}
-        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-2xl">
-          {['en', 'ar', 'ml', 'bn', 'hi'].map((code) => (
-            <button
-              key={code}
-              type="button"
-              onClick={() => setLang(code)}
-              className={`min-w-8 h-9 px-2.5 rounded-xl font-bold text-xs uppercase transition-all flex items-center justify-center ${
-                lang === code ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              {code}
-            </button>
-          ))}
+        {/* Right: Camp Privacy Mode & Language Selector */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleHideBalance}
+            className="w-10 h-10 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-center text-slate-300 hover:text-white transition cursor-pointer shadow-xs"
+            title={hideBalance ? t.showBalance : t.hideBalance}
+          >
+            {hideBalance ? <EyeOff className="w-4 h-4 text-amber-400" /> : <Eye className="w-4 h-4 text-slate-400" />}
+          </button>
+          <div className="flex items-center bg-slate-900 border border-slate-800 p-0.5 rounded-2xl">
+            {['en', 'ar', 'ml'].map((code) => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => setLang(code)}
+                className={`min-w-7 h-8 px-1.5 rounded-xl font-bold text-[11px] uppercase transition-all flex items-center justify-center cursor-pointer ${
+                  lang === code ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      </header>
 
       <main className="w-full max-w-md my-auto">
         <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 text-center relative overflow-hidden">
@@ -805,7 +835,7 @@ export default function CustomerTab() {
             </div>
           )}
 
-          {ledger.pendingClaims && ledger.pendingClaims.length > 0 && (
+          {ledger?.pendingClaims && ledger.pendingClaims.length > 0 && (
             <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs font-semibold space-y-2 no-print text-left">
               <div className="flex items-center gap-2 font-bold text-sm text-amber-400">
                 <Clock className="w-4 h-4 shrink-0" />
@@ -826,7 +856,7 @@ export default function CustomerTab() {
           )}
 
           {/* Frozen / Locked Account Alert Banner */}
-          {ledger.is_active === 0 && (
+          {ledger?.is_active === 0 && (
             <div className="mb-6 p-4 bg-rose-500/15 border-2 border-rose-500/40 rounded-2xl text-rose-300 text-xs font-semibold space-y-2 no-print text-left">
               <div className="flex items-center gap-2 font-bold text-sm text-rose-400">
                 <ShieldAlert className="w-5 h-5 shrink-0 text-rose-400" />
@@ -1103,61 +1133,17 @@ export default function CustomerTab() {
                   </div>
                 </div>
 
-                {/* List of Transactions */}
-                <div className="space-y-2">
-                  {visibleItems.map((tx, idx) => {
-                    const amt = Number(tx.amount || 0);
-                    const isCreditTx = (tx.type || '').toUpperCase().includes('SETTLE') || (tx.type || '').toUpperCase().includes('PAY') || amt < 0;
-                    const isOpeningBalance = (tx.type || '').toUpperCase().includes('OPENING');
-                    const formattedAmt = Math.abs(amt).toFixed(3);
-                    const { date, time } = formatTxDate(tx.timestamp || tx.created_at, lang);
-                    const runningBal = tx.running_balance !== undefined && tx.running_balance !== null
-                      ? Number(tx.running_balance).toFixed(3)
-                      : null;
-
-                    return (
-                      <div
-                        key={tx.id || idx}
-                        className="p-3 bg-slate-900/90 hover:bg-slate-900 rounded-xl border border-slate-800 text-xs font-mono transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          {/* Left: Icon, Reference & Full Date/Time */}
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-sm mt-0.5 ${
-                              isCreditTx 
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                                : isOpeningBalance
-                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            }`}>
-                              {isCreditTx ? '💳' : isOpeningBalance ? '📖' : '🛒'}
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-slate-200 font-sans font-bold text-xs truncate">
-                                {tx.reference ? tx.reference : isOpeningBalance ? 'Opening Balance (Previous Book)' : isCreditTx ? 'BenefitPay Payment' : 'Grocery Purchase'}
-                              </p>
-                              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5 font-mono flex-wrap">
-                                <span>📅 {date}</span>
-                                {time && <span>• ⏰ {time}</span>}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Right: Amount & Running Balance */}
-                          <div className="text-right shrink-0">
-                            <span className={`font-black text-xs ${isCreditTx ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {isCreditTx ? `-${t.currency} ${formattedAmt}` : `+${t.currency} ${formattedAmt}`}
-                            </span>
-                            {runningBal !== null && (
-                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                {t.runningBal || 'Bal'}: {t.currency} {runningBal}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                {/* List of Interactive Itemized Transactions */}
+                <div className="space-y-2.5">
+                  {visibleItems.map((tx, idx) => (
+                    <TransactionItemCard
+                      key={tx.id || idx}
+                      tx={tx}
+                      lang={lang}
+                      currency={t.currency || 'BHD'}
+                      onViewReceipt={(inv) => setSelectedReceipt(inv)}
+                    />
+                  ))}
                 </div>
 
                 {/* Show More / Show Less Pagination Button */}
@@ -1274,6 +1260,35 @@ export default function CustomerTab() {
         onSuccess={() => {
           fetchLedger();
         }}
+      />
+
+      {/* Slide-out Hamburger Drawer */}
+      <HamburgerDrawer
+        isOpen={showDrawer}
+        onClose={() => setShowDrawer(false)}
+        customer={ledger}
+        lang={lang}
+        onSelectLang={(newLang) => setLang(newLang)}
+        hideBalance={hideBalance}
+        onToggleHideBalance={toggleHideBalance}
+        isSpeaking={isSpeaking}
+        onToggleVoice={speakBalance}
+        isFrozen={ledger?.is_active === 0}
+        freezeLoading={freezeLoading}
+        onToggleFreeze={handleToggleFreeze}
+        onOpenBenefitPay={() => {
+          if (ledger && ledger.balance > 0) {
+            handlePay(ledger.balance);
+          }
+        }}
+      />
+
+      {/* Simplified Tax Invoice Receipt Modal */}
+      <ReceiptModal
+        isOpen={Boolean(selectedReceipt)}
+        onClose={() => setSelectedReceipt(null)}
+        invoice={selectedReceipt}
+        lang={lang}
       />
     </div>
   );

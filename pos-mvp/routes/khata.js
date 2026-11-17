@@ -48,12 +48,40 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
   const result = await db.execute(sql);
   const rows = result.rows || [];
 
+  // Query all active mess memberships from MessMember junction table
+  const messMemberMap = new Map();
+  try {
+    const mmRes = await db.execute(`
+      SELECT mm.customer_id, mg.id as mess_id, mg.group_name
+      FROM MessMember mm
+      JOIN MessGroup mg ON mm.mess_id = mg.id
+      WHERE mm.is_active = 1
+      ORDER BY mg.group_name ASC
+    `);
+    for (const r of mmRes.rows || []) {
+      if (!messMemberMap.has(r.customer_id)) {
+        messMemberMap.set(r.customer_id, []);
+      }
+      messMemberMap.get(r.customer_id).push({ id: r.mess_id, group_name: r.group_name });
+    }
+  } catch (err) { }
+
   const khataConfig = loadKhataConfig();
   const nowTime = Date.now();
 
   const list = rows.map((c) => {
     const computedBalance = Number(c.currentBalance || 0);
     const isAct = c.is_active === 1 || c.is_active === true || c.is_active === undefined || c.is_active === null;
+
+    // Multi-Mess Resolution
+    const customerMesses = messMemberMap.get(c.id) || [];
+    if (customerMesses.length === 0 && c.mess_id && (c.messName || c.mess_name)) {
+      customerMesses.push({ id: c.mess_id, group_name: c.messName || c.mess_name });
+    }
+    const messNames = customerMesses.map(m => m.group_name).join(', ');
+    const messIds = customerMesses.map(m => m.id);
+    const isMultiMess = customerMesses.length > 1;
+    const hasMessGroup = customerMesses.length > 0;
 
     // 1. Calculate Last Payment Date & Aging
     const lastPaymentDate = c.lastPaymentDate || null;
@@ -78,8 +106,13 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
 
     return {
       ...c,
-      messName: c.messName || null,
-      mess_name: c.mess_name || c.messName || null,
+      messes: customerMesses,
+      mess_ids: messIds,
+      hasMessGroup,
+      isMultiMess,
+      messName: messNames || c.messName || null,
+      mess_name: messNames || c.mess_name || c.messName || null,
+      mess_id: customerMesses[0]?.id || c.mess_id || null,
       is_active: isAct ? 1 : 0,
       isActive: isAct,
       currentBalance: Number(currentBalance.toFixed(3)),
@@ -130,14 +163,32 @@ const getCustomerWithBalanceById = async (id) => {
   const customer = await db.orm.Customer.where({ id }).all().first();
   if (!customer) return null;
 
-  let messName = null;
-  if (customer.mess_id) {
+  let customerMesses = [];
+  try {
+    const mmRes = await db.execute({
+      sql: `SELECT DISTINCT g.id, g.group_name 
+            FROM MessMember mm
+            JOIN MessGroup g ON mm.mess_id = g.id
+            WHERE mm.customer_id = ? AND mm.is_active = 1
+            UNION
+            SELECT g.id, g.group_name
+            FROM Customer c
+            JOIN MessGroup g ON c.mess_id = g.id
+            WHERE c.id = ?`,
+      args: [id, id]
+    });
+    customerMesses = (mmRes.rows || []).map(r => ({ id: r.id, group_name: r.group_name }));
+  } catch { }
+
+  let messName = customerMesses.map(m => m.group_name).join(', ') || null;
+  if (!messName && customer.mess_id) {
     try {
       const gRes = await db.execute({
         sql: `SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1`,
         args: [customer.mess_id]
       });
       messName = gRes.rows[0]?.group_name || null;
+      if (messName) customerMesses.push({ id: customer.mess_id, group_name: messName });
     } catch { }
   }
 
@@ -205,8 +256,13 @@ const getCustomerWithBalanceById = async (id) => {
 
   return {
     ...customer,
+    messes: customerMesses,
+    mess_ids: customerMesses.map(m => m.id),
+    hasMessGroup: customerMesses.length > 0,
+    isMultiMess: customerMesses.length > 1,
     messName,
     mess_name: messName,
+    mess_id: customerMesses[0]?.id || customer.mess_id || null,
     is_active: isAct ? 1 : 0,
     isActive: isAct,
     currentBalance: Number(currentBalance.toFixed(3)),
@@ -360,9 +416,53 @@ const fetchMessGroupDetails = async (messId) => {
   };
 };
 
+// Helper to synchronize a customer's memberships across multiple Mess/Camp accounts
+const syncCustomerMessMemberships = async (customerId, messIds, primaryMessId = null) => {
+  if (!customerId) return;
+  let ids = [];
+  if (Array.isArray(messIds)) {
+    ids = messIds.map(m => (typeof m === 'object' && m !== null ? m.id : m)).filter(Boolean);
+  } else if (messIds && typeof messIds === 'string') {
+    ids = [messIds];
+  } else if (primaryMessId) {
+    ids = [primaryMessId];
+  }
+  ids = [...new Set(ids.map(s => String(s).trim()).filter(Boolean))];
 
+  const primary = ids.length > 0 ? ids[0] : (primaryMessId || null);
 
-export { getAllCustomersWithBalances, getCustomerWithBalanceById, loadKhataConfig, saveKhataConfig, fetchMessGroupDetails };
+  // 1. Maintain backward compatibility in Customer.mess_id
+  try {
+    await db.execute({
+      sql: 'UPDATE Customer SET mess_id = ? WHERE id = ?',
+      args: [primary, customerId]
+    });
+  } catch (e) {
+    console.warn('Customer mess_id sync notice:', e?.message);
+  }
+
+  // 2. Synchronize MessMember junction table
+  try {
+    await db.execute({
+      sql: 'DELETE FROM MessMember WHERE customer_id = ?',
+      args: [customerId]
+    });
+
+    const nowIso = getRegionalIsoString();
+    for (const mId of ids) {
+      const memberId = `mm_${crypto.randomUUID ? crypto.randomUUID().substring(0, 8) : Math.random().toString(36).substring(2, 10)}`;
+      await db.execute({
+        sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+              VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, ?)`,
+        args: [memberId, mId, customerId, nowIso]
+      });
+    }
+  } catch (err) {
+    console.error('syncCustomerMessMemberships error:', err?.message);
+  }
+};
+
+export { getAllCustomersWithBalances, getCustomerWithBalanceById, loadKhataConfig, saveKhataConfig, fetchMessGroupDetails, syncCustomerMessMemberships };
 
 export default async function khataRoutes(fastify, options) {
   // --- Core Khata Ledger & Customer Management Routes ---
@@ -580,21 +680,37 @@ const handleGetCustomerStatement = async (request, reply) => {
       });
       const creditSales = salesRes.rows || [];
       for (const s of creditSales) {
-        const exists = history.some((h) => h.reference === s.invoiceNo || h.id === s.id);
+        const exists = history.some((h) => h.reference === s.invoiceNo || h.id === s.id || h.sale_id === s.id);
         if (!exists) {
+          const ledgerId = `tx_inv_${String(s.invoiceNo || s.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          const ts = s.createdAt ? new Date(s.createdAt).toISOString() : new Date().toISOString();
           const newLedgerItem = {
-            id: s.id || crypto.randomUUID(),
+            id: ledgerId,
             customerId: id,
             amount: Number(s.total) || 0,
             type: 'CHARGE',
             reference: s.invoiceNo || `INV-${Date.now()}`,
             running_balance: 0,
             syncStatus: 'SYNCED',
-            timestamp: s.createdAt || new Date(),
-            created_at: s.createdAt || new Date(),
+            timestamp: ts,
+            created_at: ts,
             tenantId: 'tenant_askar_01',
+            sale_id: s.id
           };
           history.push(newLedgerItem);
+
+          // Permanently persist to local KhataLedger and mirror to cloud
+          try {
+            await db.execute({
+              sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id)
+                    VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING`,
+              args: [ledgerId, id, newLedgerItem.amount, newLedgerItem.reference, ts, ts, s.id]
+            });
+            mirrorLedgerEntryToCloud(newLedgerItem).catch(() => {});
+          } catch (pErr) {
+            console.warn('Auto-persist recovery notice:', pErr.message);
+          }
         }
       }
     } catch (err) {
@@ -1077,7 +1193,7 @@ fastify.post('/api/customers/:id/pin', { preHandler: managerAuth }, async (reque
 
 // Create customer (supports opening/previous book balance and automatic KhataLedger debit) - Secured with Manager Auth
 fastify.post('/api/customers', { preHandler: managerAuth }, async (request, reply) => {
-  const { name, phone, cpr, batchNo, description, cardUid, creditLimit, pin, previousBalance, initialBalance, openingBalance, balance } = request.body || {};
+  const { name, phone, cpr, batchNo, description, cardUid, creditLimit, pin, previousBalance, initialBalance, openingBalance, balance, mess_id, mess_ids, messId, messIds } = request.body || {};
   if (!name || !name.trim()) {
     return reply.status(400).send({ success: false, error: 'Customer name is required' });
   }
@@ -1141,6 +1257,11 @@ fastify.post('/api/customers', { preHandler: managerAuth }, async (request, repl
       console.warn('Customer khata init notice:', e?.message);
     }
 
+    const incomingMessIds = mess_ids !== undefined ? mess_ids : (messIds !== undefined ? messIds : (mess_id !== undefined ? mess_id : messId));
+    if (incomingMessIds !== undefined && incomingMessIds !== null) {
+      await syncCustomerMessMemberships(id, incomingMessIds);
+    }
+
     // If customer has a previous book balance, post an Opening Balance debit to KhataLedger
     let openingLedgerEntry = null;
     if (cleanPrevBalance > 0) {
@@ -1156,7 +1277,7 @@ fastify.post('/api/customers', { preHandler: managerAuth }, async (request, repl
         type: 'OPENING_BALANCE',
         reference: refText,
         running_balance: cleanPrevBalance,
-        syncStatus: 'SYNCED',
+        syncStatus: 'PENDING',
         timestamp: nowIso,
         created_at: nowIso,
         tenantId: 'tenant_askar_01',
@@ -1168,7 +1289,7 @@ fastify.post('/api/customers', { preHandler: managerAuth }, async (request, repl
         // Fallback direct sql if ORM has table caching quirks
         await db.execute({
           sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, tenantId)
-                VALUES (?, ?, ?, 'OPENING_BALANCE', ?, ?, 'SYNCED', ?, ?, 'tenant_askar_01')`,
+                VALUES (?, ?, ?, 'OPENING_BALANCE', ?, ?, 'PENDING', ?, ?, 'tenant_askar_01')`,
           args: [ledgerId, id, cleanPrevBalance, refText, cleanPrevBalance, nowIso, nowIso]
         });
       }
@@ -1190,10 +1311,12 @@ fastify.post('/api/customers', { preHandler: managerAuth }, async (request, repl
       });
     }
 
-    // Asynchronous non-blocking mirror to Turso Cloud (Zero-SPOF)
+    // Mirror to Turso Cloud (Zero-SPOF)
     mirrorCustomerToCloud({ ...customerRecord, balance: cleanPrevBalance }).catch(() => {});
     if (openingLedgerEntry) {
-      mirrorLedgerEntryToCloud(openingLedgerEntry).catch(() => {});
+      await mirrorLedgerEntryToCloud(openingLedgerEntry).catch((mErr) => {
+        console.warn('Initial cloud mirror notice for opening balance:', mErr.message);
+      });
     }
 
     const created = await db.orm.Customer.where({ id }).all().first();
@@ -1218,7 +1341,7 @@ fastify.post('/api/customers', { preHandler: managerAuth }, async (request, repl
 // 1b. Edit Khata Customer Details
 const handleUpdateCustomer = async (request, reply) => {
   const { id } = request.params;
-  const { name, phone, cpr, batchNo, description, cardUid, creditLimit } = request.body || {};
+  const { name, phone, cpr, batchNo, description, cardUid, creditLimit, mess_id, mess_ids, messId, messIds } = request.body || {};
 
   try {
     const customer = await db.orm.Customer.where({ id }).all().first();
@@ -1262,6 +1385,67 @@ const handleUpdateCustomer = async (request, reply) => {
           args: [cleanUid, cleanUid, cleanUid, id]
         });
       } catch {}
+    }
+
+    const incomingMessIds = mess_ids !== undefined ? mess_ids : (messIds !== undefined ? messIds : (mess_id !== undefined ? mess_id : messId));
+    if (incomingMessIds !== undefined) {
+      await syncCustomerMessMemberships(id, incomingMessIds);
+    }
+
+    // Support updating or adding previous book balance
+    const rawPrevBal = request.body.previousBalance ?? request.body.openingBalance ?? request.body.initialBalance;
+    if (rawPrevBal !== undefined && rawPrevBal !== null && rawPrevBal !== '') {
+      const cleanPrev = Number(parseFloat(rawPrevBal).toFixed(3));
+      if (!isNaN(cleanPrev) && cleanPrev >= 0) {
+        const obCheck = await db.execute({
+          sql: `SELECT id FROM KhataLedger WHERE customerId = ? AND type = 'OPENING_BALANCE' LIMIT 1`,
+          args: [id]
+        });
+        const nowIso = new Date().toISOString();
+        if (obCheck.rows && obCheck.rows.length > 0) {
+          const obId = obCheck.rows[0].id;
+          await db.execute({
+            sql: `UPDATE KhataLedger SET amount = ?, running_balance = ?, syncStatus = 'PENDING' WHERE id = ?`,
+            args: [cleanPrev, cleanPrev, obId]
+          });
+          mirrorLedgerEntryToCloud({
+            id: obId,
+            customerId: id,
+            amount: cleanPrev,
+            type: 'OPENING_BALANCE',
+            reference: 'Opening Balance (Previous Physical Book)'
+          }).catch(() => {});
+        } else if (cleanPrev > 0) {
+          const ledgerId = `OB-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const refText = description && description.trim() 
+            ? `Opening Balance: ${description.trim()}` 
+            : 'Opening Balance (Previous Physical Book)';
+          const obEntry = {
+            id: ledgerId,
+            customerId: id,
+            amount: cleanPrev,
+            type: 'OPENING_BALANCE',
+            reference: refText,
+            running_balance: cleanPrev,
+            syncStatus: 'PENDING',
+            timestamp: nowIso,
+            created_at: nowIso,
+            tenantId: 'tenant_askar_01',
+          };
+          await db.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, tenantId)
+                  VALUES (?, ?, ?, 'OPENING_BALANCE', ?, ?, 'PENDING', ?, ?, 'tenant_askar_01')`,
+            args: [ledgerId, id, cleanPrev, refText, cleanPrev, nowIso, nowIso]
+          });
+          await mirrorLedgerEntryToCloud(obEntry);
+        }
+
+        // Recalculate customer balance to match ledger sum
+        await db.execute({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+          args: [id, id]
+        });
+      }
     }
 
     const updated = await getCustomerWithBalanceById(id);

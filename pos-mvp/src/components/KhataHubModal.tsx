@@ -32,6 +32,10 @@ interface Customer {
   messName?: string | null;
   mess_name?: string | null;
   isMessGroup?: boolean;
+  messes?: { id: string; group_name: string }[];
+  mess_ids?: string[];
+  isMultiMess?: boolean;
+  hasMessGroup?: boolean;
 }
 
 interface MessMemberData {
@@ -143,7 +147,7 @@ export default function KhataHubModal({
         try {
           kickCashDrawer();
           playThankYouVoice();
-        } catch {}
+        } catch { }
         setPendingClaims((prev) => prev.filter((c) => c.id !== claim.id));
         onCustomerUpdated?.();
       } else {
@@ -201,11 +205,10 @@ export default function KhataHubModal({
           <div className="flex grid-cols-4 w-full text-base font-bold">
             <button
               onClick={() => setActiveTab('SETTLE')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${
-                activeTab === 'SETTLE'
-                  ? 'border-emerald-500 text-emerald-600 bg-emerald-50'
-                  : 'border-transparent text-slate-500 hover:bg-slate-100'
-              }`}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${activeTab === 'SETTLE'
+                ? 'border-emerald-500 text-emerald-600 bg-emerald-50'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+                }`}
             >
               Receive Payment
             </button>
@@ -214,11 +217,10 @@ export default function KhataHubModal({
                 setActiveTab('CLAIMS');
                 fetchPendingClaims();
               }}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === 'CLAIMS'
-                  ? 'border-amber-500 text-amber-600 bg-amber-50'
-                  : 'border-transparent text-slate-500 hover:bg-slate-100'
-              }`}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'CLAIMS'
+                ? 'border-amber-500 text-amber-600 bg-amber-50'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+                }`}
             >
               <span>BenefitPay Claims</span>
               {pendingClaims.length > 0 && (
@@ -229,21 +231,19 @@ export default function KhataHubModal({
             </button>
             <button
               onClick={() => setActiveTab('NEW')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${
-                activeTab === 'NEW'
-                  ? 'border-blue-500 text-blue-600 bg-blue-50'
-                  : 'border-transparent text-slate-500 hover:bg-slate-100'
-              }`}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${activeTab === 'NEW'
+                ? 'border-blue-500 text-blue-600 bg-blue-50'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+                }`}
             >
               <UserPlus className="inline mr-1" size={18} /> New Customer
             </button>
             <button
               onClick={() => setActiveTab('CARDS')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === 'CARDS'
-                  ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
-                  : 'border-transparent text-slate-500 hover:bg-slate-100'
-              }`}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'CARDS'
+                ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+                }`}
             >
               <CreditCard className="inline mr-1" size={18} />
               <span>NFC Cards & Mess</span>
@@ -400,10 +400,10 @@ export function broadcastKhataPayment(
 
   const qrPayload = (customer && payAmt > 0)
     ? generateBenefitPayPayload(
-        payAmt,
-        `KHATA-${customer.id}-${Date.now().toString().slice(-4)}`,
-        getStoredBenefitPayConfig()
-      )
+      payAmt,
+      `KHATA-${customer.id}-${Date.now().toString().slice(-4)}`,
+      getStoredBenefitPayConfig()
+    )
     : null;
 
   const payload = {
@@ -436,23 +436,23 @@ export function broadcastKhataPayment(
     const ch2 = new BroadcastChannel('askar_customer_display_channel');
     ch2.postMessage(payload);
     ch2.close();
-  } catch (_) {}
+  } catch (_) { }
 
   // Update hardware pole display
   if (customer) {
     if (isConfirmed) {
       CustomerDisplay.updateDisplay?.({
         text: `THANK YOU, ${customer.name.toUpperCase()}!\nPAID: BD ${payAmt.toFixed(3)}\nNEW BAL: BD ${remainingBal.toFixed(3)}`
-      }).catch(() => {});
+      }).catch(() => { });
     } else {
       CustomerDisplay.updateDisplay?.({
         text: `${customer.name.toUpperCase()}\nOWED: BD ${currentBal.toFixed(3)}\nPAYING: BD ${payAmt.toFixed(3)}\nREM: BD ${remainingBal.toFixed(3)}`
-      }).catch(() => {});
+      }).catch(() => { });
     }
   } else {
     CustomerDisplay.updateDisplay?.({
       text: `ASKAR SUPERMARKET\nWELCOME!`
-    }).catch(() => {});
+    }).catch(() => { });
   }
 }
 
@@ -466,7 +466,7 @@ export function resetCustomerDisplay() {
     const ch2 = new BroadcastChannel('askar_customer_display_channel');
     ch2.postMessage(payload);
     ch2.close();
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function SettleBalanceView({
@@ -629,7 +629,7 @@ function SettleBalanceView({
               break;
             }
           }
-        } catch {}
+        } catch { }
       }
 
       if (!data || (!data.customers && !Array.isArray(data))) {
@@ -646,7 +646,7 @@ function SettleBalanceView({
                 break;
               }
             }
-          } catch {}
+          } catch { }
         }
       }
 
@@ -742,9 +742,9 @@ function SettleBalanceView({
             setCustomers((prev) => prev.filter((c) => c.id !== data.customerId));
             setSelectedCustomer((prev) => (prev?.id === data.customerId ? null : prev));
           }
-        } catch {}
+        } catch { }
       };
-    } catch {}
+    } catch { }
 
     return () => {
       if (ws) ws.close();
@@ -1174,7 +1174,7 @@ function SettleBalanceView({
     const s = (search || '').toLowerCase().trim();
     if (!s) return true;
     return (
-      (c.name && c.name.toLowerCase().includes(s)) || 
+      (c.name && c.name.toLowerCase().includes(s)) ||
       (c.phone && c.phone.includes(s)) ||
       (c.cpr && c.cpr.toLowerCase().includes(s)) ||
       (c.batchNo && c.batchNo.toLowerCase().includes(s)) ||
@@ -1189,785 +1189,794 @@ function SettleBalanceView({
     return (
       <>
         <div className="space-y-4 animate-in slide-in-from-right-4 flex flex-col h-full">
-        {/* Header & Sub-Navigation */}
-        <div className="flex justify-between items-center mb-1">
-          <button 
-            onClick={() => {
-              setSelectedCustomer(null);
-              setPayAmount('');
-              setViewMode('PAY');
-            }}
-            className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold active:scale-95 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl transition-all cursor-pointer text-sm"
-          >
-            <ArrowLeft size={18} /> Back to Search
-          </button>
-          
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button 
-              onClick={() => setViewMode('PAY')}
-              className={`px-5 py-2 rounded-lg font-bold text-sm transition-all cursor-pointer ${
-                viewMode === 'PAY'
-                  ? 'bg-white shadow-sm text-slate-900 border border-slate-200'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
+          {/* Header & Sub-Navigation */}
+          <div className="flex justify-between items-center mb-1">
+            <button
+              onClick={() => {
+                setSelectedCustomer(null);
+                setPayAmount('');
+                setViewMode('PAY');
+              }}
+              className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold active:scale-95 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl transition-all cursor-pointer text-sm"
             >
-              Take Payment
+              <ArrowLeft size={18} /> Back to Search
             </button>
-            <button 
-              onClick={() => loadStatement(selectedCustomer.id)}
-              className={`flex items-center gap-2 px-5 py-2 rounded-lg font-bold text-sm transition-all cursor-pointer ${
-                viewMode === 'STATEMENT'
-                  ? 'bg-white shadow-sm text-slate-900 border border-slate-200'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <FileClock size={16} /> View Statement
-            </button>
-            {onSelectCustomerForCart && (
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectCustomerForCart(selectedCustomer);
-                  onClose?.();
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-sm bg-amber-500 hover:bg-amber-600 text-white transition-all cursor-pointer active:scale-95 shadow-xs ml-1"
-                title="Link this customer to active cart for checkout"
-              >
-                🛒 Link to Cart
-              </button>
-            )}
-          </div>
-        </div>
 
-        {/* Customer Identity Card */}
-        <div className="bg-slate-50 border-2 border-slate-200 rounded-xl p-4 flex justify-between items-center shrink-0 shadow-sm">
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-2xl font-black text-slate-800">{selectedCustomer.name}</h4>
-              {(selectedCustomer.is_active === 0 || selectedCustomer.isActive === false || selectedCustomer.isFrozen) && (
-                <span className="text-xs bg-red-100 text-red-700 border border-red-300 px-2.5 py-0.5 rounded-md font-black uppercase tracking-wider flex items-center gap-1 shadow-2xs">
-                  🔒 ACCOUNT FROZEN
-                </span>
-              )}
-              {selectedCustomer.batchNo && (
-                <span className="text-xs bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
-                  {selectedCustomer.batchNo}
-                </span>
-              )}
-              {/* Edit/Archive button for active customer */}
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
               <button
-                type="button"
-                onClick={() => setEditingCustomer(selectedCustomer)}
-                title="Edit / Archive Customer Details"
-                className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                onClick={() => setViewMode('PAY')}
+                className={`px-5 py-2 rounded-lg font-bold text-sm transition-all cursor-pointer ${viewMode === 'PAY'
+                  ? 'bg-white shadow-sm text-slate-900 border border-slate-200'
+                  : 'text-slate-500 hover:text-slate-700'
+                  }`}
               >
-                <Settings size={16} /> Edit
+                Take Payment
               </button>
-            </div>
-            <div className="text-slate-500 font-medium flex flex-wrap items-center gap-2 mt-1 text-sm">
-              <span>{selectedCustomer.phone || 'No Phone on Record'}</span>
-              {selectedCustomer.cpr && (
-                <span className="text-slate-400 font-mono text-xs">
-                  · CPR: {selectedCustomer.cpr}
-                </span>
+              <button
+                onClick={() => loadStatement(selectedCustomer.id)}
+                className={`flex items-center gap-2 px-5 py-2 rounded-lg font-bold text-sm transition-all cursor-pointer ${viewMode === 'STATEMENT'
+                  ? 'bg-white shadow-sm text-slate-900 border border-slate-200'
+                  : 'text-slate-500 hover:text-slate-700'
+                  }`}
+              >
+                <FileClock size={16} /> View Statement
+              </button>
+              {onSelectCustomerForCart && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectCustomerForCart(selectedCustomer);
+                    onClose?.();
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-sm bg-amber-500 hover:bg-amber-600 text-white transition-all cursor-pointer active:scale-95 shadow-xs ml-1"
+                  title="Link this customer to active cart for checkout"
+                >
+                  🛒 Link to Cart
+                </button>
               )}
               {selectedCustomer.cardUid && (
                 <span className="font-mono text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
                   💳 NFC: {selectedCustomer.cardUid}
                 </span>
               )}
-              {(selectedCustomer.messName || selectedCustomer.mess_name) && (
+              {selectedCustomer.messes && selectedCustomer.messes.length > 0 ? (
+                selectedCustomer.messes.map((m: any) => (
+                  <span key={m.id} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
+                    👥 {m.group_name}
+                  </span>
+                ))
+              ) : (selectedCustomer.messName || selectedCustomer.mess_name) ? (
                 <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
                   👥 {selectedCustomer.messName || selectedCustomer.mess_name}
                 </span>
-              )}
+              ) : null}
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Owed</p>
-            <p className="text-3xl font-black text-red-500">BD {getBal(selectedCustomer).toFixed(3)}</p>
-          </div>
-        </div>
 
-        {/* Mess Group Affiliation Banner with 1-Click Split Statement Button */}
-        {(selectedCustomer.messName || selectedCustomer.mess_name || selectedCustomer.mess_id || activeMessGroup) && (
-          <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
-                <Users size={16} />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-black text-indigo-950">
-                    Mess Account: {activeMessGroup?.group_name || selectedCustomer.messName || selectedCustomer.mess_name || 'Camp Mess'}
-                  </span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-200/60 text-indigo-800">
-                    {activeMessGroup?.memberCount || 'Shared'} Members
-                  </span>
-                </div>
-                <p className="text-[11px] text-indigo-700 font-medium mt-0.5">
-                  {activeMessGroup ? `Total Camp Debt: BD ${activeMessGroup.totalBalance.toFixed(3)} • Equal Share: BD ${(activeMessGroup.equalSplitShare ?? (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.memberCount))).toFixed(3)}/member` : 'Labor camp shared grocery group'}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                loadStatement(selectedCustomer.mess_id || selectedCustomer.id, true);
-              }}
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              <Users size={14} />
-              <span>View Mess Split Statement (كشف الميس)</span>
-            </button>
-          </div>
-        )}
-
-        {/* DYNAMIC AREA: Payment vs Statement */}
-        {viewMode === 'PAY' ? (
-          <div className="flex-1 space-y-6 pt-2">
-            {/* Quick Balance Buttons */}
-            {getBal(selectedCustomer) > 0 && (
+          {/* Customer Identity Card */}
+          <div className="bg-slate-50 border-2 border-slate-200 rounded-xl p-4 flex justify-between items-center shrink-0 shadow-sm">
+            <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 font-bold uppercase">Quick Fill:</span>
+                <h4 className="text-2xl font-black text-slate-800">{selectedCustomer.name}</h4>
+                {(selectedCustomer.is_active === 0 || selectedCustomer.isActive === false || selectedCustomer.isFrozen) && (
+                  <span className="text-xs bg-red-100 text-red-700 border border-red-300 px-2.5 py-0.5 rounded-md font-black uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                    🔒 ACCOUNT FROZEN
+                  </span>
+                )}
+                {selectedCustomer.batchNo && (
+                  <span className="text-xs bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
+                    {selectedCustomer.batchNo}
+                  </span>
+                )}
+                {/* Edit/Archive button for active customer */}
                 <button
-                  onClick={() => setPayAmount(getBal(selectedCustomer).toFixed(3))}
-                  className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                  type="button"
+                  onClick={() => setEditingCustomer(selectedCustomer)}
+                  title="Edit / Archive Customer Details"
+                  className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
                 >
-                  Full Balance (BD {getBal(selectedCustomer).toFixed(3)})
+                  <Settings size={16} /> Edit
                 </button>
-                {getBal(selectedCustomer) > 0.200 && (
-                  <button
-                    onClick={() => setPayAmount((getBal(selectedCustomer) / 2).toFixed(3))}
-                    className="px-3 py-1.5 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg cursor-pointer active:scale-95 transition-all"
-                  >
-                    50% Partial (BD {(getBal(selectedCustomer) / 2).toFixed(3)})
-                  </button>
-                )}
-                {getBal(selectedCustomer) >= 5 && (
-                  <button
-                    onClick={() => setPayAmount('5.000')}
-                    className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
-                  >
-                    BD 5.000
-                  </button>
-                )}
-                {getBal(selectedCustomer) >= 10 && (
-                  <button
-                    onClick={() => setPayAmount('10.000')}
-                    className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
-                  >
-                    BD 10.000
-                  </button>
-                )}
               </div>
-            )}
-
-            {/* Payment Entry Inputs */}
-            <div className="grid grid-cols-2 gap-6 pt-2">
-              <div>
-                <label className="block text-slate-600 font-bold mb-2">Amount Paying Now (BD)</label>
-                <input
-                  type="number"
-                  step="0.001"
-                  value={payAmount}
-                  onChange={(e) => setPayAmount(e.target.value)}
-                  className="w-full text-3xl font-black p-4 bg-white border-2 border-slate-300 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-300"
-                  placeholder="0.000"
-                />
-              </div>
-              <div className="flex gap-3 items-end">
-                <button
-                  onClick={() => handleSettle('CASH')}
-                  disabled={isSubmitting || !payAmount || parseFloat(payAmount) <= 0}
-                  className="flex-1 h-18 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100 cursor-pointer shadow-sm"
-                >
-                  <Banknote size={24} /> Cash
-                </button>
-                <button
-                  onClick={() => handleSettle('BENEFIT_PAY')}
-                  disabled={isSubmitting || !payAmount || parseFloat(payAmount) <= 0}
-                  className="flex-1 h-18 bg-red-600 hover:bg-red-700 text-white font-bold text-xl rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100 cursor-pointer shadow-sm"
-                >
-                  <Smartphone size={24} /> Benefit
-                </button>
+              <div className="text-slate-500 font-medium flex flex-wrap items-center gap-2 mt-1 text-sm">
+                <span>{selectedCustomer.phone || 'No Phone on Record'}</span>
+                {selectedCustomer.cpr && (
+                  <span className="text-slate-400 font-mono text-xs">
+                    · CPR: {selectedCustomer.cpr}
+                  </span>
+                )}
+                {selectedCustomer.cardUid && (
+                  <span className="font-mono text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                    💳 NFC: {selectedCustomer.cardUid}
+                  </span>
+                )}
+                {(selectedCustomer.messName || selectedCustomer.mess_name) && (
+                  <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
+                    👥 {selectedCustomer.messName || selectedCustomer.mess_name}
+                  </span>
+                )}
               </div>
             </div>
+            <div className="text-right">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Owed</p>
+              <p className="text-3xl font-black text-red-500">BD {getBal(selectedCustomer).toFixed(3)}</p>
+            </div>
           </div>
-        ) : (
-          <div className="flex-1 flex flex-col bg-white border-2 border-slate-200 rounded-xl overflow-hidden shadow-inner min-h-[300px]">
-            {/* Mess vs Personal Statement Tab Switcher */}
-            {activeMessGroup && (
-              <div className="bg-slate-100 p-2 border-b border-slate-200 flex items-center justify-between gap-2">
-                <div className="flex bg-slate-200 p-1 rounded-xl flex-1 max-w-md">
+
+          {/* Mess Group Affiliation Banner with 1-Click Split Statement Button */}
+          {(selectedCustomer.messName || selectedCustomer.mess_name || selectedCustomer.mess_id || activeMessGroup) && (
+            <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+                  <Users size={16} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black text-indigo-950">
+                      Mess Account: {activeMessGroup?.group_name || selectedCustomer.messName || selectedCustomer.mess_name || 'Camp Mess'}
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-200/60 text-indigo-800">
+                      {activeMessGroup?.memberCount || 'Shared'} Members
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-indigo-700 font-medium mt-0.5">
+                    {activeMessGroup ? `Total Camp Debt: BD ${activeMessGroup.totalBalance.toFixed(3)} • Equal Share: BD ${(activeMessGroup.equalSplitShare ?? (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.memberCount))).toFixed(3)}/member` : 'Labor camp shared grocery group'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  loadStatement(selectedCustomer.mess_id || selectedCustomer.id, true);
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Users size={14} />
+                <span>View Mess Split Statement (كشف الميس)</span>
+              </button>
+            </div>
+          )}
+
+          {/* DYNAMIC AREA: Payment vs Statement */}
+          {viewMode === 'PAY' ? (
+            <div className="flex-1 space-y-6 pt-2">
+              {/* Quick Balance Buttons */}
+              {getBal(selectedCustomer) > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold uppercase">Quick Fill:</span>
                   <button
-                    type="button"
-                    onClick={() => {
-                      setStatementTab('PERSONAL');
-                      setSelectedMessMemberFilter(null);
-                    }}
-                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                      statementTab === 'PERSONAL'
+                    onClick={() => setPayAmount(getBal(selectedCustomer).toFixed(3))}
+                    className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                  >
+                    Full Balance (BD {getBal(selectedCustomer).toFixed(3)})
+                  </button>
+                  {getBal(selectedCustomer) > 0.200 && (
+                    <button
+                      onClick={() => setPayAmount((getBal(selectedCustomer) / 2).toFixed(3))}
+                      className="px-3 py-1.5 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg cursor-pointer active:scale-95 transition-all"
+                    >
+                      50% Partial (BD {(getBal(selectedCustomer) / 2).toFixed(3)})
+                    </button>
+                  )}
+                  {getBal(selectedCustomer) >= 5 && (
+                    <button
+                      onClick={() => setPayAmount('5.000')}
+                      className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                    >
+                      BD 5.000
+                    </button>
+                  )}
+                  {getBal(selectedCustomer) >= 10 && (
+                    <button
+                      onClick={() => setPayAmount('10.000')}
+                      className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                    >
+                      BD 10.000
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Payment Entry Inputs */}
+              <div className="grid grid-cols-2 gap-6 pt-2">
+                <div>
+                  <label className="block text-slate-600 font-bold mb-2">Amount Paying Now (BD)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                    className="w-full text-3xl font-black p-4 bg-white border-2 border-slate-300 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-300"
+                    placeholder="0.000"
+                  />
+                </div>
+                <div className="flex gap-3 items-end">
+                  <button
+                    onClick={() => handleSettle('CASH')}
+                    disabled={isSubmitting || !payAmount || parseFloat(payAmount) <= 0}
+                    className="flex-1 h-18 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100 cursor-pointer shadow-sm"
+                  >
+                    <Banknote size={24} /> Cash
+                  </button>
+                  <button
+                    onClick={() => handleSettle('BENEFIT_PAY')}
+                    disabled={isSubmitting || !payAmount || parseFloat(payAmount) <= 0}
+                    className="flex-1 h-18 bg-red-600 hover:bg-red-700 text-white font-bold text-xl rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100 cursor-pointer shadow-sm"
+                  >
+                    <Smartphone size={24} /> Benefit
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col bg-white border-2 border-slate-200 rounded-xl overflow-hidden shadow-inner min-h-[300px]">
+              {/* Mess vs Personal Statement Tab Switcher */}
+              {activeMessGroup && (
+                <div className="bg-slate-100 p-2 border-b border-slate-200 flex items-center justify-between gap-2">
+                  <div className="flex bg-slate-200 p-1 rounded-xl flex-1 max-w-md">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatementTab('PERSONAL');
+                        setSelectedMessMemberFilter(null);
+                      }}
+                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition-all cursor-pointer ${statementTab === 'PERSONAL'
                         ? 'bg-white text-slate-900 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    👤 Personal Statement ({selectedCustomer.name})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatementTab('MESS')}
-                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      statementTab === 'MESS'
+                        }`}
+                    >
+                      👤 Personal Statement ({selectedCustomer.name})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatementTab('MESS')}
+                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${statementTab === 'MESS'
                         ? 'bg-indigo-600 text-white shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Users size={14} />
-                    <span>👥 Mess Statement ({activeMessGroup.group_name})</span>
-                  </button>
-                </div>
-
-                {statementTab === 'MESS' && (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={handleShareMessWhatsApp}
-                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs active:scale-95 transition-all"
-                      title="Share Room Split Breakdown on WhatsApp"
+                        }`}
                     >
-                      <MessageCircle size={13} />
-                      <span className="hidden sm:inline">WhatsApp</span>
+                      <Users size={14} />
+                      <span>👥 Mess Statement ({activeMessGroup.group_name})</span>
                     </button>
                   </div>
-                )}
-              </div>
-            )}
 
-            {/* Mess Group Transparency Overview & Room Member Split Cards */}
-            {statementTab === 'MESS' && activeMessGroup && (
-              <div className="p-4 bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 text-white border-b border-indigo-800 space-y-4">
-                {/* Top Header & Fast Action Buttons */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300">
-                        Mess Labor Camp Transparency
-                      </span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
-                        {activeMessGroup.members.length} Room Members
-                      </span>
-                    </div>
-                    <h3 className="text-lg font-black text-white mt-0.5 flex items-center gap-2">
-                      <Users size={20} className="text-indigo-400" />
-                      <span>{activeMessGroup.group_name}</span>
-                    </h3>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* One-Click Split Balance Equally Across All Cards */}
-                    <button
-                      type="button"
-                      onClick={handleRebalanceMessCards}
-                      disabled={isRebalancingMess}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer border border-indigo-400/40 disabled:opacity-50"
-                      title="Distribute total camp debt equally across all member cards in the database"
-                    >
-                      <Scale size={14} className="text-amber-300" />
-                      <span>{isRebalancingMess ? 'Splitting...' : '⚡ Split Balance to Cards'}</span>
-                    </button>
-
-                    <a
-                      href={`https://wa.me/?text=${encodeURIComponent(
-                        `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
-                        `🏢 *Mess Group:* ${activeMessGroup.group_name}\n` +
-                        `💰 *Total Camp Balance:* BD ${activeMessGroup.totalBalance.toFixed(3)}\n` +
-                        `👥 *Members:* ${activeMessGroup.members.length}\n` +
-                        `⚖️ *EQUAL SPLIT SHARE:* BD ${(activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3)} / member\n` +
-                        `----------------------------------------\n` +
-                        `*Room Members Equal Split Balances:*\n` +
-                        activeMessGroup.members.map((m) => {
-                          const mEq = (m.equalSplitShare || activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3);
-                          return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
-                        }).join('\n') +
-                        `\n----------------------------------------\n` +
-                        `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-                      title="Share full mess debt breakdown to WhatsApp group"
-                    >
-                      <MessageCircle size={14} className="fill-white/20" />
-                      <span>WhatsApp Group Split</span>
-                    </a>
-                  </div>
-                </div>
-
-                {/* 3 Prominent KPI Stat Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-                  <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
-                    <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
-                      <span>Total Camp Debt</span>
-                      <CreditCard size={14} className="text-emerald-400" />
-                    </div>
-                    <div className="mt-1">
-                      <span className="text-xl font-black font-mono text-emerald-400">
-                        BD {activeMessGroup.totalBalance.toFixed(3)}
-                      </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Collective room debt</span>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/80 border border-emerald-500/50 rounded-xl p-3 flex flex-col justify-between shadow-xs ring-1 ring-emerald-500/20">
-                    <div className="flex items-center justify-between text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
-                      <span>Equal Share / Card</span>
-                      <Scale size={14} className="text-emerald-400" />
-                    </div>
-                    <div className="mt-1">
-                      <span className="text-xl font-black font-mono text-emerald-300">
-                        BD {(activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3)}
-                      </span>
-                      <span className="text-[10px] text-emerald-400/80 block mt-0.5 font-medium">
-                        BD {activeMessGroup.totalBalance.toFixed(3)} ÷ {activeMessGroup.members.length} members
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
-                    <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
-                      <span>Active Camp Cards</span>
-                      <Users size={14} className="text-indigo-400" />
-                    </div>
-                    <div className="mt-1">
-                      <span className="text-xl font-black font-mono text-white">
-                        {activeMessGroup.members.length} Cards
-                      </span>
-                      <span className="text-[10px] text-indigo-300/80 block mt-0.5 font-medium">
-                        Registered camp members
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Member Cards Splitting Balance Equally */}
-                <div className="space-y-2 pt-2 border-t border-indigo-800/60">
-                  <div className="flex items-center justify-between text-xs font-bold text-indigo-200 px-0.5">
+                  {statementTab === 'MESS' && (
                     <div className="flex items-center gap-1.5">
-                      <CreditCard size={14} className="text-emerald-400" />
-                      <span>Member Cards • Balance Split Equally ({activeMessGroup.members.length})</span>
-                    </div>
-                    {selectedMessMemberFilter ? (
                       <button
                         type="button"
-                        onClick={() => setSelectedMessMemberFilter(null)}
-                        className="text-amber-300 hover:underline text-[11px] font-bold cursor-pointer"
+                        onClick={handleShareMessWhatsApp}
+                        className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs active:scale-95 transition-all"
+                        title="Share Room Split Breakdown on WhatsApp"
                       >
-                        ✕ Showing 1 member • Click to clear filter
+                        <MessageCircle size={13} />
+                        <span className="hidden sm:inline">WhatsApp</span>
                       </button>
-                    ) : (
-                      <span className="text-[10px] text-indigo-400">Click card to filter transactions below</span>
-                    )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Mess Group Transparency Overview & Room Member Split Cards */}
+              {statementTab === 'MESS' && activeMessGroup && (
+                <div className="p-4 bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 text-white border-b border-indigo-800 space-y-4">
+                  {/* Top Header & Fast Action Buttons */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300">
+                          Mess Labor Camp Transparency
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                          {activeMessGroup.members.length} Room Members
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-black text-white mt-0.5 flex items-center gap-2">
+                        <Users size={20} className="text-indigo-400" />
+                        <span>{activeMessGroup.group_name}</span>
+                      </h3>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* One-Click Split Balance Equally Across All Cards */}
+                      <button
+                        type="button"
+                        onClick={handleRebalanceMessCards}
+                        disabled={isRebalancingMess}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer border border-indigo-400/40 disabled:opacity-50"
+                        title="Distribute total camp debt equally across all member cards in the database"
+                      >
+                        <Scale size={14} className="text-amber-300" />
+                        <span>{isRebalancingMess ? 'Splitting...' : '⚡ Split Balance to Cards'}</span>
+                      </button>
+
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(
+                          `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
+                          `🏢 *Mess Group:* ${activeMessGroup.group_name}\n` +
+                          `💰 *Total Camp Balance:* BD ${activeMessGroup.totalBalance.toFixed(3)}\n` +
+                          `👥 *Members:* ${activeMessGroup.members.length}\n` +
+                          `⚖️ *EQUAL SPLIT SHARE:* BD ${(activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3)} / member\n` +
+                          `----------------------------------------\n` +
+                          `*Room Members Equal Split Balances:*\n` +
+                          activeMessGroup.members.map((m) => {
+                            const mEq = (m.equalSplitShare || activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3);
+                            return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
+                          }).join('\n') +
+                          `\n----------------------------------------\n` +
+                          `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        title="Share full mess debt breakdown to WhatsApp group"
+                      >
+                        <MessageCircle size={14} className="fill-white/20" />
+                        <span>WhatsApp Group Split</span>
+                      </a>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-72 overflow-y-auto pr-1 scroll-zone">
-                    {activeMessGroup.members.map((m) => {
-                      const isSelected = selectedMessMemberFilter === m.id;
-                      const isMe = m.id === selectedCustomer.id;
-                      const memberEqShare = Number(
-                        m.equalSplitShare ||
-                        activeMessGroup.equalSplitShare ||
-                        (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))
-                      );
-                      const cardBalance = Number(m.currentBalance || 0);
-                      const diff = Number((cardBalance - memberEqShare).toFixed(3));
+                  {/* 3 Prominent KPI Stat Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                    <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Total Camp Debt</span>
+                        <CreditCard size={14} className="text-emerald-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-emerald-400">
+                          BD {activeMessGroup.totalBalance.toFixed(3)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Collective room debt</span>
+                      </div>
+                    </div>
 
-                      return (
-                        <div
-                          key={m.id}
-                          onClick={() => setSelectedMessMemberFilter(isSelected ? null : m.id)}
-                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                            isSelected
+                    <div className="bg-slate-900/80 border border-emerald-500/50 rounded-xl p-3 flex flex-col justify-between shadow-xs ring-1 ring-emerald-500/20">
+                      <div className="flex items-center justify-between text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Equal Share / Card</span>
+                        <Scale size={14} className="text-emerald-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-emerald-300">
+                          BD {(activeMessGroup.equalSplitShare || (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))).toFixed(3)}
+                        </span>
+                        <span className="text-[10px] text-emerald-400/80 block mt-0.5 font-medium">
+                          BD {activeMessGroup.totalBalance.toFixed(3)} ÷ {activeMessGroup.members.length} members
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-indigo-800/80 rounded-xl p-3 flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-indigo-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span>Active Camp Cards</span>
+                        <Users size={14} className="text-indigo-400" />
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xl font-black font-mono text-white">
+                          {activeMessGroup.members.length} Cards
+                        </span>
+                        <span className="text-[10px] text-indigo-300/80 block mt-0.5 font-medium">
+                          Registered camp members
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Member Cards Splitting Balance Equally */}
+                  <div className="space-y-2 pt-2 border-t border-indigo-800/60">
+                    <div className="flex items-center justify-between text-xs font-bold text-indigo-200 px-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <CreditCard size={14} className="text-emerald-400" />
+                        <span>Member Cards • Balance Split Equally ({activeMessGroup.members.length})</span>
+                      </div>
+                      {selectedMessMemberFilter ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMessMemberFilter(null)}
+                          className="text-amber-300 hover:underline text-[11px] font-bold cursor-pointer"
+                        >
+                          ✕ Showing 1 member • Click to clear filter
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-indigo-400">Click card to filter transactions below</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-72 overflow-y-auto pr-1 scroll-zone">
+                      {activeMessGroup.members.map((m) => {
+                        const isSelected = selectedMessMemberFilter === m.id;
+                        const isMe = m.id === selectedCustomer.id;
+                        const memberEqShare = Number(
+                          m.equalSplitShare ||
+                          activeMessGroup.equalSplitShare ||
+                          (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.members.length))
+                        );
+                        const cardBalance = Number(m.currentBalance || 0);
+                        const diff = Number((cardBalance - memberEqShare).toFixed(3));
+
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => setSelectedMessMemberFilter(isSelected ? null : m.id)}
+                            className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${isSelected
                               ? 'bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-900 border-emerald-400 shadow-lg ring-2 ring-emerald-400/40'
                               : 'bg-gradient-to-br from-slate-900/95 via-indigo-950/70 to-slate-900/95 border-indigo-700/60 hover:border-emerald-500/60 hover:shadow-md'
-                          }`}
-                        >
-                          {/* Card Header: NFC Icon + Member Name + Split Status Badge */}
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
-                                <CreditCard size={15} className="text-emerald-400" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-white text-xs flex items-center gap-1.5 leading-tight truncate">
-                                  <span className="truncate">{m.name}</span>
-                                  {isMe && (
-                                    <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">
-                                      You
-                                    </span>
-                                  )}
+                              }`}
+                          >
+                            {/* Card Header: NFC Icon + Member Name + Split Status Badge */}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                                  <CreditCard size={15} className="text-emerald-400" />
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
-                                  {m.cardUid || m.nfcCardId ? `💳 ${m.cardUid || m.nfcCardId}` : 'Card: Linked'}
+                                <div className="min-w-0">
+                                  <div className="font-bold text-white text-xs flex items-center gap-1.5 leading-tight truncate">
+                                    <span className="truncate">{m.name}</span>
+                                    {isMe && (
+                                      <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
+                                    {m.cardUid || m.nfcCardId ? `💳 ${m.cardUid || m.nfcCardId}` : 'Card: Linked'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <span
+                                className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${Math.abs(diff) <= 0.001
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                  : diff > 0
+                                    ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  }`}
+                              >
+                                {Math.abs(diff) <= 0.001
+                                  ? 'Balanced'
+                                  : diff > 0
+                                    ? `+BD ${diff.toFixed(3)} Paid`
+                                    : `-BD ${Math.abs(diff).toFixed(3)} Due`}
+                              </span>
+                            </div>
+
+                            {/* Card Middle: EQUAL SPLIT DUE (Hero Box) */}
+                            <div className="my-2.5 p-2 bg-indigo-950/80 rounded-xl border border-indigo-800/60 flex items-center justify-between">
+                              <div>
+                                <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider block">
+                                  Equal Split Due
+                                </span>
+                                <span className="text-sm font-black font-mono text-emerald-400">
+                                  BD {memberEqShare.toFixed(3)}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                  Card Spent
+                                </span>
+                                <span className="text-xs font-bold font-mono text-slate-300">
+                                  BD {cardBalance.toFixed(3)}
                                 </span>
                               </div>
                             </div>
 
-                            <span
-                              className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
-                                Math.abs(diff) <= 0.001
-                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                  : diff > 0
-                                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
-                                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                              }`}
-                            >
-                              {Math.abs(diff) <= 0.001
-                                ? 'Balanced'
-                                : diff > 0
-                                ? `+BD ${diff.toFixed(3)} Paid`
-                                : `-BD ${Math.abs(diff).toFixed(3)} Due`}
-                            </span>
-                          </div>
-
-                          {/* Card Middle: EQUAL SPLIT DUE (Hero Box) */}
-                          <div className="my-2.5 p-2 bg-indigo-950/80 rounded-xl border border-indigo-800/60 flex items-center justify-between">
-                            <div>
-                              <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider block">
-                                Equal Split Due
-                              </span>
-                              <span className="text-sm font-black font-mono text-emerald-400">
-                                BD {memberEqShare.toFixed(3)}
-                              </span>
+                            {/* Spend share progress bar */}
+                            <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden mb-2">
+                              <div
+                                className="h-full bg-emerald-400 rounded-full transition-all"
+                                style={{ width: `${Math.min(100, m.spendPercentage || 0)}%` }}
+                              />
                             </div>
-                            <div className="text-right">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                                Card Spent
-                              </span>
-                              <span className="text-xs font-bold font-mono text-slate-300">
-                                BD {cardBalance.toFixed(3)}
-                              </span>
-                            </div>
-                          </div>
 
-                          {/* Spend share progress bar */}
-                          <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden mb-2">
-                            <div
-                              className="h-full bg-emerald-400 rounded-full transition-all"
-                              style={{ width: `${Math.min(100, m.spendPercentage || 0)}%` }}
-                            />
-                          </div>
-
-                          {/* Card Actions: Settle Equal Share & WhatsApp */}
-                          <div className="pt-1.5 border-t border-indigo-800/40 flex items-center justify-between gap-1 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedCustomer({ ...m, currentBalance: memberEqShare });
-                                setViewMode('PAY');
-                                setPayAmount(memberEqShare.toFixed(3));
-                              }}
-                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                              title={`Settle ${m.name}'s equal split share (BD ${memberEqShare.toFixed(3)})`}
-                            >
-                              <Banknote size={11} />
-                              <span>Settle Equal (BD {memberEqShare.toFixed(3)})</span>
-                            </button>
-
-                            {Math.abs(cardBalance - memberEqShare) > 0.001 && (
+                            {/* Card Actions: Settle Equal Share & WhatsApp */}
+                            <div className="pt-1.5 border-t border-indigo-800/40 flex items-center justify-between gap-1 flex-wrap">
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setSelectedCustomer({ ...m, currentBalance: cardBalance });
+                                  setSelectedCustomer({ ...m, currentBalance: memberEqShare });
                                   setViewMode('PAY');
-                                  setPayAmount(cardBalance.toFixed(3));
+                                  setPayAmount(memberEqShare.toFixed(3));
                                 }}
-                                className="px-1.5 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 rounded-lg text-[9px] font-medium active:scale-95 transition-all cursor-pointer"
-                                title={`Settle card purchases: BD ${cardBalance.toFixed(3)}`}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                                title={`Settle ${m.name}'s equal split share (BD ${memberEqShare.toFixed(3)})`}
                               >
-                                <span>Card (BD {cardBalance.toFixed(3)})</span>
+                                <Banknote size={11} />
+                                <span>Settle Equal (BD {memberEqShare.toFixed(3)})</span>
                               </button>
-                            )}
 
-                            {m.phone && (
-                              <a
-                                href={`https://wa.me/${m.phone.replace(/[^0-9]/g, '').length === 8 ? `973${m.phone.replace(/[^0-9]/g, '')}` : m.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                  `Hello ${m.name}, your equal split share of ${activeMessGroup.group_name} at Askar Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${activeMessGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
-                                )}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="p-1 bg-indigo-800 hover:bg-indigo-700 text-white rounded-lg active:scale-95 transition-all cursor-pointer"
-                                title="WhatsApp reminder"
-                              >
-                                <MessageCircle size={12} />
-                              </a>
-                            )}
+                              {Math.abs(cardBalance - memberEqShare) > 0.001 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedCustomer({ ...m, currentBalance: cardBalance });
+                                    setViewMode('PAY');
+                                    setPayAmount(cardBalance.toFixed(3));
+                                  }}
+                                  className="px-1.5 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 rounded-lg text-[9px] font-medium active:scale-95 transition-all cursor-pointer"
+                                  title={`Settle card purchases: BD ${cardBalance.toFixed(3)}`}
+                                >
+                                  <span>Card (BD {cardBalance.toFixed(3)})</span>
+                                </button>
+                              )}
+
+                              {m.phone && (
+                                <a
+                                  href={`https://wa.me/${m.phone.replace(/[^0-9]/g, '').length === 8 ? `973${m.phone.replace(/[^0-9]/g, '')}` : m.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                                    `Hello ${m.name}, your equal split share of ${activeMessGroup.group_name} at Askar Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${activeMessGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="p-1 bg-indigo-800 hover:bg-indigo-700 text-white rounded-lg active:scale-95 transition-all cursor-pointer"
+                                  title="WhatsApp reminder"
+                                >
+                                  <MessageCircle size={12} />
+                                </a>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Statement Header & Date-to-Date Filter Bar */}
-            <div className="p-3 border-b bg-slate-50 space-y-2">
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
-                    <FileText size={18} className="text-slate-600" />
-                    <span>{statementTab === 'MESS' ? 'Mess Itemized Ledger' : 'Transaction Ledger'}</span>
-                  </h3>
-                  <span className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-full font-mono">
-                    {filteredStatement.length} of {statement.length}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {/* Type Filter Buttons */}
-                  <div className="inline-flex rounded-lg bg-slate-200 p-0.5 text-xs font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setStatementTypeFilter('ALL')}
-                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      All
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatementTypeFilter('CHARGES')}
-                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'CHARGES' ? 'bg-white text-rose-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      Purchases (+)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatementTypeFilter('PAYMENTS')}
-                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'PAYMENTS' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      Payments (-)
-                    </button>
+              {/* Statement Header & Date-to-Date Filter Bar */}
+              <div className="p-3 border-b bg-slate-50 space-y-2">
+                <div className="flex flex-wrap justify-between items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+                      <FileText size={18} className="text-slate-600" />
+                      <span>{statementTab === 'MESS' ? 'Mess Itemized Ledger' : 'Transaction Ledger'}</span>
+                    </h3>
+                    <span className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-full font-mono">
+                      {filteredStatement.length} of {statement.length}
+                    </span>
                   </div>
 
-                  <button 
-                    onClick={printStatement} 
-                    className="flex items-center gap-1.5 text-xs bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg font-bold active:scale-95 cursor-pointer shadow-sm transition-all"
-                    title={statementTab === 'MESS' ? "Print 58mm Mess Statement Slip" : "Print 58mm Statement Slip on Sunmi"}
-                  >
-                    <Printer size={14} />
-                    <span>{statementTab === 'MESS' ? 'Print Mess Slip' : 'Print (58mm)'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Date to Date Filter Row */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200 text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">FROM</span>
-                    <input
-                      type="date"
-                      value={statementStartDate}
-                      onChange={(e) => setStatementStartDate(e.target.value)}
-                      className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TO</span>
-                    <input
-                      type="date"
-                      value={statementEndDate}
-                      onChange={(e) => setStatementEndDate(e.target.value)}
-                      className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
-                    />
-                  </div>
-
-                  {/* Quick Presets */}
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setQuickRange('TODAY')}
-                      className={`px-2 py-1 rounded-md font-bold text-[11px] transition-all cursor-pointer ${
-                        statementStartDate && statementStartDate === statementEndDate && statementStartDate === new Date().toISOString().slice(0, 10)
-                          ? 'bg-blue-600 text-white shadow-2xs'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQuickRange('THIS_MONTH')}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
-                    >
-                      This Month
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQuickRange('LAST_MONTH')}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
-                    >
-                      Last Month
-                    </button>
-                    {(statementStartDate || statementEndDate || statementTypeFilter !== 'ALL' || selectedMessMemberFilter) && (
+                  <div className="flex items-center gap-2">
+                    {/* Type Filter Buttons */}
+                    <div className="inline-flex rounded-lg bg-slate-200 p-0.5 text-xs font-bold">
                       <button
                         type="button"
-                        onClick={() => { setStatementStartDate(''); setStatementEndDate(''); setStatementTypeFilter('ALL'); setSelectedMessMemberFilter(null); }}
-                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                        onClick={() => setStatementTypeFilter('ALL')}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
                       >
-                        Clear
+                        All
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => setStatementTypeFilter('CHARGES')}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'CHARGES' ? 'bg-white text-rose-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                      >
+                        Purchases (+)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatementTypeFilter('PAYMENTS')}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${statementTypeFilter === 'PAYMENTS' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                      >
+                        Payments (-)
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={printStatement}
+                      className="flex items-center gap-1.5 text-xs bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg font-bold active:scale-95 cursor-pointer shadow-sm transition-all"
+                      title={statementTab === 'MESS' ? "Print 58mm Mess Statement Slip" : "Print 58mm Statement Slip on Sunmi"}
+                    >
+                      <Printer size={14} />
+                      <span>{statementTab === 'MESS' ? 'Print Mess Slip' : 'Print (58mm)'}</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Filtered Range Totals */}
-                <div className="flex items-center gap-3 font-mono text-[11px]">
-                  <span className="text-rose-600 font-bold">
-                    Charges: +BD {filteredDebitTotal.toFixed(3)}
-                  </span>
-                  <span className="text-emerald-600 font-bold">
-                    Payments: -BD {filteredCreditTotal.toFixed(3)}
-                  </span>
+                {/* Date to Date Filter Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">FROM</span>
+                      <input
+                        type="date"
+                        value={statementStartDate}
+                        onChange={(e) => setStatementStartDate(e.target.value)}
+                        className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TO</span>
+                      <input
+                        type="date"
+                        value={statementEndDate}
+                        onChange={(e) => setStatementEndDate(e.target.value)}
+                        className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setQuickRange('TODAY')}
+                        className={`px-2 py-1 rounded-md font-bold text-[11px] transition-all cursor-pointer ${statementStartDate && statementStartDate === statementEndDate && statementStartDate === new Date().toISOString().slice(0, 10)
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickRange('THIS_MONTH')}
+                        className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                      >
+                        This Month
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickRange('LAST_MONTH')}
+                        className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                      >
+                        Last Month
+                      </button>
+                      {(statementStartDate || statementEndDate || statementTypeFilter !== 'ALL' || selectedMessMemberFilter) && (
+                        <button
+                          type="button"
+                          onClick={() => { setStatementStartDate(''); setStatementEndDate(''); setStatementTypeFilter('ALL'); setSelectedMessMemberFilter(null); }}
+                          className="px-2 py-1 text-red-600 hover:bg-red-50 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Filtered Range Totals */}
+                  <div className="flex items-center gap-3 font-mono text-[11px]">
+                    <span className="text-rose-600 font-bold">
+                      Charges: +BD {filteredDebitTotal.toFixed(3)}
+                    </span>
+                    <span className="text-emerald-600 font-bold">
+                      Payments: -BD {filteredCreditTotal.toFixed(3)}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Scrollable Statement Table with Sticky Header */}
-            <div className="flex-1 overflow-y-auto scroll-zone max-h-[340px]">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-100 sticky top-0 border-b z-10">
-                  <tr>
-                    <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider">Date & Time</th>
-                    <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider">
-                      {statementTab === 'MESS' ? 'Shopper & Description' : 'Description'}
-                    </th>
-                    <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider text-right">Debit (Charge)</th>
-                    <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider text-right">Credit (Paid)</th>
-                    <th className="p-3 font-bold text-slate-800 text-xs uppercase tracking-wider text-right bg-slate-200">Balance</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredStatement.map((entry) => (
-                    <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 text-sm text-slate-600">
-                        <div className="font-bold text-slate-800">{entry.formattedDate}</div>
-                        <div className="text-xs text-slate-400 font-mono">{entry.formattedTime}</div>
-                      </td>
-                      <td className="p-3 text-sm font-bold text-slate-800">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div>
-                            <div>{entry.reference || (entry.type === 'PAYMENT' ? 'Cash Payment' : (entry.type === 'WRITE_OFF' ? 'Bad Debt Write-Off' : 'Grocery Purchase'))}</div>
-                            {entry.shopperName && entry.shopperName !== 'Member' && (
-                              <div className="text-[11px] text-indigo-700 font-medium mt-0.5 flex items-center gap-1">
-                                <Users size={11} />
-                                <span>Shopper: <strong>{entry.shopperName}</strong></span>
-                              </div>
-                            )}
-                            {entry.memberName && statementTab === 'MESS' && (
-                              <div className="text-[10px] text-slate-500 font-normal">
-                                Charged to: {entry.memberName}
-                              </div>
+              {/* Scrollable Statement Table with Sticky Header */}
+              <div className="flex-1 overflow-y-auto scroll-zone max-h-[340px]">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-100 sticky top-0 border-b z-10">
+                    <tr>
+                      <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider">Date & Time</th>
+                      <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider">
+                        {statementTab === 'MESS' ? 'Shopper & Description' : 'Description'}
+                      </th>
+                      <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider text-right">Debit (Charge)</th>
+                      <th className="p-3 font-bold text-slate-600 text-xs uppercase tracking-wider text-right">Credit (Paid)</th>
+                      <th className="p-3 font-bold text-slate-800 text-xs uppercase tracking-wider text-right bg-slate-200">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredStatement.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3 text-sm text-slate-600">
+                          <div className="font-bold text-slate-800">{entry.formattedDate}</div>
+                          <div className="text-xs text-slate-400 font-mono">{entry.formattedTime}</div>
+                        </td>
+                        <td className="p-3 text-sm font-bold text-slate-800">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div>
+                              <div>{entry.reference || (entry.type === 'PAYMENT' ? 'Cash Payment' : (entry.type === 'WRITE_OFF' ? 'Bad Debt Write-Off' : 'Grocery Purchase'))}</div>
+                              {entry.shopperName && entry.shopperName !== 'Member' && (
+                                <div className="text-[11px] text-indigo-700 font-medium mt-0.5 flex items-center gap-1">
+                                  <Users size={11} />
+                                  <span>Shopper: <strong>{entry.shopperName}</strong></span>
+                                </div>
+                              )}
+                              {entry.memberName && statementTab === 'MESS' && (
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  Charged to: {entry.memberName}
+                                </div>
+                              )}
+                            </div>
+                            {(entry.type === 'PAYMENT' || entry.raw_amount < 0) && (
+                              <button
+                                onClick={() => handleRePrintReceipt(entry)}
+                                title="Re-print Khata Payment Slip on 58mm Printer"
+                                className="px-2 py-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 rounded font-bold flex items-center gap-1 active:scale-95 cursor-pointer shadow-2xs transition-all"
+                              >
+                                <Printer size={12} /> Slip
+                              </button>
                             )}
                           </div>
-                          {(entry.type === 'PAYMENT' || entry.raw_amount < 0) && (
-                            <button
-                              onClick={() => handleRePrintReceipt(entry)}
-                              title="Re-print Khata Payment Slip on 58mm Printer"
-                              className="px-2 py-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 rounded font-bold flex items-center gap-1 active:scale-95 cursor-pointer shadow-2xs transition-all"
-                            >
-                              <Printer size={12} /> Slip
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3 font-mono font-bold text-red-500 text-right text-sm">
-                        {entry.type === 'CHARGE' || entry.raw_amount > 0 ? `BD ${Number(entry.amount).toFixed(3)}` : '-'}
-                      </td>
-                      <td className="p-3 font-mono font-bold text-emerald-600 text-right text-sm">
-                        {entry.type === 'PAYMENT' || entry.type === 'WRITE_OFF' || entry.raw_amount < 0 ? `BD ${Number(entry.amount).toFixed(3)}` : '-'}
-                      </td>
-                      <td className="p-3 font-mono font-black text-slate-900 text-right bg-slate-50 text-sm">
-                        BD {Number(entry.running_balance ?? entry.runningBalance ?? 0).toFixed(3)}
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredStatement.length === 0 && !isLoadingStatement && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-400 font-bold">
-                        {statement.length === 0 ? 'No transaction history found for this customer.' : 'No transactions match the selected date filter.'}
-                      </td>
-                    </tr>
-                  )}
-                  {isLoadingStatement && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-400 font-bold">
-                        Loading statement ledger...
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                        </td>
+                        <td className="p-3 font-mono font-bold text-red-500 text-right text-sm">
+                          {entry.type === 'CHARGE' || entry.raw_amount > 0 ? `BD ${Number(entry.amount).toFixed(3)}` : '-'}
+                        </td>
+                        <td className="p-3 font-mono font-bold text-emerald-600 text-right text-sm">
+                          {entry.type === 'PAYMENT' || entry.type === 'WRITE_OFF' || entry.raw_amount < 0 ? `BD ${Number(entry.amount).toFixed(3)}` : '-'}
+                        </td>
+                        <td className="p-3 font-mono font-black text-slate-900 text-right bg-slate-50 text-sm">
+                          BD {Number(entry.running_balance ?? entry.runningBalance ?? 0).toFixed(3)}
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredStatement.length === 0 && !isLoadingStatement && (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-400 font-bold">
+                          {statement.length === 0 ? 'No transaction history found for this customer.' : 'No transactions match the selected date filter.'}
+                        </td>
+                      </tr>
+                    )}
+                    {isLoadingStatement && (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-400 font-bold">
+                          Loading statement ledger...
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-            {/* Print Receipt Strip for @media print */}
-            <div className="print-receipt hidden">
-              <h2 style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold' }}>ASKAR STORE</h2>
-              <h3 style={{ textAlign: 'center', fontSize: '12px' }}>KHATA STATEMENT</h3>
-              <p style={{ textAlign: 'center', fontSize: '10px' }}>================================</p>
-              <p>Customer: {selectedCustomer.name}</p>
-              {selectedCustomer.phone && <p>Phone: {selectedCustomer.phone}</p>}
-              {selectedCustomer.cpr && <p>CPR: {selectedCustomer.cpr}</p>}
-              {(statementStartDate || statementEndDate) && (
-                <p style={{ textAlign: 'center', fontSize: '10px' }}>
-                  Filter: {statementStartDate || 'Start'} to {statementEndDate || 'Today'}
-                </p>
-              )}
-              <p>--------------------------------</p>
-              <p style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>DATE / DESC</span>
-                <span>BALANCE</span>
-              </p>
-              <p>--------------------------------</p>
-              {filteredStatement.slice().reverse().map(e => (
-                <div key={e.id} style={{ marginBottom: '4px' }}>
-                  <p>{e.formattedDate} {e.formattedTime}</p>
-                  <p style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{e.type === 'SALE' ? '+GROCERY' : '-PAYMENT'} ({Number(e.amount || 0) > 0 ? `+${Number(e.amount || 0).toFixed(3)}` : Number(e.amount || 0).toFixed(3)})</span>
-                    <span>BD {Number(e.runningBalance ?? e.running_balance ?? 0).toFixed(3)}</span>
+              {/* Print Receipt Strip for @media print */}
+              <div className="print-receipt hidden">
+                <h2 style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold' }}>ASKAR STORE</h2>
+                <h3 style={{ textAlign: 'center', fontSize: '12px' }}>KHATA STATEMENT</h3>
+                <p style={{ textAlign: 'center', fontSize: '10px' }}>================================</p>
+                <p>Customer: {selectedCustomer.name}</p>
+                {selectedCustomer.phone && <p>Phone: {selectedCustomer.phone}</p>}
+                {selectedCustomer.cpr && <p>CPR: {selectedCustomer.cpr}</p>}
+                {(statementStartDate || statementEndDate) && (
+                  <p style={{ textAlign: 'center', fontSize: '10px' }}>
+                    Filter: {statementStartDate || 'Start'} to {statementEndDate || 'Today'}
                   </p>
-                </div>
-              ))}
-              <p>================================</p>
-              <p style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
-                <span>OUTSTANDING DUE:</span>
-                <span>BD {getBal(selectedCustomer).toFixed(3)}</span>
-              </p>
-              <p style={{ textAlign: 'center', marginTop: '6px', fontSize: '10px' }}>
-                Printed: {new Date().toLocaleString()}
-              </p>
+                )}
+                <p>--------------------------------</p>
+                <p style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>DATE / DESC</span>
+                  <span>BALANCE</span>
+                </p>
+                <p>--------------------------------</p>
+                {filteredStatement.slice().reverse().map(e => (
+                  <div key={e.id} style={{ marginBottom: '4px' }}>
+                    <p>{e.formattedDate} {e.formattedTime}</p>
+                    <p style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{e.type === 'SALE' ? '+GROCERY' : '-PAYMENT'} ({Number(e.amount || 0) > 0 ? `+${Number(e.amount || 0).toFixed(3)}` : Number(e.amount || 0).toFixed(3)})</span>
+                      <span>BD {Number(e.runningBalance ?? e.running_balance ?? 0).toFixed(3)}</span>
+                    </p>
+                  </div>
+                ))}
+                <p>================================</p>
+                <p style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
+                  <span>OUTSTANDING DUE:</span>
+                  <span>BD {getBal(selectedCustomer).toFixed(3)}</span>
+                </p>
+                <p style={{ textAlign: 'center', marginTop: '6px', fontSize: '10px' }}>
+                  Printed: {new Date().toLocaleString()}
+                </p>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {editingCustomer && (
-        <KhataEditModal
-          customer={editingCustomer}
-          onClose={() => setEditingCustomer(null)}
-          onSaved={handleCustomerSaved}
-          onDeleted={handleCustomerDeleted}
-          apiBase={apiBase}
-          showToast={showToast}
-        />
-      )}
-    </>
+        {editingCustomer && (
+          <KhataEditModal
+            customer={editingCustomer}
+            onClose={() => setEditingCustomer(null)}
+            onSaved={handleCustomerSaved}
+            onDeleted={handleCustomerDeleted}
+            apiBase={apiBase}
+            showToast={showToast}
+          />
+        )}
+      </>
     );
   }
 
@@ -1975,87 +1984,82 @@ function SettleBalanceView({
   return (
     <>
       <div className="space-y-4 animate-in slide-in-from-left-4 h-full flex flex-col">
-      {/* Visual NFC Prompt */}
-      <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="relative flex h-10 w-10 items-center justify-center">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-20"></span>
-            <div className="bg-emerald-500 p-2 rounded-full">
-              <Wifi size={20} className="text-white" />
+        {/* Visual NFC Prompt */}
+        <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="relative flex h-10 w-10 items-center justify-center">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-20"></span>
+              <div className="bg-emerald-500 p-2 rounded-full">
+                <Wifi size={20} className="text-white" />
+              </div>
+            </div>
+            <div>
+              <h4 className="font-bold text-lg flex items-center gap-2">
+                Ready to Scan
+                {isNfcLoading && (
+                  <span className="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded animate-pulse">
+                    Reading card...
+                  </span>
+                )}
+              </h4>
+              <p className="text-slate-400 text-sm">Tap customer Khata card on terminal...</p>
             </div>
           </div>
-          <div>
-            <h4 className="font-bold text-lg flex items-center gap-2">
-              Ready to Scan
-              {isNfcLoading && (
-                <span className="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded animate-pulse">
-                  Reading card...
-                </span>
-              )}
-            </h4>
-            <p className="text-slate-400 text-sm">Tap customer Khata card on terminal...</p>
-          </div>
-        </div>
-        {/* Hidden button for testing in the browser without hardware */}
-        <button 
-          type="button"
-          onClick={() => handleNfcLookup('04:8A:21:5A:F1:48:80')} 
-          className="text-xs bg-slate-800 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer active:scale-95"
-        >
-          Simulate Scan
-        </button>
-      </div>
-
-      {/* Search Bar + Mess Filter + Sort Order Controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2">
-        <div className="relative flex-1">
-          <input 
-            type="text" 
-            placeholder="Search by name, phone, CPR, batch, mess name..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-base py-3 pl-4 pr-4 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 font-medium"
-          />
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+          {/* Hidden button for testing in the browser without hardware */}
           <button
             type="button"
-            onClick={() => setMessOnlyFilter(!messOnlyFilter)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              messOnlyFilter
+            onClick={() => handleNfcLookup('04:8A:21:5A:F1:48:80')}
+            className="text-xs bg-slate-800 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer active:scale-95"
+          >
+            Simulate Scan
+          </button>
+        </div>
+
+        {/* Search Bar + Mess Filter + Sort Order Controls */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              placeholder="Search by name, phone, CPR, batch, mess name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full text-base py-3 pl-4 pr-4 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 font-medium"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setMessOnlyFilter(!messOnlyFilter)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${messOnlyFilter
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-            }`}
-            title="Filter customers belonging to shared mess/camp groups"
-          >
-            <Users size={13} />
-            <span>Mess Groups</span>
-          </button>
-          <ArrowUpDown size={14} className="text-slate-500 ml-1" />
-          <select
-            value={sortParam}
-            onChange={(e: any) => setSortParam(e.target.value)}
-            className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none cursor-pointer"
-          >
-            <option value="highest">Highest Debt First</option>
-            <option value="stale">🚨 Stale Debt (&gt;45d)</option>
-            <option value="lowest">Lowest Balance</option>
-            <option value="alpha">Alphabetical (A-Z)</option>
-          </select>
+                }`}
+              title="Filter customers belonging to shared mess/camp groups"
+            >
+              <Users size={13} />
+              <span>Mess Groups</span>
+            </button>
+            <ArrowUpDown size={14} className="text-slate-500 ml-1" />
+            <select
+              value={sortParam}
+              onChange={(e: any) => setSortParam(e.target.value)}
+              className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none cursor-pointer"
+            >
+              <option value="highest">Highest Debt First</option>
+              <option value="stale">🚨 Stale Debt (&gt;45d)</option>
+              <option value="lowest">Lowest Balance</option>
+              <option value="alpha">Alphabetical (A-Z)</option>
+            </select>
+          </div>
         </div>
-      </div>
 
-      {/* Scrollable Customer List */}
-      <div className="flex-1 overflow-y-auto scroll-zone space-y-2 max-h-[350px] pr-1">
-        {filtered.map((customer) => (
-          <div
-            key={customer.id}
-            className="w-full bg-white border-2 border-slate-100 p-3.5 rounded-xl flex items-center justify-between active:border-emerald-500 transition-all text-left shadow-sm hover:border-slate-300"
-          >
+        {/* Scrollable Customer List */}
+        <div className="flex-1 overflow-y-auto scroll-zone space-y-2 max-h-[350px] pr-1">
+          {filtered.map((customer) => (
             <div
-              onClick={() => setSelectedCustomer(customer)}
-              className="flex-1 cursor-pointer pr-2 select-none"
+              key={customer.id}
+              className="w-full bg-white border-2 border-slate-100 p-3.5 rounded-xl flex items-center justify-between active:border-emerald-500 transition-all text-left shadow-sm hover:border-slate-300"
             >
               <div className="font-bold text-lg text-slate-800 flex items-center gap-2 flex-wrap">
                 <span>{customer.name}</span>
@@ -2069,147 +2073,144 @@ function SettleBalanceView({
                     {customer.batchNo}
                   </span>
                 )}
-                {(customer.messName || customer.mess_name) && (
+                {customer.messes && customer.messes.length > 0 ? (
+                  customer.messes.map((m: any) => (
+                    <span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1 shadow-2xs">
+                      <Users size={11} />
+                      <span>{m.group_name}</span>
+                    </span>
+                  ))
+                ) : (customer.messName || customer.mess_name) ? (
                   <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1 shadow-2xs">
                     <Users size={11} />
                     <span>{customer.messName || customer.mess_name}</span>
                   </span>
-                )}
+                ) : null}
               </div>
-              <div className="text-slate-500 text-sm flex items-center flex-wrap gap-3 mt-0.5">
-                <span>{customer.phone || 'No phone'}</span>
-                {customer.cpr && <span className="text-slate-400 font-mono text-xs">CPR: {customer.cpr}</span>}
-                {customer.cardUid && (
-                  <span className="font-mono text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
-                    💳 {customer.cardUid}
-                  </span>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Direct Mess Statement Button */}
+                {(customer.messName || customer.mess_name || customer.mess_id) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedCustomer(customer);
+                      loadStatement(customer.mess_id || customer.id, true);
+                    }}
+                    className="px-2.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 active:scale-95 transition-transform rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer shadow-2xs"
+                    title={`View Mess Split Statement for ${customer.messName || customer.mess_name || 'Mess'}`}
+                  >
+                    <Users size={14} />
+                    <span className="hidden sm:inline">Mess Split</span>
+                  </button>
                 )}
-              </div>
-            </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Direct Mess Statement Button */}
-              {(customer.messName || customer.mess_name || customer.mess_id) && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedCustomer(customer);
-                    loadStatement(customer.mess_id || customer.id, true);
-                  }}
-                  className="px-2.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 active:scale-95 transition-transform rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer shadow-2xs"
-                  title={`View Mess Split Statement for ${customer.messName || customer.mess_name || 'Mess'}`}
+                {/* One-Click WhatsApp Reminder Button */}
+                {getBal(customer) > 0 && customer.phone && (
+                  <a
+                    href={`https://wa.me/${(() => {
+                      const d = customer.phone.replace(/[^0-9]/g, '');
+                      return d.length === 8 ? `973${d}` : d;
+                    })()}?text=${encodeURIComponent(
+                      `*ASKAR SUPERMARKET - PAYMENT STATEMENT / كشف حساب أسواق عسكر*\n` +
+                      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                      `👤 *Customer / العميل:* ${customer.name}\n` +
+                      `💰 *Outstanding Balance / المبلغ المستحق:* *BHD ${getBal(customer).toFixed(3)}*\n\n` +
+                      `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
+                      `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(customer.id)}\n\n` +
+                      `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
+                      `• Registered Mobile: *+973 33843855*\n` +
+                      `• Beneficiary Name: *layali sbi*\n` +
+                      `• IBAN: *BH77SBIN02740045310001*\n\n` +
+                      `💡 *سدد فوراً عبر تطبيق بنفت بت (فوري+)*\n` +
+                      `• رقم الهاتف: *33843855*\n` +
+                      `• الاسم: *layali sbi*\n` +
+                      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                      `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-300 active:scale-90 transition-transform cursor-pointer shadow-2xs"
+                    title="Send WhatsApp Fawri+ Debt Reminder"
+                  >
+                    <MessageCircle size={18} className="fill-emerald-600/20" />
+                  </a>
+                )}
+
+                <div
+                  onClick={() => setSelectedCustomer(customer)}
+                  className="text-right cursor-pointer pr-1 select-none"
                 >
-                  <Users size={14} />
-                  <span className="hidden sm:inline">Mess Split</span>
-                </button>
-              )}
-
-              {/* One-Click WhatsApp Reminder Button */}
-              {getBal(customer) > 0 && customer.phone && (
-                <a
-                  href={`https://wa.me/${(() => {
-                    const d = customer.phone.replace(/[^0-9]/g, '');
-                    return d.length === 8 ? `973${d}` : d;
-                  })()}?text=${encodeURIComponent(
-                    `*ASKAR SUPERMARKET - PAYMENT STATEMENT / كشف حساب أسواق عسكر*\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `👤 *Customer / العميل:* ${customer.name}\n` +
-                    `💰 *Outstanding Balance / المبلغ المستحق:* *BHD ${getBal(customer).toFixed(3)}*\n\n` +
-                    `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
-                    `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(customer.id)}\n\n` +
-                    `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
-                    `• Registered Mobile: *+973 33843855*\n` +
-                    `• Beneficiary Name: *layali sbi*\n` +
-                    `• IBAN: *BH77SBIN02740045310001*\n\n` +
-                    `💡 *سدد فوراً عبر تطبيق بنفت بت (فوري+)*\n` +
-                    `• رقم الهاتف: *33843855*\n` +
-                    `• الاسم: *layali sbi*\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-300 active:scale-90 transition-transform cursor-pointer shadow-2xs"
-                  title="Send WhatsApp Fawri+ Debt Reminder"
-                >
-                  <MessageCircle size={18} className="fill-emerald-600/20" />
-                </a>
-              )}
-
-              <div
-                onClick={() => setSelectedCustomer(customer)}
-                className="text-right cursor-pointer pr-1 select-none"
-              >
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Balance</div>
-                <div className={`font-black text-lg ${getBal(customer) > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                  BD {getBal(customer).toFixed(3)}
-                </div>
-                {customer.isStale && (
-                  <div className="text-[9px] font-black bg-rose-100 text-rose-700 px-1 py-0.2 rounded mt-0.5 border border-rose-200">
-                    🚨 STALE ({customer.daysSinceLastPayment ?? 46}d)
+                  <div className="text-[10px] text-slate-400 font-bold uppercase">Balance</div>
+                  <div className={`font-black text-lg ${getBal(customer) > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                    BD {getBal(customer).toFixed(3)}
                   </div>
-                )}
-              </div>
+                  {customer.isStale && (
+                    <div className="text-[9px] font-black bg-rose-100 text-rose-700 px-1 py-0.2 rounded mt-0.5 border border-rose-200">
+                      🚨 STALE ({customer.daysSinceLastPayment ?? 46}d)
+                    </div>
+                  )}
+                </div>
 
-              {/* Direct Select / Link to Cart button */}
-              {onSelectCustomerForCart && (
+                {/* Direct Select / Link to Cart button */}
+                {onSelectCustomerForCart && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectCustomerForCart(customer);
+                      onClose?.();
+                    }}
+                    title={`Link ${customer.name} to active cart`}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl transition-all cursor-pointer font-bold text-xs flex items-center gap-1 shadow-sm"
+                  >
+                    <ShoppingCart size={14} /> Link Cart
+                  </button>
+                )}
+
+                {/* Dedicated Gear Icon for Edit / Archive (Soft Delete) */}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onSelectCustomerForCart(customer);
-                    onClose?.();
+                    setEditingCustomer(customer);
                   }}
-                  title={`Link ${customer.name} to active cart`}
-                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl transition-all cursor-pointer font-bold text-xs flex items-center gap-1 shadow-sm"
+                  title="Edit / Delete Account"
+                  className="p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-xl active:scale-90 transition-transform cursor-pointer border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs"
                 >
-                  <ShoppingCart size={14} /> Link Cart
+                  <Settings size={18} />
                 </button>
-              )}
 
-              {/* Dedicated Gear Icon for Edit / Archive (Soft Delete) */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditingCustomer(customer);
-                }}
-                title="Edit / Delete Account"
-                className="p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-xl active:scale-90 transition-transform cursor-pointer border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs"
-              >
-                <Settings size={18} />
-              </button>
-
-              <div
-                onClick={() => setSelectedCustomer(customer)}
-                className="cursor-pointer pl-1"
-              >
-                <ChevronRight className="text-slate-300" />
+                <div
+                  onClick={() => setSelectedCustomer(customer)}
+                  className="cursor-pointer pl-1"
+                >
+                  <ChevronRight className="text-slate-300" />
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div className="text-center text-slate-400 py-10 font-bold">
-            No customers found{search ? ` for "${search}"` : ''}.
-          </div>
-        )}
+          ))}
+          {filtered.length === 0 && (
+            <div className="text-center text-slate-400 py-10 font-bold">
+              No customers found{search ? ` for "${search}"` : ''}.
+            </div>
+          )}
+        </div>
       </div>
-    </div>
 
-    {editingCustomer && (
-      <KhataEditModal
-        customer={editingCustomer}
-        onClose={() => setEditingCustomer(null)}
-        onSaved={handleCustomerSaved}
-        onDeleted={handleCustomerDeleted}
-        apiBase={apiBase}
-        showToast={showToast}
-      />
-    )}
-  </>
+      {editingCustomer && (
+        <KhataEditModal
+          customer={editingCustomer}
+          onClose={() => setEditingCustomer(null)}
+          onSaved={handleCustomerSaved}
+          onDeleted={handleCustomerDeleted}
+          apiBase={apiBase}
+          showToast={showToast}
+        />
+      )}
+    </>
   );
 }
 
@@ -2238,10 +2239,21 @@ function NewCustomerView({
     cardUid: lastScannedCardUid || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [messGroupsList, setMessGroupsList] = useState<any[]>([]);
+  const [selectedMessGroupIds, setSelectedMessGroupIds] = useState<string[]>([]);
   const [cardStatus, setCardStatus] = useState<{
     status: 'idle' | 'checking' | 'valid' | 'conflict';
     message?: string;
   }>({ status: 'idle' });
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/nfc/mess-groups`)
+      .then(res => res.json())
+      .then(data => {
+        if (data?.messGroups) setMessGroupsList(data.messGroups);
+      })
+      .catch(() => {});
+  }, [apiBase]);
 
   // Verification helper to check if card is already taken by another customer
   const checkCard = async (uid: string) => {
@@ -2332,9 +2344,13 @@ function NewCustomerView({
           'Content-Type': 'application/json',
           'x-pos-client': 'store-pos'
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          mess_ids: selectedMessGroupIds,
+          mess_id: selectedMessGroupIds[0] || null
+        })
       });
-      
+
       const data = await res.json();
       if (res.ok && (data.success || data.id)) {
         const msg = `✅ Khata Party "${formData.name.trim()}" added successfully!`;
@@ -2354,7 +2370,7 @@ function NewCustomerView({
   return (
     <form onSubmit={handleSubmit} className="space-y-6 animate-in slide-in-from-left-4 h-full flex flex-col">
       <div className="flex-1 overflow-y-auto scroll-zone pr-2 space-y-6 max-h-[50vh]">
-        
+
         {/* SECTION 1: Identity */}
         <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
           <h4 className="flex items-center gap-2 text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">
@@ -2363,37 +2379,37 @@ function NewCustomerView({
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-slate-700 font-bold mb-1">Full Name *</label>
-              <input 
+              <input
                 type="text"
                 name="name"
                 required
                 value={formData.name}
                 onChange={handleChange}
-                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors" 
-                placeholder="e.g. Mohammed Yaseen" 
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors"
+                placeholder="e.g. Mohammed Yaseen"
               />
             </div>
             <div>
               <label className="block text-slate-700 font-bold mb-1">CPR Number</label>
-              <input 
+              <input
                 type="text"
-                name="cpr" 
+                name="cpr"
                 value={formData.cpr}
                 onChange={handleChange}
-                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono transition-colors" 
-                placeholder="XXXXXXXXX" 
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono transition-colors"
+                placeholder="XXXXXXXXX"
                 maxLength={9}
               />
             </div>
             <div>
               <label className="block text-slate-700 font-bold mb-1">Batch / Group No.</label>
-              <input 
+              <input
                 type="text"
-                name="batchNo" 
+                name="batchNo"
                 value={formData.batchNo}
                 onChange={handleChange}
-                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors" 
-                placeholder="e.g. B-452" 
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors"
+                placeholder="e.g. B-452"
               />
             </div>
           </div>
@@ -2407,13 +2423,13 @@ function NewCustomerView({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-slate-700 font-bold mb-1">Phone Number</label>
-              <input 
+              <input
                 type="tel"
-                name="phone" 
+                name="phone"
                 value={formData.phone}
                 onChange={handleChange}
-                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors" 
-                placeholder="+973 XXXXXXXX" 
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 transition-colors"
+                placeholder="+973 XXXXXXXX"
               />
             </div>
             <div>
@@ -2422,15 +2438,15 @@ function NewCustomerView({
               </label>
               <div className="relative flex items-center">
                 <span className="absolute left-3.5 font-bold text-slate-500 text-sm">BD</span>
-                <input 
+                <input
                   type="number"
                   step="0.005"
                   min="0"
-                  name="previousBalance" 
+                  name="previousBalance"
                   value={formData.previousBalance}
                   onChange={handleChange}
-                  className="w-full text-lg p-3 pl-12 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-bold text-red-600 font-mono transition-colors" 
-                  placeholder="0.000" 
+                  className="w-full text-lg p-3 pl-12 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-bold text-red-600 font-mono transition-colors"
+                  placeholder="0.000"
                 />
               </div>
               <p className="text-[11px] text-slate-500 mt-1 font-medium">
@@ -2439,13 +2455,13 @@ function NewCustomerView({
             </div>
             <div className="md:col-span-2">
               <label className="block text-slate-700 font-bold mb-1">Description / Notes</label>
-              <textarea 
-                name="description" 
+              <textarea
+                name="description"
                 value={formData.description}
                 onChange={handleChange}
                 rows={2}
-                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 resize-none transition-colors" 
-                placeholder="e.g. Migrated from physical ledger book Page 34..." 
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 resize-none transition-colors"
+                placeholder="e.g. Migrated from physical ledger book Page 34..."
               />
             </div>
           </div>
@@ -2471,26 +2487,23 @@ function NewCustomerView({
 
           {/* Active Card Pill / Conflict Warning / Tap Indicator */}
           {formData.cardUid ? (
-            <div className={`p-3.5 rounded-xl border mb-3 flex items-center justify-between ${
-              cardStatus.status === 'conflict'
-                ? 'bg-rose-50 border-rose-300 text-rose-900'
-                : 'bg-emerald-50 border-emerald-300 text-emerald-950'
-            }`}>
+            <div className={`p-3.5 rounded-xl border mb-3 flex items-center justify-between ${cardStatus.status === 'conflict'
+              ? 'bg-rose-50 border-rose-300 text-rose-900'
+              : 'bg-emerald-50 border-emerald-300 text-emerald-950'
+              }`}>
               <div className="flex items-center gap-2.5">
                 <span className="text-xl">💳</span>
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-black text-sm">{formData.cardUid}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                      cardStatus.status === 'conflict' ? 'bg-rose-200 text-rose-800' : 'bg-emerald-200 text-emerald-800'
-                    }`}>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${cardStatus.status === 'conflict' ? 'bg-rose-200 text-rose-800' : 'bg-emerald-200 text-emerald-800'
+                      }`}>
                       {cardStatus.status === 'conflict' ? 'Already in Use' : 'Card Verified'}
                     </span>
                   </div>
                   {cardStatus.message && (
-                    <p className={`text-xs mt-0.5 font-medium ${
-                      cardStatus.status === 'conflict' ? 'text-rose-700 font-bold' : 'text-emerald-700'
-                    }`}>
+                    <p className={`text-xs mt-0.5 font-medium ${cardStatus.status === 'conflict' ? 'text-rose-700 font-bold' : 'text-emerald-700'
+                      }`}>
                       {cardStatus.message}
                     </p>
                   )}
@@ -2523,7 +2536,7 @@ function NewCustomerView({
           )}
 
           <div className="flex gap-2">
-            <input 
+            <input
               type="text"
               name="cardUid"
               value={formData.cardUid}
@@ -2532,8 +2545,8 @@ function NewCustomerView({
                 setFormData(prev => ({ ...prev, cardUid: val }));
                 checkCard(val);
               }}
-              className="flex-1 text-base p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono" 
-              placeholder="Or type card UID manually (e.g. 04:8A:21:5A)..." 
+              className="flex-1 text-base p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono"
+              placeholder="Or type card UID manually (e.g. 04:8A:21:5A)..."
             />
             {lastScannedCardUid && formData.cardUid !== lastScannedCardUid && (
               <button
@@ -2551,12 +2564,72 @@ function NewCustomerView({
           </div>
         </div>
 
+        {/* SECTION 4: Multi-Mess / Camp Accounts */}
+        <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-slate-700 font-bold">
+              Enroll in Mess / Camp Accounts (Multiple Allowed)
+            </label>
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+              {selectedMessGroupIds.length} enrolled
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            A single member can be enrolled into 2 or more communal mess accounts simultaneously.
+          </p>
+
+          {messGroupsList.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No mess groups available yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 border border-slate-200 rounded-xl bg-white">
+              {messGroupsList.map((g) => {
+                const isEnrolled = selectedMessGroupIds.includes(g.id);
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedMessGroupIds((prev) =>
+                        isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                      );
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
+                      isEnrolled
+                        ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
+                          isEnrolled
+                            ? 'bg-purple-600 border-purple-600 text-white'
+                            : 'border-slate-300 bg-white'
+                        }`}
+                      >
+                        {isEnrolled && <Check size={12} strokeWidth={3} />}
+                      </div>
+                      <div className="truncate">
+                        <div className="text-xs truncate">{g.group_name}</div>
+                        <div className="text-[10px] text-slate-400 font-normal">
+                          {g.memberCount || 0} members
+                        </div>
+                      </div>
+                    </div>
+                    <Users size={14} className={isEnrolled ? 'text-purple-600 shrink-0' : 'text-slate-300 shrink-0'} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* Sticky Save Button at the bottom */}
       <div className="pt-4 border-t mt-auto">
-        <button 
-          type="submit" 
+        <button
+          type="submit"
           disabled={!formData.name.trim() || isSubmitting}
           className="w-full h-16 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xl rounded-xl active:scale-95 flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
         >
@@ -2591,8 +2664,24 @@ function KhataEditModal({
   const [cpr, setCpr] = useState(customer.cpr || '');
   const [batchNo, setBatchNo] = useState(customer.batchNo || '');
   const [creditLimit, setCreditLimit] = useState(String(customer.creditLimit || 30.0));
+  const [selectedMessGroupIds, setSelectedMessGroupIds] = useState<string[]>(() => {
+    if (Array.isArray(customer.mess_ids) && customer.mess_ids.length > 0) return customer.mess_ids;
+    if (Array.isArray(customer.messes) && customer.messes.length > 0) return customer.messes.map((m: any) => m.id);
+    if (customer.mess_id) return [customer.mess_id];
+    return [];
+  });
+  const [messGroupsList, setMessGroupsList] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/nfc/mess-groups`)
+      .then(res => res.json())
+      .then(data => {
+        if (data?.messGroups) setMessGroupsList(data.messGroups);
+      })
+      .catch(() => {});
+  }, [apiBase]);
 
   // Manager PIN modal state (PIN 9999)
   const [showPinModal, setShowPinModal] = useState(false);
@@ -2616,6 +2705,8 @@ function KhataEditModal({
           cpr: cpr.trim() || null,
           batchNo: batchNo.trim() || null,
           creditLimit: parseFloat(creditLimit) || 30.0,
+          mess_ids: selectedMessGroupIds,
+          mess_id: selectedMessGroupIds[0] || null,
         }),
       });
 
@@ -2628,6 +2719,11 @@ function KhataEditModal({
           cpr: cpr.trim() || null,
           batchNo: batchNo.trim() || null,
           creditLimit: parseFloat(creditLimit) || 30.0,
+          mess_ids: selectedMessGroupIds,
+          mess_id: selectedMessGroupIds[0] || null,
+          messes: messGroupsList.filter(g => selectedMessGroupIds.includes(g.id)).map(g => ({ id: g.id, group_name: g.group_name })),
+          hasMessGroup: selectedMessGroupIds.length > 0,
+          isMultiMess: selectedMessGroupIds.length > 1,
         };
         const msg = `Customer "${name.trim()}" updated successfully.`;
         showToast ? showToast(msg, 'success') : alert(msg);
@@ -2699,7 +2795,7 @@ function KhataEditModal({
             lastErrMsg = data.error;
             if (res.status === 400 || res.status === 401 || res.status === 403) break;
           }
-        } catch {}
+        } catch { }
 
         try {
           const res2 = await fetch(`${url}/khata/${customer.id}`, {
@@ -2719,7 +2815,7 @@ function KhataEditModal({
             lastErrMsg = data2.error;
             if (res2.status === 400 || res2.status === 401 || res2.status === 403) break;
           }
-        } catch {}
+        } catch { }
       }
 
       if (success) {
@@ -2834,6 +2930,66 @@ function KhataEditModal({
             <div className={`text-2xl font-black ${Number(customer.currentBalance ?? customer.balance ?? 0) > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
               BD {Number(customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}
             </div>
+          </div>
+
+          {/* Communal Mess Accounts Membership */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-slate-700 font-bold text-sm">
+                Communal Mess / Camp Accounts
+              </label>
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                {selectedMessGroupIds.length} enrolled
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Check all communal mess groups this customer belongs to. Multiple memberships are supported.
+            </p>
+
+            {messGroupsList.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">No mess groups available.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-200 rounded-xl bg-white">
+                {messGroupsList.map((g) => {
+                  const isEnrolled = selectedMessGroupIds.includes(g.id);
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMessGroupIds((prev) =>
+                          isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                        );
+                      }}
+                      className={`p-2 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
+                        isEnrolled
+                          ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
+                            isEnrolled
+                              ? 'bg-purple-600 border-purple-600 text-white'
+                              : 'border-slate-300 bg-white'
+                          }`}
+                        >
+                          {isEnrolled && <Check size={12} strokeWidth={3} />}
+                        </div>
+                        <div className="truncate">
+                          <div className="text-xs truncate">{g.group_name}</div>
+                          <div className="text-[10px] text-slate-400 font-normal">
+                            {g.memberCount || 0} members
+                          </div>
+                        </div>
+                      </div>
+                      <Users size={13} className={isEnrolled ? 'text-purple-600 shrink-0' : 'text-slate-300 shrink-0'} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Action Buttons: Emerald for saving, Red for deleting with Massive Touch Targets */}

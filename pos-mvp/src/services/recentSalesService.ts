@@ -49,7 +49,7 @@ export interface FetchRecentSalesOptions {
 }
 
 export const RECENT_SALES_STORAGE_KEY = 'askar_recent_sales_history_v1';
-export const MAX_RECENT_SALES = 200;
+export const MAX_RECENT_SALES = 1000;
 
 /**
  * Persist a completed sale to durable localStorage cache
@@ -194,22 +194,23 @@ function mergeIntoLocalSalesCache(newSales: RecentSale[]): void {
  * 3. Reconciles and backfills `localStorage` cache for instant offline reads.
  */
 export async function fetchRecentSalesFromDb(
-  optionsOrLimit: number | FetchRecentSalesOptions = 50
+  optionsOrLimit: number | FetchRecentSalesOptions = 500
 ): Promise<RecentSale[]> {
   const options: FetchRecentSalesOptions =
     typeof optionsOrLimit === 'number' ? { limit: optionsOrLimit } : (optionsOrLimit || {});
-  const limit = options.limit || 50;
+  const limit = options.limit || 500;
   const targetDate = options.date;
+  const isAll = !targetDate || targetDate === 'ALL' || targetDate === 'all';
 
   // 1. Try resilient API network fetch first
   const candidates = getResilientApiCandidates();
   for (const base of candidates) {
     try {
-      const url = targetDate
-        ? `${base}/api/sales/today?date=${encodeURIComponent(targetDate)}&limit=${limit}`
-        : `${base}/api/sales/today?limit=${limit}`;
+      const url = targetDate && !isAll
+        ? `${base}/api/sales/history?date=${encodeURIComponent(targetDate)}&limit=${limit}`
+        : `${base}/api/sales/history?all=true&limit=${limit}`;
 
-      const res = await fetch(url, { signal: AbortSignal.timeout(2500) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
         const data = await res.json();
         const rawSales = Array.isArray(data?.sales) ? data.sales : (Array.isArray(data) ? data : []);
@@ -251,7 +252,7 @@ export async function fetchRecentSalesFromDb(
                FROM Sale `;
     const args: any[] = [];
 
-    if (targetDate) {
+    if (targetDate && !isAll) {
       sql += `WHERE (createdAt LIKE ? OR date(createdAt) = ?) `;
       args.push(`${targetDate}%`, targetDate);
     }
@@ -322,6 +323,6 @@ export async function fetchRecentSalesFromDb(
  * Fetch sales specifically for a given date (YYYY-MM-DD)
  */
 export async function fetchSalesByDate(targetDate: string): Promise<RecentSale[]> {
-  return fetchRecentSalesFromDb({ date: targetDate, limit: 100 });
+  return fetchRecentSalesFromDb({ date: targetDate, limit: 300 });
 }
 

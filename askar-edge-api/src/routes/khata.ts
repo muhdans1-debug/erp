@@ -768,20 +768,40 @@ const handleCustomerStatement = async (c: any) => {
       });
       const creditSales = salesRes.rows || [];
       for (const s of creditSales) {
-        const exists = history.some((h: any) => h.reference === s.invoiceNo || h.id === s.id);
+        const exists = history.some((h: any) => h.reference === s.invoiceNo || h.id === s.id || h.sale_id === s.id);
         if (!exists) {
-          history.push({
-            id: s.id,
+          const ledgerId = `tx_inv_${String(s.invoiceNo || s.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          const ts = s.createdAt ? new Date(String(s.createdAt)).toISOString() : new Date().toISOString();
+          const newLedgerItem = {
+            id: ledgerId,
             customerId: realId,
             amount: Number(s.total) || 0,
             type: 'CHARGE',
             reference: s.invoiceNo || `INV-${Date.now()}`,
             running_balance: 0,
             syncStatus: 'SYNCED',
-            timestamp: s.createdAt || new Date().toISOString(),
-            created_at: s.createdAt || new Date().toISOString(),
+            timestamp: ts,
+            created_at: ts,
             tenantId: customer.tenantId || 'tenant_askar_01',
-          });
+            sale_id: s.id
+          };
+          history.push(newLedgerItem);
+
+          // Permanently persist to Cloud KhataLedger
+          try {
+            await db.execute({
+              sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id)
+                    VALUES (?, ?, ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING`,
+              args: [ledgerId, customer.tenantId || 'tenant_askar_01', realId, newLedgerItem.amount, newLedgerItem.reference, ts, ts, s.id]
+            });
+            await db.execute({
+              sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+              args: [realId, realId]
+            });
+          } catch (pErr: any) {
+            console.warn('Auto-persist edge recovery notice:', pErr?.message);
+          }
         }
       }
     } catch (e: any) {
@@ -1038,10 +1058,11 @@ khataRouter.post('/customers', requirePosOrManagerAuth, async (c) => {
 });
 
 /**
- * Update Existing Customer Details & Credit Limit (POS or Manager)
+ * Update Existing Customer Details & Credit Limit & Opening Balance (POS or Manager)
  */
-khataRouter.post('/customers/:id/update', requirePosOrManagerAuth, async (c) => {
+async function handleCustomerUpdate(c: any) {
   const db = getDb(c.env);
+  const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
   const customerId = c.req.param('id');
   try {
     const body = await c.req.json();
@@ -1049,6 +1070,8 @@ khataRouter.post('/customers/:id/update', requirePosOrManagerAuth, async (c) => 
     const phone = body.phone !== undefined ? (body.phone ? String(body.phone).trim() : null) : undefined;
     const cpr = body.cpr !== undefined ? (body.cpr ? String(body.cpr).trim() : null) : undefined;
     const creditLimit = body.creditLimit !== undefined ? Number(body.creditLimit) : (body.credit_limit !== undefined ? Number(body.credit_limit) : undefined);
+    const cardUid = body.cardUid !== undefined ? (body.cardUid ? String(body.cardUid).trim().toUpperCase() : null) : undefined;
+    const description = body.description ? String(body.description).trim() : null;
 
     const updates: string[] = [];
     const args: any[] = [];
@@ -1057,56 +1080,89 @@ khataRouter.post('/customers/:id/update', requirePosOrManagerAuth, async (c) => 
     if (phone !== undefined) { updates.push('phone = ?'); args.push(phone); }
     if (cpr !== undefined) { updates.push('cpr = ?'); args.push(cpr); }
     if (creditLimit !== undefined && !isNaN(creditLimit)) { updates.push('credit_limit = ?'); args.push(creditLimit); }
+    if (cardUid !== undefined) { updates.push('nfcCardId = ?'); args.push(cardUid); }
 
-    if (updates.length === 0) return c.json({ success: true, message: 'No updates provided' });
+    if (updates.length > 0) {
+      updates.push('updatedAt = CURRENT_TIMESTAMP');
+      args.push(customerId);
 
-    updates.push('updatedAt = CURRENT_TIMESTAMP');
-    args.push(customerId);
+      await db.execute({
+        sql: `UPDATE Customer SET ${updates.join(', ')} WHERE id = ?`,
+        args
+      });
+    }
 
-    await db.execute({
-      sql: `UPDATE Customer SET ${updates.join(', ')} WHERE id = ?`,
-      args
+    // Handle NFC card binding
+    if (cardUid) {
+      await db.execute({
+        sql: `UPDATE Customer SET nfcCardId = NULL WHERE (UPPER(nfcCardId) = ? OR REPLACE(UPPER(nfcCardId), ':', '') = ?) AND id != ?`,
+        args: [cardUid, cardUid.replace(/[:\-]/g, ''), customerId]
+      });
+      await db.execute({
+        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, createdAt)
+              VALUES (?, 'PERSONAL', ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(tag_id) DO UPDATE SET customer_id = excluded.customer_id`,
+        args: [cardUid, customerId]
+      });
+    }
+
+    // Support updating or adding previous book balance
+    const rawPrevBal = body.previousBalance ?? body.openingBalance ?? body.initialBalance;
+    if (rawPrevBal !== undefined && rawPrevBal !== null && rawPrevBal !== '') {
+      const cleanPrev = Number(parseFloat(String(rawPrevBal)).toFixed(3));
+      if (!isNaN(cleanPrev) && cleanPrev >= 0) {
+        const obCheck = await db.execute({
+          sql: `SELECT id FROM KhataLedger WHERE customerId = ? AND type = 'OPENING_BALANCE' LIMIT 1`,
+          args: [customerId]
+        });
+
+        if (obCheck.rows && obCheck.rows.length > 0) {
+          const obId = obCheck.rows[0].id as string;
+          await db.execute({
+            sql: `UPDATE KhataLedger SET amount = ?, running_balance = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+            args: [cleanPrev, cleanPrev, obId]
+          });
+        } else if (cleanPrev > 0) {
+          const ledgerId = `OB-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+          const refText = description || 'Opening Balance (Previous Physical Book)';
+          await db.execute({
+            sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, running_balance, reference, syncStatus, timestamp, created_at)
+                  VALUES (?, ?, ?, ?, 'OPENING_BALANCE', ?, ?, 'SYNCED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            args: [ledgerId, tenantId, customerId, cleanPrev, cleanPrev, refText]
+          });
+        }
+
+        // Recalculate customer balance to match ledger sum
+        await db.execute({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+          args: [customerId, customerId]
+        });
+      }
+    }
+
+    const updatedRes = await db.execute({
+      sql: `SELECT id, name, phone, cpr, balance, credit_limit, nfcCardId, mess_id, is_active FROM Customer WHERE id = ? LIMIT 1`,
+      args: [customerId]
     });
+    const updated = updatedRes.rows[0] || null;
 
-    return c.json({ success: true, message: 'Customer updated successfully', customerId });
+    return c.json({
+      success: true,
+      message: 'Customer updated successfully',
+      customerId,
+      customer: updated ? {
+        ...updated,
+        balance: Number(updated.balance ?? 0),
+        creditLimit: Number(updated.credit_limit ?? 30.0)
+      } : null
+    });
   } catch (err: any) {
     return c.json({ error: 'Failed to update customer', details: err?.message }, 500);
   }
-});
+}
 
-khataRouter.put('/customers/:id', requirePosOrManagerAuth, async (c) => {
-  const db = getDb(c.env);
-  const customerId = c.req.param('id');
-  try {
-    const body = await c.req.json();
-    const name = body.name ? String(body.name).trim() : null;
-    const phone = body.phone !== undefined ? (body.phone ? String(body.phone).trim() : null) : undefined;
-    const cpr = body.cpr !== undefined ? (body.cpr ? String(body.cpr).trim() : null) : undefined;
-    const creditLimit = body.creditLimit !== undefined ? Number(body.creditLimit) : (body.credit_limit !== undefined ? Number(body.credit_limit) : undefined);
-
-    const updates: string[] = [];
-    const args: any[] = [];
-
-    if (name) { updates.push('name = ?'); args.push(name); }
-    if (phone !== undefined) { updates.push('phone = ?'); args.push(phone); }
-    if (cpr !== undefined) { updates.push('cpr = ?'); args.push(cpr); }
-    if (creditLimit !== undefined && !isNaN(creditLimit)) { updates.push('credit_limit = ?'); args.push(creditLimit); }
-
-    if (updates.length === 0) return c.json({ success: true, message: 'No updates provided' });
-
-    updates.push('updatedAt = CURRENT_TIMESTAMP');
-    args.push(customerId);
-
-    await db.execute({
-      sql: `UPDATE Customer SET ${updates.join(', ')} WHERE id = ?`,
-      args
-    });
-
-    return c.json({ success: true, message: 'Customer updated successfully', customerId });
-  } catch (err: any) {
-    return c.json({ error: 'Failed to update customer', details: err?.message }, 500);
-  }
-});
+khataRouter.post('/customers/:id/update', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.put('/customers/:id', requirePosOrManagerAuth, handleCustomerUpdate);
 
 /**
  * Delete Khata Customer (Manager Authorization Required, Balance Must Be Zero)
@@ -1619,6 +1675,9 @@ khataRouter.post('/nfc/assign', requirePosOrManagerAuth, async (c) => {
     const customerId = body.customer_id || body.customerId;
     const cardType = (body.card_type || body.cardType || 'PERSONAL').toUpperCase();
     const messId = body.mess_id || body.messId || null;
+    const messIds: string[] = Array.isArray(body.mess_ids || body.messIds) 
+      ? (body.mess_ids || body.messIds) 
+      : (messId ? [messId] : []);
     const messName = (body.mess_name || '').trim();
     const memberIds: string[] = Array.isArray(body.member_ids) ? body.member_ids : [];
 
@@ -1638,8 +1697,14 @@ khataRouter.post('/nfc/assign', requirePosOrManagerAuth, async (c) => {
 
       if (finalMessId && memberIds.length > 0) {
         for (const mId of memberIds) {
+          const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
           statements.push({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+            sql: `INSERT OR IGNORE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                  VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+            args: [mmId, finalMessId, mId]
+          });
+          statements.push({
+            sql: `UPDATE Customer SET mess_id = COALESCE(mess_id, ?) WHERE id = ?`,
             args: [finalMessId, mId]
           });
         }
@@ -1666,10 +1731,28 @@ khataRouter.post('/nfc/assign', requirePosOrManagerAuth, async (c) => {
         args: [tagId, tagId.replace(/[:\-]/g, ''), customerId]
       });
 
+      const primaryMessId = messIds.length > 0 ? messIds[0] : (messId || null);
+
       statements.push({
-        sql: `UPDATE Customer SET nfcCardId = ?, cardUid = ?, mess_id = COALESCE(?, mess_id), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
-        args: [tagId, tagId, messId, customerId]
+        sql: `UPDATE Customer SET nfcCardId = ?, cardUid = ?, mess_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+        args: [tagId, tagId, primaryMessId, customerId]
       });
+
+      // Synchronize multiple mess memberships
+      if (body.mess_ids !== undefined || body.messIds !== undefined || body.mess_id !== undefined || body.messId !== undefined) {
+        statements.push({
+          sql: `DELETE FROM MessMember WHERE customer_id = ?`,
+          args: [customerId]
+        });
+        for (const mId of messIds) {
+          const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          statements.push({
+            sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                  VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+            args: [mmId, mId, customerId]
+          });
+        }
+      }
 
       statements.push({
         sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt)
@@ -1678,7 +1761,7 @@ khataRouter.post('/nfc/assign', requirePosOrManagerAuth, async (c) => {
                 card_type = 'PERSONAL',
                 customer_id = excluded.customer_id,
                 mess_id = excluded.mess_id`,
-        args: [tagId, customerId, messId]
+        args: [tagId, customerId, primaryMessId]
       });
 
       await db.batch(statements, 'write');

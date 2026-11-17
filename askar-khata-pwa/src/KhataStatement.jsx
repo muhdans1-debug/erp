@@ -17,9 +17,13 @@ import {
   ChevronDown,
   PhoneCall,
   MessageCircle,
-  Clock
+  Clock,
+  Menu
 } from 'lucide-react';
 import BenefitPayModal from './components/BenefitPayModal';
+import HamburgerDrawer from './components/HamburgerDrawer';
+import ReceiptModal from './components/ReceiptModal';
+import TransactionItemCard from './components/TransactionItemCard';
 import { generateBenefitPayPayload } from './utils/benefitPay';
 
 const STATEMENT_TEXTS = {
@@ -341,6 +345,8 @@ export function KhataStatement() {
   const [newPin, setNewPin] = useState('');
   const [pinMessage, setPinMessage] = useState('');
   const [isChangingPin, setIsChangingPin] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
 
   // AbortController ref for in-flight fetch management (ADV-07)
   const abortControllerRef = useRef(null);
@@ -1008,23 +1014,36 @@ export function KhataStatement() {
       dir={isRtl ? 'rtl' : 'ltr'}
       className="min-h-screen bg-slate-950 text-white flex flex-col items-center p-4 pt-safe pb-safe selection:bg-emerald-500 selection:text-white"
     >
-      {/* Top Header & Actions */}
-      <div className="w-full max-w-md mb-3 flex items-center justify-between no-print">
-        <Link to="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition py-2">
-          <ArrowLeft className={`w-4 h-4 ${isRtl ? 'rotate-180' : ''}`} />
-          <span>{t.backSearch}</span>
-        </Link>
-
-        {/* Language Switcher & Lock Device Button */}
+      {/* Top Header & Actions Bar */}
+      <header className="w-full max-w-md mb-3 flex items-center justify-between no-print">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-2xl">
-            {['en', 'ar', 'ml', 'bn', 'hi'].map((code) => (
+          {/* Hamburger Drawer Button */}
+          <button
+            type="button"
+            onClick={() => setShowDrawer(true)}
+            className="min-h-[42px] px-3 bg-slate-900 hover:bg-slate-800 active:scale-95 border border-slate-800 rounded-2xl flex items-center gap-1.5 text-slate-200 hover:text-white transition cursor-pointer shadow-xs"
+            title="Open Menu"
+          >
+            <Menu className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs font-bold font-mono">MENU</span>
+          </button>
+
+          <Link to="/" className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-white transition py-2 px-1">
+            <ArrowLeft className={`w-3.5 h-3.5 ${isRtl ? 'rotate-180' : ''}`} />
+            <span>{t.backSearch}</span>
+          </Link>
+        </div>
+
+        {/* Lock Device & Quick Language Selector */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-slate-900 border border-slate-800 p-0.5 rounded-2xl">
+            {['en', 'ar', 'ml'].map((code) => (
               <button
                 key={code}
                 type="button"
                 onClick={() => setLang(code)}
-                className={`min-w-8 h-8 px-2 rounded-xl font-bold text-xs uppercase transition-all flex items-center justify-center ${
-                  lang === code ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                className={`min-w-7 h-8 px-1.5 rounded-xl font-bold text-[11px] uppercase transition-all flex items-center justify-center cursor-pointer ${
+                  lang === code ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
                 }`}
               >
                 {code}
@@ -1034,13 +1053,14 @@ export function KhataStatement() {
 
           <button
             onClick={() => handleLockAccount(false)}
-            className="h-10 px-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-2xl text-xs text-rose-400 font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            className="h-10 px-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-2xl text-xs text-rose-400 font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+            title={t.lockDevice}
           >
             <Lock className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{t.lockDevice}</span>
           </button>
         </div>
-      </div>
+      </header>
 
       <div className="w-full max-w-md space-y-4">
         {/* Offline Snapshot Banner */}
@@ -1244,54 +1264,16 @@ export function KhataStatement() {
               <p>{t.noTransactions}</p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {ledgerData.map((tx, idx) => {
-                const isWriteOff = tx.type === 'WRITE_OFF';
-                const isPayment = tx.type === 'PAYMENT' || Number(tx.amount) < 0;
-                const absAmount = Math.abs(Number(tx.amount || 0)).toFixed(3);
-                const txDate = formatTxDate(tx.timestamp);
-
-                return (
-                  <div
-                    key={tx.id || idx}
-                    className="p-3 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-center justify-between text-xs"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                        isWriteOff
-                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                          : isPayment 
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                      }`}>
-                        {isWriteOff ? <CheckCircle2 className="w-4 h-4" /> : isPayment ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
-                      </div>
-                      <div>
-                        <p className="font-bold text-white truncate max-w-[170px]">
-                          {tx.reference || (isWriteOff ? t.writeOff : (isPayment ? t.paymentReceived : t.storePurchase))}
-                        </p>
-                        <p className="text-[10px] text-slate-500 flex items-center gap-1 font-mono">
-                          <Calendar className="w-3 h-3 text-slate-600" />
-                          <span>{txDate}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <span className={`font-mono font-black text-xs ${
-                        isWriteOff ? 'text-amber-400' : isPayment ? 'text-emerald-400' : 'text-rose-400'
-                      }`}>
-                        {isWriteOff || isPayment ? '-' : '+'}{t.currency} {absAmount}
-                      </span>
-                      {tx.running_balance !== undefined && tx.running_balance !== null && (
-                        <p className="text-[10px] text-slate-500 font-mono">
-                          bal: {Number(tx.running_balance).toFixed(3)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+              {ledgerData.map((tx, idx) => (
+                <TransactionItemCard
+                  key={tx.id || idx}
+                  tx={tx}
+                  lang={lang}
+                  currency={t.currency || 'BHD'}
+                  onViewReceipt={(inv) => setSelectedReceipt(inv)}
+                />
+              ))}
             </div>
           )}
 
@@ -1420,6 +1402,29 @@ export function KhataStatement() {
         onSuccess={() => {
           fetchLedger(uuid, localStorage.getItem(pinKey) || '');
         }}
+      />
+
+      {/* Slide-out Hamburger Drawer */}
+      <HamburgerDrawer
+        isOpen={showDrawer}
+        onClose={() => setShowDrawer(false)}
+        customer={account}
+        lang={lang}
+        onSelectLang={(newLang) => setLang(newLang)}
+        isFrozen={account?.is_active === 0}
+        onOpenBenefitPay={() => {
+          if (account && Number(account.balance) > 0) {
+            handlePayBenefitPay(Number(account.balance));
+          }
+        }}
+      />
+
+      {/* Simplified Tax Invoice Receipt Modal */}
+      <ReceiptModal
+        isOpen={Boolean(selectedReceipt)}
+        onClose={() => setSelectedReceipt(null)}
+        invoice={selectedReceipt}
+        lang={lang}
       />
     </div>
   );

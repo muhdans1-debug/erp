@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, TrendingUp, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2 } from 'lucide-react';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, TrendingUp, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
-import { openCashDrawer, kickCashDrawer } from '../services/cashDrawerService';
+import { openCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
@@ -263,7 +263,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [showReceivingDrawer, setShowReceivingDrawer] = useState(false);
   const [showOrderHistoryDrawer, setShowOrderHistoryDrawer] = useState(false);
   const [showPreviousBillsModal, setShowPreviousBillsModal] = useState(false);
-  const [showMoreActionsMenu, setShowMoreActionsMenu] = useState(false);
+  const [showHamburgerMenu, setShowHamburgerMenu] = useState(() => typeof window !== 'undefined' && window.location.search.includes('menu=open'));
   const [showNumpad, setShowNumpad] = useState(false);
   const [changeFlashNotice, setChangeFlashNotice] = useState<{ changeDue: number; tendered: number } | null>(null);
   const [lastCompletedSale, setLastCompletedSale] = useState<{
@@ -2556,6 +2556,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setShowOmniPadModal,
     showPreviousBillsModal,
     setShowPreviousBillsModal,
+    showHamburgerMenu,
+    setShowHamburgerMenu,
   });
 
   useEffect(() => {
@@ -2569,6 +2571,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       setShowOmniPadModal,
       showPreviousBillsModal,
       setShowPreviousBillsModal,
+      showHamburgerMenu,
+      setShowHamburgerMenu,
       showKhataHub,
       showZReportModal,
       showCashOutModal,
@@ -2612,8 +2616,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         return;
       }
 
-      // Escape: Close F12 Search Modal, Omni-Pad, or Previous Bills if open
+      // Escape: Close F12 Search Modal, Omni-Pad, Previous Bills, or Hamburger Menu if open
       if (e.key === 'Escape') {
+        if (s.showHamburgerMenu) {
+          e.preventDefault();
+          s.setShowHamburgerMenu(false);
+          return;
+        }
         if (s.showPreviousBillsModal) {
           e.preventDefault();
           s.setShowPreviousBillsModal(false);
@@ -3064,6 +3073,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         {/* Left: Brand & Status Capsule */}
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2">
+            {/* Hamburger Operations Menu Trigger */}
+            <button
+              type="button"
+              onClick={() => setShowHamburgerMenu(true)}
+              className="h-9 w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-750 transition cursor-pointer shadow-xs border border-slate-200/90"
+              title="Open Operations & Tools Menu [Esc to close]"
+            >
+              <Menu size={18} />
+            </button>
+
             <h1
               onDoubleClick={() => setShowDevPanel((prev) => !prev)}
               className="font-black text-xl tracking-tight text-slate-800 cursor-pointer select-none whitespace-nowrap"
@@ -3228,34 +3247,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <kbd className="bg-blue-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-blue-900 leading-none">F12</kbd>
           </button>
 
-          {/* AUTO-PRINT TOGGLE */}
-          <button
-            type="button"
-            onClick={toggleAutoPrint}
-            className={`h-9 flex items-center gap-1.5 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer whitespace-nowrap shadow-xs active:scale-95 ${isAutoPrintEnabled
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
-              : 'bg-slate-50 text-slate-600 border-slate-200/90 hover:bg-slate-100'
-              }`}
-            title="Toggle between Auto-Print and Selective Print on Demand"
-          >
-            <Printer size={14} className={isAutoPrintEnabled ? 'text-emerald-600' : 'text-slate-400'} />
-            <span>Print: {isAutoPrintEnabled ? 'ON' : 'OFF'}</span>
-          </button>
-
-          {/* RECEIPT ROLL FORMAT & PRINTER STYLING */}
-          <button
-            type="button"
-            onClick={() => setShowPrinterStyleModal(true)}
-            className="h-9 flex items-center gap-1.5 px-2.5 bg-sky-50 hover:bg-sky-100 active:scale-95 text-sky-900 font-bold rounded-xl text-xs border border-sky-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
-            title="Configure Thermal Bill Receipt Styling & Sunmi Innerprinter Options"
-          >
-            <Settings size={13} className="text-sky-600" />
-            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-200/90 font-mono text-sky-950 font-black">
-              {receiptFormat.toUpperCase()}
-            </span>
-            <span className="hidden sm:inline">Receipt Style</span>
-          </button>
-
           {/* KHATA (F3) */}
           <button
             type="button"
@@ -3263,15 +3254,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               setShowKhataHub(true);
               loadCustomers();
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Khata Hub & Customer Ledger [F3]"
           >
             <CreditCard size={14} className="text-indigo-600" />
             <span>Khata</span>
-            <kbd className="bg-slate-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-700 leading-none">F3</kbd>
+            <kbd className="bg-indigo-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-indigo-900 leading-none">F3</kbd>
           </button>
 
-          {/* NFC CARDS */}
+          {/* NFC CARDS / MANAGER */}
           <button
             type="button"
             onClick={() => {
@@ -3283,275 +3274,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <Radio size={14} className="text-emerald-600 animate-pulse" />
             <span>NFC Cards</span>
           </button>
-
-          {/* 🧾 PREVIOUS BILLS & REPRINTS (F9) */}
-          <button
-            type="button"
-            onClick={() => setShowPreviousBillsModal(true)}
-            className="h-9 flex items-center gap-1.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-bold rounded-xl text-xs border border-slate-700 transition-all cursor-pointer whitespace-nowrap shadow-xs"
-            title="Search & Reprint Previous Bills [F9]"
-          >
-            <Receipt size={14} className="text-green-400" />
-            <span>Previous Bills</span>
-            <kbd className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] font-mono text-zinc-300 border border-slate-700 leading-none">F9</kbd>
-          </button>
-
-          {/* ⚡ CASH DRAWER TRIGGER (F10) */}
-          <button
-            type="button"
-            onClick={async () => {
-              await openCashDrawer({ reason: 'HEADER_TRIGGER' });
-            }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-900 font-bold rounded-xl text-xs border border-amber-300 transition-all cursor-pointer whitespace-nowrap shadow-xs hover:border-amber-400"
-            title="Kick Sunmi Cash Drawer Across Network [F10]"
-          >
-            <Coins size={14} className="text-amber-600" />
-            <span>Open Drawer</span>
-            <kbd className="bg-amber-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-amber-900 leading-none">F10</kbd>
-          </button>
-
-          {/* ⚡ MANAGER & OPERATIONS TRAY (ALL 9 TOOLS 100% PRESERVED & TOUCH-FRIENDLY) */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowMoreActionsMenu(!showMoreActionsMenu)}
-              className={`h-9 flex items-center gap-1.5 px-3 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shadow-xs active:scale-95 border ${showMoreActionsMenu
-                ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-400'
-                : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-300'
-                }`}
-              title="Manager Operations & Tools (Receiving, Receipts, Mess, Refund, Drawer, Cash Out, Shift, Financials, Settings)"
-            >
-              <span>⚡ More Actions</span>
-              <span className="bg-amber-400 text-slate-950 font-black text-[10px] px-1.5 py-0.2 rounded-full">
-                9
-              </span>
-              <ChevronDown size={12} className={`transition-transform duration-200 ${showMoreActionsMenu ? 'rotate-180' : ''}`} />
-            </button>
-
-            {showMoreActionsMenu && (
-              <>
-                {/* Backdrop to close on tap outside */}
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowMoreActionsMenu(false)}
-                />
-
-                {/* 9-Tool Grid Popover */}
-                <div className="absolute top-full right-0 mt-2 w-80 bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl p-3 z-50 text-white animate-in fade-in zoom-in-95 duration-150">
-                  <div className="px-1 pb-2 mb-2 border-b border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                    <span>⚡ Operations & Back-Office</span>
-                    <span className="text-[9px] font-mono text-emerald-400">100% PRESERVED</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {/* RECEIVING */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowOrderHistoryDrawer(false);
-                        setShowReceivingDrawer(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <Truck size={15} className="text-emerald-400 shrink-0" />
-                      <span className="truncate">Receiving</span>
-                    </button>
-
-                    {/* RECEIPTS */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowReceivingDrawer(false);
-                        setShowOrderHistoryDrawer(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <Receipt size={15} className="text-blue-400 shrink-0" />
-                      <span className="truncate">Receipts</span>
-                    </button>
-
-                    {/* MESS GROUPS */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowMessModal(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <Users size={15} className="text-indigo-400 shrink-0" />
-                      <span className="truncate">Mess Groups</span>
-                    </button>
-
-                    {/* REFUND */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setIsReturnMode((prev) => !prev);
-                        setShowRefundModal(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <RotateCcw size={15} className="text-rose-400 shrink-0" />
-                      <span className="truncate">Refund</span>
-                    </button>
-
-                    {/* CASH DRAWER */}
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setShowMoreActionsMenu(false);
-                        const storedPin = localStorage.getItem('manager_pin') || '9999';
-                        const inputPin = window.prompt('🔒 Enter Manager PIN to open cash drawer (No-Sale):');
-                        if (inputPin !== storedPin) {
-                          if (inputPin !== null) {
-                            showToast('❌ Invalid Manager PIN', 'error');
-                          }
-                          return;
-                        }
-
-                        const ok = await kickCashDrawer({ pin: inputPin, reason: 'MANAGER_OVERRIDE_NO_SALE' });
-                        if (ok) {
-                          showToast('⚡ Cash Drawer opened [Manager Override]', 'success');
-                          try {
-                            fetch(`${apiBase}/api/expenses`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                type: 'BUSINESS',
-                                category: 'MISC_BUSINESS',
-                                amount: 0,
-                                description: `Manual No-Sale Drawer Kick by Cashier: ${localStorage.getItem('active_shift_cashier') || 'Staff'}`,
-                                recordedBy: 'Manager'
-                              })
-                            }).catch(() => { });
-                          } catch (_) { }
-                        } else {
-                          showToast('⚠️ Cash Drawer kick failed', 'error');
-                        }
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <Coins size={15} className="text-amber-400 shrink-0" />
-                      <span className="truncate">Drawer Kick</span>
-                    </button>
-
-                    {/* CASH OUT */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowCashOutModal(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-200 transition cursor-pointer text-left"
-                    >
-                      <Banknote size={15} className="text-rose-400 shrink-0" />
-                      <span className="truncate">Cash Out</span>
-                    </button>
-
-                    {/* CLOSE SHIFT */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowBlindCloseModal(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-amber-600/90 hover:bg-amber-600 rounded-xl text-xs font-bold text-white transition cursor-pointer text-left shadow-xs"
-                    >
-                      <Lock size={15} className="text-white shrink-0" />
-                      <span className="truncate">Close Shift</span>
-                    </button>
-
-                    {/* FINANCIALS & P&L */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        const storedPin = getManagerPin();
-                        const inputPin = window.prompt('🔒 Enter Manager PIN to view Financials & P&L Statement:');
-                        if (inputPin !== storedPin) {
-                          if (inputPin !== null) {
-                            showToast('❌ Invalid Manager PIN', 'error');
-                          }
-                          return;
-                        }
-                        setEmergencyUnlocked(true);
-                        setViewMode('pnl');
-                      }}
-                      className="flex items-center gap-2 p-2 bg-emerald-700/90 hover:bg-emerald-700 rounded-xl text-xs font-bold text-white transition cursor-pointer text-left shadow-xs"
-                    >
-                      <TrendingUp size={15} className="text-white shrink-0" />
-                      <span className="truncate">Financials</span>
-                    </button>
-
-                    {/* ALL TRANSACTIONS (MASTER REPORT & DATE FILTER) */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        const storedPin = getManagerPin();
-                        const inputPin = window.prompt('🔒 Enter Manager PIN to view Full Transaction History:');
-                        if (inputPin !== storedPin) {
-                          if (inputPin !== null) {
-                            showToast('❌ Invalid Manager PIN', 'error');
-                          }
-                          return;
-                        }
-                        setEmergencyUnlocked(true);
-                        setViewMode('master');
-                      }}
-                      className="flex items-center gap-2 p-2 bg-indigo-700/90 hover:bg-indigo-700 rounded-xl text-xs font-bold text-white transition cursor-pointer text-left shadow-xs"
-                    >
-                      <FileText size={15} className="text-white shrink-0" />
-                      <span className="truncate">All Transactions</span>
-                    </button>
-
-                    {/* PREVIOUS BILLS & REPRINTS (NO MANAGER PIN NEEDED) */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowPreviousBillsModal(true);
-                      }}
-                      className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-green-400 transition cursor-pointer text-left"
-                    >
-                      <Receipt size={15} className="text-green-400 shrink-0" />
-                      <span className="truncate">Previous Bills [F9]</span>
-                    </button>
-
-                    {/* SUNMI INNERPRINTER & RECEIPT STYLING */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowPrinterStyleModal(true);
-                      }}
-                      className="col-span-2 flex items-center justify-center gap-2 p-2 bg-sky-950/70 hover:bg-sky-900 border border-sky-700/70 rounded-xl text-xs font-bold text-sky-300 transition cursor-pointer text-center"
-                    >
-                      <Printer size={15} className="text-sky-400 shrink-0" />
-                      <span>🖨️ Printer & Bill Receipt Style</span>
-                    </button>
-
-                    {/* DEV DIAGNOSTICS & SETTINGS */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActionsMenu(false);
-                        setShowDevPanel(true);
-                      }}
-                      className="col-span-2 flex items-center justify-center gap-2 p-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 transition cursor-pointer text-center"
-                    >
-                      <Settings size={15} className="text-slate-400 shrink-0" />
-                      <span>Diagnostics & Settings [Ctrl+Shift+D]</span>
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
 
           {/* OFFLINE SALES QUEUE DRAIN BADGE */}
           {offlinePendingCount > 0 && (
@@ -3579,6 +3301,407 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           />
         </div>
       </header>
+
+      {/* ☰ HAMBURGER OPERATIONS & BACK-OFFICE DRAWER (LEFT SLIDE-OUT) */}
+      {showHamburgerMenu && (
+        <div className="fixed inset-0 z-50 overflow-hidden select-none">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+            onClick={() => setShowHamburgerMenu(false)}
+          />
+
+          {/* Slide-out Drawer Panel */}
+          <aside className="fixed inset-y-0 left-0 w-84 sm:w-96 bg-slate-900 border-r border-slate-800 text-white shadow-2xl flex flex-col z-50 animate-in slide-in-from-left duration-200">
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 font-black text-sm">
+                  AP
+                </div>
+                <div>
+                  <h2 className="font-black text-base tracking-tight text-white flex items-center gap-2">
+                    Askar POS Tools
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      LIVE
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {localStorage.getItem('active_shift_cashier') || 'Register 01'} • Active Shift
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHamburgerMenu(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+                title="Close Menu [Esc]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* FLEET TERMINAL SELECTOR */}
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Active Terminal</span>
+                  <span className="text-[9px] font-mono text-emerald-400">FLEET SYNC</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSwitchTerminal('T1');
+                      setShowHamburgerMenu(false);
+                    }}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                      currentTerminal === 'T1'
+                        ? 'bg-blue-950/60 text-blue-300 border-blue-700 ring-1 ring-blue-500'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Monitor size={14} className="text-blue-400 shrink-0" />
+                      <span className="truncate">T1: Sunmi D2</span>
+                    </span>
+                    <span className="text-[10px] font-mono opacity-60">Counter 1</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSwitchTerminal('T2');
+                      setShowHamburgerMenu(false);
+                    }}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                      currentTerminal === 'T2'
+                        ? 'bg-amber-950/60 text-amber-300 border-amber-700 ring-1 ring-amber-500'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Smartphone size={14} className="text-amber-400 shrink-0" />
+                      <span className="truncate">T2: F100</span>
+                    </span>
+                    <span className="text-[10px] font-mono opacity-60">Counter 2</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSwitchTerminal('T3');
+                      setShowHamburgerMenu(false);
+                    }}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                      currentTerminal === 'T3'
+                        ? 'bg-purple-950/60 text-purple-300 border-purple-700 ring-1 ring-purple-500'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Laptop size={14} className="text-purple-400 shrink-0" />
+                      <span className="truncate">T3: Desktop 1</span>
+                    </span>
+                    <span className="text-[10px] font-mono opacity-60">Counter 3</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSwitchTerminal('T4');
+                      setShowHamburgerMenu(false);
+                    }}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                      currentTerminal === 'T4'
+                        ? 'bg-teal-950/60 text-teal-300 border-teal-700 ring-1 ring-teal-500'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Laptop size={14} className="text-teal-400 shrink-0" />
+                      <span className="truncate">T4: Desktop 2</span>
+                    </span>
+                    <span className="text-[10px] font-mono opacity-60">Counter 4</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* GROUP 1: HARDWARE & CASH DRAWER */}
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Hardware & Peripherals</span>
+                  <span className="text-amber-400 font-mono text-[9px]">DEVICES</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* CASH DRAWER KICK */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setShowHamburgerMenu(false);
+                      await openCashDrawer({ reason: 'HAMBURGER_TRIGGER' });
+                    }}
+                    className="flex flex-col gap-1 p-3 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 rounded-xl transition cursor-pointer text-left group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <Coins size={18} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                      <kbd className="text-[9px] font-mono bg-amber-900/80 text-amber-200 px-1.5 py-0.5 rounded">F10</kbd>
+                    </div>
+                    <span className="text-xs font-black text-amber-200 mt-1">Open Drawer</span>
+                    <span className="text-[10px] text-amber-400/80">Kick RJ11 Drawer</span>
+                  </button>
+
+                  {/* AUTO-PRINT TOGGLE */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleAutoPrint();
+                    }}
+                    className={`flex flex-col gap-1 p-3 border rounded-xl transition cursor-pointer text-left ${
+                      isAutoPrintEnabled
+                        ? 'bg-emerald-950/40 hover:bg-emerald-900/60 border-emerald-800/60 text-emerald-200'
+                        : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <Printer size={18} className={isAutoPrintEnabled ? 'text-emerald-400' : 'text-slate-400'} />
+                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                        isAutoPrintEnabled ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-400'
+                      }`}>
+                        {isAutoPrintEnabled ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                    <span className="text-xs font-black mt-1">Auto-Print</span>
+                    <span className="text-[10px] opacity-70">
+                      {isAutoPrintEnabled ? 'Print on Tender' : 'Demand Only'}
+                    </span>
+                  </button>
+
+                  {/* RECEIPT STYLE & ROLL (58mm / 80mm) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowPrinterStyleModal(true);
+                    }}
+                    className="col-span-2 flex items-center justify-between p-3 bg-sky-950/40 hover:bg-sky-900/50 border border-sky-800/50 rounded-xl transition cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Settings size={16} className="text-sky-400" />
+                      <div>
+                        <div className="text-xs font-bold text-sky-200">Thermal Receipt Style</div>
+                        <div className="text-[10px] text-sky-400/80">Paper roll, font size & density</div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-sky-900/80 text-sky-300 border border-sky-700 font-mono text-[11px] font-black">
+                      {receiptFormat.toUpperCase()}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* GROUP 2: REPRINTS & HISTORY */}
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Sales & Reprints</span>
+                  <span className="text-blue-400 font-mono text-[9px]">HISTORY</span>
+                </div>
+                <div className="space-y-1.5">
+                  {/* PREVIOUS BILLS (F9) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowPreviousBillsModal(true);
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Receipt size={16} className="text-green-400 group-hover:scale-110 transition-transform" />
+                      <div>
+                        <div className="text-xs font-bold text-white">Previous Bills & Reprints</div>
+                        <div className="text-[10px] text-slate-400">Search past invoices & re-issue tax receipt</div>
+                      </div>
+                    </div>
+                    <kbd className="text-[10px] font-mono bg-slate-900 text-green-300 border border-slate-700 px-2 py-0.5 rounded">F9</kbd>
+                  </button>
+
+                  {/* ORDER HISTORY DRAWER */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowReceivingDrawer(false);
+                      setShowOrderHistoryDrawer(true);
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <FileText size={16} className="text-blue-400" />
+                      <div>
+                        <div className="text-xs font-bold text-white">Receipts Journal</div>
+                        <div className="text-[10px] text-slate-400">Browse register shift order receipts</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* MESS GROUPS */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowMessModal(true);
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Users size={16} className="text-indigo-400" />
+                      <div>
+                        <div className="text-xs font-bold text-white">Mess & Group Accounts</div>
+                        <div className="text-[10px] text-slate-400">Bulk meal billing & corporate ledger</div>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* GROUP 3: CASHIER OPERATIONS & SHIFT */}
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Cashier & Operations</span>
+                  <span className="text-purple-400 font-mono text-[9px]">REGISTER</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* RECEIVING */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowOrderHistoryDrawer(false);
+                      setShowReceivingDrawer(true);
+                    }}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left flex items-center gap-2"
+                  >
+                    <Truck size={16} className="text-emerald-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-200">Receiving</span>
+                  </button>
+
+                  {/* REFUND */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setIsReturnMode((prev) => !prev);
+                      setShowRefundModal(true);
+                    }}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left flex items-center gap-2"
+                  >
+                    <RotateCcw size={16} className="text-rose-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-200">Refund</span>
+                  </button>
+
+                  {/* CASH OUT */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowCashOutModal(true);
+                    }}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left flex items-center gap-2"
+                  >
+                    <Banknote size={16} className="text-amber-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-200">Cash Out</span>
+                  </button>
+
+                  {/* CLOSE SHIFT */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      setShowBlindCloseModal(true);
+                    }}
+                    className="p-2.5 bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 rounded-xl transition cursor-pointer text-left flex items-center gap-2 text-amber-200"
+                  >
+                    <Lock size={16} className="text-amber-400 shrink-0" />
+                    <span className="text-xs font-bold">Close Shift</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* GROUP 4: BACK-OFFICE & REPORTS (PIN PROTECTED) */}
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Manager & Analytics</span>
+                  <span className="text-rose-400 font-mono text-[9px]">PIN PROTECTED</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* FINANCIALS & P&L */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      const storedPin = getManagerPin();
+                      const inputPin = window.prompt('🔒 Enter Manager PIN to view Financials & P&L Statement:');
+                      if (inputPin !== storedPin) {
+                        if (inputPin !== null) {
+                          showToast('❌ Invalid Manager PIN', 'error');
+                        }
+                        return;
+                      }
+                      setEmergencyUnlocked(true);
+                      setViewMode('pnl');
+                    }}
+                    className="p-2.5 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/50 rounded-xl transition cursor-pointer text-left flex items-center gap-2 text-emerald-200"
+                  >
+                    <TrendingUp size={16} className="text-emerald-400 shrink-0" />
+                    <span className="text-xs font-bold">Financials</span>
+                  </button>
+
+                  {/* ALL TRANSACTIONS */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHamburgerMenu(false);
+                      const storedPin = getManagerPin();
+                      const inputPin = window.prompt('🔒 Enter Manager PIN to view Full Transaction History:');
+                      if (inputPin !== storedPin) {
+                        if (inputPin !== null) {
+                          showToast('❌ Invalid Manager PIN', 'error');
+                        }
+                        return;
+                      }
+                      setEmergencyUnlocked(true);
+                      setViewMode('master');
+                    }}
+                    className="p-2.5 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/50 rounded-xl transition cursor-pointer text-left flex items-center gap-2 text-indigo-200"
+                  >
+                    <FileText size={16} className="text-indigo-400 shrink-0" />
+                    <span className="text-xs font-bold">All Orders</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHamburgerMenu(false);
+                  setShowDevPanel(true);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="Developer Diagnostics [Ctrl+Shift+D]"
+              >
+                <Settings size={13} />
+                <span>Diagnostics</span>
+              </button>
+              <span className="text-[10px] font-mono text-slate-500">v2.5 • Sunmi D2 Mini</span>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* Prolonged Offline Notice (Only if unsynced sales exist and not dismissed) */}
       {syncStatus === 'OFFLINE_WARNING' && (offlinePendingCount || 0) > 0 && !offlineBannerDismissed && (

@@ -667,18 +667,22 @@ salesRouter.get('/today', async (c) => {
   const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
   const storeId = c.req.query('storeId') || c.get('storeId') || c.env.DEFAULT_STORE_ID || 'store_askar_01';
   const targetDate = c.req.query('date') || null;
-  const limit = parseInt(c.req.query('limit') || '100', 10);
+  const isAll = c.req.query('all') === 'true' || c.req.query('all') === '1' || targetDate === 'all' || targetDate === 'ALL' || c.req.path.includes('/history');
+  const limit = parseInt(c.req.query('limit') || (isAll ? '500' : '100'), 10);
 
-  let dateWhereClause;
-  let dateArgs: any[];
+  let dateWhereClause = '';
+  let dateArgs: any[] = [];
 
-  if (targetDate) {
+  if (targetDate && !isAll) {
     const { startIso, endIso } = getRegionalDayRange(targetDate);
-    dateWhereClause = `((s.createdAt >= ? AND s.createdAt <= ?) OR (datetime(s.createdAt) >= datetime(?) AND datetime(s.createdAt) <= datetime(?)) OR (s.createdAt LIKE ?) OR (date(s.createdAt) = ?))`;
+    dateWhereClause = `((s.createdAt >= ? AND s.createdAt <= ?) OR (datetime(s.createdAt) >= datetime(?) AND datetime(s.createdAt) <= datetime(?)) OR (s.createdAt LIKE ?) OR (date(s.createdAt) = ?)) AND `;
     dateArgs = [startIso, endIso, startIso, endIso, `${targetDate}%`, targetDate];
+  } else if (isAll) {
+    dateWhereClause = '';
+    dateArgs = [];
   } else {
     const { startIso } = getRegionalDayRange();
-    dateWhereClause = `(s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;
+    dateWhereClause = `(s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?)) AND `;
     dateArgs = [startIso, startIso];
   }
 
@@ -713,8 +717,7 @@ salesRouter.get('/today', async (c) => {
             FROM Sale s
             LEFT JOIN SaleItem i ON s.id = i.saleId
             LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
-            WHERE ${dateWhereClause} 
-              AND (s.tenantId = ? OR s.tenantId IS NULL)
+            WHERE ${dateWhereClause}(s.tenantId = ? OR s.tenantId IS NULL)
               AND (s.storeId = ? OR ? = 'all' OR s.storeId IS NULL)
             GROUP BY s.id
             ORDER BY s.createdAt DESC

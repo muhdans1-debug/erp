@@ -16,7 +16,9 @@ import {
   Lock,
   KeyRound,
   Zap,
-  Scale
+  Scale,
+  ChevronDown,
+  Receipt
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement } from '../utils/printer';
@@ -272,6 +274,38 @@ export default function CustomerStatementPage({
       }
     }
   }, []);
+
+  // Expandable Itemized Transaction State ("Transaction of Each and Everything")
+  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
+  const [entryItemsMap, setEntryItemsMap] = useState<Record<string, any[]>>({});
+  const [loadingItemsId, setLoadingItemsId] = useState<string | null>(null);
+
+  const toggleExpandEntry = async (entry: LedgerEntry) => {
+    if (expandedEntryId === entry.id) {
+      setExpandedEntryId(null);
+      return;
+    }
+    setExpandedEntryId(entry.id);
+
+    const invoiceRef = entry.reference || entry.invoiceNo || entry.id;
+    if (invoiceRef && !entryItemsMap[entry.id]) {
+      try {
+        setLoadingItemsId(entry.id);
+        const resolvedApiBase = resolveApiBase();
+        const res = await fetch(`${resolvedApiBase}/api/invoice/${encodeURIComponent(invoiceRef)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && (data.sale?.items || data.invoice?.items)) {
+            setEntryItemsMap(prev => ({ ...prev, [entry.id]: data.sale?.items || data.invoice?.items }));
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch invoice items:', e);
+      } finally {
+        setLoadingItemsId(null);
+      }
+    }
+  };
 
   // Fetch statement data
   const fetchStatement = async () => {
@@ -1441,77 +1475,162 @@ export default function CustomerStatementPage({
                   (entry.raw_amount !== undefined && entry.raw_amount < 0);
 
                 const isWriteOff = entry.type === 'WRITE_OFF';
+                const isExpanded = expandedEntryId === entry.id;
+                const items = entryItemsMap[entry.id] || [];
+                const isLoadingItems = loadingItemsId === entry.id;
 
                 return (
                   <div
                     key={entry.id}
-                    className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-3.5 transition-all flex items-center justify-between"
+                    className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden transition-all shadow-xs"
                   >
-                    <div className="flex items-center gap-3 min-w-0 pr-2">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                          isPayment
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : isWriteOff
-                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                            : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                        }`}
-                      >
-                        {isPayment ? (
-                          <ArrowDownLeft className="w-5 h-5" />
-                        ) : isWriteOff ? (
-                          <ShieldCheck className="w-5 h-5" />
-                        ) : (
-                          <ShoppingBag className="w-5 h-5" />
-                        )}
-                      </div>
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="text-sm font-bold text-white truncate leading-tight">
-                            {entry.reference || entry.invoiceNo || 'Store Purchase'}
-                          </p>
-                          {((entry as any).messName || (entry as any).walletName) && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              🥘 {(entry as any).messName || (entry as any).walletName}
-                              {(entry as any).member_count ? ` (1/${(entry as any).member_count})` : ''}
-                            </span>
-                          )}
-                          {(entry as any).group_total && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                              Total: BD {Number((entry as any).group_total).toFixed(3)}
-                            </span>
-                          )}
-                          {entry.memberName && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              👤 Shopper: {entry.memberName}
-                            </span>
+                    <div 
+                      onClick={() => toggleExpandEntry(entry)}
+                      className="p-3.5 flex items-center justify-between cursor-pointer select-none active:bg-slate-850"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 pr-2">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                            isPayment
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : isWriteOff
+                              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                          }`}
+                        >
+                          {isPayment ? (
+                            <ArrowDownLeft className="w-5 h-5" />
+                          ) : isWriteOff ? (
+                            <ShieldCheck className="w-5 h-5" />
+                          ) : (
+                            <ShoppingBag className="w-5 h-5" />
                           )}
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          {entry.formattedDate} • {entry.formattedTime}
-                        </p>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-sm font-bold text-white truncate leading-tight">
+                              {entry.reference || entry.invoiceNo || 'Store Purchase'}
+                            </p>
+                            {((entry as any).messName || (entry as any).walletName) && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                🥘 {(entry as any).messName || (entry as any).walletName}
+                                {(entry as any).member_count ? ` (1/${(entry as any).member_count})` : ''}
+                              </span>
+                            )}
+                            {(entry as any).group_total && (
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                                Total: BD {Number((entry as any).group_total).toFixed(3)}
+                              </span>
+                            )}
+                            {entry.memberName && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                👤 Shopper: {entry.memberName}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            {entry.formattedDate} • {entry.formattedTime}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0 flex items-center gap-2">
+                        <div>
+                          <p
+                            className={`text-sm font-black font-mono ${
+                              isPayment
+                                ? 'text-emerald-400'
+                                : isWriteOff
+                                ? 'text-purple-400'
+                                : 'text-rose-400'
+                            }`}
+                          >
+                            {isPayment ? '-' : '+'}BD {entry.amount.toFixed(3)}
+                          </p>
+                          {entry.runningBalance !== undefined && (
+                            <p className="text-[10px] text-slate-400 font-mono">
+                              Bal: BD {entry.runningBalance.toFixed(3)}
+                            </p>
+                          )}
+                        </div>
+                        <div className={`w-6 h-6 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180 bg-slate-700 text-white' : ''}`}>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </div>
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <p
-                        className={`text-sm font-black font-mono ${
-                          isPayment
-                            ? 'text-emerald-400'
-                            : isWriteOff
-                            ? 'text-purple-400'
-                            : 'text-rose-400'
-                        }`}
-                      >
-                        {isPayment ? '-' : '+'}BD {entry.amount.toFixed(3)}
-                      </p>
-                      {entry.runningBalance !== undefined && (
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          Bal: BD {entry.runningBalance.toFixed(3)}
-                        </p>
-                      )}
-                    </div>
+                    {/* Expandable Itemized Breakdown Container ("Transaction of Each and Everything") */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-1 bg-slate-950/70 border-t border-slate-800 text-xs font-mono space-y-2.5 animate-in fade-in duration-200">
+                        {!isPayment && !isWriteOff && (
+                          <>
+                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider pt-2 pb-1 border-b border-slate-800">
+                              <span className="flex items-center gap-1 text-emerald-400">
+                                <Receipt className="w-3.5 h-3.5" />
+                                <span>Purchased Items & Quantities</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500">NBR 10% VAT</span>
+                            </div>
+
+                            {isLoadingItems ? (
+                              <div className="py-3 text-center text-slate-400 flex items-center justify-center gap-2 text-xs">
+                                <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                                <span>Loading bill details...</span>
+                              </div>
+                            ) : items.length > 0 ? (
+                              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                {items.map((it, idx) => (
+                                  <div key={it.id || idx} className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-start justify-between gap-2">
+                                    <div className="min-w-0 pr-2">
+                                      <p className="font-bold text-white text-xs">{it.name || it.productName || 'Store Item'}</p>
+                                      {it.nameAr && <p className="text-[10px] text-slate-400">{it.nameAr}</p>}
+                                      <p className="text-[10px] text-slate-500 font-mono">
+                                        {Number(it.quantity || it.qty || 1)}x @ BD {Number(it.price || it.priceAtSale || 0).toFixed(3)}
+                                      </p>
+                                    </div>
+                                    <span className="font-bold text-emerald-400 text-xs">
+                                      BD {Number(it.total || it.total_price || (Number(it.quantity || 1) * Number(it.price || 0))).toFixed(3)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-xs">
+                                General Store Purchase • BD {entry.amount.toFixed(3)}
+                              </div>
+                            )}
+
+                            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] space-y-1">
+                              <div className="flex justify-between text-slate-400">
+                                <span>Subtotal (Excl. VAT)</span>
+                                <span>BD {(entry.amount / 1.10).toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between text-slate-400">
+                                <span>VAT (10%)</span>
+                                <span>BD {(entry.amount - (entry.amount / 1.10)).toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-800">
+                                <span>Total Bill</span>
+                                <span className="text-emerald-400">BD {entry.amount.toFixed(3)}</span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+
+                        {isPayment && (
+                          <div className="pt-2 space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px]">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>BenefitPay / Counter Settlement Verified</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300">
+                              Payment reference: #{entry.reference || entry.id}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

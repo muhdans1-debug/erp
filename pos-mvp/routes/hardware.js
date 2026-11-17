@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
-import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails } from './khata.js';
+import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails, syncCustomerMessMemberships } from './khata.js';
 import { verifyManagerPin } from '../middleware/auth.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
@@ -636,7 +636,7 @@ fastify.get('/api/nfc/cards', async (request, reply) => {
 // POST /api/nfc/assign - Assign card to Personal Customer or Mess Group
 fastify.post('/api/nfc/assign', async (request, reply) => {
   try {
-    const { tag_id, card_type, customer_id, mess_id, mess_name, member_ids } = request.body || {};
+    const { tag_id, card_type, customer_id, mess_id, mess_ids, mess_name, member_ids } = request.body || {};
     const cleanTag = (tag_id || '').trim().toUpperCase();
     if (!cleanTag) {
       return reply.status(400).send({ success: false, error: 'tag_id is required' });
@@ -654,16 +654,30 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
         } catch { }
       }
 
-      // If members provided, attach them to this mess group
+      // If members provided, attach them to this mess group without wiping their other groups
       if (targetMessId && Array.isArray(member_ids)) {
         try {
           for (const mId of member_ids) {
+            const exists = await db.execute({
+              sql: 'SELECT 1 FROM MessMember WHERE mess_id = ? AND customer_id = ? LIMIT 1',
+              args: [targetMessId, mId]
+            });
+            if (!exists.rows || exists.rows.length === 0) {
+              const mmId = `mm_${crypto.randomUUID().substring(0, 8)}`;
+              await db.execute({
+                sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                      VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, datetime('now'))`,
+                args: [mmId, targetMessId, mId]
+              });
+            }
             await db.execute({
-              sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
+              sql: `UPDATE Customer SET mess_id = COALESCE(mess_id, ?) WHERE id = ?`,
               args: [targetMessId, mId]
             });
           }
-        } catch { }
+        } catch (e) {
+          console.warn('Attach members to mess notice:', e?.message);
+        }
       }
 
       // Upsert into NfcCard
@@ -703,22 +717,20 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
         });
       } catch { }
 
-      // If mess_id is specified (or explicitly cleared), update customer's mess group
-      if (mess_id !== undefined) {
-        try {
-          await db.execute({
-            sql: `UPDATE Customer SET mess_id = ? WHERE id = ?`,
-            args: [mess_id || null, customer_id]
-          });
-        } catch { }
+      // Synchronize multiple mess groups (or single mess group) via MessMember junction table
+      const targetMessIds = mess_ids !== undefined ? mess_ids : (mess_id !== undefined ? mess_id : undefined);
+      if (targetMessIds !== undefined) {
+        await syncCustomerMessMemberships(customer_id, targetMessIds);
       }
+
+      const primaryMessId = Array.isArray(targetMessIds) ? (targetMessIds[0] || null) : (targetMessIds || null);
 
       try {
         await db.execute({
           sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) 
                 VALUES (?, 'PERSONAL', ?, ?, datetime('now'))
                 ON CONFLICT(tag_id) DO UPDATE SET card_type = 'PERSONAL', customer_id = excluded.customer_id, mess_id = excluded.mess_id;`,
-          args: [cleanTag, customer_id, mess_id || null]
+          args: [cleanTag, customer_id, primaryMessId]
         });
       } catch { }
 
@@ -979,9 +991,6 @@ fastify.get('/api/customers/:id/messes', async (request, reply) => {
     return reply.status(500).send({ success: false, error: err.message });
   }
 });
-});
-
-
 
 // Legacy / alias route - upgraded for both Personal & Mess Cards
 fastify.get('/api/customers/by-card/:uid', async (request, reply) => {

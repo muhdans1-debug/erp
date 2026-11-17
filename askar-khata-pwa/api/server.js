@@ -1074,6 +1074,7 @@ const handleKhataStatementOrTab = async (request, reply) => {
 
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
         const allLedger = recentPurchases.rows || [];
+        const enrichedLedger = await enrichLedgerWithItems(allLedger);
         return reply.send({
           success: true,
           id: customer.id,
@@ -1084,10 +1085,10 @@ const handleKhataStatementOrTab = async (request, reply) => {
           isActive: Boolean(isActiveNum),
           isLocked: false,
           pendingClaims: pendingClaims.rows || [],
-          recentPurchases: allLedger,
-          transactions: allLedger,
-          ledger: allLedger,
-          totalTransactions: allLedger.length,
+          recentPurchases: enrichedLedger,
+          transactions: enrichedLedger,
+          ledger: enrichedLedger,
+          totalTransactions: enrichedLedger.length,
           message: 'Khata Tab with complete transaction ledger'
         });
       }
@@ -1146,6 +1147,8 @@ const handleKhataStatementOrTab = async (request, reply) => {
       }).catch(() => ({ rows: [] }));
 
       const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
+      const statementLedger = ledgerQuery.rows || [];
+      const enrichedStatement = await enrichLedgerWithItems(statementLedger);
       return reply.send({
         success: true,
         id: customer.id,
@@ -1158,10 +1161,10 @@ const handleKhataStatementOrTab = async (request, reply) => {
         cpr: maskedCpr,
         token,
         pendingClaims: pendingClaims.rows || [],
-        recentPurchases: ledgerQuery.rows || [],
-        transactions: ledgerQuery.rows || [],
-        ledger: ledgerQuery.rows || [],
-        totalTransactions: (ledgerQuery.rows || []).length
+        recentPurchases: enrichedStatement,
+        transactions: enrichedStatement,
+        ledger: enrichedStatement,
+        totalTransactions: enrichedStatement.length
       });
     }
 
@@ -1171,6 +1174,217 @@ const handleKhataStatementOrTab = async (request, reply) => {
     return reply.status(500).send({ error: 'Database Error', message: error.message });
   }
 };
+
+// Enrich transaction records with line items from SaleItem & Product
+async function enrichLedgerWithItems(allLedger) {
+  if (!Array.isArray(allLedger) || allLedger.length === 0) return allLedger;
+  const references = allLedger
+    .map(tx => tx.reference)
+    .filter(ref => ref && typeof ref === 'string' && ref.trim().length > 0);
+
+  if (references.length === 0) return allLedger;
+
+  try {
+    const placeholders = references.map(() => '?').join(',');
+    const itemsRes = await db.execute({
+      sql: `SELECT s.invoiceNo, s.id as saleId, s.subtotal, s.totalVat, s.paymentType,
+                   si.id as itemId, si.productId, si.quantity, si.priceAtSale, si.vatAmount, si.vatRateAtSale, si.total_price,
+                   p.name as productName, p.name_ar as productNameAr, p.barcode, p.is_weighed_item
+            FROM Sale s
+            JOIN SaleItem si ON s.id = si.saleId
+            LEFT JOIN Product p ON si.productId = p.id OR si.productId = p.barcode
+            WHERE s.invoiceNo IN (${placeholders}) OR s.id IN (${placeholders})`,
+      args: [...references, ...references]
+    });
+
+    const formatItemName = (name, prodId) => {
+      if (name && typeof name === 'string' && name.trim()) return name.trim();
+      if (!prodId) return 'Store Item';
+      return String(prodId)
+        .replace(/^nb_|^f100_|^prod_|^si_/, '')
+        .replace(/[0-9_]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, l => l.toUpperCase()) || 'Store Item';
+    };
+
+    const itemsMap = new Map();
+    for (const row of (itemsRes.rows || [])) {
+      const keys = [row.invoiceNo, row.saleId].filter(Boolean);
+      for (const k of keys) {
+        if (!itemsMap.has(k)) itemsMap.set(k, []);
+        itemsMap.get(k).push({
+          id: row.itemId,
+          productId: row.productId,
+          name: formatItemName(row.productName, row.productId),
+          nameAr: row.productNameAr || null,
+          barcode: row.barcode,
+          quantity: Number(row.quantity ?? 1),
+          qty: Number(row.quantity ?? 1),
+          price: Number(row.priceAtSale ?? 0),
+          unitPrice: Number(row.priceAtSale ?? 0),
+          vatAmount: Number(row.vatAmount ?? 0),
+          vatRate: Number(row.vatRateAtSale ?? 10),
+          total: Number(row.total_price ?? (Number(row.quantity ?? 1) * Number(row.priceAtSale ?? 0))),
+          is_weighed_item: Boolean(row.is_weighed_item)
+        });
+      }
+    }
+
+    return allLedger.map(tx => {
+      const txCopy = { ...tx };
+      if (tx.reference && itemsMap.has(tx.reference)) {
+        txCopy.items = itemsMap.get(tx.reference);
+        txCopy.itemCount = txCopy.items.length;
+      }
+      return txCopy;
+    });
+  } catch (err) {
+    console.warn('Could not enrich ledger with items:', err);
+    return allLedger;
+  }
+}
+
+// Detailed Invoice & Itemized Receipt Endpoint ("Transaction of Each and Everything")
+const handleGetInvoiceDetails = async (request, reply) => {
+  const invoiceNo = String(request.params.invoiceNo || request.params.id || '').trim();
+  if (!invoiceNo) {
+    return reply.status(400).send({ success: false, error: 'Invoice number is required' });
+  }
+
+  try {
+    // 1. Look up master sale record
+    const saleRes = await db.execute({
+      sql: `SELECT s.*, c.name as customerName, c.phone as customerPhone, c.cpr as customerCpr
+            FROM Sale s
+            LEFT JOIN Customer c ON s.customerId = c.id
+            WHERE s.invoiceNo = ? OR s.id = ? LIMIT 1`,
+      args: [invoiceNo, invoiceNo]
+    });
+
+    let sale = saleRes.rows && saleRes.rows.length > 0 ? saleRes.rows[0] : null;
+
+    // 2. If not found in Sale, check KhataLedger
+    if (!sale) {
+      const ledgerRes = await db.execute({
+        sql: `SELECT kl.*, c.name as customerName, c.phone as customerPhone, c.cpr as customerCpr
+              FROM KhataLedger kl
+              LEFT JOIN Customer c ON kl.customerId = c.id
+              WHERE kl.reference = ? OR kl.id = ? OR kl.sale_id = ? LIMIT 1`,
+        args: [invoiceNo, invoiceNo, invoiceNo]
+      });
+
+      if (ledgerRes.rows && ledgerRes.rows.length > 0) {
+        const kl = ledgerRes.rows[0];
+        const amt = Math.abs(Number(kl.amount || 0));
+        const subtotal = amt > 0 ? Number((amt / 1.10).toFixed(3)) : 0;
+        const vat = amt > 0 ? Number((amt - subtotal).toFixed(3)) : 0;
+        sale = {
+          id: kl.id,
+          invoiceNo: kl.reference || invoiceNo,
+          total: amt,
+          totalAmount: amt,
+          subtotal: subtotal,
+          totalVat: vat,
+          vatTotal: vat,
+          paymentType: kl.type === 'CHARGE' ? 'CREDIT' : (kl.type || 'STORE_CREDIT'),
+          status: 'COMPLETED',
+          createdAt: kl.timestamp || kl.created_at,
+          customerId: kl.customerId,
+          customerName: kl.customerName,
+          customerPhone: kl.customerPhone,
+          terminalId: 'T1',
+          employeeId: 'Register 01'
+        };
+      }
+    }
+
+    if (!sale) {
+      return reply.status(404).send({ success: false, error: 'Invoice not found' });
+    }
+
+    // 3. Query line items from SaleItem
+    const itemsRes = await db.execute({
+      sql: `SELECT si.*, p.name as productName, p.name_ar as productNameAr, p.barcode, p.is_weighed_item
+            FROM SaleItem si
+            LEFT JOIN Product p ON si.productId = p.id OR si.productId = p.barcode
+            WHERE si.saleId = ? OR si.saleId = ?`,
+      args: [sale.id, sale.invoiceNo]
+    });
+
+    let items = (itemsRes.rows || []).map((item) => {
+      const formatItemName = (name, prodId) => {
+        if (name && typeof name === 'string' && name.trim()) return name.trim();
+        if (!prodId) return 'Store Item';
+        return String(prodId)
+          .replace(/^nb_|^f100_|^prod_|^si_/, '')
+          .replace(/[0-9_]+/g, ' ')
+          .trim()
+          .replace(/\b\w/g, l => l.toUpperCase()) || 'Store Item';
+      };
+
+      return {
+        id: item.id,
+        productId: item.productId,
+        name: formatItemName(item.productName || item.name, item.productId),
+        nameAr: item.productNameAr || item.name_ar || null,
+        barcode: item.barcode || item.productId,
+        quantity: Number(item.quantity ?? 1),
+        qty: Number(item.quantity ?? 1),
+        price: Number(item.priceAtSale ?? item.sellingPrice ?? 0),
+        unitPrice: Number(item.priceAtSale ?? item.sellingPrice ?? 0),
+        vatAmount: Number(item.vatAmount ?? 0),
+        vatRate: Number(item.vatRateAtSale ?? 10),
+        total: Number(item.total_price ?? (Number(item.quantity ?? 1) * Number(item.priceAtSale ?? 0))),
+        is_weighed_item: Boolean(item.is_weighed_item)
+      };
+    });
+
+    // If no SaleItem rows found, synthesize clean item representing the grocery charge
+    if (items.length === 0) {
+      const totalAmt = Number(sale.total || sale.totalAmount || 0);
+      const subtotal = Number(sale.subtotal || (totalAmt > 0 ? (totalAmt / 1.10).toFixed(3) : 0));
+      const vat = Number((sale.totalVat ?? sale.vatTotal ?? (totalAmt - subtotal)).toFixed(3));
+      items = [
+        {
+          id: `item_${sale.invoiceNo || sale.id}`,
+          name: sale.paymentType === 'MESS_KHATA' ? 'Camp Mess Grocery Supply' : 'General Grocery & Household Essentials',
+          nameAr: sale.paymentType === 'MESS_KHATA' ? 'مواد غذائية لميس العمال' : 'مواد غذائية وتموينية عامة',
+          barcode: 'GEN-GROCERY',
+          quantity: 1,
+          qty: 1,
+          price: totalAmt,
+          unitPrice: totalAmt,
+          vatAmount: vat,
+          vatRate: 10,
+          total: totalAmt,
+          is_weighed_item: false
+        }
+      ];
+    }
+
+    const formattedSale = {
+      ...sale,
+      subtotal: Number(sale.subtotal || (sale.total ? sale.total / 1.10 : 0)).toFixed(3),
+      totalVat: Number(sale.totalVat || sale.vatTotal || 0).toFixed(3),
+      total: Number(sale.total || sale.totalAmount || 0).toFixed(3),
+      items
+    };
+
+    return reply.send({
+      success: true,
+      sale: formattedSale,
+      invoice: formattedSale
+    });
+  } catch (err) {
+    fastify.log.error(err, 'Failed to fetch invoice details');
+    return reply.status(500).send({ success: false, error: 'Failed to fetch invoice details', details: err?.message });
+  }
+};
+
+// Route Aliases for Invoices
+fastify.get('/api/invoice/:invoiceNo', handleGetInvoiceDetails);
+fastify.get('/api/sales/:invoiceNo', handleGetInvoiceDetails);
+fastify.get('/api/invoices/:invoiceNo', handleGetInvoiceDetails);
 
 // Route Aliases to satisfy every client caller
 fastify.get('/api/khata/:uuid', handleKhataStatementOrTab);

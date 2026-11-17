@@ -1046,12 +1046,13 @@ fastify.get('/api/sales/refunds', async () => {
 const handleGetTodaySales = async (req, reply) => {
   try {
     const targetDate = req.query?.date || null;
-    const limit = parseInt(req.query?.limit, 10) || 100;
+    const isAll = req.query?.all === 'true' || req.query?.all === '1' || targetDate === 'all' || targetDate === 'ALL' || req.url.includes('/history');
+    const limit = parseInt(req.query?.limit, 10) || (isAll ? 500 : 100);
 
     let dateWhereClause;
     let queryArgs;
 
-    if (targetDate) {
+    if (targetDate && targetDate !== 'all' && targetDate !== 'ALL') {
       const { startIso, endIso } = getRegionalDayRange(targetDate);
       dateWhereClause = `WHERE (
         (s.createdAt >= ? AND s.createdAt <= ?)
@@ -1060,6 +1061,9 @@ const handleGetTodaySales = async (req, reply) => {
         OR (date(s.createdAt) = ?)
       )`;
       queryArgs = [startIso, endIso, startIso, endIso, `${targetDate}%`, targetDate];
+    } else if (isAll) {
+      dateWhereClause = '';
+      queryArgs = [];
     } else {
       const { startIso } = getRegionalDayRange();
       dateWhereClause = `WHERE (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;

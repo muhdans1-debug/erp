@@ -365,7 +365,7 @@ export async function syncAllPendingToCloud() {
 
     // B. Pending Khata Ledger
     const pendingLedgerRes = await db.execute({
-      sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' LIMIT 100`,
+      sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' OR syncStatus IS NULL LIMIT 200`,
       args: []
     });
 
@@ -446,8 +446,16 @@ async function upsertLocalCustomer(c) {
       return true;
     } else {
       const local = existing.rows[0];
+      const localLedgerBal = await db.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as bal, COUNT(id) as cnt FROM KhataLedger WHERE customerId = ?`,
+        args: [c.id]
+      });
+      const effectiveBalance = (localLedgerBal.rows && localLedgerBal.rows[0]?.cnt > 0)
+        ? Number(localLedgerBal.rows[0].bal || 0)
+        : Number(c.balance ?? 0.0);
+
       const hasDiff =
-        Math.abs(Number(local.balance || 0) - Number(c.balance || 0)) > 0.001 ||
+        Math.abs(Number(local.balance || 0) - effectiveBalance) > 0.001 ||
         local.name !== c.name ||
         (local.phone || '') !== (c.phone || '') ||
         (local.nfcCardId || '') !== (safeCardVal || '');
@@ -463,7 +471,7 @@ async function upsertLocalCustomer(c) {
             c.phone || null,
             c.cpr || null,
             c.description || null,
-            c.balance ?? 0.0,
+            effectiveBalance,
             safeCardVal,
             safeCardVal,
             safeCardVal,
@@ -608,15 +616,9 @@ export async function pullCloudDeltas() {
     }
 
     // C. Reconcile Khata Ledger from Cloud
-    const maxLedgerRes = await db.execute({
-      sql: `SELECT MAX(COALESCE(timestamp, created_at)) as maxDate FROM KhataLedger`,
-      args: []
-    });
-    const latestLocalLedgerDate = maxLedgerRes.rows?.[0]?.maxDate || '1970-01-01T00:00:00.000Z';
-
     const cloudLedgerRes = await tursoCloudClient.execute({
-      sql: `SELECT * FROM KhataLedger WHERE COALESCE(timestamp, created_at) > ? ORDER BY COALESCE(timestamp, created_at) ASC LIMIT 200`,
-      args: [latestLocalLedgerDate]
+      sql: `SELECT * FROM KhataLedger ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) DESC LIMIT 500`,
+      args: []
     });
 
     const newCloudLedgers = cloudLedgerRes.rows || [];
@@ -648,8 +650,13 @@ export async function pullCloudDeltas() {
         await db.execute({
           sql: `INSERT INTO KhataLedger (
             id, tenantId, customerId, amount, type, reference,
-            running_balance, syncStatus, timestamp, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)`,
+            running_balance, syncStatus, timestamp, created_at,
+            mess_id, sale_id, group_total, member_count
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            amount = excluded.amount,
+            type = excluded.type,
+            reference = excluded.reference`,
           args: [
             cl.id,
             cl.tenantId || 'tenant_askar_01',
@@ -659,7 +666,11 @@ export async function pullCloudDeltas() {
             cl.reference,
             cl.running_balance,
             cl.timestamp,
-            cl.created_at || cl.timestamp
+            cl.created_at || cl.timestamp,
+            cl.mess_id || null,
+            cl.sale_id || null,
+            cl.group_total ?? null,
+            cl.member_count ?? null
           ]
         });
         if (cl.customerId) touchedCustomerIds.add(cl.customerId);

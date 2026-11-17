@@ -16,8 +16,10 @@ import {
   Download,
   RefreshCw,
   WifiOff,
-  Lock
+  Lock,
+  Menu
 } from 'lucide-react';
+import HamburgerDrawer from '../components/HamburgerDrawer';
 
 const TRANSLATIONS = {
   en: {
@@ -209,6 +211,7 @@ export default function HomeLookup() {
   const fileInputRef = useRef(null);
 
   // Store Manager / Cashier Directory View States
+  const [showDrawer, setShowDrawer] = useState(false);
   const [showManagerModal, setShowManagerModal] = useState(false);
   const [managerPinInput, setManagerPinInput] = useState('');
   const [isManagerUnlocked, setIsManagerUnlocked] = useState(false);
@@ -531,27 +534,35 @@ export default function HomeLookup() {
       dir={isRtl ? 'rtl' : 'ltr'} 
       className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-between p-4 pt-safe pb-safe selection:bg-emerald-500 selection:text-white"
     >
-      {/* Top Bar: Brand & Language Toggle (Min 44px Touch Targets) */}
+      {/* Top Bar: Clean Drawer Navigation, Brand & Language */}
       <header className="w-full max-w-md flex items-center justify-between pt-2 pb-2 no-print">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-base shadow-xs">
-            A
-          </div>
+          {/* Hamburger Drawer Button */}
+          <button
+            type="button"
+            onClick={() => setShowDrawer(true)}
+            className="h-10 px-3 bg-slate-900 hover:bg-slate-800 active:scale-95 border border-slate-800 rounded-2xl flex items-center gap-1.5 text-slate-200 hover:text-white transition cursor-pointer shadow-xs"
+            title="Open Menu"
+          >
+            <Menu className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs font-bold font-mono">MENU</span>
+          </button>
+
           <div>
             <span className="font-black text-sm tracking-tight text-white uppercase block leading-none">Askar Khata</span>
             <span className="text-[10px] text-slate-400 font-mono">Bahrain • NBR Tax</span>
           </div>
         </div>
 
-        {/* Large Accessible Language Switcher */}
-        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-2xl">
-          {['en', 'ar', 'ml', 'bn', 'hi'].map((code) => (
+        {/* Quick Language Switcher */}
+        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-0.5 rounded-2xl">
+          {['en', 'ar', 'ml'].map((code) => (
             <button
               key={code}
               type="button"
               onClick={() => setLang(code)}
-              className={`min-w-8 h-9 px-2.5 rounded-xl font-bold text-xs uppercase transition-all flex items-center justify-center ${
-                lang === code ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              className={`min-w-7 h-8 px-2 rounded-xl font-bold text-[11px] uppercase transition-all flex items-center justify-center cursor-pointer ${
+                lang === code ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
               }`}
             >
               {code}
@@ -960,6 +971,15 @@ export default function HomeLookup() {
           </div>
         </div>
       )}
+
+      {/* Slide-out Hamburger Drawer */}
+      <HamburgerDrawer
+        isOpen={showDrawer}
+        onClose={() => setShowDrawer(false)}
+        customer={null}
+        lang={lang}
+        onSelectLang={(newLang) => setLang(newLang)}
+      />
     </div>
   );
 }

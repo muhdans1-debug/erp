@@ -419,7 +419,8 @@ reportsRouter.get('/unified', async (c) => {
               FROM KhataLedger k 
               LEFT JOIN Customer c ON k.customerId = c.id
               WHERE ((k.timestamp BETWEEN ? AND ?) OR (datetime(k.timestamp) BETWEEN datetime(?) AND datetime(?)))
-                AND (k.type = 'PAYMENT_IN' OR k.amount < 0)`,
+                AND (k.type IN ('PAYMENT', 'PAYMENT_IN') OR k.amount < 0)
+                AND (COALESCE(k.reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(k.reference, '') NOT LIKE 'Refund Credit Note%')`,
         args: [startIso, endIso, startIso, endIso]
       }),
       db.execute({
@@ -863,11 +864,13 @@ reportsRouter.get('/z-report/:shiftId?', async (c) => {
       const ledgerRes = await db.execute({
         sql: `SELECT amount, reference FROM KhataLedger 
               WHERE ((timestamp BETWEEN ? AND ?) OR (datetime(timestamp) BETWEEN datetime(?) AND datetime(?))) 
-                AND (type = 'PAYMENT_IN' OR type = 'PAYMENT' OR amount < 0)`,
+                AND (type = 'PAYMENT_IN' OR type = 'PAYMENT' OR amount < 0)
+                AND (COALESCE(reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(reference, '') NOT LIKE 'Refund Credit Note%')`,
         args: [startIso, endIso, startIso, endIso]
       });
       (ledgerRes.rows || []).forEach((entry: any) => {
-        if (!entry.reference || !String(entry.reference).toLowerCase().includes('benefit')) {
+        const ref = String(entry.reference || '').toLowerCase();
+        if (!ref.includes('benefit') && !ref.includes('void') && !ref.includes('refund')) {
           shiftKhataCash += Math.abs(Number(entry.amount) || 0);
         }
       });

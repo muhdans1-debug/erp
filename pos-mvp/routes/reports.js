@@ -575,7 +575,8 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
             FROM KhataLedger k 
             LEFT JOIN Customer c ON k.customerId = c.id
             WHERE ((k.timestamp BETWEEN ? AND ?) OR (datetime(k.timestamp) BETWEEN datetime(?) AND datetime(?)))
-              AND (k.type = 'PAYMENT_IN' OR k.amount < 0)`,
+              AND (k.type IN ('PAYMENT', 'PAYMENT_IN') OR k.amount < 0)
+              AND (COALESCE(k.reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(k.reference, '') NOT LIKE 'Refund Credit Note%')`,
       args: [startIso, endIso, startIso, endIso]
     });
     const allKhata = khataRes.rows || [];
@@ -715,7 +716,9 @@ fastify.get('/api/reports/unified-cashflow', { preHandler: managerAuth }, async 
             WHERE createdAt BETWEEN ? AND ?
             UNION ALL
             SELECT 'KHATA_PAYMENT' as type, id, ABS(amount) as amount, 'KHATA' as paymentType, timestamp as createdAt FROM KhataLedger 
-            WHERE timestamp BETWEEN ? AND ? AND (type IN ('PAYMENT', 'PAYMENT_IN') OR amount < 0)
+            WHERE timestamp BETWEEN ? AND ? 
+              AND (type IN ('PAYMENT', 'PAYMENT_IN') OR amount < 0)
+              AND (COALESCE(reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(reference, '') NOT LIKE 'Refund Credit Note%')
             ORDER BY createdAt DESC`,
       args: [start, end, start, end, start, end]
     });

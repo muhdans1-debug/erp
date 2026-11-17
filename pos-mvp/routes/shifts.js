@@ -631,11 +631,15 @@ const calculateZReport = async (shiftId = null) => {
     const ledgerRes = await db.execute({
       sql: `SELECT amount, reference FROM KhataLedger 
             WHERE (COALESCE(timestamp, created_at) BETWEEN ? AND ?) 
-              AND (type = 'PAYMENT' OR amount < 0)`,
+              AND (type = 'PAYMENT' OR type = 'PAYMENT_IN' OR amount < 0)
+              AND (COALESCE(reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(reference, '') NOT LIKE 'Refund Credit Note%')`,
       args: [startIso, endIso]
     });
     shiftKhataCash = (ledgerRes.rows || [])
-      .filter((entry) => !entry.reference || !String(entry.reference).toLowerCase().includes('benefit'))
+      .filter((entry) => {
+        const ref = String(entry.reference || '').toLowerCase();
+        return !ref.includes('benefit') && !ref.includes('void') && !ref.includes('refund');
+      })
       .reduce((sum, entry) => sum + Math.abs(Number(entry.amount) || 0), 0);
   } catch (err) {
     shiftKhataCash = 0;

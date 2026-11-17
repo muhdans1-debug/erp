@@ -402,6 +402,7 @@ export interface FullReceiptProps {
   saleDate?: string | Date;
   isReprint?: boolean;
   styleConfig?: Partial<SunmiPrinterStyleConfig>;
+  includeFooter?: boolean;
 }
 
 // 58mm thermal paper fits 32 characters per line in standard font (42 for 80mm)
@@ -656,6 +657,7 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
   const width = is80mm ? 48 : 32;
   const lineEqual = "=".repeat(width) + "\n";
   const lineDash = "-".repeat(width) + "\n";
+  const isCompact = cfg.receiptTheme === 'compact_quick' || cfg.fontSize === 'compact';
 
   const shopName = props.shopName || cfg.shopNameEn;
   const shopNameAr = props.shopNameAr || cfg.shopNameAr;
@@ -679,35 +681,62 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
   const total = Number(props.total || 0);
 
   let out = "";
-  out += centerText(shopName, width);
-  if (cfg.showArabicHeader && shopNameAr) {
-    out += centerText(shopNameAr, width);
-  }
-  out += centerText("SIMPLIFIED TAX INVOICE", width);
-  out += centerText("فاتورة ضريبية مبسطة", width);
-  out += centerText(`C.R. No: ${crNumber}`, width);
-  out += centerText(`VAT TRN: ${vatNumber}`, width);
-  out += centerText(shopAddress, width);
-  out += centerText(`Tel: ${shopPhone}`, width);
 
-  if (props.isReprint) {
-    out += lineEqual;
-    out += centerText("*** DUPLICATE / REPRINT COPY ***", width);
-    out += centerText("نسخة معاد طباعتها", width);
-    out += lineEqual;
+  if (isCompact) {
+    // ⚡ COMPACT PROFESSIONAL HEADER (Saves 6-7 lines)
+    out += centerText(shopName, width);
+    if (cfg.showArabicHeader && shopNameAr) {
+      out += centerText(shopNameAr, width);
+    }
+    out += centerText(`CR:${crNumber} | VAT:${vatNumber}`, width);
+    out += centerText(`Tel: ${shopPhone}`, width);
+
+    if (props.isReprint) {
+      out += lineDash;
+      out += centerText("*** DUPLICATE / REPRINT ***", width);
+      out += lineDash;
+    } else {
+      out += lineDash;
+    }
+
+    out += formatTwoCols(`INV:${finalInvoiceDisplay}`, formattedDate, width);
+    out += formatTwoCols(`Mode:${paymentMode}`, `Staff:${cashierName}`, width);
+    if (props.customerName && !props.isMess) {
+      out += formatTwoCols("Customer:", props.customerName, width);
+    }
+    out += lineDash;
   } else {
-    out += lineEqual;
-  }
+    // 📋 CLASSIC FULL HEADER
+    out += centerText(shopName, width);
+    if (cfg.showArabicHeader && shopNameAr) {
+      out += centerText(shopNameAr, width);
+    }
+    out += centerText("SIMPLIFIED TAX INVOICE", width);
+    out += centerText("فاتورة ضريبية مبسطة", width);
+    out += centerText(`C.R. No: ${crNumber}`, width);
+    out += centerText(`VAT TRN: ${vatNumber}`, width);
+    out += centerText(shopAddress, width);
+    out += centerText(`Tel: ${shopPhone}`, width);
 
-  out += formatTwoCols("Invoice:", finalInvoiceDisplay, width);
-  out += formatTwoCols("Date:", formattedDate, width);
-  out += formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`, width);
-  if (props.customerName && !props.isMess) {
-    out += formatTwoCols("Customer:", props.customerName, width);
+    if (props.isReprint) {
+      out += lineEqual;
+      out += centerText("*** DUPLICATE / REPRINT COPY ***", width);
+      out += centerText("نسخة معاد طباعتها", width);
+      out += lineEqual;
+    } else {
+      out += lineEqual;
+    }
+
+    out += formatTwoCols("Invoice:", finalInvoiceDisplay, width);
+    out += formatTwoCols("Date:", formattedDate, width);
+    out += formatTwoCols(`Staff: ${cashierName}`, `Mode: ${paymentMode}`, width);
+    if (props.customerName && !props.isMess) {
+      out += formatTwoCols("Customer:", props.customerName, width);
+    }
+    out += lineDash;
+    out += formatTwoCols("Item / Description", "Qty/Amt(BD)", width);
+    out += lineDash;
   }
-  out += lineDash;
-  out += formatTwoCols("Item / Description", "Qty/Amt(BD)", width);
-  out += lineDash;
 
   // Group items
   const groupedMap = new Map<string, { item: ReceiptItem; count: number }>();
@@ -744,17 +773,21 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     }
 
     const vatTag = isVat10 ? '*' : 'Z';
-    const itemLabel = `${idx}. ${item.name}`;
-    out += `${itemLabel}\n`;
+    const itemLabel = `${idx}.${item.name}`;
 
-    if (cfg.showArabicItems && (item as any).nameAr) {
-      out += `  ${(item as any).nameAr}\n`;
+    if (isCompact && count === 1 && !isScale && (!cfg.showArabicItems || !(item as any).nameAr)) {
+      // ⚡ Single-line clean item for single unit count!
+      out += formatTwoCols(itemLabel, `BD ${lineTotal.toFixed(3)}${vatTag}`, width);
+    } else {
+      out += `${itemLabel}\n`;
+      if (cfg.showArabicItems && (item as any).nameAr) {
+        out += `  ${(item as any).nameAr}\n`;
+      }
+      const qtyLine = isScale
+        ? `  ${count.toFixed(3)}kg @ ${unitPrice.toFixed(3)}`
+        : `  ${count}x @ ${unitPrice.toFixed(3)}`;
+      out += formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)} [${vatTag}]`, width);
     }
-
-    const qtyLine = isScale
-      ? `  ${count.toFixed(3)}kg @ BD ${unitPrice.toFixed(3)}`
-      : `  ${count}x @ BD ${unitPrice.toFixed(3)}`;
-    out += formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)} [${vatTag}]`, width);
   }
 
   const calculatedVat = Number(standardVatAmount.toFixed(3));
@@ -769,35 +802,37 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     }
     out += formatTwoCols("Subtotal (Excl. VAT):", `BD ${subtotalExcl.toFixed(3)}`, width);
     out += lineDash;
+  } else {
+    // ⚡ Consolidated Subtotal & 10% VAT line
+    out += formatTwoCols(`Subtotal: BD ${subtotalExcl.toFixed(3)}`, `VAT: BD ${calculatedVat.toFixed(3)}`, width);
   }
 
-  // Highlighted Grand Total (Ultra-Prominent for Laborers)
-  out += lineEqual;
-  out += "<<JUMBO_TOTAL>>\n";
-  out += centerText("TOTAL / المجموع الإجمالي", width);
-  out += centerText(`BD ${total.toFixed(3)}`, width);
-  out += "<</JUMBO_TOTAL>>\n";
-  out += centerText("(Inclusive of 10% VAT / شامل الضريبة)", width);
-  out += lineEqual;
+  // Highlighted Grand Total
+  if (isCompact && cfg.totalBannerSize === 'standard') {
+    out += lineEqual;
+    out += formatTwoCols("TOTAL / المجموع:", `BD ${total.toFixed(3)}`, width);
+    out += lineEqual;
+  } else {
+    out += lineEqual;
+    out += "<<JUMBO_TOTAL>>\n";
+    out += centerText("TOTAL / المجموع الإجمالي", width);
+    out += centerText(`BD ${total.toFixed(3)}`, width);
+    out += "<</JUMBO_TOTAL>>\n";
+    out += centerText("(Inclusive of 10% VAT / شامل الضريبة)", width);
+    out += lineEqual;
+  }
 
   // Payments
   if (paymentMode === 'CASH') {
-    out += centerText("*** PAID VIA CASH / نقداً ***", width);
     const tendered = props.cashTendered !== undefined ? Number(props.cashTendered) : total;
     const change = props.changeDue !== undefined ? Number(props.changeDue) : (tendered > total ? tendered - total : 0);
-    out += formatTwoCols("Cash Tendered / المدفوع:", `BD ${tendered.toFixed(3)}`, width);
-    out += formatTwoCols("Change Returned / الباقي:", `BD ${change.toFixed(3)}`, width);
+    out += formatTwoCols(`Paid (CASH): BD ${tendered.toFixed(3)}`, `Change: BD ${change.toFixed(3)}`, width);
     out += lineDash;
   } else if (paymentMode === 'BENEFIT_PAY') {
-    out += centerText("*** PAID VIA BENEFITPAY / فوري+ ***", width);
-    out += formatTwoCols("Method:", "BenefitPay Fawri+", width);
-    if (props.transactionRef) {
-      out += formatTwoCols("Reference No:", props.transactionRef, width);
-    }
+    out += formatTwoCols("Method: BenefitPay", props.transactionRef ? `Ref:${props.transactionRef}` : "Fawri+", width);
     out += lineDash;
   } else if (paymentMode === 'CARD') {
-    out += centerText("*** PAID VIA CARD / بطاقة مصرفية ***", width);
-    out += formatTwoCols("Terminal:", "POS Contactless EMV", width);
+    out += formatTwoCols("Paid: Card", "EMV Contactless", width);
     out += lineDash;
   } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
     const group = props.groupName || props.customerName || "Shared Mess";
@@ -806,27 +841,8 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
       ? Number(props.newBalance) 
       : (prevDebt + total);
 
-    out += centerText("*** MESS GROUP DINING TAB ***", width);
-    out += centerText("حساب سكن العمال المشترك", width);
-    out += formatTwoCols("Mess Account:", group, width);
-    if (props.shopperName) out += formatTwoCols("Shopper:", props.shopperName, width);
-    if (props.cardUid) out += formatTwoCols("Card UID:", String(props.cardUid), width);
-    out += formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`, width);
-    out += formatTwoCols("Pool Members:", String(props.members?.length || 0), width);
-    if (Array.isArray(props.members) && props.members.length > 0) {
-      out += lineDash;
-      out += "SPLIT SHARE PER WORKER:\n";
-      props.members.forEach((m: any) => {
-        const splitVal = Number(m.amount ?? m.splitAmount ?? (total / Math.max(1, props.members!.length))).toFixed(3);
-        out += formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`, width);
-      });
-    }
-    out += lineEqual;
-    out += "<<JUMBO_DEBT>>\n";
-    out += centerText(">>> MESS TOTAL DEBT DUE <<<", width);
-    out += centerText("إجمالي دين المجموعة", width);
-    out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
-    out += "<</JUMBO_DEBT>>\n";
+    out += formatTwoCols(`Mess: ${group}`, `Workers: ${props.members?.length || 0}`, width);
+    out += formatTwoCols("MESS TOTAL DUE / المستحق:", `BD ${finalBalance.toFixed(3)}`, width);
     out += lineEqual;
   } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
     const prevDebt = Number(props.previousBalance || 0);
@@ -834,33 +850,34 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
       ? Number(props.newBalance) 
       : (prevDebt + total);
 
-    out += centerText("*** KHATA CREDIT TAB / حساب الآجل ***", width);
-    if (props.customerName) out += formatTwoCols("Customer / العميل:", props.customerName, width);
-    if (props.customerCardUid) out += formatTwoCols("Card UID / البطاقة:", props.customerCardUid, width);
-    if (props.previousBalance !== undefined) {
-      out += formatTwoCols("Previous Debt / السابق:", `BD ${prevDebt.toFixed(3)}`, width);
+    if (isCompact && !cfg.showCreditBalanceBox) {
+      out += formatTwoCols(`Customer: ${props.customerName || 'Khata'}`, `Prev: BD ${prevDebt.toFixed(3)}`, width);
+      out += formatTwoCols("BALANCE DUE / المستحق:", `BD ${finalBalance.toFixed(3)}`, width);
+      out += lineEqual;
+    } else {
+      out += centerText("*** KHATA CREDIT TAB / حساب الآجل ***", width);
+      if (props.customerName) out += formatTwoCols("Customer:", props.customerName, width);
+      if (props.previousBalance !== undefined) {
+        out += formatTwoCols("Previous Debt:", `BD ${prevDebt.toFixed(3)}`, width);
+      }
+      out += formatTwoCols("Added:", `+BD ${total.toFixed(3)}`, width);
+      out += lineEqual;
+      out += "<<JUMBO_DEBT>>\n";
+      out += centerText(">>> TOTAL BALANCE DUE <<<", width);
+      out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
+      out += "<</JUMBO_DEBT>>\n";
+      out += lineEqual;
     }
-    out += formatTwoCols("This Bill Added / المضاف:", `+BD ${total.toFixed(3)}`, width);
-    out += lineEqual;
-    out += "<<JUMBO_DEBT>>\n";
-    out += centerText(">>> TOTAL BALANCE DUE <<<", width);
-    out += centerText("إجمالي الرصيد المستحق", width);
-    out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
-    out += "<</JUMBO_DEBT>>\n";
-    out += lineEqual;
   }
 
-  out += centerText(`Total Items: ${totalQty} (${groupedMap.size} lines)`, width);
-  out += centerText("* Standard 10% VAT | Z Zero-Rated 0%", width);
-  out += centerText("THANK YOU FOR SHOPPING!", width);
-  out += centerText("شكراً لتسوقكم معنا!", width);
-  if (cfg.footerPolicyEn) {
-    out += centerText(cfg.footerPolicyEn, width);
+  // Footer (Only included if includeFooter !== false)
+  if (props.includeFooter !== false) {
+    out += centerText("Thank You! شكراً لزيارتكم", width);
+    if (cfg.footerPolicyEn) {
+      out += centerText(cfg.footerPolicyEn, width);
+    }
+    out += lineDash;
   }
-  if (cfg.footerPolicyAr) {
-    out += centerText(cfg.footerPolicyAr, width);
-  }
-  out += lineEqual;
 
   return out;
 };
@@ -1034,6 +1051,7 @@ export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
       shopPhone,
       vatNumber,
       styleConfig: cfg,
+      includeFooter: false, // Footer prints at the very end after barcodes & QR codes
     });
 
     let cleanInvoice = (invoiceNo !== undefined && invoiceNo !== null) ? String(invoiceNo).trim() : '';
@@ -1082,8 +1100,11 @@ export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
           vatAmount: vat
         });
         await Printer.setPrinterAlignment({ alignment: 'center' });
-        await printQRCode(nbrPayload, 175);
-        await Printer.printText({ textToPrint: "NBR Simplified Tax Invoice QR\n" });
+        const qrSize = (cfg.receiptTheme === 'compact_quick' || cfg.fontSize === 'compact') ? 115 : 160;
+        await printQRCode(nbrPayload, qrSize);
+        if (!cfg.receiptTheme || cfg.receiptTheme !== 'compact_quick') {
+          await Printer.printText({ textToPrint: "NBR Simplified Tax Invoice QR\n" });
+        }
       } catch (nbrErr) {
         console.warn("NBR QR print warning:", nbrErr);
       }
@@ -1126,7 +1147,7 @@ export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
             (newBalance !== undefined && Number(newBalance) > 0) ? `Current Debt: BD ${Number(newBalance).toFixed(3)}\n` : ''
           ].filter(Boolean).join('');
           await Printer.printText({ textToPrint: qrHeader });
-          await printQRCode(pwaUrl, 190);
+          await printQRCode(pwaUrl, 160);
           await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
           await Printer.printText({ textToPrint: "--------------------------------\n" });
         }
@@ -1135,17 +1156,32 @@ export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
       }
     }
 
-    // Feed past manual tear bar and commit printer buffer
-    const feed = Math.max(2, cfg.feedLines || 4);
+    // 5. CLOSING FOOTER (Clean divider, Thank You! and Return Policy)
+    const width = (cfg.paperWidth === '80mm') ? 48 : 32;
+    const lineDash = "-".repeat(width) + "\n";
+    await Printer.setPrinterAlignment({ alignment: 'center' });
+    await Printer.setFontSize({ fontSize: fontPt });
+    await Printer.printText({ textToPrint: lineDash });
+    await Printer.printText({ textToPrint: "Thank You! شكراً لزيارتكم\n" });
+    if (cfg.footerPolicyEn) {
+      await Printer.printText({ textToPrint: `${cfg.footerPolicyEn}\n` });
+    }
+    await Printer.printText({ textToPrint: lineDash });
+
+    // 6. CLEAR TEAR BAR / CUTTER BLADE
+    // Physical printhead-to-cutter gap on Sunmi terminals is 18-20mm (~4 lines).
+    // Minimum 4 lines of feed is strictly required so the closing footer completely clears the cutter blade.
+    const feed = Math.max(4, Number(cfg.feedLines) || 4);
     await Printer.lineWrap({ lines: feed });
-    try {
-      await Printer.commitPrinterBuffer();
-    } catch { }
+
     if (cfg.autoCut) {
       try {
         await Printer.cutPaper();
       } catch { }
     }
+    try {
+      await Printer.exitPrinterBuffer({ commit: true });
+    } catch { }
     return true;
   } catch (error) {
     console.warn("Native Sunmi hardware print error:", error);

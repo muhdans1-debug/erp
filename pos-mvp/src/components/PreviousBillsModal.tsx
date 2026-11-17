@@ -815,123 +815,81 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                 </button>
               </div>
 
-              {/* Scrollable Receipt Preview Paper */}
-              <div className="flex-1 overflow-y-auto p-4 bg-neutral-950 flex justify-center">
-                <div className="w-full max-w-[340px] bg-white text-black p-4 rounded shadow-2xl font-mono text-xs select-text">
+              {/* Scrollable Receipt Preview Paper (Shrunk Compact Professional) */}
+              <div className="flex-1 overflow-y-auto p-3 bg-neutral-950 flex justify-center">
+                <div className="w-full max-w-[320px] bg-white text-black p-3 rounded shadow-2xl font-mono text-xs select-text">
                   
-                  {/* Shop Header */}
-                  <div className="text-center font-bold text-sm">ASKAR SUPERMARKET</div>
-                  <div className="text-center font-bold text-xs">أسواق عسكر المركزية</div>
-                  <div className="text-center text-[10px]">Simplified Tax Invoice</div>
-                  <div className="text-center text-[10px]">فاتورة ضريبية مبسطة</div>
-                  <div className="text-center text-[10px]">TRN: 200012345678901</div>
-                  <div className="text-center text-[10px]">Askar, Kingdom of Bahrain</div>
+                  {/* Shop Compact Header */}
+                  <div className="text-center font-bold text-xs">ASKAR SUPERMARKET أسواق عسكر</div>
+                  <div className="text-center text-[10px] text-gray-700">CR: 790614189 | VAT: 200012345678901</div>
+                  <div className="text-center text-[10px] text-gray-700">Tel: +973 33843855</div>
                   
-                  {/* Duplicate Watermark */}
-                  <div className="my-2 border-2 border-black p-1 text-center font-black text-xs uppercase tracking-wider">
-                    *** DUPLICATE / REPRINT COPY ***<br />
-                    <span className="text-[10px]">نسخة معاد طباعتها</span>
+                  {/* Duplicate Notice */}
+                  <div className="my-1 border-t border-b border-black py-0.5 text-center font-bold text-[10px]">
+                    *** DUPLICATE / REPRINT COPY ***
                   </div>
-
-                  <div className="border-t border-dashed border-black my-2" />
 
                   {/* Meta */}
-                  <div className="flex justify-between text-[11px]">
-                    <span>Invoice:</span>
-                    <span className="font-bold">#{previewSale.invoiceNo}</span>
+                  <div className="flex justify-between text-[10px] mt-1">
+                    <span>INV: <strong>#{previewSale.invoiceNo}</strong></span>
+                    <span>{formatBillDate(previewSale.timestamp)} {formatBillTime(previewSale.timestamp)}</span>
                   </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span>Date:</span>
-                    <span className="font-bold">
-                      {formatBillDate(previewSale.timestamp)} {formatBillTime(previewSale.timestamp)}
-                    </span>
+                  <div className="flex justify-between text-[10px] text-gray-700">
+                    <span>Mode: <strong>{previewSale.paymentMode}</strong></span>
+                    {previewSale.customerName && <span>Cust: <strong>{previewSale.customerName}</strong></span>}
                   </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span>Mode:</span>
-                    <span className="font-bold">{previewSale.paymentMode}</span>
-                  </div>
-                  {previewSale.customerName && (
-                    <div className="flex justify-between text-[11px]">
-                      <span>Customer:</span>
-                      <span className="font-bold">{previewSale.customerName}</span>
-                    </div>
-                  )}
 
-                  <div className="border-t border-dashed border-black my-2" />
-
-                  {/* Items Header */}
-                  <div className="flex justify-between font-bold text-[11px]">
-                    <span>Item</span>
-                    <span>Qty  Amt(BD)</span>
-                  </div>
-                  <div className="border-t border-dashed border-black my-1" />
+                  <div className="border-t border-dashed border-black my-1.5" />
 
                   {/* Items */}
                   {(previewSale.items || []).map((it, idx) => (
-                    <div key={idx} className="my-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="truncate pr-2">{it.name}</span>
-                        <span className="font-bold whitespace-nowrap">
-                          {it.qty}{it.is_weighed_item ? 'kg' : ''} &nbsp; 
-                          {(it.price * it.qty).toFixed(3)}
-                        </span>
+                    <div key={idx} className="my-0.5">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="truncate pr-1">{idx + 1}. {it.name}</span>
+                        <span className="font-bold whitespace-nowrap">BD {(it.price * it.qty).toFixed(3)}*</span>
                       </div>
-                      {it.nameAr && (
-                        <div className="text-[10px] text-right text-gray-700">{it.nameAr}</div>
+                      {(it.is_weighed_item || it.qty > 1) && (
+                        <div className="text-[9px] text-gray-600 pl-3">
+                          {it.qty}{it.is_weighed_item ? 'kg' : 'x'} @ BD {it.price.toFixed(3)}
+                        </div>
                       )}
                     </div>
                   ))}
 
-                  <div className="border-t border-dashed border-black my-2" />
+                  <div className="border-t border-dashed border-black my-1.5" />
 
-                  {/* Totals */}
-                  <div className="flex justify-between text-[11px]">
-                    <span>Subtotal:</span>
-                    <span>BD {previewSale.subtotal.toFixed(3)}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span>VAT (10%):</span>
-                    <span>BD {previewSale.vat.toFixed(3)}</span>
+                  {/* Consolidated Subtotal & VAT */}
+                  <div className="flex justify-between text-[10px] text-gray-700">
+                    <span>Subtotal: BD {previewSale.subtotal.toFixed(3)}</span>
+                    <span>VAT: BD {previewSale.vat.toFixed(3)}</span>
                   </div>
                   
-                  {/* Total Banner */}
-                  <div className="my-2 border-2 border-black p-1.5 text-center bg-gray-50">
-                    <div className="text-[10px] font-bold text-gray-700">NET TOTAL DUE / المبلغ الإجمالي</div>
-                    <div className="text-base font-black">BD {previewSale.total.toFixed(3)}</div>
+                  {/* Clean Total */}
+                  <div className="my-1 border-t-2 border-b-2 border-black py-1 flex justify-between items-baseline font-black">
+                    <span className="text-xs">TOTAL / المجموع:</span>
+                    <span className="text-sm">BD {previewSale.total.toFixed(3)}</span>
                   </div>
 
                   {previewSale.cashTendered !== undefined && (
-                    <>
-                      <div className="flex justify-between text-[11px] mt-1">
-                        <span>Cash Tendered:</span>
-                        <span>BD {previewSale.cashTendered.toFixed(3)}</span>
-                      </div>
-                      <div className="flex justify-between text-[11px]">
-                        <span>Change:</span>
-                        <span>BD {(previewSale.changeDue || 0).toFixed(3)}</span>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Senior Credit Balance Tab (if Khata) */}
-                  {previewSale.newBalance !== undefined && (
-                    <div className="my-2 border-2 border-black p-1.5 text-center bg-gray-100">
-                      <div className="text-[10px] font-bold text-gray-800">CUSTOMER BALANCE / رصيد الحساب</div>
-                      <div className="text-sm font-black text-black">BD {Number(previewSale.newBalance).toFixed(3)}</div>
+                    <div className="flex justify-between text-[10px] text-gray-700 mt-0.5">
+                      <span>Paid: BD {previewSale.cashTendered.toFixed(3)}</span>
+                      <span>Change: <strong>BD {(previewSale.changeDue || 0).toFixed(3)}</strong></span>
                     </div>
                   )}
 
-                  {/* Barcode Mock */}
-                  <div className="text-center font-mono font-bold tracking-widest text-xs mt-3">
-                    |||| | ||||| |||| || |||||||
-                  </div>
-                  <div className="text-center text-[9px] font-bold">
-                    #{previewSale.invoiceNo}
-                  </div>
+                  {/* Khata Balance */}
+                  {previewSale.newBalance !== undefined && (
+                    <div className="flex justify-between text-[10px] font-bold mt-1 p-1 bg-gray-100 rounded">
+                      <span>BALANCE DUE:</span>
+                      <span>BD {Number(previewSale.newBalance).toFixed(3)}</span>
+                    </div>
+                  )}
 
-                  <div className="text-center text-[9px] mt-2 text-gray-700">
-                    * Item includes 10% VAT<br />
-                    THANK YOU FOR SHOPPING!
+                  <div className="text-center text-[9px] mt-2 font-bold text-gray-800">
+                    Thank You! شكراً لزيارتكم
+                  </div>
+                  <div className="text-center text-[8px] text-gray-600">
+                    Return within 3 days with bill
                   </div>
                 </div>
               </div>

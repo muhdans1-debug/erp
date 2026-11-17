@@ -16,26 +16,57 @@ khataRouter.get('/customers', async (c) => {
   const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
 
   try {
-    const res = await db.execute({
-      sql: `SELECT c.id, c.name, c.phone, c.cpr, c.balance, c.balance AS currentBalance, c.credit_limit, c.credit_limit AS creditLimit, 
-                   c.is_active, c.is_active AS isActive, c.nfcCardId, c.nfcCardId AS cardUid, c.mess_id, 
-                   mg.group_name AS messName, mg.group_name AS mess_name, c.createdAt
-            FROM Customer c
-            LEFT JOIN MessGroup mg ON c.mess_id = mg.id
-            WHERE (c.tenantId = ? OR c.tenantId = 'tenant_1' OR c.tenantId = 'tenant_askar_01' OR c.tenantId IS NULL)
-              AND (c.is_active = 1 OR c.is_active IS NULL)
-            ORDER BY c.name ASC`,
-      args: [tenantId]
-    });
+    const [res, mmRes] = await Promise.all([
+      db.execute({
+        sql: `SELECT c.id, c.name, c.phone, c.cpr, c.balance, c.balance AS currentBalance, c.credit_limit, c.credit_limit AS creditLimit, 
+                     c.is_active, c.is_active AS isActive, c.nfcCardId, c.nfcCardId AS cardUid, c.mess_id, 
+                     mg.group_name AS messName, mg.group_name AS mess_name, c.createdAt
+              FROM Customer c
+              LEFT JOIN MessGroup mg ON c.mess_id = mg.id
+              WHERE (c.tenantId = ? OR c.tenantId = 'tenant_1' OR c.tenantId = 'tenant_askar_01' OR c.tenantId IS NULL)
+                AND (c.is_active = 1 OR c.is_active IS NULL)
+              ORDER BY c.name ASC`,
+        args: [tenantId]
+      }),
+      db.execute({
+        sql: `SELECT mm.customer_id, mg.id as mess_id, mg.group_name 
+              FROM MessMember mm
+              JOIN MessGroup mg ON mm.mess_id = mg.id
+              WHERE mm.is_active = 1
+              ORDER BY mg.group_name ASC`,
+        args: []
+      }).catch(() => ({ rows: [] }))
+    ]);
+
+    const messMemberMap = new Map<string, { id: string; group_name: string }[]>();
+    for (const r of (mmRes.rows || [])) {
+      const cId = String(r.customer_id);
+      if (!messMemberMap.has(cId)) messMemberMap.set(cId, []);
+      messMemberMap.get(cId)!.push({ id: String(r.mess_id), group_name: String(r.group_name) });
+    }
 
     const customers = res.rows.map(r => {
       const balance = Number(r.balance ?? 0);
       const rawLimit = Number(r.credit_limit);
       const limit = rawLimit > 0 ? rawLimit : 30.0;
+      const cId = String(r.id);
+
+      const customerMesses = messMemberMap.get(cId) || [];
+      if (customerMesses.length === 0 && r.mess_id && (r.messName || r.mess_name)) {
+        customerMesses.push({ id: String(r.mess_id), group_name: String(r.messName || r.mess_name) });
+      }
+      const messNames = customerMesses.map(m => m.group_name).join(', ');
+      const messIds = customerMesses.map(m => m.id);
+
       return {
         ...r,
-        messName: r.messName || null,
-        mess_name: r.mess_name || r.messName || null,
+        messes: customerMesses,
+        mess_ids: messIds,
+        hasMessGroup: customerMesses.length > 0,
+        isMultiMess: customerMesses.length > 1,
+        messName: messNames || r.messName || null,
+        mess_name: messNames || r.mess_name || r.messName || null,
+        mess_id: customerMesses[0]?.id || r.mess_id || null,
         currentBalance: balance,
         balance: balance,
         creditLimit: limit,
@@ -204,22 +235,54 @@ async function resolveCustomerByCard(c: any) {
     const balance = Number(row.balance ?? 0);
     const rawLimit = Number(row.credit_limit);
     const limit = rawLimit > 0 ? rawLimit : 30.0;
-    const finalMessId = row.mess_id || messId;
+    // Look up all messes this customer belongs to (from MessMember junction table and legacy mess_id)
+    let customerMesses: any[] = [];
+    try {
+      const mmRes = await db.execute({
+        sql: `SELECT DISTINCT g.id, g.group_name 
+              FROM MessMember mm
+              JOIN MessGroup g ON mm.mess_id = g.id
+              WHERE mm.customer_id = ? AND mm.is_active = 1
+              UNION
+              SELECT g.id, g.group_name
+              FROM Customer c
+              JOIN MessGroup g ON c.mess_id = g.id
+              WHERE c.id = ?`,
+        args: [customerId, customerId]
+      });
+      customerMesses = (mmRes.rows || []).map(r => ({ id: String(r.id), group_name: String(r.group_name) }));
+    } catch {}
 
-    let groupName = null;
+    const primaryMess = customerMesses[0] || null;
+    const finalMessId = primaryMess?.id || row.mess_id || messId;
+
+    let groupName = primaryMess?.group_name || null;
     let groupMembers: any[] = [];
     if (finalMessId) {
       try {
         const [gRes, mRes] = await Promise.all([
-          db.execute({ sql: `SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [finalMessId] }),
-          db.execute({ sql: `SELECT id, name, balance FROM Customer WHERE mess_id = ?`, args: [finalMessId] })
+          groupName ? { rows: [{ group_name: groupName }] } : db.execute({ sql: `SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [finalMessId] }),
+          db.execute({
+            sql: `SELECT DISTINCT c.id, c.name, c.balance 
+                  FROM MessMember mm
+                  JOIN Customer c ON mm.customer_id = c.id
+                  WHERE mm.mess_id = ? AND mm.is_active = 1
+                  UNION
+                  SELECT c.id, c.name, c.balance
+                  FROM Customer c
+                  WHERE c.mess_id = ?`,
+            args: [finalMessId, finalMessId]
+          })
         ]);
-        if (gRes.rows.length > 0) groupName = gRes.rows[0].group_name as string;
-        groupMembers = mRes.rows.map(m => ({ ...m, balance: Number(m.balance ?? 0) }));
+        if (gRes.rows && gRes.rows.length > 0) groupName = gRes.rows[0].group_name as string;
+        groupMembers = (mRes.rows || []).map(m => ({ ...m, balance: Number(m.balance ?? 0) }));
       } catch {}
     }
 
     const isFrozen = (row.is_active === 0 || (row as any).isActive === 0);
+    const isMultiMess = customerMesses.length > 1;
+    const hasMessGroup = customerMesses.length > 0 || !!finalMessId;
+
     const customer = {
       ...row,
       currentBalance: balance,
@@ -227,9 +290,12 @@ async function resolveCustomerByCard(c: any) {
       creditLimit: limit,
       credit_limit: limit,
       cardUid: row.nfcCardId || uid,
-      card_type: finalMessId ? 'DUAL' : 'PERSONAL',
-      hasMessGroup: !!finalMessId,
-      isDual: !!finalMessId,
+      card_type: isMultiMess ? 'MULTI_MESS' : (hasMessGroup ? 'DUAL' : 'PERSONAL'),
+      hasMessGroup,
+      isDual: hasMessGroup,
+      isMultiMess,
+      messes: customerMesses,
+      mess_ids: customerMesses.map(m => m.id),
       mess_id: finalMessId,
       group_name: groupName,
       members: groupMembers,
@@ -999,6 +1065,19 @@ khataRouter.post('/customers', requirePosOrManagerAuth, async (c) => {
     const rawPrevBal = Number(body.previousBalance ?? body.initialBalance ?? body.openingBalance ?? body.balance ?? 0);
     const cleanPrevBal = !isNaN(rawPrevBal) && rawPrevBal > 0 ? Number(rawPrevBal.toFixed(3)) : 0.0;
 
+    // Multi-Mess / Camp Account enrollment
+    const incomingMessIds = body.mess_ids !== undefined ? body.mess_ids : (body.messIds !== undefined ? body.messIds : (body.mess_id !== undefined ? body.mess_id : body.messId));
+    let messIdsList: string[] = [];
+    if (incomingMessIds !== undefined && incomingMessIds !== null) {
+      if (Array.isArray(incomingMessIds)) {
+        messIdsList = incomingMessIds.map((m: any) => (typeof m === 'object' && m !== null ? m.id : m)).filter(Boolean);
+      } else if (typeof incomingMessIds === 'string' && incomingMessIds.trim()) {
+        messIdsList = [incomingMessIds.trim()];
+      }
+    }
+    messIdsList = [...new Set(messIdsList.map(s => String(s).trim()).filter(Boolean))];
+    const primaryMessId = messIdsList.length > 0 ? messIdsList[0] : null;
+
     const statements: { sql: string; args: any[] }[] = [];
 
     if (cardUid) {
@@ -1010,17 +1089,27 @@ khataRouter.post('/customers', requirePosOrManagerAuth, async (c) => {
     }
 
     statements.push({
-      sql: `INSERT INTO Customer (id, tenantId, name, phone, cpr, balance, credit_limit, is_active, nfcCardId, createdAt, updatedAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      args: [id, tenantId, name, phone, cpr, cleanPrevBal, creditLimit, cardUid]
+      sql: `INSERT INTO Customer (id, tenantId, name, phone, cpr, balance, credit_limit, is_active, nfcCardId, mess_id, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      args: [id, tenantId, name, phone, cpr, cleanPrevBal, creditLimit, cardUid, primaryMessId]
     });
+
+    // Populate MessMember junction table for each enrolled mess group
+    for (const mId of messIdsList) {
+      const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      statements.push({
+        sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+              VALUES (?, ?, ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+        args: [mmId, tenantId, mId, id]
+      });
+    }
 
     if (cardUid) {
       statements.push({
-        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, createdAt)
-              VALUES (?, 'PERSONAL', ?, CURRENT_TIMESTAMP)
-              ON CONFLICT(tag_id) DO UPDATE SET customer_id = excluded.customer_id`,
-        args: [cardUid, id]
+        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt)
+              VALUES (?, 'PERSONAL', ?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(tag_id) DO UPDATE SET customer_id = excluded.customer_id, mess_id = excluded.mess_id`,
+        args: [cardUid, id, primaryMessId]
       });
     }
 
@@ -1082,6 +1171,37 @@ async function handleCustomerUpdate(c: any) {
     if (creditLimit !== undefined && !isNaN(creditLimit)) { updates.push('credit_limit = ?'); args.push(creditLimit); }
     if (cardUid !== undefined) { updates.push('nfcCardId = ?'); args.push(cardUid); }
 
+    // Multi-Mess / Camp Account enrollment
+    const incomingMessIds = body.mess_ids !== undefined ? body.mess_ids : (body.messIds !== undefined ? body.messIds : (body.mess_id !== undefined ? body.mess_id : body.messId));
+    if (incomingMessIds !== undefined && incomingMessIds !== null) {
+      let ids: string[] = [];
+      if (Array.isArray(incomingMessIds)) {
+        ids = incomingMessIds.map((m: any) => (typeof m === 'object' && m !== null ? m.id : m)).filter(Boolean);
+      } else if (typeof incomingMessIds === 'string' && incomingMessIds.trim()) {
+        ids = [incomingMessIds.trim()];
+      }
+      ids = [...new Set(ids.map(s => String(s).trim()).filter(Boolean))];
+      const primaryMessId = ids.length > 0 ? ids[0] : null;
+
+      updates.push('mess_id = ?');
+      args.push(primaryMessId);
+
+      // Synchronize MessMember junction table
+      await db.execute({
+        sql: `DELETE FROM MessMember WHERE customer_id = ?`,
+        args: [customerId]
+      });
+
+      for (const mId of ids) {
+        const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        await db.execute({
+          sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                VALUES (?, ?, ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
+          args: [mmId, tenantId, mId, customerId]
+        });
+      }
+    }
+
     if (updates.length > 0) {
       updates.push('updatedAt = CURRENT_TIMESTAMP');
       args.push(customerId);
@@ -1140,11 +1260,25 @@ async function handleCustomerUpdate(c: any) {
       }
     }
 
-    const updatedRes = await db.execute({
-      sql: `SELECT id, name, phone, cpr, balance, credit_limit, nfcCardId, mess_id, is_active FROM Customer WHERE id = ? LIMIT 1`,
-      args: [customerId]
-    });
+    const [updatedRes, mmRes] = await Promise.all([
+      db.execute({
+        sql: `SELECT id, name, phone, cpr, balance, credit_limit, nfcCardId, mess_id, is_active FROM Customer WHERE id = ? LIMIT 1`,
+        args: [customerId]
+      }),
+      db.execute({
+        sql: `SELECT mm.mess_id, mg.group_name 
+              FROM MessMember mm
+              JOIN MessGroup mg ON mm.mess_id = mg.id
+              WHERE mm.customer_id = ? AND mm.is_active = 1
+              ORDER BY mg.group_name ASC`,
+        args: [customerId]
+      }).catch(() => ({ rows: [] }))
+    ]);
+
     const updated = updatedRes.rows[0] || null;
+    const customerMesses = (mmRes.rows || []).map(r => ({ id: String(r.mess_id), group_name: String(r.group_name) }));
+    const messNames = customerMesses.map(m => m.group_name).join(', ');
+    const messIds = customerMesses.map(m => m.id);
 
     return c.json({
       success: true,
@@ -1153,7 +1287,14 @@ async function handleCustomerUpdate(c: any) {
       customer: updated ? {
         ...updated,
         balance: Number(updated.balance ?? 0),
-        creditLimit: Number(updated.credit_limit ?? 30.0)
+        creditLimit: Number(updated.credit_limit ?? 30.0),
+        messes: customerMesses,
+        mess_ids: messIds,
+        hasMessGroup: customerMesses.length > 0,
+        isMultiMess: customerMesses.length > 1,
+        messName: messNames || null,
+        mess_name: messNames || null,
+        mess_id: customerMesses[0]?.id || updated.mess_id || null
       } : null
     });
   } catch (err: any) {
@@ -1162,7 +1303,14 @@ async function handleCustomerUpdate(c: any) {
 }
 
 khataRouter.post('/customers/:id/update', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.post('/:id/update', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.post('/khata/:id/update', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.post('/api/customers/:id/update', requirePosOrManagerAuth, handleCustomerUpdate);
 khataRouter.put('/customers/:id', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.put('/:id', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.put('/khata/:id', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.put('/api/customers/:id', requirePosOrManagerAuth, handleCustomerUpdate);
+khataRouter.put('/api/khata/:id', requirePosOrManagerAuth, handleCustomerUpdate);
 
 /**
  * Delete Khata Customer (Manager Authorization Required, Balance Must Be Zero)
@@ -1406,7 +1554,14 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
         args: [tenantId]
       }),
       db.execute({
-        sql: `SELECT id, name, phone, cpr, balance, mess_id FROM Customer WHERE mess_id IS NOT NULL`,
+        sql: `SELECT DISTINCT c.id, c.name, c.phone, c.cpr, c.balance, mm.mess_id
+              FROM MessMember mm
+              JOIN Customer c ON mm.customer_id = c.id
+              WHERE mm.is_active = 1
+              UNION
+              SELECT c.id, c.name, c.phone, c.cpr, c.balance, c.mess_id
+              FROM Customer c
+              WHERE c.mess_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM MessMember WHERE customer_id = c.id)`,
         args: []
       }),
       db.execute({
@@ -1481,10 +1636,11 @@ khataRouter.post('/nfc/mess-groups', requirePosOrManagerAuth, async (c) => {
     ];
 
     for (const mId of memberIds) {
+      const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${mId.slice(-4)}`;
       statements.push({
         sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
               VALUES (?, ?, ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
-        args: [`mm_${Date.now()}_${mId.slice(-4)}`, tenantId, id, mId]
+        args: [mmId, tenantId, id, mId]
       });
       statements.push({
         sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
@@ -1548,10 +1704,11 @@ khataRouter.put('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) => {
       });
       // Set new members in MessMember
       for (const mId of memberIds) {
+        const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${mId.slice(-4)}`;
         statements.push({
           sql: `INSERT OR REPLACE INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
                 VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)`,
-          args: [`mm_${Date.now()}_${mId.slice(-4)}`, groupId, mId]
+          args: [mmId, groupId, mId]
         });
         statements.push({
           sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,

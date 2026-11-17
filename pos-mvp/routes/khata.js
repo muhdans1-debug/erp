@@ -5,7 +5,7 @@ import bcrypt from 'bcrypt';
 import { db, dataDir } from '../db.js';
 import { managerAuth } from '../middleware/auth.js';
 import { ensureRegionalIso, getRegionalIsoString, REGIONAL_TIMEZONE } from '../utils/time.js';
-import { mirrorCustomerToCloud, mirrorCustomerDeleteToCloud, mirrorLedgerEntryToCloud } from '../services/cloudSync.js';
+import { mirrorCustomerToCloud, mirrorCustomerDeleteToCloud, mirrorLedgerEntryToCloud, mirrorCustomerMessMembershipsToCloud } from '../services/cloudSync.js';
 import { generatePaydayBatch } from '../src/automation/paydayJob.js';
 
 const KHATA_CONFIG_FILE = path.join(dataDir, 'khata_config.json');
@@ -457,6 +457,9 @@ const syncCustomerMessMemberships = async (customerId, messIds, primaryMessId = 
         args: [memberId, mId, customerId, nowIso]
       });
     }
+
+    // Non-blocking mirror of multiple mess memberships to Turso Cloud
+    mirrorCustomerMessMembershipsToCloud(customerId, ids).catch(() => {});
   } catch (err) {
     console.error('syncCustomerMessMemberships error:', err?.message);
   }
@@ -1463,8 +1466,11 @@ const handleUpdateCustomer = async (request, reply) => {
 };
 
 fastify.put('/api/customers/:id', { preHandler: managerAuth }, handleUpdateCustomer);
+fastify.put('/customers/:id', { preHandler: managerAuth }, handleUpdateCustomer);
 fastify.put('/khata/:id', { preHandler: managerAuth }, handleUpdateCustomer);
 fastify.put('/api/khata/:id', { preHandler: managerAuth }, handleUpdateCustomer);
+fastify.post('/customers/:id/update', { preHandler: managerAuth }, handleUpdateCustomer);
+fastify.post('/api/customers/:id/update', { preHandler: managerAuth }, handleUpdateCustomer);
 
 // 1d. Bad Debt Write-Off (Settles balance as WRITE_OFF and logs business expense)
 fastify.post('/api/khata/write-off', { preHandler: managerAuth }, async (request, reply) => {

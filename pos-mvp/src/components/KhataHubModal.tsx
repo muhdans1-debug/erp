@@ -2247,12 +2247,30 @@ function NewCustomerView({
   }>({ status: 'idle' });
 
   useEffect(() => {
-    fetch(`${apiBase}/api/nfc/mess-groups`)
-      .then(res => res.json())
-      .then(data => {
-        if (data?.messGroups) setMessGroupsList(data.messGroups);
-      })
-      .catch(() => {});
+    const fetchMessGroups = async () => {
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const candidates = [
+        targetBase,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/api/nfc/mess-groups`, { signal: AbortSignal.timeout(3500) });
+          if (res.ok) {
+            const data = await res.json();
+            const raw = data?.messGroups || data?.groups || (Array.isArray(data) ? data : []);
+            if (Array.isArray(raw) && raw.length > 0) {
+              setMessGroupsList(raw);
+              return;
+            }
+          }
+        } catch { }
+      }
+    };
+    fetchMessGroups();
   }, [apiBase]);
 
   // Verification helper to check if card is already taken by another customer
@@ -2338,26 +2356,59 @@ function NewCustomerView({
 
     setIsSubmitting(true);
     try {
-      const res = await fetch(`${apiBase}/api/customers`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-pos-client': 'store-pos'
-        },
-        body: JSON.stringify({
-          ...formData,
-          mess_ids: selectedMessGroupIds,
-          mess_id: selectedMessGroupIds[0] || null
-        })
-      });
+      const payload = {
+        ...formData,
+        mess_ids: selectedMessGroupIds,
+        mess_id: selectedMessGroupIds[0] || null
+      };
 
-      const data = await res.json();
-      if (res.ok && (data.success || data.id)) {
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-manager-pin': getManagerPin() || '9999'
+      };
+
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const candidates = [
+        targetBase,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      let created = false;
+      let lastError = '';
+
+      for (const base of candidates) {
+        for (const p of ['/api/customers', '/customers']) {
+          try {
+            const res = await fetch(`${base}${p}`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success || data.customer || data.id) {
+                created = true;
+                break;
+              }
+            } else {
+              const err = await res.json().catch(() => ({}));
+              if (err.error) lastError = err.error;
+            }
+          } catch { }
+        }
+        if (created) break;
+      }
+
+      if (created) {
         const msg = `✅ Khata Party "${formData.name.trim()}" added successfully!`;
         showToast ? showToast(msg, 'success') : alert(msg);
         onCustomerCreated?.();
       } else {
-        alert(data.error || 'Failed to create customer.');
+        alert(lastError || 'Failed to create customer.');
       }
     } catch (error) {
       console.error(error);
@@ -2675,13 +2726,45 @@ function KhataEditModal({
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    fetch(`${apiBase}/api/nfc/mess-groups`)
-      .then(res => res.json())
-      .then(data => {
-        if (data?.messGroups) setMessGroupsList(data.messGroups);
-      })
-      .catch(() => {});
-  }, [apiBase]);
+    if (customer) {
+      setName(customer.name || '');
+      setPhone(customer.phone || '');
+      setCpr(customer.cpr || '');
+      setBatchNo(customer.batchNo || '');
+      setCreditLimit(String(customer.creditLimit || (customer as any).credit_limit || 30.0));
+      const initialMessIds = Array.isArray(customer.mess_ids) && customer.mess_ids.length > 0
+        ? customer.mess_ids
+        : (Array.isArray(customer.messes) && customer.messes.length > 0
+          ? customer.messes.map((m: any) => m.id)
+          : (customer.mess_id ? [customer.mess_id] : []));
+      setSelectedMessGroupIds(initialMessIds);
+
+      const fetchMessGroups = async () => {
+        const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+        const candidates = [
+          targetBase,
+          'http://192.168.8.7:3000',
+          'http://localhost:3000',
+          DEFAULT_EDGE_API_URL
+        ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+        for (const base of candidates) {
+          try {
+            const res = await fetch(`${base}/api/nfc/mess-groups`, { signal: AbortSignal.timeout(3500) });
+            if (res.ok) {
+              const data = await res.json();
+              const raw = data?.messGroups || data?.groups || (Array.isArray(data) ? data : []);
+              if (Array.isArray(raw) && raw.length > 0) {
+                setMessGroupsList(raw);
+                return;
+              }
+            }
+          } catch { }
+        }
+      };
+      fetchMessGroups();
+    }
+  }, [customer, apiBase]);
 
   // Manager PIN modal state (PIN 9999)
   const [showPinModal, setShowPinModal] = useState(false);
@@ -2696,22 +2779,69 @@ function KhataEditModal({
 
     setIsSaving(true);
     try {
-      const res = await fetch(`${apiBase}/khata/${customer.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          phone: phone.trim() || null,
-          cpr: cpr.trim() || null,
-          batchNo: batchNo.trim() || null,
-          creditLimit: parseFloat(creditLimit) || 30.0,
-          mess_ids: selectedMessGroupIds,
-          mess_id: selectedMessGroupIds[0] || null,
-        }),
-      });
+      const payload = {
+        name: name.trim(),
+        phone: phone.trim() || null,
+        cpr: cpr.trim() || null,
+        batchNo: batchNo.trim() || null,
+        creditLimit: parseFloat(creditLimit) || 30.0,
+        mess_ids: selectedMessGroupIds,
+        mess_id: selectedMessGroupIds[0] || null,
+      };
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-manager-pin': getManagerPin() || '9999'
+      };
+
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const candidates = [
+        targetBase,
+        'http://192.168.8.7:3000',
+        'http://localhost:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      let saved = false;
+      let lastError = '';
+
+      for (const base of candidates) {
+        const paths = [
+          `/api/customers/${customer.id}`,
+          `/customers/${customer.id}`,
+          `/khata/${customer.id}`,
+          `/api/khata/${customer.id}`,
+          `/customers/${customer.id}/update`,
+          `/api/customers/${customer.id}/update`
+        ];
+
+        for (const p of paths) {
+          try {
+            const method = p.includes('/update') ? 'POST' : 'PUT';
+            const res = await fetch(`${base}${p}`, {
+              method,
+              headers,
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success || data.customer || data.id) {
+                saved = true;
+                break;
+              }
+            } else if (res.status === 401 || res.status === 403) {
+              const err = await res.json().catch(() => ({}));
+              lastError = err.error || 'Manager authentication required';
+            }
+          } catch { }
+        }
+        if (saved) break;
+      }
+
+      if (saved) {
+        const enrolledMesses = messGroupsList.filter(g => selectedMessGroupIds.includes(g.id)).map(g => ({ id: g.id, group_name: g.group_name }));
         const updatedCustomer: Customer = {
           ...customer,
           name: name.trim(),
@@ -2721,7 +2851,9 @@ function KhataEditModal({
           creditLimit: parseFloat(creditLimit) || 30.0,
           mess_ids: selectedMessGroupIds,
           mess_id: selectedMessGroupIds[0] || null,
-          messes: messGroupsList.filter(g => selectedMessGroupIds.includes(g.id)).map(g => ({ id: g.id, group_name: g.group_name })),
+          messes: enrolledMesses,
+          messName: enrolledMesses.map(m => m.group_name).join(', ') || null,
+          mess_name: enrolledMesses.map(m => m.group_name).join(', ') || null,
           hasMessGroup: selectedMessGroupIds.length > 0,
           isMultiMess: selectedMessGroupIds.length > 1,
         };
@@ -2730,7 +2862,7 @@ function KhataEditModal({
         onSaved(updatedCustomer);
         onClose();
       } else {
-        alert(data.error || 'Failed to update customer details.');
+        alert(lastError || 'Failed to update customer details.');
       }
     } catch (e) {
       console.error(e);

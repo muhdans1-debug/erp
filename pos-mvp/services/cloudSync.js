@@ -217,8 +217,8 @@ export async function mirrorCustomerToCloud(customer) {
       sql: `INSERT INTO Customer (
         id, tenantId, name, phone, cpr, batchNo, description,
         nfcCardId, cardUid, nfc_card_id, balance, khataPin, khata_pin,
-        pin, access_token, credit_limit, is_active, isActive, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+        pin, access_token, credit_limit, is_active, isActive, mess_id, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         phone = excluded.phone,
@@ -232,6 +232,7 @@ export async function mirrorCustomerToCloud(customer) {
         khata_pin = excluded.khata_pin,
         pin = excluded.pin,
         credit_limit = excluded.credit_limit,
+        mess_id = excluded.mess_id,
         updatedAt = excluded.updatedAt`,
       args: [
         customer.id,
@@ -250,15 +251,94 @@ export async function mirrorCustomerToCloud(customer) {
         pin,
         customer.access_token || customer.id,
         customer.credit_limit ?? 30.0,
+        customer.mess_id || null,
         customer.createdAt ? new Date(customer.createdAt).toISOString() : updatedAt,
         updatedAt
       ]
     });
 
+    if (customer.mess_ids || customer.messes) {
+      mirrorCustomerMessMembershipsToCloud(customer.id, customer.mess_ids || customer.messes).catch(() => {});
+    }
+
     console.log(`☁️ [CloudSync] Customer '${customer.name}' (${customer.id}) mirrored to Turso Cloud.`);
     return true;
   } catch (err) {
     console.warn(`⚠️ [CloudSync] Could not mirror customer ${customer.id} to cloud:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Mirror Mess Group to Turso Cloud
+ */
+export async function mirrorMessGroupToCloud(group) {
+  if (!tursoCloudClient || !group || !group.id) return false;
+  try {
+    await tursoCloudClient.execute({
+      sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
+      args: [group.id, group.tenantId || 'tenant_askar_01', group.group_name, group.createdAt || new Date().toISOString()]
+    });
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror mess group ${group.id}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Mirror complete Mess Group Roster (members) to Turso Cloud
+ */
+export async function mirrorMessGroupRosterToCloud(groupId, memberIds) {
+  if (!tursoCloudClient || !groupId) return false;
+  try {
+    await tursoCloudClient.execute({
+      sql: `DELETE FROM MessMember WHERE mess_id = ?`,
+      args: [groupId]
+    });
+    const ids = Array.isArray(memberIds) ? memberIds : [];
+    for (const mId of ids.filter(Boolean)) {
+      const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await tursoCloudClient.execute({
+        sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+              VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)
+              ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = 1`,
+        args: [mmId, groupId, mId]
+      });
+    }
+    console.log(`☁️ [CloudSync] Mess group ${groupId} roster (${ids.length} members) mirrored to Turso Cloud.`);
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror mess group roster for ${groupId}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Mirror Customer's multiple mess memberships to Turso Cloud
+ */
+export async function mirrorCustomerMessMembershipsToCloud(customerId, messIds) {
+  if (!tursoCloudClient || !customerId) return false;
+  try {
+    await tursoCloudClient.execute({
+      sql: `DELETE FROM MessMember WHERE customer_id = ?`,
+      args: [customerId]
+    });
+    const ids = Array.isArray(messIds) ? messIds : [messIds];
+    for (const mId of ids.filter(Boolean)) {
+      const mmId = `mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await tursoCloudClient.execute({
+        sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+              VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1, CURRENT_TIMESTAMP)
+              ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = 1`,
+        args: [mmId, mId, customerId]
+      });
+    }
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror mess memberships for ${customerId}:`, err.message);
     return false;
   }
 }
@@ -374,6 +454,28 @@ export async function syncAllPendingToCloud() {
       const ok = await mirrorLedgerEntryToCloud(l);
       if (ok) pushedLedger++;
     }
+
+    // C. Reconcile Mess Groups & Members to Cloud
+    try {
+      const lGroups = await db.execute(`SELECT * FROM MessGroup`);
+      for (const g of lGroups.rows || []) {
+        await tursoCloudClient.execute({
+          sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
+          args: [g.id, g.tenantId || 'tenant_askar_01', g.group_name, g.createdAt || new Date().toISOString()]
+        });
+      }
+      const lMembers = await db.execute(`SELECT * FROM MessMember`);
+      for (const m of lMembers.rows || []) {
+        await tursoCloudClient.execute({
+          sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = excluded.is_active`,
+          args: [m.id, m.tenantId || 'tenant_askar_01', m.mess_id, m.customer_id, m.role || 'MEMBER', m.is_active ?? 1, m.joined_at || new Date().toISOString()]
+        });
+      }
+    } catch { }
 
     if (pushedSales > 0 || pushedLedger > 0) {
       console.log(`☁️ [CloudSync] Outbox drain completed: ${pushedSales} sales, ${pushedLedger} ledger entries synced to cloud.`);
@@ -688,6 +790,28 @@ export async function pullCloudDeltas() {
         args: [custId, custId]
       });
     }
+
+    // Pull Mess Groups & Members from Cloud
+    try {
+      const cGroups = await tursoCloudClient.execute(`SELECT * FROM MessGroup`);
+      for (const g of cGroups.rows || []) {
+        await db.execute({
+          sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
+          args: [g.id, g.tenantId || 'tenant_askar_01', g.group_name, g.createdAt || new Date().toISOString()]
+        });
+      }
+      const cMembers = await tursoCloudClient.execute(`SELECT * FROM MessMember`);
+      for (const m of cMembers.rows || []) {
+        await db.execute({
+          sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = excluded.is_active`,
+          args: [m.id, m.tenantId || 'tenant_askar_01', m.mess_id, m.customer_id, m.role || 'MEMBER', m.is_active ?? 1, m.joined_at || new Date().toISOString()]
+        });
+      }
+    } catch { }
 
     if (pulledCustomers > 0 || pulledSales > 0 || pulledLedger > 0) {
       console.log(`☁️ [CloudSync] Pulled from Turso Cloud: ${pulledCustomers} customers, ${pulledSales} sales, ${pulledLedger} ledger events.`);

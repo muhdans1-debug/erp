@@ -15,7 +15,9 @@ import {
   getPrinterStyleConfig, 
   savePrinterStyleConfig, 
   resetPrinterStyleConfig, 
-  type SunmiPrinterStyleConfig 
+  type SunmiPrinterStyleConfig,
+  COMPACT_PROFESSIONAL_CONFIG,
+  CLASSIC_FULL_CONFIG
 } from '../utils/printerConfig';
 import { generateNBRReceiptHtml } from '../utils/receiptTemplate';
 import { formatSaleReceiptText, printFullReceipt, showToast } from '../utils/printer';
@@ -117,6 +119,34 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
     setSaveSuccess(true);
     showToast('✅ Printer & Receipt style saved!');
     setTimeout(() => setSaveSuccess(false), 2500);
+  };
+
+  const applyCompactPreset = () => {
+    setConfig(prev => ({
+      ...prev,
+      ...COMPACT_PROFESSIONAL_CONFIG,
+      shopNameEn: prev.shopNameEn,
+      shopNameAr: prev.shopNameAr,
+      crNumber: prev.crNumber,
+      vatNumber: prev.vatNumber,
+      shopPhone: prev.shopPhone,
+      paperWidth: prev.paperWidth,
+    }));
+    showToast('⚡ Applied Compact Professional preset');
+  };
+
+  const applyClassicPreset = () => {
+    setConfig(prev => ({
+      ...prev,
+      ...CLASSIC_FULL_CONFIG,
+      shopNameEn: prev.shopNameEn,
+      shopNameAr: prev.shopNameAr,
+      crNumber: prev.crNumber,
+      vatNumber: prev.vatNumber,
+      shopPhone: prev.shopPhone,
+      paperWidth: prev.paperWidth,
+    }));
+    showToast('📋 Applied Classic Full preset');
   };
 
   const handleReset = () => {
@@ -262,6 +292,38 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
               className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
             >
               <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* PRESET SELECTOR BAR */}
+        <div className="bg-slate-950/70 border-b border-slate-800 px-5 py-2.5 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <Sparkles size={14} className="text-amber-400" />
+            <span className="text-xs font-bold text-slate-200">Length & Paper Style:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyCompactPreset}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                config.receiptTheme === 'compact_quick'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-1 ring-emerald-400'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}
+            >
+              <span>⚡ Compact Professional (Shrunk & Paper Saver)</span>
+            </button>
+            <button
+              type="button"
+              onClick={applyClassicPreset}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                config.receiptTheme === 'classic_supermarket'
+                  ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30 ring-1 ring-sky-400'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`}
+            >
+              <span>📋 Classic Full</span>
             </button>
           </div>
         </div>
@@ -620,13 +682,13 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                     <div className="bg-slate-800 p-3 rounded-xl border border-slate-700">
                       <label className="block text-xs font-bold text-slate-300 mb-1">
-                        Trailing Feed Lines: {config.feedLines}
+                        Trailing Feed Lines: {config.feedLines}L
                       </label>
                       <p className="text-[11px] text-slate-400 mb-2">
-                        Feeds receipt past manual tear bar so barcode isn't clipped.
+                        Pushes footer completely past cutter blade (prevents footer printing on next bill).
                       </p>
                       <div className="flex gap-2">
-                        {[2, 4, 6, 8].map(lines => (
+                        {[3, 4, 5, 6].map(lines => (
                           <button
                             key={lines}
                             type="button"
@@ -637,7 +699,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                             }`}
                           >
-                            {lines}L
+                            {lines}L {lines === 4 ? '★' : ''}
                           </button>
                         ))}
                       </div>

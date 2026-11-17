@@ -3,14 +3,14 @@
  * Designed for Askar Supermarket with Sunmi D2mini & 80mm thermal hardware support.
  * 
  * Features:
- * 1. Clean bilingual typography (Arabic / English)
- * 2. Official Ministry of Industry and Commerce C.R. No. and NBR VAT TRN registration
- * 3. Accurate item alignment (Unit count vs Scale kg)
- * 4. NBR VAT breakdown (Standard 10% vs Zero-Rated 0%)
- * 5. High-visibility Grand Total banner
- * 6. Tendered & Change breakdown
- * 7. Official Article 53 TLV Base64 QR code & Code128 return barcode
- * 8. Configurable via Sunmi Printer Style Settings
+ * 1. Compact Professional layout: Paper-saving, ultra-clean, sleek typography.
+ * 2. Official Ministry of Industry and Commerce C.R. No. and NBR VAT TRN registration.
+ * 3. Smart single-line item rendering (with sub-qty only when multiple or weighed).
+ * 4. Consolidated Subtotal & 10% VAT line.
+ * 5. High-visibility clean Grand Total banner.
+ * 6. Compact payment and Khata credit ledger summary.
+ * 7. Official Article 53 TLV Base64 QR code (sharp, fast-scanning).
+ * 8. Configurable via Sunmi Printer Style Settings.
  */
 
 import { getStoredBenefitPayConfig } from './benefitPay';
@@ -67,6 +67,7 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
     ...(props.styleConfig || {}),
   };
 
+  const isCompact = cfg.receiptTheme === 'compact_quick' || cfg.fontSize === 'compact';
   const invoiceNo = props.invoiceNo || 'INV-000000';
   const shopName = props.shopName || cfg.shopNameEn;
   const shopNameAr = props.shopNameAr || cfg.shopNameAr;
@@ -83,10 +84,10 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
   const pageSize = is80mm ? '80mm auto' : '58mm auto';
 
   // Base font size scaling
-  let baseFontSize = '9.5px';
+  let baseFontSize = '9px';
   if (cfg.fontSize === 'compact') baseFontSize = is80mm ? '10px' : '8.5px';
   else if (cfg.fontSize === 'large') baseFontSize = is80mm ? '12.5px' : '10.5px';
-  else baseFontSize = is80mm ? '11.5px' : '9.5px';
+  else baseFontSize = is80mm ? '11px' : '9px';
 
   // Ink density weight
   const inkWeight = cfg.printDensity === 'deep_burn' ? 700 : (cfg.printDensity === 'dark' ? 600 : 500);
@@ -116,19 +117,20 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
     }
 
     const vatTag = isTaxable ? '*' : 'Z';
-    const qtyDisplay = isScale ? `${qty.toFixed(3)} kg` : `${qty} pcs`;
+    const qtyDisplay = isScale ? `${qty.toFixed(3)} kg` : `${qty}x`;
+    const hasSubQty = isScale || qty > 1;
 
     return `
     <div class="item-block">
-      <div class="row bold">
+      <div class="row">
         <span class="item-name">${idx + 1}. ${escapeHtml(item.name)} <span class="tax-badge">[${vatTag}]</span></span>
         <span class="item-total">BD ${lineAmt.toFixed(3)}</span>
       </div>
-      ${cfg.showArabicItems && item.nameAr ? `<div class="item-arabic">${escapeHtml(item.nameAr)}</div>` : ''}
-      <div class="row text-muted">
+      ${hasSubQty ? `
+      <div class="row text-muted" style="font-size: 8px;">
         <span class="item-rate">&nbsp;&nbsp;${qtyDisplay} @ BD ${unitPrice.toFixed(3)}</span>
-        <span class="tax-desc">${isTaxable ? '10% VAT' : '0% Zero-Rated'}</span>
-      </div>
+      </div>` : ''}
+      ${cfg.showArabicItems && item.nameAr ? `<div class="item-arabic">${escapeHtml(item.nameAr)}</div>` : ''}
     </div>`;
   }).join('\n');
 
@@ -142,41 +144,23 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
     const tendered = props.cashTendered !== undefined ? Number(props.cashTendered) : total;
     const change = props.changeDue !== undefined ? Number(props.changeDue) : (tendered > total ? tendered - total : 0);
     paymentSectionHtml = `
-    <div class="payment-box">
-      <div class="center bold payment-title">*** PAID VIA CASH / نقداً ***</div>
-      <div class="row" style="margin-top: 3px;">
-        <span>Cash Tendered / المدفوع:</span>
-        <span class="bold">BD ${tendered.toFixed(3)}</span>
-      </div>
-      <div class="row">
-        <span>Change Returned / الباقي:</span>
-        <span class="bold">BD ${change.toFixed(3)}</span>
-      </div>
+    <div class="row text-muted" style="margin-top: 2px;">
+      <span>Paid (CASH): BD ${tendered.toFixed(3)}</span>
+      <span>Change: <strong style="color:#000;">BD ${change.toFixed(3)}</strong></span>
     </div>`;
   } else if (paymentMode === 'BENEFIT_PAY') {
     const bCfg = getStoredBenefitPayConfig();
     const payeeIdent = bCfg.accountType === 'MOBILE_FAWRI' ? `Tel: ${bCfg.mobileNumber || ''}` : `MID: ${bCfg.merchantId || ''}`;
     paymentSectionHtml = `
-    <div class="payment-box">
-      <div class="center bold payment-title">*** PAID VIA BENEFITPAY / فوري+ ***</div>
-      <div class="row" style="margin-top: 3px;">
-        <span>Payment Method:</span>
-        <span>BenefitPay Fawri+</span>
-      </div>
-      <div class="row">
-        <span>Settlement Account:</span>
-        <span class="bold">${payeeIdent}</span>
-      </div>
-      ${props.transactionRef ? `<div class="row"><span>Reference No:</span> <span class="bold font-mono">${props.transactionRef}</span></div>` : ''}
+    <div class="row text-muted" style="margin-top: 2px;">
+      <span>BenefitPay Fawri+</span>
+      <span>${props.transactionRef ? `Ref: ${props.transactionRef}` : payeeIdent}</span>
     </div>`;
   } else if (paymentMode === 'CARD') {
     paymentSectionHtml = `
-    <div class="payment-box">
-      <div class="center bold payment-title">*** PAID VIA CARD / بطاقة مصرفية ***</div>
-      <div class="row" style="margin-top: 3px;">
-        <span>Terminal:</span>
-        <span>POS Contactless EMV / NFC</span>
-      </div>
+    <div class="row text-muted" style="margin-top: 2px;">
+      <span>Card Terminal</span>
+      <span>POS EMV Contactless</span>
     </div>`;
   } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
     const prevDebt = Number(props.previousBalance || 0);
@@ -184,33 +168,38 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       ? Number(props.newBalance) 
       : (prevDebt + total);
 
-    paymentSectionHtml = `
-    <div class="khata-balance-banner">
-      <div class="center bold khata-title">*** KHATA CREDIT ACCOUNT / حساب الآجل ***</div>
-      ${props.customerName ? `
-      <div class="row" style="margin-top: 3px;">
-        <span>Customer / العميل:</span>
-        <span class="bold">${escapeHtml(props.customerName)}</span>
-      </div>` : ''}
-      ${props.customerCardUid ? `
-      <div class="row">
-        <span>Card UID / البطاقة:</span>
-        <span class="bold font-mono">${escapeHtml(props.customerCardUid)}</span>
-      </div>` : ''}
-      ${props.previousBalance !== undefined ? `
-      <div class="row" style="margin-top: 2px;">
-        <span>Previous Debt / الرصيد السابق:</span>
-        <span class="bold">BD ${prevDebt.toFixed(3)}</span>
-      </div>` : ''}
-      <div class="row" style="margin-top: 2px;">
-        <span>This Bill Added / المبلغ المضاف:</span>
-        <span class="bold">+BD ${total.toFixed(3)}</span>
-      </div>
-      <div class="current-debt-box">
-        <div class="current-debt-label">TOTAL CURRENT BALANCE DUE<br/><span style="font-size: 10px;">إجمالي الرصيد المستحق</span></div>
-        <div class="current-debt-amount">BD ${finalBalance.toFixed(3)}</div>
-      </div>
-    </div>`;
+    if (isCompact && !cfg.showCreditBalanceBox) {
+      paymentSectionHtml = `
+      <div class="khata-compact-box">
+        <div class="row">
+          <span>Khata: <strong>${escapeHtml(props.customerName || 'Customer')}</strong></span>
+          <span>Prev: BD ${prevDebt.toFixed(3)}</span>
+        </div>
+        <div class="row bold" style="font-size: 10px; margin-top: 1px;">
+          <span>BALANCE DUE / المستحق:</span>
+          <span>BD ${finalBalance.toFixed(3)}</span>
+        </div>
+      </div>`;
+    } else {
+      paymentSectionHtml = `
+      <div class="khata-balance-banner">
+        <div class="center bold khata-title">*** KHATA CREDIT ACCOUNT / حساب الآجل ***</div>
+        ${props.customerName ? `
+        <div class="row" style="margin-top: 2px;">
+          <span>Customer:</span>
+          <span class="bold">${escapeHtml(props.customerName)}</span>
+        </div>` : ''}
+        ${props.previousBalance !== undefined ? `
+        <div class="row">
+          <span>Previous Debt:</span>
+          <span>BD ${prevDebt.toFixed(3)}</span>
+        </div>` : ''}
+        <div class="row bold" style="margin-top: 2px; font-size: 11px;">
+          <span>CURRENT DUE / المستحق:</span>
+          <span>BD ${finalBalance.toFixed(3)}</span>
+        </div>
+      </div>`;
+    }
   } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
     const group = props.groupName || props.customerName || "Shared Mess";
     const prevDebt = Number(props.previousBalance || 0);
@@ -219,53 +208,27 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       : (prevDebt + total);
 
     paymentSectionHtml = `
-    <div class="khata-balance-banner">
-      <div class="center bold khata-title">*** MESS GROUP DINING TAB / حساب سكن العمال ***</div>
-      <div class="row" style="margin-top: 3px;">
-        <span>Mess Account / المجموعة:</span>
-        <span class="bold">${escapeHtml(group)}</span>
+    <div class="khata-compact-box">
+      <div class="row">
+        <span>Mess: <strong>${escapeHtml(group)}</strong></span>
+        <span>Workers: ${props.members?.length || 0}</span>
       </div>
-      ${props.shopperName ? `
-      <div class="row">
-        <span>Purchased By / المشتري:</span>
-        <span class="bold">${escapeHtml(props.shopperName)}</span>
-      </div>` : ''}
-      ${props.customerCardUid ? `
-      <div class="row">
-        <span>NFC Card / البطاقة:</span>
-        <span class="bold font-mono">${escapeHtml(props.customerCardUid)}</span>
-      </div>` : ''}
-      <div class="row">
-        <span>Pool Workers / عدد العمال:</span>
-        <span class="bold">${props.members?.length || 0}</span>
-      </div>
-      ${Array.isArray(props.members) && props.members.length > 0 ? `
-      <div class="divider" style="margin: 3px 0;"></div>
-      <div class="center bold" style="font-size: 8.5px;">EQUAL SPLIT SHARE PER WORKER / نصيب العامل:</div>
-      <div style="margin-top: 2px;">
-        ${props.members.map((m: any) => `
-          <div class="row" style="font-size: 8.5px;">
-            <span>- ${escapeHtml(m.name || m.customer_name)}:</span>
-            <span class="bold">BD ${Number(m.amount ?? m.splitAmount ?? (total / Math.max(1, props.members!.length))).toFixed(3)}</span>
-          </div>
-        `).join('')}
-      </div>` : ''}
-      <div class="current-debt-box">
-        <div class="current-debt-label">MESS TOTAL DEBT / إجمالي دين المجموعة</div>
-        <div class="current-debt-amount">BD ${finalBalance.toFixed(3)}</div>
+      <div class="row bold" style="font-size: 10px; margin-top: 1px;">
+        <span>MESS TOTAL DUE / المستحق:</span>
+        <span>BD ${finalBalance.toFixed(3)}</span>
       </div>
     </div>`;
   } else {
     paymentSectionHtml = `
-    <div class="payment-box">
-      <div class="center bold payment-title">*** ${paymentMode} ***</div>
-      ${props.customerName ? `<div class="row" style="margin-top: 3px;"><span>Account:</span> <span class="bold">${escapeHtml(props.customerName)}</span></div>` : ''}
+    <div class="row text-muted" style="margin-top: 2px;">
+      <span>Payment Mode:</span>
+      <span class="bold">${paymentMode}</span>
     </div>`;
   }
 
   const barcodeImgHtml = props.barcodeDataUrl
-    ? `<img src="${props.barcodeDataUrl}" style="width: 82%; max-height: 40px; display: block; margin: 0 auto;" alt="Barcode" />`
-    : `<div style="font-family: monospace; letter-spacing: 2px; font-weight: 700; font-size: 13px;">|||| | ||||| |||| || |||||||</div>`;
+    ? `<img src="${props.barcodeDataUrl}" style="width: 75%; max-height: 34px; display: block; margin: 0 auto;" alt="Barcode" />`
+    : `<div style="font-family: monospace; letter-spacing: 2px; font-weight: 700; font-size: 12px;">|||| | ||||| |||| || |||||||</div>`;
 
   return `<!DOCTYPE html>
 <html lang="ar" dir="ltr">
@@ -295,32 +258,25 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       width: ${widthMm};
       max-width: ${widthMm};
       margin: 0 auto;
-      padding: 1.5mm 1mm;
+      padding: ${isCompact ? '0.5mm 0.5mm' : '1.5mm 1mm'};
       font-size: ${baseFontSize};
-      line-height: 1.25;
+      line-height: ${isCompact ? '1.18' : '1.25'};
       letter-spacing: -0.15px;
     }
 
     .center { text-align: center; }
     .bold { font-weight: 800; }
     .title-large {
-      font-size: 13.5px;
+      font-size: ${isCompact ? '12px' : '13.5px'};
       font-weight: 900;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
       margin-bottom: 1px;
     }
     .title-arabic {
-      font-size: 13px;
+      font-size: 11px;
       font-weight: 800;
       direction: rtl;
-      margin-bottom: 2px;
-    }
-    .subtitle-tax {
-      font-size: 9.5px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-top: 1px;
+      margin-bottom: 1px;
     }
     
     /* Strict Left/Right Flex Alignment */
@@ -329,269 +285,208 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       justify-content: space-between;
       align-items: baseline;
       width: 100%;
-      margin: 1px 0;
+      margin: 0.5px 0;
     }
 
     .text-muted {
-      color: #333333;
-      font-size: 8.5px;
+      color: #222222;
+      font-size: 8px;
     }
 
     .divider {
       border-top: 1px dashed #000000;
-      margin: 3.5px 0;
+      margin: ${isCompact ? '2px 0' : '3px 0'};
       width: 100%;
     }
     .divider-double {
-      border-top: 2px solid #000000;
-      margin: 4px 0;
+      border-top: 1.5px solid #000000;
+      margin: ${isCompact ? '2px 0' : '3.5px 0'};
       width: 100%;
     }
 
     /* Item Blocks */
     .item-block {
-      margin-bottom: 3.5px;
-      padding-bottom: 1.5px;
+      margin-bottom: ${isCompact ? '1.5px' : '3px'};
+      padding-bottom: 0;
     }
     .item-name {
       max-width: 72%;
       word-break: break-word;
-      font-size: ${cfg.seniorHighLegibility ? '10px' : '9.5px'};
-      font-weight: ${cfg.seniorHighLegibility ? '800' : '700'};
+      font-size: ${baseFontSize};
+      font-weight: 700;
     }
     .item-arabic {
-      font-size: 8.5px;
+      font-size: 8px;
       direction: rtl;
       text-align: right;
       color: #222222;
-      padding-right: 4px;
     }
     .item-total {
-      font-weight: 900;
-      font-size: ${cfg.seniorHighLegibility ? '11px' : '9.5px'};
+      font-weight: 800;
+      font-size: ${baseFontSize};
       white-space: nowrap;
     }
     .tax-badge {
-      font-size: 8px;
-      font-weight: 800;
+      font-size: 7.5px;
+      font-weight: 700;
     }
 
-    /* Ultra-Bold Grand Total Banner for Senior Laborers */
-    .total-banner {
-      border: ${cfg.seniorHighLegibility ? '3px solid #000000' : '2px solid #000000'};
-      padding: ${cfg.totalBannerSize === 'jumbo' ? '6px 5px' : '5px 5px'};
-      margin: 6px 0;
-      background-color: #ffffff;
-      text-align: center;
+    /* Compact Total Row */
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      width: 100%;
+      padding: ${isCompact ? '2px 0' : '4px 0'};
+      border-top: 1.5px solid #000000;
+      border-bottom: 1.5px solid #000000;
+      margin: ${isCompact ? '2px 0' : '4px 0'};
     }
     .total-label {
-      font-size: ${cfg.totalBannerSize === 'jumbo' ? '13px' : '12px'};
-      font-weight: 950;
-      letter-spacing: 0.5px;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.3px;
     }
     .total-amount {
-      font-size: ${cfg.totalBannerSize === 'jumbo' ? '24px' : (cfg.totalBannerSize === 'extra_bold' ? '20px' : '16px')};
+      font-size: ${isCompact ? '14px' : '18px'};
       font-weight: 950;
-      letter-spacing: 0.5px;
-      line-height: 1.1;
-      margin-top: 1px;
+      letter-spacing: 0.3px;
     }
 
-    /* Dedicated Framed Khata Credit Balance Banner */
+    .khata-compact-box {
+      border: 1px solid #000000;
+      padding: 3px 4px;
+      margin-top: 3px;
+      background: #ffffff;
+    }
     .khata-balance-banner {
-      margin-top: 6px;
-      padding: 6px 5px;
-      border: 2px solid #000000;
+      margin-top: 3px;
+      padding: 4px;
+      border: 1.5px solid #000000;
       background-color: #ffffff;
     }
     .khata-title {
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.3px;
-      margin-bottom: 3px;
-      text-transform: uppercase;
-    }
-    .current-debt-box {
-      border: 3px solid #000000;
-      padding: 6px 4px;
-      margin-top: 5px;
-      background-color: #ffffff;
-      text-align: center;
-    }
-    .current-debt-label {
-      font-size: 10px;
-      font-weight: 950;
-      letter-spacing: 0.4px;
-      color: #000000;
-      text-transform: uppercase;
-      line-height: 1.2;
-    }
-    .current-debt-amount {
-      font-size: ${cfg.seniorHighLegibility ? '24px' : '20px'};
-      font-weight: 950;
-      letter-spacing: 0.5px;
-      color: #000000;
-      margin-top: 3px;
-      line-height: 1;
-    }
-
-    /* Payment & Breakdown Boxes */
-    .payment-box {
-      margin-top: 4px;
-      padding-top: 3px;
-      border-top: 1px dashed #000000;
-    }
-    .payment-title {
       font-size: 9px;
-      letter-spacing: 0.2px;
+      font-weight: 900;
       margin-bottom: 2px;
+      text-transform: uppercase;
     }
 
     .qr-container {
-      margin: 6px 0 3px 0;
+      margin: 3px 0 1px 0;
       text-align: center;
     }
     .barcode-container {
-      margin-top: 6px;
+      margin-top: 3px;
       text-align: center;
     }
   </style>
 </head>
 <body>
 
-  <!-- STORE BILINGUAL HEADER -->
+  <!-- STORE COMPACT HEADER -->
   <div class="center title-large">${escapeHtml(shopName)}</div>
   ${cfg.showArabicHeader && shopNameAr ? `<div class="center title-arabic">${escapeHtml(shopNameAr)}</div>` : ''}
-  <div class="center subtitle-tax">SIMPLIFIED TAX INVOICE / فاتورة ضريبية مبسطة</div>
-  <div class="center" style="font-size: 8.5px; margin-top: 1px;">
-    C.R. No: <strong>${escapeHtml(crNumber)}</strong> | س.ت: <strong>${escapeHtml(crNumber)}</strong>
+  <div class="center text-muted">
+    CR: <strong>${escapeHtml(crNumber)}</strong> | VAT: <strong>${escapeHtml(vatNumber)}</strong>
   </div>
-  <div class="center" style="font-size: 8.5px;">
-    VAT TRN: <strong>${escapeHtml(vatNumber)}</strong>
-  </div>
-  <div class="center" style="font-size: 8px;">${escapeHtml(shopAddress)}</div>
-  <div class="center" style="font-size: 8.5px; font-weight: 700;">Tel / WhatsApp: ${escapeHtml(shopPhone)}</div>
+  ${!isCompact && shopAddress ? `<div class="center text-muted" style="font-size: 7.5px;">${escapeHtml(shopAddress)}</div>` : ''}
+  <div class="center text-muted">Tel: ${escapeHtml(shopPhone)}</div>
 
   ${props.isReprint ? `
-  <div style="border: 1.5px solid #000; padding: 3px; margin: 5px 0; text-align: center; font-weight: 800; font-size: 11px;">
-    *** DUPLICATE / REPRINT COPY ***<br/>
-    <span style="font-size: 9.5px;">نسخة معاد طباعتها</span>
+  <div style="border: 1px solid #000; padding: 1.5px; margin: 3px 0; text-align: center; font-weight: 800; font-size: 9.5px;">
+    *** DUPLICATE / REPRINT COPY ***
   </div>` : ''}
 
   <div class="divider-double"></div>
 
-  <!-- INVOICE METADATA -->
+  <!-- INVOICE METADATA (COMPACT 2-COLUMN) -->
   <div class="row">
-    <span>Invoice / الفاتورة:</span>
-    <span class="bold">${escapeHtml(invoiceNo)}</span>
-  </div>
-  <div class="row">
-    <span>Date & Time / التاريخ:</span>
+    <span>INV: <strong>${escapeHtml(invoiceNo)}</strong></span>
     <span>${escapeHtml(dateStr)}</span>
   </div>
-  <div class="row">
-    <span>Staff / الكاشير:</span>
-    <span>${escapeHtml(staff)}</span>
-  </div>
-  <div class="row">
-    <span>Payment / طريقة الدفع:</span>
-    <span class="bold">${escapeHtml(paymentMode)}</span>
+  <div class="row text-muted">
+    <span>Mode: <strong>${escapeHtml(paymentMode)}</strong></span>
+    <span>Staff: ${escapeHtml(staff)}</span>
   </div>
   ${props.customerName ? `
   <div class="row">
-    <span>Customer / العميل:</span>
-    <span class="bold">${escapeHtml(props.customerName)}</span>
+    <span>Customer: <strong>${escapeHtml(props.customerName)}</strong></span>
   </div>` : ''}
 
   <div class="divider"></div>
 
   <!-- ITEMS LIST -->
-  <div class="row bold" style="font-size: 8.5px; letter-spacing: 0.2px; text-transform: uppercase;">
-    <span>Item / الوصف</span>
-    <span>Total (BD)</span>
-  </div>
-  <div class="divider"></div>
-
   ${itemsHtml}
 
   <div class="divider"></div>
 
-  <!-- NBR VAT BREAKDOWN (ARTICLE 53 COMPLIANT) -->
+  <!-- NBR VAT SUMMARY (COMPACT CONSOLIDATED) -->
   ${cfg.showVatBreakdown ? `
   <div class="row text-muted">
-    <span>Standard Rated (10% Base):</span>
+    <span>Standard (10% Base):</span>
     <span>BD ${standardTaxableBase.toFixed(3)}</span>
   </div>
   <div class="row text-muted">
-    <span>VAT Amount (10%):</span>
+    <span>VAT (10%):</span>
     <span>BD ${calculatedVat.toFixed(3)}</span>
   </div>
   ${zeroRatedBase > 0 ? `
   <div class="row text-muted">
-    <span>Zero Rated (0% Base):</span>
+    <span>Zero-Rated (0% Base):</span>
     <span>BD ${zeroRatedBase.toFixed(3)}</span>
   </div>` : ''}
   <div class="row text-muted">
     <span>Subtotal Excl. VAT:</span>
     <span>BD ${calculatedSubtotal.toFixed(3)}</span>
   </div>
-  <div class="divider"></div>
-  ` : ''}
+  ` : `
+  <div class="row text-muted">
+    <span>Subtotal: BD ${calculatedSubtotal.toFixed(3)}</span>
+    <span>VAT (10%): BD ${calculatedVat.toFixed(3)}</span>
+  </div>
+  `}
 
-  <!-- PROMINENT GRAND TOTAL BANNER (ULTRA-BOLD FOR SENIOR LABORERS) -->
-  <div class="total-banner">
-    <div class="total-label">TOTAL / المجموع الإجمالي</div>
-    <div class="total-amount">BD ${total.toFixed(3)}</div>
-    <div class="center text-muted" style="font-size: 8px; font-weight: 700; margin-top: 2px;">
-      Inclusive of 10% VAT / شامل ضريبة القيمة المضافة
-    </div>
+  <!-- GRAND TOTAL -->
+  <div class="total-row">
+    <span class="total-label">TOTAL / المجموع:</span>
+    <span class="total-amount">BD ${total.toFixed(3)}</span>
   </div>
 
   <!-- PAYMENT SECTION -->
   ${paymentSectionHtml}
 
-  <!-- TOTAL ITEMS COUNT -->
-  <div class="center text-muted" style="margin-top: 5px; font-size: 8px;">
-    Total Items: <strong>${totalItemCount}</strong> | Lines: <strong>${props.items?.length || 0}</strong>
-  </div>
-
   <!-- NBR ARTICLE 53 OFFICIAL QR CODE -->
   ${cfg.showNbrQr && props.qrCodeDataUrl ? `
   <div class="qr-container">
-    <img src="${props.qrCodeDataUrl}" style="width: 80px; height: 80px; display: block; margin: 0 auto;" alt="NBR VAT QR" />
-    <div style="font-size: 7.5px; margin-top: 2px; font-weight: 800; letter-spacing: 0.3px;">
-      BAHRAIN NBR SIMPLIFIED TAX INVOICE
-    </div>
+    <img src="${props.qrCodeDataUrl}" style="width: 58px; height: 58px; display: block; margin: 0 auto;" alt="NBR VAT QR" />
   </div>` : ''}
 
-  <!-- KHATA LIVE STATEMENT & BENEFITPAY QR -->
+  <!-- KHATA LIVE STATEMENT QR (ONLY IF EXPLICITLY ENABLED) -->
   ${cfg.showKhataQr && props.khataQrDataUrl ? `
   <div class="divider"></div>
-  <div class="center bold" style="margin-top: 3px; font-size: 8px;">LIVE KHATA STATEMENT & PAYMENT</div>
-  <div class="qr-container" style="margin-top: 2px;">
-    <img src="${props.khataQrDataUrl}" style="width: 72px; height: 72px; display: block; margin: 0 auto;" alt="Khata Tab" />
-    <div style="font-size: 7.5px; margin-top: 2px;">Scan with phone to Pay via BenefitPay</div>
+  <div class="qr-container">
+    <img src="${props.khataQrDataUrl}" style="width: 54px; height: 54px; display: block; margin: 0 auto;" alt="Khata Tab" />
+    <div style="font-size: 7px; margin-top: 1px;">BenefitPay Khata Tab</div>
   </div>` : ''}
 
-  <!-- RETURN BARCODE -->
+  <!-- RETURN BARCODE (ONLY IF EXPLICITLY ENABLED) -->
   ${cfg.showReturnBarcode ? `
   <div class="barcode-container">
     <div class="divider"></div>
-    <div style="font-size: 8px; font-weight: 700; margin-bottom: 2px;">SCAN TO RETURN ITEMS / باركود الإرجاع</div>
     ${barcodeImgHtml}
-    <div style="font-size: 8.5px; margin-top: 1px; font-weight: 800;">${escapeHtml(invoiceNo)}</div>
+    <div style="font-size: 7.5px; font-weight: 700;">${escapeHtml(invoiceNo)}</div>
   </div>` : ''}
 
-  <!-- RETURN POLICY & FOOTER -->
+  <!-- COMPACT FOOTER -->
   <div class="divider"></div>
-  <div class="center bold" style="font-size: 9px; margin-top: 4px;">THANK YOU FOR SHOPPING!</div>
-  <div class="center" style="font-size: 9px; font-weight: 700; direction: rtl;">شكراً لتسوقكم معنا!</div>
-  <div class="center text-muted" style="margin-top: 3px; font-size: 7.5px; line-height: 1.2;">
-    ${escapeHtml(cfg.footerPolicyEn)}<br/>
-    <span style="direction: rtl;">${escapeHtml(cfg.footerPolicyAr)}</span>
-  </div>
+  <div class="center bold" style="font-size: 8px; margin-top: 2px;">Thank You! شكراً لزيارتكم</div>
+  ${cfg.footerPolicyEn ? `
+  <div class="center text-muted" style="font-size: 7px; margin-top: 1px;">
+    ${escapeHtml(cfg.footerPolicyEn)}
+  </div>` : ''}
 
-  <div style="height: ${cfg.feedLines * 3}mm;"></div>
+  <div style="height: ${Math.max(1, cfg.feedLines || 1) * 2}mm;"></div>
 
 </body>
 </html>`;

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { db } from '../db.js';
 import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails, syncCustomerMessMemberships } from './khata.js';
 import { verifyManagerPin } from '../middleware/auth.js';
+import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud } from '../services/cloudSync.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
 const resolveNfcTagDetails = async (uid) => {
@@ -875,6 +876,10 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
           args: [cleanTag, messId]
         });
       }
+      mirrorMessGroupToCloud({ id: messId, group_name: cleanName }).catch(() => {});
+      if (Array.isArray(member_ids)) {
+        mirrorMessGroupRosterToCloud(messId, member_ids).catch(() => {});
+      }
     } catch { }
 
     const details = await fetchMessGroupDetails(messId);
@@ -938,6 +943,12 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
             args: [id]
           });
         }
+      }
+      if (group_name && group_name.trim()) {
+        mirrorMessGroupToCloud({ id, group_name: group_name.trim() }).catch(() => {});
+      }
+      if (Array.isArray(member_ids)) {
+        mirrorMessGroupRosterToCloud(id, member_ids).catch(() => {});
       }
     } catch { }
 

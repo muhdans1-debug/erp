@@ -1750,7 +1750,7 @@ export default function PaymentModal({
             color: '#000000'
           }}
         >
-          {receiptText}
+          {receiptText.replace(/<<\/?JUMBO_[A-Z]+>>/g, '')}
         </pre>
 
         {/* NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE */}

@@ -46,6 +46,13 @@ export interface ReceiptTemplateProps {
   cashTendered?: number;
   changeDue?: number;
   customerName?: string;
+  customerCardUid?: string;
+  previousBalance?: number;
+  newBalance?: number;
+  isMess?: boolean;
+  groupName?: string;
+  shopperName?: string;
+  members?: any[];
   transactionRef?: string;
   barcodeDataUrl?: string;
   qrCodeDataUrl?: string;
@@ -171,11 +178,88 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
         <span>POS Contactless EMV / NFC</span>
       </div>
     </div>`;
+  } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
+    const prevDebt = Number(props.previousBalance || 0);
+    const finalBalance = props.newBalance !== undefined 
+      ? Number(props.newBalance) 
+      : (prevDebt + total);
+
+    paymentSectionHtml = `
+    <div class="khata-balance-banner">
+      <div class="center bold khata-title">*** KHATA CREDIT ACCOUNT / حساب الآجل ***</div>
+      ${props.customerName ? `
+      <div class="row" style="margin-top: 3px;">
+        <span>Customer / العميل:</span>
+        <span class="bold">${escapeHtml(props.customerName)}</span>
+      </div>` : ''}
+      ${props.customerCardUid ? `
+      <div class="row">
+        <span>Card UID / البطاقة:</span>
+        <span class="bold font-mono">${escapeHtml(props.customerCardUid)}</span>
+      </div>` : ''}
+      ${props.previousBalance !== undefined ? `
+      <div class="row" style="margin-top: 2px;">
+        <span>Previous Debt / الرصيد السابق:</span>
+        <span class="bold">BD ${prevDebt.toFixed(3)}</span>
+      </div>` : ''}
+      <div class="row" style="margin-top: 2px;">
+        <span>This Bill Added / المبلغ المضاف:</span>
+        <span class="bold">+BD ${total.toFixed(3)}</span>
+      </div>
+      <div class="current-debt-box">
+        <div class="current-debt-label">TOTAL CURRENT BALANCE DUE<br/><span style="font-size: 10px;">إجمالي الرصيد المستحق</span></div>
+        <div class="current-debt-amount">BD ${finalBalance.toFixed(3)}</div>
+      </div>
+    </div>`;
+  } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
+    const group = props.groupName || props.customerName || "Shared Mess";
+    const prevDebt = Number(props.previousBalance || 0);
+    const finalBalance = props.newBalance !== undefined 
+      ? Number(props.newBalance) 
+      : (prevDebt + total);
+
+    paymentSectionHtml = `
+    <div class="khata-balance-banner">
+      <div class="center bold khata-title">*** MESS GROUP DINING TAB / حساب سكن العمال ***</div>
+      <div class="row" style="margin-top: 3px;">
+        <span>Mess Account / المجموعة:</span>
+        <span class="bold">${escapeHtml(group)}</span>
+      </div>
+      ${props.shopperName ? `
+      <div class="row">
+        <span>Purchased By / المشتري:</span>
+        <span class="bold">${escapeHtml(props.shopperName)}</span>
+      </div>` : ''}
+      ${props.customerCardUid ? `
+      <div class="row">
+        <span>NFC Card / البطاقة:</span>
+        <span class="bold font-mono">${escapeHtml(props.customerCardUid)}</span>
+      </div>` : ''}
+      <div class="row">
+        <span>Pool Workers / عدد العمال:</span>
+        <span class="bold">${props.members?.length || 0}</span>
+      </div>
+      ${Array.isArray(props.members) && props.members.length > 0 ? `
+      <div class="divider" style="margin: 3px 0;"></div>
+      <div class="center bold" style="font-size: 8.5px;">EQUAL SPLIT SHARE PER WORKER / نصيب العامل:</div>
+      <div style="margin-top: 2px;">
+        ${props.members.map((m: any) => `
+          <div class="row" style="font-size: 8.5px;">
+            <span>- ${escapeHtml(m.name || m.customer_name)}:</span>
+            <span class="bold">BD ${Number(m.amount ?? m.splitAmount ?? (total / Math.max(1, props.members!.length))).toFixed(3)}</span>
+          </div>
+        `).join('')}
+      </div>` : ''}
+      <div class="current-debt-box">
+        <div class="current-debt-label">MESS TOTAL DEBT / إجمالي دين المجموعة</div>
+        <div class="current-debt-amount">BD ${finalBalance.toFixed(3)}</div>
+      </div>
+    </div>`;
   } else {
     paymentSectionHtml = `
     <div class="payment-box">
       <div class="center bold payment-title">*** ${paymentMode} ***</div>
-      ${props.customerName ? `<div class="row" style="margin-top: 3px;"><span>Account:</span> <span class="bold">${props.customerName}</span></div>` : ''}
+      ${props.customerName ? `<div class="row" style="margin-top: 3px;"><span>Account:</span> <span class="bold">${escapeHtml(props.customerName)}</span></div>` : ''}
     </div>`;
   }
 
@@ -272,6 +356,8 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
     .item-name {
       max-width: 72%;
       word-break: break-word;
+      font-size: ${cfg.seniorHighLegibility ? '10px' : '9.5px'};
+      font-weight: ${cfg.seniorHighLegibility ? '800' : '700'};
     }
     .item-arabic {
       font-size: 8.5px;
@@ -281,7 +367,8 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       padding-right: 4px;
     }
     .item-total {
-      font-weight: 800;
+      font-weight: 900;
+      font-size: ${cfg.seniorHighLegibility ? '11px' : '9.5px'};
       white-space: nowrap;
     }
     .tax-badge {
@@ -289,20 +376,63 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       font-weight: 800;
     }
 
-    /* Grand Total Banner */
+    /* Ultra-Bold Grand Total Banner for Senior Laborers */
     .total-banner {
-      border: 2px solid #000000;
-      padding: 4px 6px;
-      margin: 5px 0;
+      border: ${cfg.seniorHighLegibility ? '3px solid #000000' : '2px solid #000000'};
+      padding: ${cfg.totalBannerSize === 'jumbo' ? '6px 5px' : '5px 5px'};
+      margin: 6px 0;
       background-color: #ffffff;
+      text-align: center;
     }
     .total-label {
-      font-size: 13px;
-      font-weight: 900;
+      font-size: ${cfg.totalBannerSize === 'jumbo' ? '13px' : '12px'};
+      font-weight: 950;
+      letter-spacing: 0.5px;
     }
     .total-amount {
-      font-size: 15px;
+      font-size: ${cfg.totalBannerSize === 'jumbo' ? '24px' : (cfg.totalBannerSize === 'extra_bold' ? '20px' : '16px')};
+      font-weight: 950;
+      letter-spacing: 0.5px;
+      line-height: 1.1;
+      margin-top: 1px;
+    }
+
+    /* Dedicated Framed Khata Credit Balance Banner */
+    .khata-balance-banner {
+      margin-top: 6px;
+      padding: 6px 5px;
+      border: 2px solid #000000;
+      background-color: #ffffff;
+    }
+    .khata-title {
+      font-size: 10px;
       font-weight: 900;
+      letter-spacing: 0.3px;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+    }
+    .current-debt-box {
+      border: 3px solid #000000;
+      padding: 6px 4px;
+      margin-top: 5px;
+      background-color: #ffffff;
+      text-align: center;
+    }
+    .current-debt-label {
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.4px;
+      color: #000000;
+      text-transform: uppercase;
+      line-height: 1.2;
+    }
+    .current-debt-amount {
+      font-size: ${cfg.seniorHighLegibility ? '24px' : '20px'};
+      font-weight: 950;
+      letter-spacing: 0.5px;
+      color: #000000;
+      margin-top: 3px;
+      line-height: 1;
     }
 
     /* Payment & Breakdown Boxes */
@@ -408,13 +538,11 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
   <div class="divider"></div>
   ` : ''}
 
-  <!-- PROMINENT GRAND TOTAL BANNER -->
+  <!-- PROMINENT GRAND TOTAL BANNER (ULTRA-BOLD FOR SENIOR LABORERS) -->
   <div class="total-banner">
-    <div class="row">
-      <span class="total-label">TOTAL / المجموع:</span>
-      <span class="total-amount">BD ${total.toFixed(3)}</span>
-    </div>
-    <div class="center text-muted" style="font-size: 7.5px; margin-top: 1px;">
+    <div class="total-label">TOTAL / المجموع الإجمالي</div>
+    <div class="total-amount">BD ${total.toFixed(3)}</div>
+    <div class="center text-muted" style="font-size: 8px; font-weight: 700; margin-top: 2px;">
       Inclusive of 10% VAT / شامل ضريبة القيمة المضافة
     </div>
   </div>

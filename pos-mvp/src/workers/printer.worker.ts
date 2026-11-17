@@ -73,9 +73,29 @@ self.onmessage = (event: MessageEvent) => {
     commands.push({ action: 'printText', data: '--------------------------------\n' });
     commands.push({ action: 'printText', data: `Subtotal:`.padEnd(16) + `BD ${subtotal.toFixed(3)}`.padStart(16) + '\n' });
     commands.push({ action: 'printText', data: `VAT (10%):`.padEnd(16) + `BD ${vat.toFixed(3)}`.padStart(16) + '\n' });
-    commands.push({ action: 'printText', data: '--------------------------------\n' });
-    commands.push({ action: 'printText', data: `TOTAL:`.padEnd(14) + `BD ${Number(payload.total).toFixed(3)}`.padStart(18) + '\n' });
-    commands.push({ action: 'printText', data: '--------------------------------\n' });
+    commands.push({ action: 'printText', data: '================================\n' });
+    commands.push({ action: 'setAlignment', data: 1 });
+    commands.push({ action: 'printText', data: 'TOTAL / المجموع الإجمالي\n' });
+    commands.push({ action: 'printText', data: `BD ${Number(payload.total).toFixed(3)}\n` });
+    commands.push({ action: 'printText', data: '================================\n' });
+
+    const payMode = (payload.paymentMode || 'CASH').toUpperCase();
+    if (payMode === 'CREDIT' || payMode === 'KHATA' || payMode === 'CREDIT_PERSONAL') {
+      const prevBal = Number(payload.previousBalance || 0);
+      const newBal = payload.newBalance !== undefined ? Number(payload.newBalance) : (prevBal + Number(payload.total));
+      commands.push({ action: 'setAlignment', data: 1 });
+      commands.push({ action: 'printText', data: '*** KHATA CREDIT ACCOUNT ***\n' });
+      commands.push({ action: 'setAlignment', data: 0 });
+      if (payload.customerName) commands.push({ action: 'printText', data: `Customer: ${payload.customerName}\n` });
+      commands.push({ action: 'printText', data: `Previous Debt:`.padEnd(16) + `BD ${prevBal.toFixed(3)}`.padStart(16) + '\n' });
+      commands.push({ action: 'printText', data: `This Bill:`.padEnd(16) + `+BD ${Number(payload.total).toFixed(3)}`.padStart(16) + '\n' });
+      commands.push({ action: 'printText', data: '================================\n' });
+      commands.push({ action: 'setAlignment', data: 1 });
+      commands.push({ action: 'printText', data: '>>> TOTAL BALANCE DUE <<<\n' });
+      commands.push({ action: 'printText', data: 'إجمالي الرصيد المستحق\n' });
+      commands.push({ action: 'printText', data: `BD ${newBal.toFixed(3)}\n` });
+      commands.push({ action: 'printText', data: '================================\n' });
+    }
 
     // Post finalized HTML and commands back to main thread
     self.postMessage({ type: 'RECEIPT_READY', html, commands });

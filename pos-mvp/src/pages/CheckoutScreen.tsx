@@ -369,6 +369,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         cashTendered: saleToPrint.cashTendered,
         changeDue: saleToPrint.changeDue,
         customerName: (saleToPrint as any).customerName,
+        customerCardUid: (saleToPrint as any).customerCardUid || (saleToPrint as any).cardUid,
+        previousBalance: (saleToPrint as any).previousBalance,
+        newBalance: (saleToPrint as any).newBalance,
         cashierName: saleToPrint.cashierName || 'Register 01',
         isReprint: true // 🏷️ NBR Duplicate Watermark
       });

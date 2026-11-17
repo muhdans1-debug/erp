@@ -771,9 +771,12 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += lineDash;
   }
 
-  // Highlighted Grand Total
+  // Highlighted Grand Total (Ultra-Prominent for Laborers)
   out += lineEqual;
-  out += formatTwoCols("TOTAL / المجموع:", `BD ${total.toFixed(3)}`, width);
+  out += "<<JUMBO_TOTAL>>\n";
+  out += centerText("TOTAL / المجموع الإجمالي", width);
+  out += centerText(`BD ${total.toFixed(3)}`, width);
+  out += "<</JUMBO_TOTAL>>\n";
   out += centerText("(Inclusive of 10% VAT / شامل الضريبة)", width);
   out += lineEqual;
 
@@ -782,8 +785,8 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += centerText("*** PAID VIA CASH / نقداً ***", width);
     const tendered = props.cashTendered !== undefined ? Number(props.cashTendered) : total;
     const change = props.changeDue !== undefined ? Number(props.changeDue) : (tendered > total ? tendered - total : 0);
-    out += formatTwoCols("Cash Tendered:", `BD ${tendered.toFixed(3)}`, width);
-    out += formatTwoCols("Change Returned:", `BD ${change.toFixed(3)}`, width);
+    out += formatTwoCols("Cash Tendered / المدفوع:", `BD ${tendered.toFixed(3)}`, width);
+    out += formatTwoCols("Change Returned / الباقي:", `BD ${change.toFixed(3)}`, width);
     out += lineDash;
   } else if (paymentMode === 'BENEFIT_PAY') {
     out += centerText("*** PAID VIA BENEFITPAY / فوري+ ***", width);
@@ -798,34 +801,53 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += lineDash;
   } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
     const group = props.groupName || props.customerName || "Shared Mess";
-    out += centerText("*** MESS SPLIT-BILL RECEIPT ***", width);
+    const prevDebt = Number(props.previousBalance || 0);
+    const finalBalance = props.newBalance !== undefined 
+      ? Number(props.newBalance) 
+      : (prevDebt + total);
+
+    out += centerText("*** MESS GROUP DINING TAB ***", width);
+    out += centerText("حساب سكن العمال المشترك", width);
     out += formatTwoCols("Mess Account:", group, width);
     if (props.shopperName) out += formatTwoCols("Shopper:", props.shopperName, width);
     if (props.cardUid) out += formatTwoCols("Card UID:", String(props.cardUid), width);
     out += formatTwoCols("Total Groceries:", `BD ${total.toFixed(3)}`, width);
     out += formatTwoCols("Pool Members:", String(props.members?.length || 0), width);
-    out += lineDash;
-    out += "EQUAL SPLIT SHARE PER MEMBER:\n";
-    if (Array.isArray(props.members)) {
+    if (Array.isArray(props.members) && props.members.length > 0) {
+      out += lineDash;
+      out += "SPLIT SHARE PER WORKER:\n";
       props.members.forEach((m: any) => {
         const splitVal = Number(m.amount ?? m.splitAmount ?? (total / Math.max(1, props.members!.length))).toFixed(3);
         out += formatTwoCols(`- ${m.name || m.customer_name}:`, `BD ${splitVal}`, width);
       });
     }
-    out += lineDash;
-    out += "Shares synced to Khata Account\n";
-    out += lineDash;
-  } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA') {
-    out += centerText("*** KHATA CREDIT TAB ***", width);
-    if (props.customerName) out += formatTwoCols("Customer:", props.customerName, width);
-    if (props.customerCardUid) out += formatTwoCols("Card UID:", props.customerCardUid, width);
+    out += lineEqual;
+    out += "<<JUMBO_DEBT>>\n";
+    out += centerText(">>> MESS TOTAL DEBT DUE <<<", width);
+    out += centerText("إجمالي دين المجموعة", width);
+    out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
+    out += "<</JUMBO_DEBT>>\n";
+    out += lineEqual;
+  } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
+    const prevDebt = Number(props.previousBalance || 0);
+    const finalBalance = props.newBalance !== undefined 
+      ? Number(props.newBalance) 
+      : (prevDebt + total);
+
+    out += centerText("*** KHATA CREDIT TAB / حساب الآجل ***", width);
+    if (props.customerName) out += formatTwoCols("Customer / العميل:", props.customerName, width);
+    if (props.customerCardUid) out += formatTwoCols("Card UID / البطاقة:", props.customerCardUid, width);
     if (props.previousBalance !== undefined) {
-      out += formatTwoCols("Previous Balance:", `BD ${Number(props.previousBalance).toFixed(3)}`, width);
+      out += formatTwoCols("Previous Debt / السابق:", `BD ${prevDebt.toFixed(3)}`, width);
     }
-    out += formatTwoCols("Added to Tab:", `+BD ${total.toFixed(3)}`, width);
-    out += lineDash;
-    out += formatTwoCols("NEW BALANCE DUE:", `BD ${Number(props.newBalance || 0).toFixed(3)}`, width);
-    out += lineDash;
+    out += formatTwoCols("This Bill Added / المضاف:", `+BD ${total.toFixed(3)}`, width);
+    out += lineEqual;
+    out += "<<JUMBO_DEBT>>\n";
+    out += centerText(">>> TOTAL BALANCE DUE <<<", width);
+    out += centerText("إجمالي الرصيد المستحق", width);
+    out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
+    out += "<</JUMBO_DEBT>>\n";
+    out += lineEqual;
   }
 
   out += centerText(`Total Items: ${totalQty} (${groupedMap.size} lines)`, width);
@@ -929,6 +951,13 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
     cashTendered: props.cashTendered,
     changeDue: props.changeDue,
     customerName: props.customerName,
+    customerCardUid: props.customerCardUid || (props.cardUid ? String(props.cardUid) : undefined),
+    previousBalance: props.previousBalance,
+    newBalance: props.newBalance,
+    isMess: props.isMess,
+    groupName: props.groupName,
+    shopperName: props.shopperName,
+    members: props.members,
     transactionRef: props.transactionRef,
     items: (props.items || []).map((itm: any) => ({
       name: itm.name || 'Item',
@@ -1015,11 +1044,32 @@ export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
       ? cleanInvoice
       : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
 
-    // 1. Dispatch full authentic Sunmi receipt text in single continuous stream
+    // 1. Dispatch authentic Sunmi receipt text with dynamic font scaling for laborers
     const fontPt = cfg.fontSize === 'compact' ? 18 : (cfg.fontSize === 'large' ? 24 : 20);
-    await Printer.setPrinterAlignment({ alignment: 'left' });
-    await Printer.setFontSize({ fontSize: fontPt });
-    await Printer.printText({ textToPrint: receiptText });
+    const jumboPt = cfg.totalBannerSize === 'jumbo' ? 36 : (cfg.totalBannerSize === 'extra_bold' ? 30 : 26);
+    const debtPt = cfg.seniorHighLegibility ? 34 : 26;
+
+    const segments = receiptText.split(/(<<JUMBO_[A-Z]+>>[\s\S]*?<<\/JUMBO_[A-Z]+>>)/g);
+    for (const seg of segments) {
+      if (!seg) continue;
+      if (seg.startsWith('<<JUMBO_TOTAL>>')) {
+        const cleanContent = seg.replace(/<<\/?JUMBO_TOTAL>>/g, '').trim() + '\n';
+        await Printer.setPrinterAlignment({ alignment: 'center' });
+        await Printer.setFontSize({ fontSize: jumboPt });
+        await Printer.printText({ textToPrint: cleanContent });
+        await Printer.setFontSize({ fontSize: fontPt });
+      } else if (seg.startsWith('<<JUMBO_DEBT>>')) {
+        const cleanContent = seg.replace(/<<\/?JUMBO_DEBT>>/g, '').trim() + '\n';
+        await Printer.setPrinterAlignment({ alignment: 'center' });
+        await Printer.setFontSize({ fontSize: debtPt });
+        await Printer.printText({ textToPrint: cleanContent });
+        await Printer.setFontSize({ fontSize: fontPt });
+      } else {
+        await Printer.setPrinterAlignment({ alignment: 'left' });
+        await Printer.setFontSize({ fontSize: fontPt });
+        await Printer.printText({ textToPrint: seg });
+      }
+    }
 
     // 2. BAHRAIN NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE (Official 5-Tag TLV Base64)
     if (cfg.showNbrQr) {

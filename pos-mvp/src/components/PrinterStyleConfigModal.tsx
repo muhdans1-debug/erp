@@ -8,7 +8,6 @@ import {
   Barcode, 
   Building2, 
   Sparkles,
-  Eye,
   Sliders,
   X
 } from 'lucide-react';
@@ -33,8 +32,9 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
   onClose
 }) => {
   const [config, setConfig] = useState<SunmiPrinterStyleConfig>(getPrinterStyleConfig);
-  const [activeTab, setActiveTab] = useState<'store' | 'hardware' | 'toggles' | 'footer'>('store');
+  const [activeTab, setActiveTab] = useState<'store' | 'hardware' | 'toggles' | 'footer'>('hardware');
   const [previewMode, setPreviewMode] = useState<'rendered' | 'monospaced'>('rendered');
+  const [previewReceiptType, setPreviewReceiptType] = useState<'CASH' | 'CREDIT'>('CREDIT');
   const [isPrintingTest, setIsPrintingTest] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -133,6 +133,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
       // Temporarily save current draft to test with it
       savePrinterStyleConfig(config);
 
+      const isCredit = previewReceiptType === 'CREDIT';
       const success = await printFullReceipt({
         shopName: config.shopNameEn,
         shopAddress: config.shopAddressEn,
@@ -143,11 +144,16 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
         total: sampleTotal,
         subtotal: 3.309,
         vat: 0.241,
-        paymentMode: 'CASH',
-        cashTendered: 5.000,
-        changeDue: 1.450,
+        paymentMode: isCredit ? 'CREDIT' : 'CASH',
+        customerName: isCredit ? 'Ashraf (Nass Camp)' : undefined,
+        customerCardUid: isCredit ? '04:36:66:32:D7:2A:81' : undefined,
+        previousBalance: isCredit ? 30.825 : undefined,
+        newBalance: isCredit ? 34.375 : undefined,
+        cashTendered: isCredit ? undefined : 5.000,
+        changeDue: isCredit ? undefined : 1.450,
         cashierName: 'POS-01 (Register 1)',
         saleDate: new Date(),
+        styleConfig: config,
       });
 
       if (success) {
@@ -163,6 +169,8 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
     }
   };
 
+  const isCreditPreview = previewReceiptType === 'CREDIT';
+
   // Generate live HTML string
   const renderedHtml = generateNBRReceiptHtml({
     invoiceNo: sampleInvoiceNo,
@@ -174,9 +182,13 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
     shopPhone: config.shopPhone,
     staffName: 'POS-01 (Register 1)',
     dateStr: new Date().toLocaleString('en-GB'),
-    paymentMode: 'CASH',
-    cashTendered: 5.000,
-    changeDue: 1.450,
+    paymentMode: isCreditPreview ? 'CREDIT' : 'CASH',
+    customerName: isCreditPreview ? 'Ashraf (Nass Camp)' : undefined,
+    customerCardUid: isCreditPreview ? '04:36:66:32:D7:2A:81' : undefined,
+    previousBalance: isCreditPreview ? 30.825 : undefined,
+    newBalance: isCreditPreview ? 34.375 : undefined,
+    cashTendered: isCreditPreview ? undefined : 5.000,
+    changeDue: isCreditPreview ? undefined : 1.450,
     items: sampleItems,
     total: sampleTotal,
     subtotal: 3.309,
@@ -197,12 +209,17 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
     total: sampleTotal,
     subtotal: 3.309,
     vat: 0.241,
-    paymentMode: 'CASH',
-    cashTendered: 5.000,
-    changeDue: 1.450,
+    paymentMode: isCreditPreview ? 'CREDIT' : 'CASH',
+    customerName: isCreditPreview ? 'Ashraf (Nass Camp)' : undefined,
+    customerCardUid: isCreditPreview ? '04:36:66:32:D7:2A:81' : undefined,
+    previousBalance: isCreditPreview ? 30.825 : undefined,
+    newBalance: isCreditPreview ? 34.375 : undefined,
+    cashTendered: isCreditPreview ? undefined : 5.000,
+    changeDue: isCreditPreview ? undefined : 1.450,
     cashierName: 'POS-01 (Register 1)',
     saleDate: new Date(),
-  });
+    styleConfig: config,
+  }).replace(/<<\/?JUMBO_[A-Z]+>>/g, '');
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 select-none">
@@ -425,6 +442,64 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
               {/* TAB 2: HARDWARE & PAPER */}
               {activeTab === 'hardware' && (
                 <div className="space-y-4">
+                  {/* FEATURED: SENIOR & LABORER HIGH-LEGIBILITY MODE */}
+                  <div className="bg-gradient-to-r from-emerald-950/60 to-slate-800 p-4 rounded-2xl border-2 border-emerald-500/50 shadow-lg flex items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white">Senior & Laborer High-Legibility Mode</span>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                          Recommended
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1">
+                        نمط الخط العريض والواضح للعمال وكبار السن
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Deep thermal burn, ultra-bold font weights, and giant framed debt totals for older workers reading without glasses.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdate('seniorHighLegibility', !config.seniorHighLegibility)}
+                      className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                        config.seniorHighLegibility ? 'bg-emerald-600 shadow-md shadow-emerald-600/30' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 rounded-full bg-white absolute top-1 transition-transform ${
+                        config.seniorHighLegibility ? 'right-1' : 'left-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  {/* GRAND TOTAL PRICE DISPLAY SIZE */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Grand Total & Debt Amount Scale (حجم المجموع والرصيد)
+                    </label>
+                    <p className="text-[11px] text-slate-400 mb-2">
+                      Scales the main Total Price and Khata Current Balance on printed thermal slips.
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['standard', 'extra_bold', 'jumbo'] as const).map((ts) => (
+                        <button
+                          key={ts}
+                          type="button"
+                          onClick={() => handleUpdate('totalBannerSize', ts)}
+                          className={`py-2 px-3 rounded-xl border text-center font-bold text-xs capitalize transition cursor-pointer flex flex-col items-center justify-center ${
+                            config.totalBannerSize === ts
+                              ? 'bg-sky-500/20 border-sky-500 text-white'
+                              : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                          }`}
+                        >
+                          <span>{ts === 'standard' ? 'Standard (20pt)' : (ts === 'extra_bold' ? 'Extra Bold (28pt)' : 'Jumbo (36pt)')}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            {ts === 'jumbo' ? 'Laborer High Legibility' : (ts === 'extra_bold' ? 'Compact Bold' : 'Standard ESC/POS')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* PAPER WIDTH SELECTOR */}
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-2">
@@ -728,6 +803,28 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       }`} />
                     </button>
                   </div>
+
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>Framed Khata Debt Due Box (صندوق رصيد الآجل)</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Always prints previous debt, this bill addition, and massive bold new balance due on credit slips
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdate('showCreditBalanceBox', !config.showCreditBalanceBox)}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+                        config.showCreditBalanceBox ? 'bg-emerald-600' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                        config.showCreditBalanceBox ? 'right-1' : 'left-1'
+                      }`} />
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -806,12 +903,28 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
           <div className="md:col-span-5 flex flex-col bg-slate-950 p-4 overflow-hidden">
             
             {/* SIMULATOR HEADER */}
-            <div className="flex items-center justify-between mb-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <Eye size={15} className="text-sky-400" />
-                <span className="text-xs font-black text-slate-200">
-                  Live Thermal Preview ({config.paperWidth})
-                </span>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 shrink-0">
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReceiptType('CREDIT')}
+                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
+                      previewReceiptType === 'CREDIT' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Khata Credit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReceiptType('CASH')}
+                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
+                      previewReceiptType === 'CASH' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Cash Bill
+                  </button>
+                </div>
               </div>
 
               {/* VIEW MODE TOGGLE */}

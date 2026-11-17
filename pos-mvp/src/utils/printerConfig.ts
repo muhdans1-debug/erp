@@ -33,6 +33,9 @@ export interface SunmiPrinterStyleConfig {
   showNbrQr: boolean;
   showReturnBarcode: boolean;
   showKhataQr: boolean;
+  seniorHighLegibility: boolean; // Ultra-bold high-contrast mode for laborers & elderly customers
+  totalBannerSize: 'standard' | 'extra_bold' | 'jumbo'; // Scale of total price banner
+  showCreditBalanceBox: boolean; // Prominent framed box for current Khata balance due
 
   // Footer & Policies
   footerPolicyEn: string;
@@ -62,6 +65,9 @@ export const DEFAULT_PRINTER_STYLE_CONFIG: SunmiPrinterStyleConfig = {
   showNbrQr: true,
   showReturnBarcode: true,
   showKhataQr: true,
+  seniorHighLegibility: true,
+  totalBannerSize: 'jumbo',
+  showCreditBalanceBox: true,
 
   footerPolicyEn: 'Exchange or return accepted within 3 days with receipt',
   footerPolicyAr: 'الاستبدال والاسترجاع خلال ٣ أيام مع إحضار الفاتورة الأصلية',

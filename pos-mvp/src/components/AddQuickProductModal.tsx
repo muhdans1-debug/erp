@@ -85,24 +85,32 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
       }
 
       const candidates = [
-        apiBase && !apiBase.includes('localhost') ? apiBase : null,
+        apiBase,
         getApiBaseUrl(),
         DEFAULT_EDGE_API_URL
-      ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
-      for (const url of candidates) {
-        try {
-          fetch(`${url}/api/quick-products/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: product.id,
-              barcode: product.barcode,
-              category: selectedCategory,
-              isQuickProduct: true,
-            }),
-          }).catch(() => {});
-        } catch {}
-      }
+      ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+      // Await server persistence before re-fetching
+      await Promise.allSettled(
+        candidates.map(async (url) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2500);
+            await fetch(`${url.replace(/\/$/, '')}/api/quick-products/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                id: product.id,
+                barcode: product.barcode,
+                category: selectedCategory,
+                isQuickProduct: true,
+              }),
+            });
+            clearTimeout(timer);
+          } catch {}
+        })
+      );
 
       showToast(`✅ Added ${product.name} to Quick Grid (${selectedCategory})`, 'success');
       onProductAdded?.();

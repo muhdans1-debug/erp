@@ -107,7 +107,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
 
   if (!isOpen || !product) return null;
 
-  // 1. Save Category / Color Change (Instant Local-First + Background Sync)
+  // 1. Save Category / Color Change (Instant Local-First + Server Sync)
   const handleSaveColor = async () => {
     setIsSaving(true);
     try {
@@ -115,26 +115,32 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
         onUpdateColor(product, selectedCategory);
       }
 
-      // Background sync to server
       const candidates = [
-        apiBase && !apiBase.includes('localhost') ? apiBase : null,
+        apiBase,
         getApiBaseUrl(),
         DEFAULT_EDGE_API_URL
-      ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
-      for (const url of candidates) {
-        try {
-          fetch(`${url}/api/quick-products/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: product.id,
-              barcode: product.barcode,
-              category: selectedCategory,
-              isQuickProduct: true,
-            }),
-          }).catch(() => {});
-        } catch {}
-      }
+      ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+      await Promise.allSettled(
+        candidates.map(async (url) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2500);
+            await fetch(`${url.replace(/\/$/, '')}/api/quick-products/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                id: product.id,
+                barcode: product.barcode,
+                category: selectedCategory,
+                isQuickProduct: true,
+              }),
+            });
+            clearTimeout(timer);
+          } catch {}
+        })
+      );
 
       showToast(`🎨 Updated ${product.name} to ${selectedCategory}`, 'success');
       onProductUpdated?.();
@@ -146,36 +152,42 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
     }
   };
 
-  // 2. Swap Item with Another Catalog Product (Instant Local-First + Background Sync)
+  // 2. Swap Item with Another Catalog Product (Instant Local-First + Server Sync)
   const handleSwapItem = async (newProduct: Product) => {
     setIsSaving(true);
     try {
       const targetCategory = selectedCategory || product.category || 'ESSENTIALS';
 
-      // Immediate local swap (works instantly offline & online)
+      // Immediate local swap
       if (onSwapProduct) {
         onSwapProduct(product, newProduct, targetCategory);
       }
 
-      // Background sync to server if available
       const candidates = [
-        apiBase && !apiBase.includes('localhost') ? apiBase : null,
+        apiBase,
         getApiBaseUrl(),
         DEFAULT_EDGE_API_URL
-      ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
-      for (const url of candidates) {
-        try {
-          fetch(`${url}/api/quick-products/swap`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              oldId: product.id,
-              newId: newProduct.id,
-              category: targetCategory,
-            }),
-          }).catch(() => {});
-        } catch {}
-      }
+      ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+      await Promise.allSettled(
+        candidates.map(async (url) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2500);
+            await fetch(`${url.replace(/\/$/, '')}/api/quick-products/swap`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                oldId: product.id,
+                newId: newProduct.id,
+                category: targetCategory,
+              }),
+            });
+            clearTimeout(timer);
+          } catch {}
+        })
+      );
 
       showToast(`🔄 Swapped with ${newProduct.name}`, 'success');
       onProductUpdated?.();
@@ -187,7 +199,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
     }
   };
 
-  // 3. Remove Item from Quick Grid (Instant Local-First + Background Sync)
+  // 3. Remove Item from Quick Grid (Instant Local-First + Server Sync)
   const handleRemoveItem = async () => {
     setIsSaving(true);
     try {
@@ -196,22 +208,29 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
       }
 
       const candidates = [
-        apiBase && !apiBase.includes('localhost') ? apiBase : null,
+        apiBase,
         getApiBaseUrl(),
         DEFAULT_EDGE_API_URL
-      ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
-      for (const url of candidates) {
-        try {
-          fetch(`${url}/api/quick-products/remove`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: product.id,
-              barcode: product.barcode,
-            }),
-          }).catch(() => {});
-        } catch {}
-      }
+      ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+      await Promise.allSettled(
+        candidates.map(async (url) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2500);
+            await fetch(`${url.replace(/\/$/, '')}/api/quick-products/remove`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                id: product.id,
+                barcode: product.barcode,
+              }),
+            });
+            clearTimeout(timer);
+          } catch {}
+        })
+      );
 
       showToast(`🗑️ Removed ${product.name} from Quick Grid`, 'info');
       onProductUpdated?.();

@@ -317,6 +317,43 @@ export async function mirrorMessGroupRosterToCloud(groupId, memberIds) {
 }
 
 /**
+ * Mirror Mess Group NFC Card binding or deletion to Turso Cloud
+ */
+export async function mirrorMessCardToCloud(messId, tagId) {
+  if (!tursoCloudClient || !messId) return false;
+  try {
+    if (tagId && String(tagId).trim() && String(tagId).trim().toLowerCase() !== 'null') {
+      const cleanTag = String(tagId).trim().toUpperCase();
+      await tursoCloudClient.execute({
+        sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) 
+              VALUES (?, 'MESS', NULL, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id`,
+        args: [cleanTag, messId]
+      });
+      await tursoCloudClient.execute({
+        sql: `UPDATE Customer SET cardUid = NULL, nfcCardId = NULL 
+              WHERE UPPER(COALESCE(cardUid, '')) = ? 
+                 OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ?
+                 OR UPPER(COALESCE(nfcCardId, '')) = ?
+                 OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ?`,
+        args: [cleanTag, cleanTag.replace(/[:\-]/g, ''), cleanTag, cleanTag.replace(/[:\-]/g, '')]
+      });
+      console.log(`☁️ [CloudSync] Mess card '${cleanTag}' for group ${messId} mirrored to Turso Cloud.`);
+    } else {
+      await tursoCloudClient.execute({
+        sql: `DELETE FROM NfcCard WHERE mess_id = ?`,
+        args: [messId]
+      });
+      console.log(`☁️ [CloudSync] Mess cards for group ${messId} unlinked from Turso Cloud.`);
+    }
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not mirror mess card for ${messId}:`, err.message);
+    return false;
+  }
+}
+
+/**
  * Mirror Customer's multiple mess memberships to Turso Cloud
  */
 export async function mirrorCustomerMessMembershipsToCloud(customerId, messIds) {

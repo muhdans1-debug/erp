@@ -163,7 +163,7 @@ export default async function productRoutes(fastify, options) {
         const isNonBarcoded = !p.barcode || p.barcode.trim() === '';
         const isScale = p.isScaleItem || (p.barcode && (p.barcode.startsWith('20') || p.barcode.startsWith('001')));
         const isExplicitQuick = override?.isQuickProduct === true;
-        const priorityBonus = (isExplicitQuick ? 1000 : 0) + (isNonBarcoded ? 60 : (isScale ? 30 : 0));
+        const priorityBonus = (isExplicitQuick ? 5000 : 0) + (isNonBarcoded ? 60 : (isScale ? 30 : 0));
         return {
           ...p,
           category: override?.category || categorize(p),
@@ -173,8 +173,9 @@ export default async function productRoutes(fastify, options) {
         };
       });
 
+      // Explicit pinned items come first, then top velocity products up to 60 slots
       scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, 15);
+      return scored.slice(0, 60);
     } catch (err) {
       fastify.log.error(err);
       return [];
@@ -194,16 +195,31 @@ export default async function productRoutes(fastify, options) {
     if (isQuickProduct === false) {
       config.overrides[targetId] = { ...config.overrides[targetId], isQuickProduct: false };
       if (!config.removedIds.includes(targetId)) config.removedIds.push(targetId);
+      if (id && !config.removedIds.includes(String(id))) config.removedIds.push(String(id));
+      if (barcode && !config.removedIds.includes(String(barcode))) config.removedIds.push(String(barcode));
     } else {
-      config.removedIds = config.removedIds.filter((item) => item !== targetId);
+      config.removedIds = config.removedIds.filter((item) => item !== targetId && item !== String(id) && (!barcode || item !== String(barcode)));
       config.overrides[targetId] = {
         ...config.overrides[targetId],
         isQuickProduct: true,
         category: category || config.overrides[targetId]?.category || 'ESSENTIALS',
         quickColor: quickColor !== undefined ? quickColor : config.overrides[targetId]?.quickColor
       };
+      if (id && barcode) {
+        config.overrides[String(barcode)] = { ...config.overrides[targetId] };
+      }
     }
     saveQuickConfig(config);
+
+    // Non-blocking mirror to Cloudflare Edge API
+    try {
+      fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, barcode, category, quickColor, isQuickProduct })
+      }).catch(() => {});
+    } catch {}
+
     return { success: true, message: 'Quick product updated successfully', config: config.overrides[targetId] };
   });
 
@@ -229,6 +245,16 @@ export default async function productRoutes(fastify, options) {
     };
 
     saveQuickConfig(config);
+
+    // Non-blocking mirror to Cloudflare Edge API
+    try {
+      fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/swap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldId, newId, category, quickColor })
+      }).catch(() => {});
+    } catch {}
+
     return { success: true, message: `Swapped ${oldId} with ${newId}` };
   });
 
@@ -244,8 +270,20 @@ export default async function productRoutes(fastify, options) {
 
     config.overrides[targetId] = { ...config.overrides[targetId], isQuickProduct: false };
     if (!config.removedIds.includes(targetId)) config.removedIds.push(targetId);
+    if (id && !config.removedIds.includes(String(id))) config.removedIds.push(String(id));
+    if (barcode && !config.removedIds.includes(String(barcode))) config.removedIds.push(String(barcode));
 
     saveQuickConfig(config);
+
+    // Non-blocking mirror to Cloudflare Edge API
+    try {
+      fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, barcode })
+      }).catch(() => {});
+    } catch {}
+
     return { success: true, message: `Removed ${targetId} from quick products` };
   });
 

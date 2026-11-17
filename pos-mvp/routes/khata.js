@@ -447,6 +447,15 @@ const fetchMessGroupDetails = async (messId) => {
     console.warn('Could not fetch mess ledger:', err?.message);
   }
 
+  let assignedCard = null;
+  try {
+    const cRes = await db.execute({
+      sql: `SELECT tag_id FROM NfcCard WHERE mess_id = ? LIMIT 1`,
+      args: [group.id]
+    });
+    if (cRes.rows && cRes.rows.length > 0) assignedCard = cRes.rows[0].tag_id;
+  } catch {}
+
   return {
     id: group.id,
     group_name: group.group_name,
@@ -456,7 +465,9 @@ const fetchMessGroupDetails = async (messId) => {
     balance: Number(messTotalBalance.toFixed(3)),
     equalSplitShare,
     members,
-    messLedger
+    messLedger,
+    assignedCard,
+    cardTag: assignedCard
   };
 };
 

@@ -637,8 +637,7 @@ export default function NfcManager({
           : `Mess Group "${data.messGroup?.group_name || editGroupName}" roster updated with ${editGroupMembers.length} members!`);
         setShowMessRosterModal(false);
         setSelectedMessGroupForEdit(null);
-        loadMessGroups();
-        loadCardsData();
+        await Promise.allSettled([loadMessGroups(), loadCardsData()]);
       } else {
         showNotification('error', data?.error || 'Failed to save mess group');
       }
@@ -663,8 +662,7 @@ export default function NfcManager({
       const data = await res.json();
       if (data?.success) {
         showNotification('success', `Mess Group "${groupName}" disbanded successfully.`);
-        loadMessGroups();
-        loadCardsData();
+        await Promise.allSettled([loadMessGroups(), loadCardsData()]);
       } else {
         showNotification('error', data?.error || 'Failed to disband group');
       }
@@ -693,7 +691,7 @@ export default function NfcManager({
         if (activeScannedCard?.tag_id === tagId) {
           setActiveScannedCard(null);
         }
-        loadCardsData();
+        await Promise.allSettled([loadCardsData(), loadMessGroups()]);
       } else {
         showNotification('error', data?.error || 'Failed to unlink card');
       }

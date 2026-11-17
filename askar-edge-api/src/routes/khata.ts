@@ -1730,7 +1730,10 @@ khataRouter.post('/nfc/mess-groups', requirePosOrManagerAuth, async (c) => {
 
     const id = body.id || `mess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const memberIds: string[] = Array.isArray(body.member_ids) ? body.member_ids : [];
-    const tagId = (body.tag_id || '').trim().toUpperCase();
+    const rawTag = body.tag_id;
+    const tagId = (rawTag && String(rawTag).trim() && String(rawTag).trim().toLowerCase() !== 'null')
+      ? String(rawTag).trim().toUpperCase()
+      : null;
 
     const statements: { sql: string; args: any[] }[] = [
       {
@@ -1759,6 +1762,14 @@ khataRouter.post('/nfc/mess-groups', requirePosOrManagerAuth, async (c) => {
               ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id`,
         args: [tagId, id]
       });
+      statements.push({
+        sql: `UPDATE Customer SET cardUid = NULL, nfcCardId = NULL 
+              WHERE UPPER(COALESCE(cardUid, '')) = ? 
+                 OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ?
+                 OR UPPER(COALESCE(nfcCardId, '')) = ?
+                 OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ?`,
+        args: [tagId, tagId.replace(/[:\-]/g, ''), tagId, tagId.replace(/[:\-]/g, '')]
+      });
     }
 
     await db.batch(statements, 'write');
@@ -1770,7 +1781,8 @@ khataRouter.post('/nfc/mess-groups', requirePosOrManagerAuth, async (c) => {
         group_name: groupName,
         name: groupName,
         memberCount: memberIds.length,
-        cardTag: tagId || null
+        cardTag: tagId || null,
+        assignedCard: tagId || null
       }
     }, 201);
   } catch (err: any) {
@@ -1789,7 +1801,10 @@ khataRouter.put('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) => {
     const body = await c.req.json();
     const groupName = body.group_name ? String(body.group_name).trim() : null;
     const memberIds: string[] | undefined = Array.isArray(body.member_ids) ? body.member_ids : undefined;
-    const tagId = body.tag_id !== undefined ? String(body.tag_id).trim().toUpperCase() : undefined;
+    const rawTag = body.tag_id;
+    const tagId = (rawTag !== undefined && rawTag !== null && String(rawTag).trim() !== '' && String(rawTag).trim().toLowerCase() !== 'null')
+      ? String(rawTag).trim().toUpperCase()
+      : (rawTag === null || (typeof rawTag === 'string' && rawTag.trim() === '') ? null : undefined);
 
     const statements: { sql: string; args: any[] }[] = [];
 
@@ -1829,9 +1844,17 @@ khataRouter.put('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) => {
                 ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id`,
           args: [tagId, groupId]
         });
+        statements.push({
+          sql: `UPDATE Customer SET cardUid = NULL, nfcCardId = NULL 
+                WHERE UPPER(COALESCE(cardUid, '')) = ? 
+                   OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ?
+                   OR UPPER(COALESCE(nfcCardId, '')) = ?
+                   OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ?`,
+          args: [tagId, tagId.replace(/[:\-]/g, ''), tagId, tagId.replace(/[:\-]/g, '')]
+        });
       } else {
         statements.push({
-          sql: `DELETE FROM NfcCard WHERE mess_id = ? AND card_type = 'MESS'`,
+          sql: `DELETE FROM NfcCard WHERE mess_id = ?`,
           args: [groupId]
         });
       }
@@ -1847,7 +1870,8 @@ khataRouter.put('/nfc/mess-groups/:id', requirePosOrManagerAuth, async (c) => {
         id: groupId,
         group_name: groupName || undefined,
         memberCount: memberIds ? memberIds.length : undefined,
-        cardTag: tagId || null
+        cardTag: tagId || null,
+        assignedCard: tagId || null
       }
     });
   } catch (err: any) {

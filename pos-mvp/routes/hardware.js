@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { db } from '../db.js';
 import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails, syncCustomerMessMemberships } from './khata.js';
 import { verifyManagerPin } from '../middleware/auth.js';
-import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud } from '../services/cloudSync.js';
+import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud, mirrorMessCardToCloud } from '../services/cloudSync.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
 const resolveNfcTagDetails = async (uid) => {
@@ -867,14 +867,27 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
           });
         }
       }
-      if (tag_id && tag_id.trim()) {
-        const cleanTag = tag_id.trim().toUpperCase();
+      const rawTag = tag_id;
+      const cleanTag = (rawTag !== undefined && rawTag !== null && String(rawTag).trim() !== '' && String(rawTag).trim().toLowerCase() !== 'null')
+        ? String(rawTag).trim().toUpperCase()
+        : (rawTag === null || (typeof rawTag === 'string' && rawTag.trim() === '') ? null : undefined);
+
+      if (cleanTag) {
         await db.execute({
           sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) 
                 VALUES (?, 'MESS', NULL, ?, datetime('now'))
                 ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id;`,
           args: [cleanTag, messId]
         });
+        await db.execute({
+          sql: `UPDATE Customer SET cardUid = NULL, nfcCardId = NULL, nfc_card_id = NULL
+                WHERE UPPER(COALESCE(cardUid, '')) = ? 
+                   OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ?
+                   OR UPPER(COALESCE(nfcCardId, '')) = ?
+                   OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ?`,
+          args: [cleanTag, cleanTag.replace(/[:\-]/g, ''), cleanTag, cleanTag.replace(/[:\-]/g, '')]
+        });
+        mirrorMessCardToCloud(messId, cleanTag).catch(() => {});
       }
       mirrorMessGroupToCloud({ id: messId, group_name: cleanName }).catch(() => {});
       if (Array.isArray(member_ids)) {
@@ -883,7 +896,7 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
     } catch { }
 
     const details = await fetchMessGroupDetails(messId);
-    return { success: true, messGroup: { ...details, assignedCard: tag_id || null } };
+    return { success: true, messGroup: details };
   } catch (err) {
     fastify.log.error(err);
     return reply.status(500).send({ success: false, error: err.message });
@@ -928,20 +941,34 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
         }
       }
 
-      if (tag_id !== undefined) {
-        if (tag_id) {
-          const cleanTag = tag_id.trim().toUpperCase();
+      const rawTag = tag_id;
+      const cleanTag = (rawTag !== undefined && rawTag !== null && String(rawTag).trim() !== '' && String(rawTag).trim().toLowerCase() !== 'null')
+        ? String(rawTag).trim().toUpperCase()
+        : (rawTag === null || (typeof rawTag === 'string' && rawTag.trim() === '') ? null : undefined);
+
+      if (cleanTag !== undefined) {
+        if (cleanTag) {
           await db.execute({
             sql: `INSERT INTO NfcCard (tag_id, card_type, customer_id, mess_id, createdAt) 
                   VALUES (?, 'MESS', NULL, ?, datetime('now'))
                   ON CONFLICT(tag_id) DO UPDATE SET card_type = 'MESS', customer_id = NULL, mess_id = excluded.mess_id;`,
             args: [cleanTag, id]
           });
+          await db.execute({
+            sql: `UPDATE Customer SET cardUid = NULL, nfcCardId = NULL, nfc_card_id = NULL
+                  WHERE UPPER(COALESCE(cardUid, '')) = ? 
+                     OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ?
+                     OR UPPER(COALESCE(nfcCardId, '')) = ?
+                     OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ?`,
+            args: [cleanTag, cleanTag.replace(/[:\-]/g, ''), cleanTag, cleanTag.replace(/[:\-]/g, '')]
+          });
+          mirrorMessCardToCloud(id, cleanTag).catch(() => {});
         } else {
           await db.execute({
-            sql: `DELETE FROM NfcCard WHERE mess_id = ? AND card_type = 'MESS'`,
+            sql: `DELETE FROM NfcCard WHERE mess_id = ?`,
             args: [id]
           });
+          mirrorMessCardToCloud(id, null).catch(() => {});
         }
       }
       if (group_name && group_name.trim()) {
@@ -973,6 +1000,7 @@ fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
       await db.execute({ sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM NfcCard WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM MessGroup WHERE id = ?`, args: [id] });
+      mirrorMessCardToCloud(id, null).catch(() => {});
     } catch { }
 
     return { success: true, message: `Mess Group ${id} disbanded successfully` };

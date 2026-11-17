@@ -6,6 +6,7 @@ export interface DeveloperDiagnosticsModalProps {
   apiBase: string;
   onOpenServerConfig: () => void;
   onOpenBenefitPayConfig?: () => void;
+  onOpenPrinterStyleConfig?: () => void;
   hardwareSupported: boolean;
   isScanning: boolean;
   customerScreenReady: boolean;
@@ -25,6 +26,7 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
   apiBase,
   onOpenServerConfig,
   onOpenBenefitPayConfig,
+  onOpenPrinterStyleConfig,
   hardwareSupported,
   isScanning,
   customerScreenReady,
@@ -98,6 +100,31 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
                 className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors shadow-xs"
               >
                 Configure Account
+              </button>
+            )}
+          </div>
+
+          {/* Sunmi Innerprinter & Bill Receipt Styling */}
+          <div className="bg-sky-50/70 p-3 rounded-xl border border-sky-200 flex items-center justify-between">
+            <div>
+              <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                <span>🖨️</span>
+                <span>Sunmi Innerprinter & Receipt Styling</span>
+              </p>
+              <p className="text-xs text-slate-500">
+                Configure 58mm/80mm roll width, print darkness, CR/VAT numbers & bilingual header
+              </p>
+            </div>
+            {onOpenPrinterStyleConfig && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenPrinterStyleConfig();
+                }}
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors shadow-xs"
+              >
+                Style & Settings
               </button>
             )}
           </div>

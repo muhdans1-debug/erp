@@ -13,6 +13,13 @@ import {
   isNativeSunmiHardware,
   type NetworkPrinterConfig
 } from './networkPrinter';
+import {
+  getPrinterStyleConfig,
+  savePrinterStyleConfig,
+  resetPrinterStyleConfig,
+  type SunmiPrinterStyleConfig,
+  DEFAULT_PRINTER_STYLE_CONFIG
+} from './printerConfig';
 
 export {
   generateNBRReceiptHtml,
@@ -20,9 +27,13 @@ export {
   setNetworkPrinterConfig,
   dispatchSunmiPrintJob,
   testSunmiNetworkPrint,
-  isNativeSunmiHardware
+  isNativeSunmiHardware,
+  getPrinterStyleConfig,
+  savePrinterStyleConfig,
+  resetPrinterStyleConfig,
+  DEFAULT_PRINTER_STYLE_CONFIG
 };
-export type { ReceiptTemplateProps, NetworkPrinterConfig };
+export type { ReceiptTemplateProps, NetworkPrinterConfig, SunmiPrinterStyleConfig };
 
 // Initialize the printer Web Worker natively in Vite for off-main-thread receipt formatting
 const printerWorker = typeof window !== 'undefined' && typeof Worker !== 'undefined'
@@ -362,6 +373,8 @@ export const formatReceiptLineItem = (item: {
 
 export interface FullReceiptProps {
   shopName?: string;
+  shopNameAr?: string;
+  crNumber?: string;
   shopAddress?: string;
   shopPhone?: string;
   vatNumber?: string;
@@ -388,6 +401,7 @@ export interface FullReceiptProps {
   changeDue?: number;
   saleDate?: string | Date;
   isReprint?: boolean;
+  styleConfig?: Partial<SunmiPrinterStyleConfig>;
 }
 
 // 58mm thermal paper fits 32 characters per line in standard font (42 for 80mm)
@@ -631,19 +645,24 @@ export const printThermalSlipViaIframe = (htmlContent: string): Promise<boolean>
 
 /**
  * 58mm / 80mm Monospaced Sales Receipt Formatter (Exact Authentic Sunmi Hardware Format).
- * Formats clean, 32-column text with authentic dividers, strict 2-column alignment, and zero artificial borders.
+ * Formats clean, 32-column or 48-column text with authentic dividers, strict 2-column alignment, and zero artificial borders.
  */
 export const formatSaleReceiptText = (props: FullReceiptProps): string => {
-  const is80mm = typeof window !== 'undefined' && localStorage.getItem('pos_receipt_format') === '80mm';
-  const width = is80mm ? 42 : 32;
+  const cfg = {
+    ...getPrinterStyleConfig(),
+    ...(props.styleConfig || {})
+  };
+  const is80mm = cfg.paperWidth === '80mm';
+  const width = is80mm ? 48 : 32;
   const lineEqual = "=".repeat(width) + "\n";
   const lineDash = "-".repeat(width) + "\n";
 
-  const shopName = props.shopName || "ASKAR SUPERMARKET";
-  const shopNameAr = "أسواق عسكر المركزية";
-  const shopAddress = props.shopAddress || "Askar, Kingdom of Bahrain";
-  const shopPhone = props.shopPhone || "Tel: +973 1700 0000";
-  const vatNumber = props.vatNumber || "200012345678901";
+  const shopName = props.shopName || cfg.shopNameEn;
+  const shopNameAr = props.shopNameAr || cfg.shopNameAr;
+  const crNumber = props.crNumber || cfg.crNumber;
+  const vatNumber = props.vatNumber || cfg.vatNumber;
+  const shopAddress = props.shopAddress || cfg.shopAddressEn;
+  const shopPhone = props.shopPhone || cfg.shopPhone;
 
   let cleanInvoice = (props.invoiceNo !== undefined && props.invoiceNo !== null) ? String(props.invoiceNo).trim() : '';
   if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
@@ -658,21 +677,19 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
   const paymentMode = (props.paymentMode || "CASH").toUpperCase();
 
   const total = Number(props.total || 0);
-  const subtotal = props.subtotal !== undefined
-    ? Number(props.subtotal)
-    : (props.vat !== undefined ? total - Number(props.vat) : Number((total / 1.1).toFixed(3)));
-  const vat = props.vat !== undefined
-    ? Number(props.vat)
-    : Number((total - subtotal).toFixed(3));
 
   let out = "";
   out += centerText(shopName, width);
-  out += centerText(shopNameAr, width);
-  out += centerText("Simplified Tax Invoice", width);
+  if (cfg.showArabicHeader && shopNameAr) {
+    out += centerText(shopNameAr, width);
+  }
+  out += centerText("SIMPLIFIED TAX INVOICE", width);
   out += centerText("فاتورة ضريبية مبسطة", width);
-  out += centerText(`TRN: ${vatNumber}`, width);
+  out += centerText(`C.R. No: ${crNumber}`, width);
+  out += centerText(`VAT TRN: ${vatNumber}`, width);
   out += centerText(shopAddress, width);
-  out += centerText(shopPhone, width);
+  out += centerText(`Tel: ${shopPhone}`, width);
+
   if (props.isReprint) {
     out += lineEqual;
     out += centerText("*** DUPLICATE / REPRINT COPY ***", width);
@@ -689,7 +706,7 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += formatTwoCols("Customer:", props.customerName, width);
   }
   out += lineDash;
-  out += formatTwoCols("Item / Description", "Qty   Amt(BD)", width);
+  out += formatTwoCols("Item / Description", "Qty/Amt(BD)", width);
   out += lineDash;
 
   // Group items
@@ -706,6 +723,10 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
 
   let totalQty = 0;
   let idx = 0;
+  let standardTaxableBase = 0;
+  let standardVatAmount = 0;
+  let zeroRatedBase = 0;
+
   for (const { item, count } of groupedMap.values()) {
     idx += 1;
     const isScale = Boolean((item as any).isScaleItem ?? (item as any).is_weighed_item);
@@ -714,40 +735,65 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     const lineTotal = Number(item.total_price ?? (unitPrice * count));
     const isVat10 = item.vatRate === 10 || (item.vatRate === undefined && (item as any).taxRate !== 0);
 
-    const itemLabel = `${idx}. ${item.name}${isVat10 ? ' *' : ''}`;
+    if (isVat10) {
+      const base = lineTotal / 1.10;
+      standardTaxableBase += base;
+      standardVatAmount += (lineTotal - base);
+    } else {
+      zeroRatedBase += lineTotal;
+    }
+
+    const vatTag = isVat10 ? '*' : 'Z';
+    const itemLabel = `${idx}. ${item.name}`;
     out += `${itemLabel}\n`;
+
+    if (cfg.showArabicItems && (item as any).nameAr) {
+      out += `  ${(item as any).nameAr}\n`;
+    }
 
     const qtyLine = isScale
       ? `  ${count.toFixed(3)}kg @ BD ${unitPrice.toFixed(3)}`
       : `  ${count}x @ BD ${unitPrice.toFixed(3)}`;
-    out += formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)}`, width);
+    out += formatTwoCols(qtyLine, `BD ${lineTotal.toFixed(3)} [${vatTag}]`, width);
   }
 
+  const calculatedVat = Number(standardVatAmount.toFixed(3));
+  const subtotalExcl = Number((total - calculatedVat).toFixed(3));
+
   out += lineDash;
-  out += formatTwoCols("Subtotal (Excl. VAT):", `BD ${subtotal.toFixed(3)}`, width);
-  out += formatTwoCols("VAT (10%):", `BD ${vat.toFixed(3)}`, width);
-  out += lineDash;
-  out += formatTwoCols("TOTAL:", `BD ${total.toFixed(3)}`, width);
-  out += centerText("(Inclusive of 10% VAT)", width);
-  out += lineDash;
+  if (cfg.showVatBreakdown) {
+    out += formatTwoCols("Standard (10% Base):", `BD ${standardTaxableBase.toFixed(3)}`, width);
+    out += formatTwoCols("VAT (10%):", `BD ${calculatedVat.toFixed(3)}`, width);
+    if (zeroRatedBase > 0) {
+      out += formatTwoCols("Zero-Rated (0% Base):", `BD ${zeroRatedBase.toFixed(3)}`, width);
+    }
+    out += formatTwoCols("Subtotal (Excl. VAT):", `BD ${subtotalExcl.toFixed(3)}`, width);
+    out += lineDash;
+  }
+
+  // Highlighted Grand Total
+  out += lineEqual;
+  out += formatTwoCols("TOTAL / المجموع:", `BD ${total.toFixed(3)}`, width);
+  out += centerText("(Inclusive of 10% VAT / شامل الضريبة)", width);
+  out += lineEqual;
 
   // Payments
   if (paymentMode === 'CASH') {
-    out += centerText("*** Paid via CASH ***", width);
+    out += centerText("*** PAID VIA CASH / نقداً ***", width);
     const tendered = props.cashTendered !== undefined ? Number(props.cashTendered) : total;
     const change = props.changeDue !== undefined ? Number(props.changeDue) : (tendered > total ? tendered - total : 0);
     out += formatTwoCols("Cash Tendered:", `BD ${tendered.toFixed(3)}`, width);
     out += formatTwoCols("Change Returned:", `BD ${change.toFixed(3)}`, width);
     out += lineDash;
   } else if (paymentMode === 'BENEFIT_PAY') {
-    out += centerText("*** Paid via BENEFITPAY ***", width);
+    out += centerText("*** PAID VIA BENEFITPAY / فوري+ ***", width);
     out += formatTwoCols("Method:", "BenefitPay Fawri+", width);
     if (props.transactionRef) {
       out += formatTwoCols("Reference No:", props.transactionRef, width);
     }
     out += lineDash;
   } else if (paymentMode === 'CARD') {
-    out += centerText("*** Paid via CARD ***", width);
+    out += centerText("*** PAID VIA CARD / بطاقة مصرفية ***", width);
     out += formatTwoCols("Terminal:", "POS Contactless EMV", width);
     out += lineDash;
   } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
@@ -782,11 +828,16 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += lineDash;
   }
 
-  out += centerText(`Total Items Count: ${totalQty} (${groupedMap.size} lines)`, width);
-  out += centerText("* Item includes 10% VAT", width);
+  out += centerText(`Total Items: ${totalQty} (${groupedMap.size} lines)`, width);
+  out += centerText("* Standard 10% VAT | Z Zero-Rated 0%", width);
   out += centerText("THANK YOU FOR SHOPPING!", width);
   out += centerText("شكراً لتسوقكم معنا!", width);
-  out += centerText("Returns accepted with invoice in 3 days", width);
+  if (cfg.footerPolicyEn) {
+    out += centerText(cfg.footerPolicyEn, width);
+  }
+  if (cfg.footerPolicyAr) {
+    out += centerText(cfg.footerPolicyAr, width);
+  }
   out += lineEqual;
 
   return out;
@@ -795,13 +846,13 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
 /**
  * Generate full NBR Simplified Tax Invoice HTML with embedded NBR QR code,
  * Return barcode, Mess split details, Khata tab, and zero-margin 58mm/80mm thermal CSS.
- * Formatted to match authentic Sunmi thermal hardware output (NO artificial borders).
+ * Formatted to match authentic Sunmi thermal hardware output with professional styling.
  */
 export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<string> => {
-  const is80mm = typeof window !== 'undefined' && localStorage.getItem('pos_receipt_format') === '80mm';
-  const widthMm = is80mm ? '70mm' : '48mm';
-  const pageSize = is80mm ? '80mm auto' : '58mm auto';
-  const baseFontSize = is80mm ? '11px' : '9.5px';
+  const cfg = {
+    ...getPrinterStyleConfig(),
+    ...(props.styleConfig || {})
+  };
 
   let cleanInvoice = (props.invoiceNo !== undefined && props.invoiceNo !== null) ? String(props.invoiceNo).trim() : '';
   if (!cleanInvoice || cleanInvoice === '0' || cleanInvoice === 'INV-0' || cleanInvoice === '#0' || cleanInvoice.includes('undefined')) {
@@ -811,7 +862,6 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
     ? cleanInvoice
     : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
 
-  const receiptText = formatSaleReceiptText(props);
   const total = Number(props.total || 0);
   const subtotal = props.subtotal !== undefined
     ? Number(props.subtotal)
@@ -823,21 +873,26 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
 
   // QR Code (NBR Official Article 53 TLV)
   let nbrQrDataUrl = '';
-  try {
-    const nbrPayload = generateNbrTlvBase64({
-      sellerName: props.shopName || "ASKAR SUPERMARKET",
-      vatNumber: props.vatNumber || "200012345678901",
-      timestamp: saleDateObj,
-      total: total,
-      vatAmount: vat
-    });
-    nbrQrDataUrl = await generateQrDataUrl(nbrPayload, 140);
-  } catch (err) {
-    console.warn("Failed generating NBR QR code:", err);
+  if (cfg.showNbrQr) {
+    try {
+      const nbrPayload = generateNbrTlvBase64({
+        sellerName: props.shopName || cfg.shopNameEn,
+        vatNumber: props.vatNumber || cfg.vatNumber,
+        timestamp: saleDateObj,
+        total: total,
+        vatAmount: vat
+      });
+      nbrQrDataUrl = await generateQrDataUrl(nbrPayload, 140);
+    } catch (err) {
+      console.warn("Failed generating NBR QR code:", err);
+    }
   }
 
   // Barcode (CODE128)
-  const barcodeDataUrl = generateBarcodeDataUrl(finalInvoiceDisplay);
+  let barcodeDataUrl = '';
+  if (cfg.showReturnBarcode) {
+    barcodeDataUrl = generateBarcodeDataUrl(finalInvoiceDisplay);
+  }
 
   // Optional: Khata PWA QR code if customer has debt
   let khataQrDataUrl = '';
@@ -850,7 +905,7 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
     )
   );
 
-  if (isKhataCustomer && targetCustId) {
+  if (cfg.showKhataQr && isKhataCustomer && targetCustId) {
     const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
       ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
       : 'https://askar-khata-pwa.vercel.app';
@@ -860,106 +915,38 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
     } catch { }
   }
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Receipt ${escapeHtml(finalInvoiceDisplay)}</title>
-  <style>
-    @page {
-      size: ${pageSize};
-      margin: 0mm;
-    }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #ffffff;
-    }
-    body {
-      font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
-      font-weight: 600;
-      color: #000000;
-      width: ${widthMm};
-      max-width: ${widthMm};
-      margin: 0 auto;
-      padding: 1.5mm 1mm;
-      border: none;
-      box-sizing: border-box;
-      font-size: ${baseFontSize};
-      line-height: 1.25;
-      letter-spacing: -0.15px;
-    }
-    pre.sunmi-receipt, .sunmi-receipt {
-      font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
-      font-weight: 600;
-      font-size: ${baseFontSize};
-      line-height: 1.25;
-      letter-spacing: -0.15px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      margin: 0;
-      padding: 0;
-      color: #000000;
-      border: none;
-    }
-    .center { text-align: center; }
-    @media print {
-      html, body {
-        margin: 0 auto !important;
-        background: #ffffff !important;
-      }
-      body {
-        width: ${widthMm} !important;
-        max-width: ${widthMm} !important;
-        margin: 0 auto !important;
-        padding: 1.5mm 1mm !important;
-        border: none !important;
-        box-sizing: border-box !important;
-      }
-      pre.sunmi-receipt, .sunmi-receipt {
-        border: none !important;
-      }
-    }
-  </style>
-</head>
-<body>
-  <pre class="sunmi-receipt">${escapeHtml(receiptText)}</pre>
-
-  ${nbrQrDataUrl ? `
-    <div class="center" style="margin: 6px 0 3px 0;">
-      <img src="${nbrQrDataUrl}" style="width: 110px; height: 110px; display: inline-block;" alt="NBR Tax QR" />
-      <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 8px; font-weight: 700; margin-top: 2px;">
-        NBR SIMPLIFIED TAX INVOICE QR
-      </div>
-    </div>
-  ` : ''}
-
-  ${khataQrDataUrl ? `
-    <div class="center" style="margin: 6px 0 4px 0;">
-      <pre class="sunmi-receipt">--------------------------------\nLIVE KHATA STATEMENT & PAYMENT\n--------------------------------</pre>
-      <img src="${khataQrDataUrl}" style="width: 100px; height: 100px; display: inline-block;" alt="Khata QR" />
-      <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 7.5px; margin-top: 2px;">Scan to view ledger & pay via BenefitPay</div>
-      <pre class="sunmi-receipt">--------------------------------</pre>
-    </div>
-  ` : ''}
-
-  <div class="center" style="margin-top: 4px;">
-    <pre class="sunmi-receipt" style="margin-bottom: 2px;">--------------------------------\nSCAN TO RETURN ITEMS</pre>
-    ${barcodeDataUrl ? `
-      <img src="${barcodeDataUrl}" style="width: 82%; max-height: 38px; display: inline-block;" alt="Barcode" />
-    ` : `
-      <div style="font-family: monospace; letter-spacing: 2.5px; font-weight: 700; font-size: 11px;">||| | ||||| |||| || ||||||</div>
-    `}
-    <div style="font-family: 'Roboto Mono', Consolas, monospace; font-size: 8.5px; font-weight: 700; margin-top: 1px;">${escapeHtml(finalInvoiceDisplay)}</div>
-    <pre class="sunmi-receipt" style="margin-top: 2px;">================================</pre>
-  </div>
-</body>
-</html>`;
+  return generateNBRReceiptHtml({
+    invoiceNo: finalInvoiceDisplay,
+    shopName: props.shopName || cfg.shopNameEn,
+    shopNameAr: props.shopNameAr || cfg.shopNameAr,
+    crNumber: props.crNumber || cfg.crNumber,
+    vatNumber: props.vatNumber || cfg.vatNumber,
+    shopAddress: props.shopAddress || cfg.shopAddressEn,
+    shopPhone: props.shopPhone || cfg.shopPhone,
+    staffName: props.cashierName || 'Register 01',
+    dateStr: getRegionalReceiptDateTime(props.saleDate),
+    paymentMode: props.paymentMode,
+    cashTendered: props.cashTendered,
+    changeDue: props.changeDue,
+    customerName: props.customerName,
+    transactionRef: props.transactionRef,
+    items: (props.items || []).map((itm: any) => ({
+      name: itm.name || 'Item',
+      nameAr: itm.nameAr || itm.arabicName,
+      price: Number(itm.price ?? itm.sellingPrice ?? 0),
+      qty: Number(itm.qty ?? itm.quantity ?? 1),
+      is_weighed_item: Boolean(itm.isScaleItem ?? itm.is_weighed_item),
+      vatRate: itm.vatRate !== undefined ? Number(itm.vatRate) : (itm.taxRate !== undefined ? Number(itm.taxRate) : 10)
+    })),
+    total: total,
+    subtotal: subtotal,
+    vat: vat,
+    qrCodeDataUrl: nbrQrDataUrl,
+    barcodeDataUrl: barcodeDataUrl,
+    khataQrDataUrl: khataQrDataUrl,
+    isReprint: props.isReprint,
+    styleConfig: cfg,
+  });
 };
 
 let isPrinterInitialized = false;
@@ -967,34 +954,31 @@ let isPrinterInitialized = false;
 /**
  * Direct Hardware Printing on physical Sunmi terminal (Thermal ESC/POS + Sunmi AIDL)
  */
-export const printNativeSunmiReceipt = async ({
-  shopName = "ASKAR SUPERMARKET",
-  shopAddress = "Askar, Kingdom of Bahrain",
-  shopPhone = "Tel: +973 1700 0000",
-  vatNumber = "200012345678901",
-  invoiceNo,
-  items = [],
-  subtotal,
-  vat,
-  total,
-  paymentMode,
-  customerName,
-  customerCardUid,
-  previousBalance,
-  newBalance = 0,
-  cashierName = "Cashier 01",
-  transactionRef,
-  isMess = false,
-  groupName,
-  cardUid,
-  shopperName,
-  members = [],
-  customerId,
-  customerUuid,
-  cashTendered,
-  changeDue,
-  saleDate
-}: FullReceiptProps) => {
+export const printNativeSunmiReceipt = async (props: FullReceiptProps) => {
+  const cfg = {
+    ...getPrinterStyleConfig(),
+    ...(props.styleConfig || {})
+  };
+
+  const {
+    shopName = cfg.shopNameEn,
+    shopAddress = cfg.shopAddressEn,
+    shopPhone = cfg.shopPhone,
+    vatNumber = cfg.vatNumber,
+    invoiceNo,
+    vat,
+    total,
+    paymentMode,
+    customerCardUid,
+    previousBalance,
+    newBalance = 0,
+    isMess = false,
+    cardUid,
+    customerId,
+    customerUuid,
+    saleDate
+  } = props;
+
   try {
     if (!isPrinterInitialized) {
       try {
@@ -1003,38 +987,24 @@ export const printNativeSunmiReceipt = async ({
       } catch { }
     }
 
-    // Option A+ Maximum Bold & High-Contrast: Emphasized Bold + Double-Strike Deep Burn
+    // Hardware density / darkness command based on config
     try {
-      await printRawEscPos('\x1B\x45\x01\x1B\x47\x01');
+      if (cfg.printDensity === 'deep_burn') {
+        await printRawEscPos('\x1B\x45\x01\x1B\x47\x01'); // Emphasized bold + double-strike deep burn
+      } else if (cfg.printDensity === 'dark') {
+        await printRawEscPos('\x1B\x45\x01\x1B\x47\x00'); // Emphasized bold
+      } else {
+        await printRawEscPos('\x1B\x45\x00\x1B\x47\x00'); // Normal ESC/POS
+      }
     } catch { }
 
     const receiptText = formatSaleReceiptText({
+      ...props,
       shopName,
       shopAddress,
       shopPhone,
       vatNumber,
-      invoiceNo,
-      items,
-      subtotal,
-      vat,
-      total,
-      paymentMode,
-      customerName,
-      customerCardUid,
-      previousBalance,
-      newBalance,
-      cashierName,
-      transactionRef,
-      isMess,
-      groupName,
-      cardUid,
-      shopperName,
-      members,
-      customerId,
-      customerUuid,
-      cashTendered,
-      changeDue,
-      saleDate
+      styleConfig: cfg,
     });
 
     let cleanInvoice = (invoiceNo !== undefined && invoiceNo !== null) ? String(invoiceNo).trim() : '';
@@ -1046,77 +1016,86 @@ export const printNativeSunmiReceipt = async ({
       : (cleanInvoice.startsWith('#') ? cleanInvoice.slice(1) : cleanInvoice);
 
     // 1. Dispatch full authentic Sunmi receipt text in single continuous stream
+    const fontPt = cfg.fontSize === 'compact' ? 18 : (cfg.fontSize === 'large' ? 24 : 20);
     await Printer.setPrinterAlignment({ alignment: 'left' });
-    await Printer.setFontSize({ fontSize: 20 });
+    await Printer.setFontSize({ fontSize: fontPt });
     await Printer.printText({ textToPrint: receiptText });
 
-    // 4. BAHRAIN NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE (Official 5-Tag TLV Base64)
-    try {
-      const nbrPayload = generateNbrTlvBase64({
-        sellerName: shopName,
-        vatNumber: vatNumber,
-        timestamp: saleDate || new Date(),
-        total: total,
-        vatAmount: vat
-      });
-      await Printer.setPrinterAlignment({ alignment: 'center' });
-      await printQRCode(nbrPayload, 175);
-      await Printer.printText({ textToPrint: "NBR Simplified Tax Invoice QR\n" });
-    } catch (nbrErr) {
-      console.warn("NBR QR print warning:", nbrErr);
-    }
-
-    // 5. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol - Centered)
-    try {
-      await Printer.printText({ textToPrint: "--------------------------------\nSCAN TO RETURN ITEMS\n" });
-      await printBarCode128(finalInvoiceDisplay, { height: 70, width: 2, textPosition: 2 });
-    } catch (bcErr) {
-      console.warn("Return barcode print warning:", bcErr);
-    }
-
-    // 5. THE QR CODE INJECTOR (Physical-to-Digital Bridge - Strictly Khata Customers)
-    try {
-      const isCreditSale = paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || isMess;
-      const targetCustId = customerId || customerUuid || cardUid || customerCardUid;
-
-      const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
-        ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
-        : 'https://askar-khata-pwa.vercel.app';
-
-      // 🟢 UPDATED LOGIC: Only print Khata info if they owe money, have a credit limit, or paid via Khata
-      const isKhataCustomer = Boolean(
-        targetCustId && (
-          isCreditSale ||
-          (newBalance !== undefined && Number(newBalance) > 0) ||
-          (previousBalance !== undefined && Number(previousBalance) > 0)
-        )
-      );
-
-      if (isKhataCustomer && targetCustId) {
+    // 2. BAHRAIN NBR ARTICLE 53 SIMPLIFIED TAX INVOICE QR CODE (Official 5-Tag TLV Base64)
+    if (cfg.showNbrQr) {
+      try {
+        const nbrPayload = generateNbrTlvBase64({
+          sellerName: shopName,
+          vatNumber: vatNumber,
+          timestamp: saleDate || new Date(),
+          total: total,
+          vatAmount: vat
+        });
         await Printer.setPrinterAlignment({ alignment: 'center' });
-        await Printer.printText({ textToPrint: "\n--------------------------------\n" });
-        const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
-        const qrHeader = [
-          "LIVE KHATA STATEMENT & PAYMENT\n",
-          (newBalance !== undefined && Number(newBalance) > 0) ? `Current Debt: BD ${Number(newBalance).toFixed(3)}\n` : ''
-        ].filter(Boolean).join('');
-        await Printer.printText({ textToPrint: qrHeader });
-        await printQRCode(pwaUrl, 190);
-        await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
-        await Printer.printText({ textToPrint: "--------------------------------\n" });
+        await printQRCode(nbrPayload, 175);
+        await Printer.printText({ textToPrint: "NBR Simplified Tax Invoice QR\n" });
+      } catch (nbrErr) {
+        console.warn("NBR QR print warning:", nbrErr);
       }
-    } catch (qrErr) {
-      console.warn("Receipt QR print warning:", qrErr);
+    }
+
+    // 3. CODE128 BARCODE FOR REFUNDS / RETURNS (NBR & POS Protocol - Centered)
+    if (cfg.showReturnBarcode) {
+      try {
+        await Printer.printText({ textToPrint: "--------------------------------\nSCAN TO RETURN ITEMS\n" });
+        await printBarCode128(finalInvoiceDisplay, { height: 70, width: 2, textPosition: 2 });
+      } catch (bcErr) {
+        console.warn("Return barcode print warning:", bcErr);
+      }
+    }
+
+    // 4. THE QR CODE INJECTOR (Physical-to-Digital Bridge - Strictly Khata Customers)
+    if (cfg.showKhataQr) {
+      try {
+        const isCreditSale = paymentMode === 'CREDIT' || paymentMode === 'MESS_KHATA' || paymentMode === 'KHATA' || isMess;
+        const targetCustId = customerId || customerUuid || cardUid || customerCardUid;
+
+        const portalDomain = (typeof window !== 'undefined' && localStorage.getItem('khata_portal_domain'))
+          ? localStorage.getItem('khata_portal_domain')!.replace(/\/+$/, '')
+          : 'https://askar-khata-pwa.vercel.app';
+
+        const isKhataCustomer = Boolean(
+          targetCustId && (
+            isCreditSale ||
+            (newBalance !== undefined && Number(newBalance) > 0) ||
+            (previousBalance !== undefined && Number(previousBalance) > 0)
+          )
+        );
+
+        if (isKhataCustomer && targetCustId) {
+          await Printer.setPrinterAlignment({ alignment: 'center' });
+          await Printer.printText({ textToPrint: "\n--------------------------------\n" });
+          const pwaUrl = `${portalDomain}/tab/${targetCustId}`;
+          const qrHeader = [
+            "LIVE KHATA STATEMENT & PAYMENT\n",
+            (newBalance !== undefined && Number(newBalance) > 0) ? `Current Debt: BD ${Number(newBalance).toFixed(3)}\n` : ''
+          ].filter(Boolean).join('');
+          await Printer.printText({ textToPrint: qrHeader });
+          await printQRCode(pwaUrl, 190);
+          await Printer.printText({ textToPrint: "Scan with phone to Pay via BenefitPay\n" });
+          await Printer.printText({ textToPrint: "--------------------------------\n" });
+        }
+      } catch (qrErr) {
+        console.warn("Receipt QR print warning:", qrErr);
+      }
     }
 
     // Feed past manual tear bar and commit printer buffer
-    await Printer.lineWrap({ lines: 6 });
+    const feed = Math.max(2, cfg.feedLines || 4);
+    await Printer.lineWrap({ lines: feed });
     try {
       await Printer.commitPrinterBuffer();
     } catch { }
-    try {
-      await Printer.cutPaper();
-    } catch { }
+    if (cfg.autoCut) {
+      try {
+        await Printer.cutPaper();
+      } catch { }
+    }
     return true;
   } catch (error) {
     console.warn("Native Sunmi hardware print error:", error);

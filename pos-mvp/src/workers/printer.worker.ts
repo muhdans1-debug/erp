@@ -19,10 +19,12 @@ self.onmessage = (event: MessageEvent) => {
     // Hardware ESC/POS command stream (with clean single dashes and strict 32-col layout)
     commands.push({ action: 'setAlignment', data: 1 }); // Center
     commands.push({ action: 'printText', data: `${payload.shopName || 'ASKAR SUPERMARKET'}\n` });
-    commands.push({ action: 'printText', data: `${payload.shopNameAr || 'أسكار سوبر ماركت'}\n` });
-    commands.push({ action: 'printText', data: 'Simplified Tax Invoice\n' });
-    commands.push({ action: 'printText', data: `VAT No: ${payload.vatNumber || '200012345678901'}\n` });
-    commands.push({ action: 'printText', data: `Tel: ${payload.shopPhone || '+973 1700 0000'}\n` });
+    commands.push({ action: 'printText', data: `${payload.shopNameAr || 'أسواق عسكر المركزية'}\n` });
+    commands.push({ action: 'printText', data: 'SIMPLIFIED TAX INVOICE\n' });
+    commands.push({ action: 'printText', data: 'فاتورة ضريبية مبسطة\n' });
+    commands.push({ action: 'printText', data: `C.R. No: ${payload.crNumber || '790614189'}\n` });
+    commands.push({ action: 'printText', data: `VAT TRN: ${payload.vatNumber || '200012345678901'}\n` });
+    commands.push({ action: 'printText', data: `Tel: ${payload.shopPhone || '+973 33843855'}\n` });
     if (payload.isReprint) {
       commands.push({ action: 'printText', data: '--------------------------------\n' });
       commands.push({ action: 'printText', data: '*** DUPLICATE / REPRINT COPY ***\n' });

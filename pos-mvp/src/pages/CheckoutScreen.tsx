@@ -39,6 +39,7 @@ import { getApiBaseUrl, getServerIp, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LA
 import HardCreditLimitModal from '../components/HardCreditLimitModal';
 import TapToEditDiscountModal from '../components/TapToEditDiscountModal';
 import BenefitPayConfigModal from '../components/BenefitPayConfigModal';
+import PrinterStyleConfigModal from '../components/PrinterStyleConfigModal';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { Product, Customer, CartTab } from '../types/pos';
 export type { Product, Customer, CartTab };
@@ -230,6 +231,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [showServerConfigModal, setShowServerConfigModal] = useState(false);
   // BenefitPay Owner Account Configuration State
   const [showBenefitPayConfigModal, setShowBenefitPayConfigModal] = useState(false);
+  const [showPrinterStyleModal, setShowPrinterStyleModal] = useState(false);
   const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
 
   // Active Linked Customer for Checkout
@@ -326,22 +328,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     } catch { }
     return '58mm';
   });
-
-  const toggleReceiptFormat = useCallback(() => {
-    setReceiptFormat((prev) => {
-      const next = prev === '58mm' ? '80mm' : '58mm';
-      try {
-        localStorage.setItem('pos_receipt_format', next);
-      } catch { }
-      showToast(
-        next === '80mm'
-          ? '🖨️ Receipt Width: 80mm (Desktop POS Standard)'
-          : '🖨️ Receipt Width: 58mm (Compact Thermal Roll)',
-        'info'
-      );
-      return next;
-    });
-  }, [showToast]);
 
   const toggleAutoPrint = useCallback(() => {
     setIsAutoPrintEnabled((prev) => {
@@ -3253,17 +3239,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <span>Print: {isAutoPrintEnabled ? 'ON' : 'OFF'}</span>
           </button>
 
-          {/* RECEIPT ROLL FORMAT TOGGLE (58mm Compact vs 80mm Desktop POS) */}
+          {/* RECEIPT ROLL FORMAT & PRINTER STYLING */}
           <button
             type="button"
-            onClick={toggleReceiptFormat}
-            className="h-9 flex items-center gap-1.5 px-2.5 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-xl text-xs border border-slate-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
-            title="Switch Thermal Receipt Width: 58mm Compact (Counter) vs 80mm Standard (Desktop POS)"
+            onClick={() => setShowPrinterStyleModal(true)}
+            className="h-9 flex items-center gap-1.5 px-2.5 bg-sky-50 hover:bg-sky-100 active:scale-95 text-sky-900 font-bold rounded-xl text-xs border border-sky-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Configure Thermal Bill Receipt Styling & Sunmi Innerprinter Options"
           >
-            <span className="text-[10px] px-1 py-0.5 rounded bg-slate-200/90 font-mono text-slate-800 font-black">
+            <Settings size={13} className="text-sky-600" />
+            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-200/90 font-mono text-sky-950 font-black">
               {receiptFormat.toUpperCase()}
             </span>
-            <span className="hidden sm:inline">Roll: {receiptFormat}</span>
+            <span className="hidden sm:inline">Receipt Style</span>
           </button>
 
           {/* KHATA (F3) */}
@@ -3530,6 +3517,19 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     >
                       <Receipt size={15} className="text-green-400 shrink-0" />
                       <span className="truncate">Previous Bills [F9]</span>
+                    </button>
+
+                    {/* SUNMI INNERPRINTER & RECEIPT STYLING */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActionsMenu(false);
+                        setShowPrinterStyleModal(true);
+                      }}
+                      className="col-span-2 flex items-center justify-center gap-2 p-2 bg-sky-950/70 hover:bg-sky-900 border border-sky-700/70 rounded-xl text-xs font-bold text-sky-300 transition cursor-pointer text-center"
+                    >
+                      <Printer size={15} className="text-sky-400 shrink-0" />
+                      <span>🖨️ Printer & Bill Receipt Style</span>
                     </button>
 
                     {/* DEV DIAGNOSTICS & SETTINGS */}
@@ -3960,10 +3960,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
               <button
                 type="button"
-                onClick={toggleReceiptFormat}
-                className="py-1 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition-transform cursor-pointer"
-                title="Switch Receipt Width (58mm Compact vs 80mm Desktop)"
+                onClick={() => setShowPrinterStyleModal(true)}
+                className="py-1 px-2 bg-slate-100 hover:bg-sky-100 hover:text-sky-800 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                title="Configure Sunmi Innerprinter & Receipt Style (58mm/80mm, Density, Layout)"
               >
+                <Settings size={11} className="text-slate-500" />
                 <span className="text-[10px] font-mono font-black">{receiptFormat}</span>
               </button>
 
@@ -4417,6 +4418,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           apiBase={apiBase}
           onOpenServerConfig={() => setShowServerConfigModal(true)}
           onOpenBenefitPayConfig={() => setShowBenefitPayConfigModal(true)}
+          onOpenPrinterStyleConfig={() => setShowPrinterStyleModal(true)}
           hardwareSupported={Boolean(hardwareSupported)}
           isScanning={isNfcReaderScanning}
           customerScreenReady={Boolean(customerScreenReady)}
@@ -4543,6 +4545,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           isOpen={showBenefitPayConfigModal}
           onClose={() => setShowBenefitPayConfigModal(false)}
           apiBase={apiBase}
+        />
+      )}
+
+      {/* SUNMI INNERPRINTER & RECEIPT STYLE CONFIGURATION MODAL */}
+      {showPrinterStyleModal && (
+        <PrinterStyleConfigModal
+          isOpen={showPrinterStyleModal}
+          onClose={() => setShowPrinterStyleModal(false)}
         />
       )}
 

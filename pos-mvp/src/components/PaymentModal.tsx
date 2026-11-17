@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printFullReceipt, formatSaleReceiptText } from '../utils/printer';
+import { getPrinterStyleConfig } from '../utils/printerConfig';
 import {
   getNetworkPrinterConfig,
   setNetworkPrinterConfig,
@@ -144,7 +145,13 @@ export default function PaymentModal({
   const isNative = isNativeSunmiHardware();
 
   useEffect(() => {
-    const handlePrinterCfg = () => setPrinterConfigState(getNetworkPrinterConfig());
+    const handlePrinterCfg = () => {
+      setPrinterConfigState(getNetworkPrinterConfig());
+      const pCfg = getPrinterStyleConfig();
+      if (pCfg.paperWidth) {
+        setReceiptFormat(pCfg.paperWidth);
+      }
+    };
     window.addEventListener('pos-printer-config-changed', handlePrinterCfg);
     return () => window.removeEventListener('pos-printer-config-changed', handlePrinterCfg);
   }, []);
@@ -596,13 +603,16 @@ export default function PaymentModal({
     }
   };
 
-  // Exact authentic Sunmi monospaced 32-character receipt text
+  // Exact authentic Sunmi monospaced receipt text
   const receiptText = useMemo(() => {
+    const pCfg = getPrinterStyleConfig();
     return formatSaleReceiptText({
-      shopName: "ASKAR SUPERMARKET",
-      shopAddress: "Askar, Kingdom of Bahrain",
-      shopPhone: "Tel: +973 1700 0000",
-      vatNumber: "200012345678901",
+      shopName: pCfg.shopNameEn,
+      shopNameAr: pCfg.shopNameAr,
+      shopAddress: pCfg.shopAddressEn,
+      shopPhone: pCfg.shopPhone,
+      crNumber: pCfg.crNumber,
+      vatNumber: pCfg.vatNumber,
       invoiceNo: completedSale?.invoiceNo || activeInvoiceNo || 'INV-005000',
       items: (cart || []) as any,
       subtotal,
@@ -616,9 +626,10 @@ export default function PaymentModal({
       cashierName: "Register 01",
       transactionRef: completedSale?.transactionRef || transactionRef,
       isMess: (selectedMethod as string) === 'MESS_KHATA',
-      saleDate: getSynchronizedDate()
+      saleDate: getSynchronizedDate(),
+      styleConfig: { ...pCfg, paperWidth: receiptFormat },
     });
-  }, [completedSale, activeInvoiceNo, cart, subtotal, vat, totalAmount, selectedMethod, cashTendered, changeDue, customer, transactionRef]);
+  }, [completedSale, activeInvoiceNo, cart, subtotal, vat, totalAmount, selectedMethod, cashTendered, changeDue, customer, transactionRef, receiptFormat]);
 
   return (
     <div

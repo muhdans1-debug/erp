@@ -147,8 +147,10 @@ export default async function salesRoutes(fastify, options) {
                 groupName = gRes.rows[0].group_name || groupName;
               }
               const mRes = await transaction.execute({
-                sql: 'SELECT id, name FROM Customer WHERE mess_id = ? AND (is_active = 1 OR is_active IS NULL)',
-                args: [targetMessId]
+                sql: `SELECT DISTINCT c.id, c.name FROM Customer c
+                      LEFT JOIN MessMember mm ON mm.customer_id = c.id
+                      WHERE (c.mess_id = ? OR mm.mess_id = ?) AND (c.is_active = 1 OR c.is_active IS NULL)`,
+                args: [targetMessId, targetMessId]
               });
               memberRows = mRes.rows || [];
             } catch {}
@@ -168,10 +170,10 @@ export default async function salesRoutes(fastify, options) {
               await transaction.execute({
                 sql: `INSERT INTO KhataLedger (
                   id, tenantId, customerId, amount, type, reference, running_balance,
-                  syncStatus, timestamp, created_at
-                ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+                  syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
+                ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING`,
-                args: [ledgerId, member.id, memberCharge, ledgerRef, createdAt, createdAt],
+                args: [ledgerId, member.id, memberCharge, ledgerRef, createdAt, createdAt, targetMessId, sale.id, total, memberRows.length],
               });
 
               affectedCustomerIds.add(member.id);
@@ -182,10 +184,10 @@ export default async function salesRoutes(fastify, options) {
             await transaction.execute({
               sql: `INSERT INTO KhataLedger (
                 id, tenantId, customerId, amount, type, reference, running_balance,
-                syncStatus, timestamp, created_at
-              ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+                syncStatus, timestamp, created_at, sale_id
+              ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
               ON CONFLICT(id) DO NOTHING`,
-              args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt],
+              args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt, sale.id],
             });
             affectedCustomerIds.add(customerId);
           }
@@ -195,10 +197,10 @@ export default async function salesRoutes(fastify, options) {
           await transaction.execute({
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance,
-              syncStatus, timestamp, created_at
-            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?)
+              syncStatus, timestamp, created_at, sale_id
+            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
             ON CONFLICT(id) DO NOTHING`,
-            args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt],
+            args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt, sale.id],
           });
 
           affectedCustomerIds.add(customerId);
@@ -964,21 +966,69 @@ const handleRefundSale = async (request, reply) => {
       }
 
       // 6. Handle financial destination: Deduct from Day's Cash OR credit Khata account
-      if (refundDest === 'KHATA_CREDIT' && sale.customerId) {
-        // Customer account credit: append negative ledger entry to reduce debt
-        await tx.orm.KhataLedger.create({
-          id: crypto.randomUUID(),
-          tenantId: sale.tenantId || 'tenant_1',
-          customerId: sale.customerId,
-          amount: -totalRefundAmount,
-          type: 'PAYMENT_IN',
-          syncStatus: 'PENDING',
-          timestamp: new Date(),
-        });
-        await tx.execute({
-          sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
-          args: [totalRefundAmount, sale.customerId]
-        });
+      if (refundDest === 'KHATA_CREDIT') {
+        if (sale.paymentType === 'MESS_KHATA' || !sale.customerId) {
+          // Check for linked KhataLedger members for this mess sale
+          const linkedRes = await tx.execute({
+            sql: `SELECT DISTINCT customerId, mess_id, tenantId FROM KhataLedger WHERE sale_id = ? OR reference LIKE ?`,
+            args: [sale.id, `%${sale.invoiceNo}%`]
+          });
+          const originalMembers = linkedRes.rows || [];
+          if (originalMembers.length > 0) {
+            const splitRefund = parseFloat((totalRefundAmount / originalMembers.length).toFixed(3));
+            const refundRem = parseFloat((totalRefundAmount - (splitRefund * originalMembers.length)).toFixed(3));
+            const nowIso = new Date().toISOString();
+
+            for (let i = 0; i < originalMembers.length; i++) {
+              const m = originalMembers[i];
+              const mCredit = parseFloat((i === 0 ? splitRefund + refundRem : splitRefund).toFixed(3));
+              const refId = crypto.randomUUID();
+              await tx.execute({
+                sql: `INSERT INTO KhataLedger (
+                  id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, sale_id
+                ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?, ?)`,
+                args: [
+                  refId,
+                  m.tenantId || sale.tenantId || 'tenant_1',
+                  m.customerId,
+                  -mCredit,
+                  `Refund Credit Note: ${creditNoteNo} (Inv #${sale.invoiceNo})`,
+                  nowIso,
+                  nowIso,
+                  m.mess_id || null,
+                  sale.id
+                ]
+              });
+              await tx.execute({
+                sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
+                args: [mCredit, m.customerId]
+              });
+            }
+          }
+        } else if (sale.customerId) {
+          // Customer account credit: append negative ledger entry to reduce debt
+          const refId = crypto.randomUUID();
+          const nowIso = new Date().toISOString();
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (
+              id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id
+            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?)`,
+            args: [
+              refId,
+              sale.tenantId || 'tenant_1',
+              sale.customerId,
+              -totalRefundAmount,
+              `Refund Credit Note: ${creditNoteNo} (Inv #${sale.invoiceNo})`,
+              nowIso,
+              nowIso,
+              sale.id
+            ]
+          });
+          await tx.execute({
+            sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
+            args: [totalRefundAmount, sale.customerId]
+          });
+        }
       } else {
         // Cash refund: deduct from drawer by logging cash payout expense
         await tx.orm.Expense.create({
@@ -1185,17 +1235,60 @@ const handleVoidSale = async (req, reply) => {
         }
       }
 
-      // 4. Reverse Customer Khata debt if charged to credit
-      if (sale.customerId && (sale.paymentType === 'CREDIT' || sale.paymentType === 'NFC_CREDIT')) {
+      // 4. Reverse Khata debt if charged to personal credit or communal mess
+      const linkedLedgers = await tx.execute({
+        sql: `SELECT * FROM KhataLedger WHERE sale_id = ? OR reference LIKE ?`,
+        args: [sale.id, `%${sale.invoiceNo}%`]
+      });
+      const entriesToReverse = (linkedLedgers.rows || []).filter(e => Number(e.amount) > 0);
+
+      if (entriesToReverse.length > 0) {
+        const nowIso = new Date().toISOString();
+        for (const entry of entriesToReverse) {
+          const entryAmt = Number(entry.amount) || 0;
+          const revId = crypto.randomUUID();
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (
+              id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
+            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?, ?, ?, ?)`,
+            args: [
+              revId,
+              entry.tenantId || sale.tenantId || 'tenant_1',
+              entry.customerId,
+              -entryAmt,
+              `VOID Reversal: Invoice #${sale.invoiceNo}`,
+              nowIso,
+              nowIso,
+              entry.mess_id || null,
+              sale.id,
+              entry.group_total || null,
+              entry.member_count || null
+            ]
+          });
+          await tx.execute({
+            sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,
+            args: [entryAmt, entry.customerId]
+          });
+        }
+      } else if (sale.customerId && (sale.paymentType === 'CREDIT' || sale.paymentType === 'NFC_CREDIT')) {
+        // Fallback for legacy credit sales without linked KhataLedger rows
         const debtReversal = Number(sale.total) || 0;
-        await tx.orm.KhataLedger.create({
-          id: crypto.randomUUID(),
-          tenantId: sale.tenantId || 'tenant_1',
-          customerId: sale.customerId,
-          amount: -debtReversal,
-          type: 'PAYMENT_IN',
-          syncStatus: 'PENDING',
-          timestamp: new Date(),
+        const revId = crypto.randomUUID();
+        const nowIso = new Date().toISOString();
+        await tx.execute({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id
+          ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?)`,
+          args: [
+            revId,
+            sale.tenantId || 'tenant_1',
+            sale.customerId,
+            -debtReversal,
+            `VOID Reversal: Invoice #${sale.invoiceNo}`,
+            nowIso,
+            nowIso,
+            sale.id
+          ]
         });
         await tx.execute({
           sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = datetime('now') WHERE id = ?`,

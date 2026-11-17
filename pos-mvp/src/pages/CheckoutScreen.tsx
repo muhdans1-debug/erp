@@ -2020,7 +2020,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const processCheckout = async (
     paymentMethod: 'CASH' | 'BENEFIT_PAY' | 'CARD' | 'CREDIT' | 'CREDIT_PERSONAL' | 'CREDIT_MESS',
     isManagerOverridden: boolean = false,
-    cashTendered?: number
+    cashTendered?: number,
+    overrideMessGroup?: any
   ) => {
     if (cart.length === 0) {
       showToast("⚠️ Cart is empty!", 'info');
@@ -2162,10 +2163,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       if (isMessCheckout) {
         checkoutEndpoint = `${apiBase}/api/sales/mess-checkout`;
+        const chosenMessId = overrideMessGroup?.id || customer?.mess_id || customer?.messGroup?.id || customer?.id;
         checkoutPayload = {
           ...salePayload,
           paymentType: 'MESS_KHATA',
-          messId: customer?.mess_id || customer?.messGroup?.id || customer?.id,
+          messId: chosenMessId,
           cardUid: customer?.tag_id || customer?.cardUid || lastDetectedUid,
           shopperName: customer?.shopper?.name || customer?.name,
           shopperId: customer?.shopper?.id || customer?.id
@@ -4192,7 +4194,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                             members: mg.members,
                             memberCount: mg.memberCount || mg.members?.length || 0
                           }));
-                          processCheckout('CREDIT_MESS');
+                          processCheckout('CREDIT_MESS', false, undefined, mg);
                         }}
                         disabled={cart.length === 0}
                         className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"

@@ -1,4 +1,10 @@
 import Fastify from 'fastify';
+
+// Global BigInt JSON serialization polyfill for SQLite / libSQL INTEGER results
+BigInt.prototype.toJSON = function () {
+  const n = Number(this);
+  return Number.isSafeInteger(n) ? n : this.toString();
+};
 import crypto from 'crypto';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';

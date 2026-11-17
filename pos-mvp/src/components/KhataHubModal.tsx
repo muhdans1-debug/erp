@@ -1148,7 +1148,7 @@ function SettleBalanceView({
         const res = await fetch(`${apiBase}/api/customers/${selectedCustomer.id}/settle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: amountNum, paymentMethod: method }),
+          body: JSON.stringify({ amount: amountNum, amountPaid: amountNum, paymentMethod: method }),
           signal: AbortSignal.timeout(3000)
         });
         if (res.ok) {

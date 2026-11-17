@@ -135,7 +135,12 @@ salesRouter.post('/sync', requirePosOrManagerAuth, async (c) => {
           try {
             const [gRes, mRes] = await Promise.all([
               db.execute({ sql: 'SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1', args: [targetMessId] }),
-              db.execute({ sql: 'SELECT id, name FROM Customer WHERE mess_id = ? AND (is_active = 1 OR is_active IS NULL)', args: [targetMessId] })
+              db.execute({
+                sql: `SELECT DISTINCT c.id, c.name FROM Customer c
+                      LEFT JOIN MessMember mm ON mm.customer_id = c.id
+                      WHERE (c.mess_id = ? OR mm.mess_id = ?) AND (c.is_active = 1 OR c.is_active IS NULL)`,
+                args: [targetMessId, targetMessId]
+              })
             ]);
             if (gRes.rows && gRes.rows.length > 0) {
               groupName = (gRes.rows[0].group_name as string) || groupName;
@@ -158,14 +163,14 @@ salesRouter.post('/sync', requirePosOrManagerAuth, async (c) => {
             batchStatements.push({
               sql: `INSERT INTO KhataLedger (
                       id, tenantId, storeId, customerId, amount, type, reference,
-                      running_balance, syncStatus, timestamp, created_at
+                      running_balance, syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
                     ) VALUES (
                       ?, ?, ?, ?, ?, 'CHARGE', ?,
                       (SELECT ROUND(COALESCE(SUM(amount), 0) + ?, 3) FROM KhataLedger WHERE customerId = ?),
-                      'SYNCED', ?, ?
+                      'SYNCED', ?, ?, ?, ?, ?, ?
                     )
                     ON CONFLICT(id) DO NOTHING`,
-              args: [ledgerId, tenantId, storeId, member.id, memberCharge, ledgerRef, memberCharge, member.id, createdAt, createdAt]
+              args: [ledgerId, tenantId, storeId, member.id, memberCharge, ledgerRef, memberCharge, member.id, createdAt, createdAt, targetMessId, saleId, total, memberRows.length]
             });
 
             affectedCustomerIds.add(member.id);
@@ -590,23 +595,62 @@ salesRouter.post('/refund', requirePosOrManagerAuth, async (c) => {
       });
     }
 
-    if (destination === 'KHATA_CREDIT' && sale.customerId) {
-      const ledgerId = `tx_ref_${refundId.slice(0, 8)}`;
-      batchStatements.push({
-        sql: `INSERT INTO KhataLedger (
-                id, tenantId, storeId, customerId, amount, type, reference,
-                running_balance, syncStatus, timestamp, created_at
-              ) VALUES (
-                ?, ?, ?, ?, ?, 'CREDIT', ?,
-                (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?),
-                'SYNCED', ?, ?
-              )`,
-        args: [ledgerId, tenantId, storeId, sale.customerId, -totalRefundAmount, creditNoteNo, totalRefundAmount, sale.customerId, nowRegionalIso, nowRegionalIso]
-      });
-      batchStatements.push({
-        sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
-        args: [sale.customerId, sale.customerId]
-      });
+    if (destination === 'KHATA_CREDIT') {
+      if (sale.paymentType === 'MESS_KHATA' || !sale.customerId) {
+        // Mess Sale refund: split credit note across original participating members
+        const linkedRes = await db.execute({
+          sql: `SELECT DISTINCT customerId, mess_id FROM KhataLedger WHERE sale_id = ? OR reference LIKE ?`,
+          args: [sale.id, `%${sale.invoiceNo}%`]
+        });
+        const originalMembers = linkedRes.rows || [];
+        if (originalMembers.length > 0) {
+          const splitRefund = parseFloat((totalRefundAmount / originalMembers.length).toFixed(3));
+          const refundRem = parseFloat((totalRefundAmount - (splitRefund * originalMembers.length)).toFixed(3));
+
+          for (let i = 0; i < originalMembers.length; i++) {
+            const m: any = originalMembers[i];
+            const mCredit = parseFloat((i === 0 ? splitRefund + refundRem : splitRefund).toFixed(3));
+            const ledgerId = `tx_ref_${refundId.slice(0, 8)}_${m.customerId}`;
+
+            batchStatements.push({
+              sql: `INSERT INTO KhataLedger (
+                      id, tenantId, storeId, customerId, amount, type, reference,
+                      running_balance, syncStatus, timestamp, created_at, mess_id, sale_id
+                    ) VALUES (
+                      ?, ?, ?, ?, ?, 'CREDIT', ?,
+                      (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?),
+                      'SYNCED', ?, ?, ?, ?
+                    )`,
+              args: [
+                ledgerId, tenantId, storeId, m.customerId, -mCredit,
+                `Refund Credit Note: ${creditNoteNo} (Inv #${sale.invoiceNo})`,
+                mCredit, m.customerId, nowRegionalIso, nowRegionalIso, m.mess_id || null, sale.id
+              ]
+            });
+            batchStatements.push({
+              sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+              args: [m.customerId, m.customerId]
+            });
+          }
+        }
+      } else if (sale.customerId) {
+        const ledgerId = `tx_ref_${refundId.slice(0, 8)}`;
+        batchStatements.push({
+          sql: `INSERT INTO KhataLedger (
+                  id, tenantId, storeId, customerId, amount, type, reference,
+                  running_balance, syncStatus, timestamp, created_at, sale_id
+                ) VALUES (
+                  ?, ?, ?, ?, ?, 'CREDIT', ?,
+                  (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?),
+                  'SYNCED', ?, ?, ?
+                )`,
+          args: [ledgerId, tenantId, storeId, sale.customerId, -totalRefundAmount, creditNoteNo, totalRefundAmount, sale.customerId, nowRegionalIso, nowRegionalIso, sale.id]
+        });
+        batchStatements.push({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+          args: [sale.customerId, sale.customerId]
+        });
+      }
     } else {
       // Cash refund expense
       batchStatements.push({
@@ -639,6 +683,131 @@ salesRouter.post('/refund', requirePosOrManagerAuth, async (c) => {
     });
   } catch (err: any) {
     return c.json({ error: 'Failed to process refund', details: err?.message }, 500);
+  }
+});
+
+/**
+ * Void Sale & Generate Bahrain NBR Credit Note
+ */
+salesRouter.post('/:id/void', requireManagerAuth, async (c) => {
+  const db = getDb(c.env);
+  const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
+  const id = c.req.param('id');
+  const cleanId = String(id || '').trim();
+
+  try {
+    const saleRes = await db.execute({
+      sql: `SELECT * FROM Sale WHERE UPPER(invoiceNo) = UPPER(?) OR id = ? OR CAST(invoiceSeq AS TEXT) = ? LIMIT 1`,
+      args: [cleanId, cleanId, cleanId]
+    });
+
+    if (!saleRes.rows || saleRes.rows.length === 0) {
+      return c.json({ error: `Sale with ID/Invoice #${cleanId} not found` }, 404);
+    }
+
+    const sale: any = saleRes.rows[0];
+    if (sale.status === 'VOIDED') {
+      return c.json({ error: `Invoice #${sale.invoiceNo} has already been voided.` }, 400);
+    }
+
+    const itemsRes = await db.execute({
+      sql: `SELECT * FROM SaleItem WHERE saleId = ?`,
+      args: [sale.id]
+    });
+    const saleItems = itemsRes.rows || [];
+
+    const batchStatements: { sql: string; args: any[] }[] = [];
+    const nowIso = getRegionalIsoString();
+
+    // 1. Mark Sale as VOIDED
+    batchStatements.push({
+      sql: `UPDATE Sale SET status = 'VOIDED' WHERE id = ?`,
+      args: [sale.id]
+    });
+
+    // 2. Restore physical stock
+    for (const item of saleItems) {
+      const qty = Number(item.quantity) || 1;
+      const prodId = item.productId;
+      if (prodId) {
+        batchStatements.push({
+          sql: `UPDATE Product SET stockQuantity = stockQuantity + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? OR barcode = ?`,
+          args: [qty, prodId, prodId]
+        });
+      }
+    }
+
+    // 3. Reverse Khata / Mess debt
+    const linkedLedgers = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE sale_id = ? OR reference LIKE ?`,
+      args: [sale.id, `%${sale.invoiceNo}%`]
+    });
+    const entriesToReverse = (linkedLedgers.rows || []).filter((e: any) => Number(e.amount) > 0);
+
+    if (entriesToReverse.length > 0) {
+      for (const entry of entriesToReverse) {
+        const entryAmt = Number(entry.amount) || 0;
+        const revId = crypto.randomUUID();
+        batchStatements.push({
+          sql: `INSERT INTO KhataLedger (
+                  id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
+                ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?, ?, ?, ?)`,
+          args: [
+            revId, entry.tenantId || tenantId, entry.customerId, -entryAmt,
+            `VOID Reversal: Invoice #${sale.invoiceNo}`, nowIso, nowIso,
+            entry.mess_id || null, sale.id, entry.group_total || null, entry.member_count || null
+          ]
+        });
+        batchStatements.push({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+          args: [entry.customerId, entry.customerId]
+        });
+      }
+    } else if (sale.customerId && (sale.paymentType === 'CREDIT' || sale.paymentType === 'NFC_CREDIT')) {
+      const debtReversal = Number(sale.total) || 0;
+      const revId = crypto.randomUUID();
+      batchStatements.push({
+        sql: `INSERT INTO KhataLedger (
+                id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id
+              ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?)`,
+        args: [
+          revId, tenantId, sale.customerId, -debtReversal,
+          `VOID Reversal: Invoice #${sale.invoiceNo}`, nowIso, nowIso, sale.id
+        ]
+      });
+      batchStatements.push({
+        sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?) WHERE id = ?`,
+        args: [sale.customerId, sale.customerId]
+      });
+    }
+
+    // 4. Generate official Bahrain NBR Credit Note
+    const creditNoteNo = `CN-${String(sale.invoiceNo).replace(/^INV-?/i, '')}-${Date.now().toString().slice(-4)}`;
+    const refundId = crypto.randomUUID();
+    batchStatements.push({
+      sql: `INSERT INTO Refund (id, tenantId, saleId, invoiceNo, refundedAmount, reason, destination, itemsJson, processedBy, createdAt)
+            VALUES (?, ?, ?, ?, ?, 'VOID_AND_RE_RING', ?, ?, 'Authorized Manager (Void & Re-ring)', ?)`,
+      args: [
+        refundId, tenantId, sale.id, sale.invoiceNo, Number(sale.totalAmount || sale.total || 0),
+        sale.paymentType || 'CASH', JSON.stringify(saleItems), nowIso
+      ]
+    });
+
+    await db.batch(batchStatements, 'write');
+
+    return c.json({
+      success: true,
+      message: `Sale #${sale.invoiceNo} successfully voided and inventory restored.`,
+      creditNote: {
+        id: refundId,
+        creditNoteNo,
+        invoiceNo: sale.invoiceNo,
+        totalRefunded: Number(sale.totalAmount || sale.total || 0),
+        date: nowIso
+      }
+    });
+  } catch (err: any) {
+    return c.json({ error: 'Failed to void sale', details: err?.message }, 500);
   }
 });
 

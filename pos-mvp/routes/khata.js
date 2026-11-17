@@ -36,6 +36,8 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
     SELECT c.id, c.tenantId, c.name, c.phone, c.credit_limit, c.credit_limit AS creditLimit, c.is_active,
            c.cardUid, c.mess_id, mg.group_name AS messName, mg.group_name AS mess_name, c.batchNo, c.description, c.createdAt,
            ROUND(COALESCE(SUM(l.amount), 0), 3) AS currentBalance,
+           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NULL OR l.mess_id = '' THEN l.amount ELSE 0 END), 0), 3) AS personalBalance,
+           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NOT NULL AND l.mess_id != '' THEN l.amount ELSE 0 END), 0), 3) AS messShare,
            MAX(CASE WHEN l.amount < 0 THEN l.timestamp END) AS lastPaymentDate,
            (SELECT ABS(amount) FROM KhataLedger WHERE customerId = c.id AND amount < 0 ORDER BY timestamp DESC LIMIT 1) AS lastPaymentAmount,
            MAX(l.timestamp) AS lastActivityDate,
@@ -117,6 +119,8 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
       isActive: isAct,
       currentBalance: Number(currentBalance.toFixed(3)),
       balance: Number(currentBalance.toFixed(3)),
+      personalBalance: Number((c.personalBalance || 0).toFixed(3)),
+      messShare: Number((c.messShare || 0).toFixed(3)),
       creditLimit: Number(creditLimit.toFixed(3)),
       isOverLimit,
       isStale,
@@ -206,6 +210,12 @@ const getCustomerWithBalanceById = async (id) => {
 
   // NEW: Remove the broken Math.max clamp. Trust the ledger sum completely.
   const computedBalance = Number(ledgerSum.toFixed(3));
+  const personalSum = customerLedger
+    .filter((e) => !e.mess_id || e.mess_id === '')
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const messSum = customerLedger
+    .filter((e) => e.mess_id && e.mess_id !== '')
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const isAct = customer.is_active === 1 || customer.is_active === true || customer.is_active === undefined || customer.is_active === null;
 
   const paymentEntries = customerLedger.filter((e) => Number(e.amount) < 0 || e.type === 'PAYMENT');
@@ -266,6 +276,8 @@ const getCustomerWithBalanceById = async (id) => {
     is_active: isAct ? 1 : 0,
     isActive: isAct,
     currentBalance: Number(currentBalance.toFixed(3)),
+    personalBalance: Number(personalSum.toFixed(3)),
+    messShare: Number(messSum.toFixed(3)),
     creditLimit: Number(effectiveCreditLimit.toFixed(3)),
     baseCreditLimit: Number(baseCreditLimit.toFixed(3)),
     trustScore,
@@ -710,7 +722,7 @@ const handleGetCustomerStatement = async (request, reply) => {
       const salesRes = await db.execute({
         sql: `SELECT id, total, invoiceNo, createdAt, paymentType 
               FROM Sale 
-              WHERE customerId = ? AND (paymentType = 'CREDIT' OR paymentType = 'NFC_CREDIT' OR paymentType = 'CREDIT_PERSONAL' OR paymentType = 'MESS_KHATA')`,
+              WHERE customerId = ? AND (paymentType = 'CREDIT' OR paymentType = 'NFC_CREDIT' OR paymentType = 'CREDIT_PERSONAL')`,
         args: [id]
       });
       const creditSales = salesRes.rows || [];
@@ -1795,8 +1807,8 @@ const handleCustomerSettle = async (request, reply) => {
           });
 
           await tx.execute({
-            sql: `UPDATE Customer SET balance = COALESCE(balance, 0) - ?, updatedAt = datetime('now') WHERE id = ?`,
-            args: [mCredit, m.id]
+            sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+            args: [m.id, m.id]
           });
         }
       });
@@ -1814,7 +1826,33 @@ const handleCustomerSettle = async (request, reply) => {
     }
 
     // Case B: Individual Customer Settlement (Optionally tagged with mess_id if earmarked for a mess)
-    const targetMessId = mess_id || messId || null;
+    let targetMessId = mess_id || messId || null;
+    if (!targetMessId) {
+      try {
+        const pDebtRes = await db.execute({
+          sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND (mess_id IS NULL OR mess_id = '')`,
+          args: [id]
+        });
+        const pDebt = Number(pDebtRes.rows?.[0]?.bal || 0);
+
+        if (pDebt <= 0) {
+          // If personal debt is already zero or cleared, allocate payment to customer's active mess debt
+          const mDebtRes = await db.execute({
+            sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) AS bal 
+                  FROM KhataLedger 
+                  WHERE customerId = ? AND mess_id IS NOT NULL AND mess_id != '' 
+                  GROUP BY mess_id 
+                  HAVING bal > 0 
+                  LIMIT 1`,
+            args: [id]
+          });
+          if (mDebtRes.rows && mDebtRes.rows.length > 0) {
+            targetMessId = mDebtRes.rows[0].mess_id;
+          }
+        }
+      } catch { }
+    }
+
     let previousBalance = 0;
     let newBalance = '0.000';
     let ledgerEntry = null;
@@ -2361,17 +2399,22 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
         return reply.code(404).send({ error: 'Mess group not found or has no members' });
       }
 
-      const { totalBalance, equalSplitShare, members, group_name } = messDetails;
+      const { totalBalance, members, group_name } = messDetails;
       if (totalBalance <= 0) {
         return reply.code(400).send({ error: 'Camp balance is zero; no rebalance needed', totalBalance });
       }
+
+      const splitAmount = parseFloat((totalBalance / members.length).toFixed(3));
+      const remainder = parseFloat((totalBalance - (splitAmount * members.length)).toFixed(3));
 
       const statements = [];
       const batchId = `rebal_${Date.now()}`;
       const now = new Date().toISOString();
 
-      for (const m of members) {
-        const delta = Number((equalSplitShare - m.currentBalance).toFixed(3));
+      for (let i = 0; i < members.length; i++) {
+        const m = members[i];
+        const targetShare = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
+        const delta = Number((targetShare - (m.currentBalance || m.balance || 0)).toFixed(3));
         if (Math.abs(delta) > 0.001) {
           const txId = `tx_${batchId}_${m.id}`;
           const ref = `Mess Equal Split Rebalance (${group_name})`;

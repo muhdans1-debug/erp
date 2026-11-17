@@ -522,12 +522,38 @@ khataRouter.post('/customers/:id/settle', requirePosOrManagerAuth, async (c) => 
 
   try {
     const body = await c.req.json();
-    const amount = Number(body.amount || 0);
-    const note = body.note || body.reference || `SETTLE-${Date.now().toString().slice(-6)}`;
+    const amount = Number(body.amountPaid || body.amount || 0);
+    const note = body.note || body.reference || (body.paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : `SETTLE-${Date.now().toString().slice(-6)}`);
     const channel = body.channel || body.paymentMethod || 'CASH';
+    let targetMessId = body.messId || body.mess_id || null;
 
     if (!customerId || amount <= 0) {
       return c.json({ error: 'Valid customerId and positive amount required' }, 400);
+    }
+
+    if (!targetMessId) {
+      try {
+        const pDebtRes = await db.execute({
+          sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND (mess_id IS NULL OR mess_id = '')`,
+          args: [customerId]
+        });
+        const pDebt = Number(pDebtRes.rows?.[0]?.bal || 0);
+
+        if (pDebt <= 0) {
+          const mDebtRes = await db.execute({
+            sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) AS bal 
+                  FROM KhataLedger 
+                  WHERE customerId = ? AND mess_id IS NOT NULL AND mess_id != '' 
+                  GROUP BY mess_id 
+                  HAVING bal > 0 
+                  LIMIT 1`,
+            args: [customerId]
+          });
+          if (mDebtRes.rows && mDebtRes.rows.length > 0) {
+            targetMessId = mDebtRes.rows[0].mess_id as string;
+          }
+        }
+      } catch { }
     }
 
     const txId = `tx_settle_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -537,13 +563,13 @@ khataRouter.post('/customers/:id/settle', requirePosOrManagerAuth, async (c) => 
       {
         sql: `INSERT INTO KhataLedger (
                 id, tenantId, storeId, customerId, amount, type, reference,
-                running_balance, syncStatus, timestamp, created_at
+                running_balance, syncStatus, timestamp, created_at, mess_id
               ) VALUES (
                 ?, ?, ?, ?, ?, 'PAYMENT', ?,
                 (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?),
-                'SYNCED', ?, ?
+                'SYNCED', ?, ?, ?
               )`,
-        args: [txId, tenantId, storeId, customerId, -amount, note, amount, customerId, now, now]
+        args: [txId, tenantId, storeId, customerId, -amount, note, amount, customerId, now, now, targetMessId]
       },
       {
         sql: `UPDATE Customer 
@@ -864,7 +890,7 @@ const handleCustomerStatement = async (c: any) => {
         sql: `SELECT id, total, invoiceNo, createdAt, paymentType 
               FROM Sale 
               WHERE customerId = ? 
-                AND (paymentType = 'CREDIT' OR paymentType = 'NFC_CREDIT' OR paymentType = 'CREDIT_PERSONAL' OR paymentType = 'MESS_KHATA' OR paymentType LIKE '%KHATA%')`,
+                AND (paymentType = 'CREDIT' OR paymentType = 'NFC_CREDIT' OR paymentType = 'CREDIT_PERSONAL')`,
         args: [realId]
       });
       const creditSales = salesRes.rows || [];

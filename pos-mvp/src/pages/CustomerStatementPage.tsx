@@ -432,7 +432,8 @@ export default function CustomerStatementPage({
         body: JSON.stringify({
           amountPaid: amount,
           paymentMethod: 'BENEFIT_PAY',
-          reference: `BenefitPay Fawri+ Online Settlement`
+          reference: activeTab === 'MESS' && messGroup ? `BenefitPay Mess Settlement (${messGroup.group_name})` : `BenefitPay Fawri+ Online Settlement`,
+          mess_id: activeTab === 'MESS' && messGroup ? messGroup.id : null
         })
       });
 

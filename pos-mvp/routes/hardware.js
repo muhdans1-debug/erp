@@ -92,7 +92,7 @@ const resolveNfcTagDetails = async (uid) => {
   if (customer && (customerMesses.length > 0 || primaryMess)) {
     return {
       ...customer,
-      personalBalance: customer.currentBalance,
+      personalBalance: customer.personalBalance !== undefined ? customer.personalBalance : (customer.currentBalance - (customer.messShare || 0)),
       hasMessGroup: true,
       isDual: true,
       isMultiMess: customerMesses.length > 1,

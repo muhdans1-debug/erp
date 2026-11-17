@@ -1,31 +1,138 @@
 // pos-mvp/src/components/PreviousBillsModal.tsx
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Printer, Search, X, Receipt, Eye, Clock, 
-  FileText, RefreshCw
+  FileText, RefreshCw, Calendar, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { 
   RecentSale, 
   getRecentSales, 
-  fetchRecentSalesFromDb
+  fetchRecentSalesFromDb,
+  fetchSalesByDate,
+  getSalesForDate
 } from '../services/recentSalesService';
 import { printFullReceipt, showToast } from '../utils/printer';
+import { getRegionalParts } from '../utils/time';
 
 interface PreviousBillsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+type DateFilterPreset = 'ALL' | 'TODAY' | 'YESTERDAY' | 'CUSTOM';
+type PaymentFilterPreset = 'ALL' | 'CASH' | 'BENEFIT' | 'KHATA';
+
 export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, onClose }) => {
   const [sales, setSales] = useState<RecentSale[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterMode, setFilterMode] = useState<'ALL' | 'CASH' | 'BENEFIT' | 'KHATA'>('ALL');
+  const [filterMode, setFilterMode] = useState<PaymentFilterPreset>('ALL');
+  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('ALL');
+  const [customDate, setCustomDate] = useState<string>('');
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [previewSale, setPreviewSale] = useState<RecentSale | null>(null);
   const [loading, setLoading] = useState(false);
+  const [collapsedDays, setCollapsedDays] = useState<Record<string, boolean>>({});
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Load sales on open
+  // Regional Date Keys
+  const todayKey = useMemo(() => getRegionalParts().dateOnly, []);
+  const yesterdayKey = useMemo(() => getRegionalParts(Date.now() - 86400000).dateOnly, []);
+
+  // Helper to extract YYYY-MM-DD from ISO or localized timestamp
+  const getDateKey = useCallback((isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      return getRegionalParts(isoString).dateOnly;
+    } catch {
+      return (isoString || '').substring(0, 10);
+    }
+  }, []);
+
+  // Format date header for daily grouping
+  const formatDayHeader = useCallback((dateKey: string) => {
+    const isToday = dateKey === todayKey;
+    const isYesterday = dateKey === yesterdayKey;
+
+    try {
+      const parts = dateKey.split('-').map(Number);
+      if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+        const dateObj = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
+        const dayNameEn = dateObj.toLocaleDateString('en-GB', { weekday: 'long' });
+        const formattedEn = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+        let titleEn = `${dayNameEn}, ${formattedEn}`;
+        let badgeText = '';
+        let badgeColor = 'bg-neutral-800 text-zinc-300 border-neutral-700';
+
+        if (isToday) {
+          titleEn = `Today • ${dayNameEn}, ${formattedEn}`;
+          badgeText = 'TODAY (اليوم)';
+          badgeColor = 'bg-green-500/20 text-green-400 border-green-500/30';
+        } else if (isYesterday) {
+          titleEn = `Yesterday • ${dayNameEn}, ${formattedEn}`;
+          badgeText = 'YESTERDAY (أمس)';
+          badgeColor = 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+        }
+
+        return { titleEn, badgeText, badgeColor, isToday, isYesterday };
+      }
+    } catch {}
+
+    return { 
+      titleEn: dateKey || 'Past Bills', 
+      badgeText: '', 
+      badgeColor: 'bg-neutral-800 text-zinc-300 border-neutral-700', 
+      isToday: false, 
+      isYesterday: false 
+    };
+  }, [todayKey, yesterdayKey]);
+
+  // Format date string for individual bill cards
+  const formatBillDate = useCallback((isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return isoString;
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return '';
+    }
+  }, []);
+
+  // Format exact time for individual bill cards
+  const formatBillTime = useCallback((isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch {
+      return '';
+    }
+  }, []);
+
+  // Helper to format date relative (e.g. 5m ago)
+  const formatTimeAgo = useCallback((isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) return '';
+      const now = new Date();
+      const diffSecs = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+      if (diffSecs < 60) return 'Just now';
+      const diffMins = Math.floor(diffSecs / 60);
+      if (diffMins < 60) return `${diffMins}m ago`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}h ago`;
+      const diffDays = Math.floor(diffHours / 24);
+      return `${diffDays}d ago`;
+    } catch {
+      return '';
+    }
+  }, []);
+
+  // Initial load on open
   useEffect(() => {
     if (!isOpen) return;
 
@@ -33,17 +140,15 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
     const local = getRecentSales();
     setSales(local);
 
-    // 2. If local cache has fewer than 10 records, fetch from SQLite replica
-    if (local.length < 10) {
-      setLoading(true);
-      fetchRecentSalesFromDb(40)
-        .then((dbSales) => {
-          if (Array.isArray(dbSales) && dbSales.length > 0) {
-            setSales(dbSales);
-          }
-        })
-        .finally(() => setLoading(false));
-    }
+    // 2. Fetch latest bills from DB/API in background
+    setLoading(true);
+    fetchRecentSalesFromDb(60)
+      .then((dbSales) => {
+        if (Array.isArray(dbSales) && dbSales.length > 0) {
+          setSales(dbSales);
+        }
+      })
+      .finally(() => setLoading(false));
 
     // 3. Listen for any new sales completed reactively
     const handleUpdate = () => {
@@ -77,29 +182,138 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, previewSale, onClose]);
 
+  // Handle selecting a Date Filter
+  const handleSelectDateFilter = async (preset: DateFilterPreset, pickedCustomDate?: string) => {
+    setDateFilter(preset);
+    let targetDateKey: string | null = null;
+
+    if (preset === 'TODAY') {
+      targetDateKey = todayKey;
+    } else if (preset === 'YESTERDAY') {
+      targetDateKey = yesterdayKey;
+    } else if (preset === 'CUSTOM') {
+      const selected = pickedCustomDate || customDate || todayKey;
+      setCustomDate(selected);
+      targetDateKey = selected;
+    }
+
+    if (targetDateKey) {
+      // Check if we already have sales for this date
+      const existingForDay = getSalesForDate(targetDateKey, sales);
+      if (existingForDay.length < 5) {
+        setLoading(true);
+        try {
+          const fetched = await fetchSalesByDate(targetDateKey);
+          if (fetched && fetched.length > 0) {
+            setSales((prev) => {
+              const prevMap = new Map<string, RecentSale>();
+              for (const s of prev) if (s?.invoiceNo) prevMap.set(s.invoiceNo, s);
+              for (const s of fetched) if (s?.invoiceNo) prevMap.set(s.invoiceNo, s);
+              return Array.from(prevMap.values()).sort(
+                (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+              );
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to fetch sales for date:', targetDateKey, err);
+        } finally {
+          setLoading(false);
+        }
+      }
+    }
+  };
+
+  // Manual refresh button
+  const handleManualRefresh = async () => {
+    setLoading(true);
+    try {
+      showToast('🔄 Refreshing previous bills...');
+      let targetDate: string | undefined;
+      if (dateFilter === 'TODAY') targetDate = todayKey;
+      else if (dateFilter === 'YESTERDAY') targetDate = yesterdayKey;
+      else if (dateFilter === 'CUSTOM' && customDate) targetDate = customDate;
+
+      const freshSales = await fetchRecentSalesFromDb({ date: targetDate, limit: 100, forceRefresh: true });
+      if (freshSales && freshSales.length > 0) {
+        setSales(freshSales);
+        showToast(`✅ Loaded ${freshSales.length} bills`);
+      } else {
+        showToast('ℹ️ No newer bills found');
+      }
+    } catch {
+      showToast('❌ Refresh failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Filtered sales
   const filteredSales = useMemo(() => {
     const q = searchQuery.trim().toLowerCase().replace(/^#/, '').replace(/^inv-/, '');
     
     return sales.filter((s) => {
-      // Payment filter
+      // 1. Date Filter
+      const saleDate = getDateKey(s.timestamp);
+      if (dateFilter === 'TODAY' && saleDate !== todayKey) return false;
+      if (dateFilter === 'YESTERDAY' && saleDate !== yesterdayKey) return false;
+      if (dateFilter === 'CUSTOM' && customDate && saleDate !== customDate) return false;
+
+      // 2. Payment filter
       if (filterMode === 'CASH' && !s.paymentMode?.toUpperCase().includes('CASH')) return false;
       if (filterMode === 'BENEFIT' && !s.paymentMode?.toUpperCase().includes('BENEFIT')) return false;
       if (filterMode === 'KHATA' && !['KHATA', 'CREDIT', 'CREDIT_PERSONAL'].includes(s.paymentMode?.toUpperCase())) return false;
 
-      // Query filter
+      // 3. Query filter
       if (!q) return true;
       const invClean = (s.invoiceNo || '').toLowerCase().replace(/^#/, '').replace(/^inv-/, '');
       if (invClean.includes(q)) return true;
       if (s.customerName && s.customerName.toLowerCase().includes(q)) return true;
       if (s.paymentMode && s.paymentMode.toLowerCase().includes(q)) return true;
+      if (saleDate.includes(q)) return true;
       
       // Also match item names
       if (s.items && s.items.some((it) => it.name && it.name.toLowerCase().includes(q))) return true;
 
       return false;
     });
-  }, [sales, searchQuery, filterMode]);
+  }, [sales, searchQuery, filterMode, dateFilter, customDate, todayKey, yesterdayKey, getDateKey]);
+
+  // Total revenue of current filtered set
+  const filteredTotalRevenue = useMemo(() => {
+    return filteredSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0);
+  }, [filteredSales]);
+
+  // Group filtered sales by day
+  const groupedSales = useMemo(() => {
+    const groups: Record<string, RecentSale[]> = {};
+    for (const sale of filteredSales) {
+      const key = getDateKey(sale.timestamp) || 'Other';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(sale);
+    }
+
+    // Sort dates descending (newest day first)
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    return sortedKeys.map((key) => {
+      const daySales = groups[key];
+      const dayTotal = daySales.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+      return {
+        dateKey: key,
+        sales: daySales,
+        count: daySales.length,
+        totalAmount: dayTotal,
+        header: formatDayHeader(key)
+      };
+    });
+  }, [filteredSales, getDateKey, formatDayHeader]);
+
+  // Toggle Day collapse
+  const toggleDayCollapse = (dateKey: string) => {
+    setCollapsedDays((prev) => ({
+      ...prev,
+      [dateKey]: !prev[dateKey]
+    }));
+  };
 
   // Handle reprint action
   const handleReprint = async (sale: RecentSale) => {
@@ -133,7 +347,9 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
         customerId: sale.customerId,
         cashierName: sale.cashierName || 'Register 01',
         transactionRef: sale.transactionRef,
-        isReprint: true // 🏷️ Strictly tag as duplicate reprint
+        isReprint: true, // 🏷️ Tag as duplicate reprint
+        previousBalance: sale.previousBalance,
+        newBalance: sale.newBalance
       });
 
       showToast(`✅ Receipt #${sale.invoiceNo} Printed!`);
@@ -145,39 +361,16 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
     }
   };
 
-  // Helper to format date relative
-  const formatTimeAgo = (isoString?: string) => {
-    if (!isoString) return '';
-    try {
-      const date = new Date(isoString);
-      if (isNaN(date.getTime())) return isoString;
-      const now = new Date();
-      const diffSecs = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-      const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-
-      if (diffSecs < 60) return `Just now • ${timeStr}`;
-      const diffMins = Math.floor(diffSecs / 60);
-      if (diffMins < 60) return `${diffMins}m ago • ${timeStr}`;
-      const diffHours = Math.floor(diffMins / 60);
-      if (diffHours < 24) return `${diffHours}h ago • ${timeStr}`;
-
-      return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} • ${timeStr}`;
-    } catch {
-      return '';
-    }
-  };
-
   if (!isOpen) return null;
 
   const mostRecent = sales[0] || null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-4xl h-[92vh] flex flex-col bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-5xl h-[94vh] flex flex-col bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
         
         {/* Top Header Bar */}
-        <div className="flex items-center justify-between px-6 py-4 bg-black border-b border-neutral-800">
+        <div className="flex items-center justify-between px-6 py-3.5 bg-black border-b border-neutral-800">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-neutral-900 rounded-xl border border-neutral-800 text-green-400">
               <Receipt className="w-6 h-6" />
@@ -189,13 +382,13 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                   F9
                 </span>
               </h2>
-              <p className="text-xs text-zinc-400">سجل الفواتير السابقة وإعادة الطباعة</p>
+              <p className="text-xs text-zinc-400">سجل الفواتير السابقة وإعادة الطباعة حسب التاريخ</p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="w-12 h-12 flex items-center justify-center rounded-xl bg-neutral-900 hover:bg-neutral-800 text-zinc-400 hover:text-white border border-neutral-800 active:scale-95 transition-all cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center rounded-xl bg-neutral-900 hover:bg-neutral-800 text-zinc-400 hover:text-white border border-neutral-800 active:scale-95 transition-all cursor-pointer"
             title="Close [ESC]"
           >
             <X className="w-6 h-6" />
@@ -203,14 +396,17 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
         </div>
 
         {/* Pinned Most Recent Bill Quick-Action (Zero-Search 1-Tap) */}
-        {mostRecent && !searchQuery && filterMode === 'ALL' && (
-          <div className="bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 border-b border-neutral-800 px-6 py-3 flex items-center justify-between gap-4">
+        {mostRecent && !searchQuery && dateFilter === 'ALL' && filterMode === 'ALL' && (
+          <div className="bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 border-b border-neutral-800 px-6 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shrink-0" />
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">LATEST BILL:</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">LATEST BILL:</span>
                   <span className="text-sm font-black text-white">#{mostRecent.invoiceNo}</span>
+                  <span className="text-xs text-green-400 font-bold">
+                    {formatBillDate(mostRecent.timestamp)} • {formatBillTime(mostRecent.timestamp)}
+                  </span>
                   <span className="text-xs text-zinc-400">({formatTimeAgo(mostRecent.timestamp)})</span>
                 </div>
                 <div className="text-xs text-zinc-300 truncate">
@@ -222,7 +418,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
             <button
               onClick={() => handleReprint(mostRecent)}
               disabled={printingId === mostRecent.invoiceNo}
-              className="px-5 py-2.5 bg-green-500 hover:bg-green-400 text-black font-black rounded-xl text-sm flex items-center gap-2 active:scale-95 transition-all shadow-lg shrink-0 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 bg-green-500 hover:bg-green-400 text-black font-black rounded-xl text-xs flex items-center gap-2 active:scale-95 transition-all shadow-lg shrink-0 cursor-pointer disabled:opacity-50"
             >
               {printingId === mostRecent.invoiceNo ? (
                 <>
@@ -239,18 +435,19 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
           </div>
         )}
 
-        {/* Search & Filter Bar */}
-        <div className="p-4 bg-neutral-900/90 border-b border-neutral-800 flex flex-col sm:flex-row gap-3">
-          {/* Live Search Input */}
-          <div className="relative flex-1">
+        {/* Search & Date Filter Bar */}
+        <div className="p-4 bg-neutral-900/95 border-b border-neutral-800 space-y-3">
+          
+          {/* Row 1: Search Input */}
+          <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
             <input
               ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search invoice digits (e.g. 5048), customer, or item..."
-              className="w-full h-12 pl-12 pr-10 bg-black border border-neutral-800 rounded-xl text-white placeholder-zinc-500 text-base font-semibold focus:outline-none focus:border-green-500 transition-colors"
+              placeholder="Search invoice digits (e.g. 5048), customer name, or item..."
+              className="w-full h-11 pl-12 pr-10 bg-black border border-neutral-800 rounded-xl text-white placeholder-zinc-500 text-sm font-semibold focus:outline-none focus:border-green-500 transition-colors"
             />
             {searchQuery && (
               <button
@@ -262,141 +459,319 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
             )}
           </div>
 
-          {/* Filter Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-            {(['ALL', 'CASH', 'BENEFIT', 'KHATA'] as const).map((mode) => (
+          {/* Row 2: Date Selector & Payment Method Filters */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            
+            {/* Left: Date Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+                <Calendar className="w-3.5 h-3.5 text-green-400" />
+                Date:
+              </span>
+              
               <button
-                key={mode}
-                onClick={() => setFilterMode(mode)}
-                className={`px-4 h-12 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
-                  filterMode === mode
-                    ? 'bg-white text-black shadow-md'
-                    : 'bg-neutral-800 text-zinc-300 hover:bg-neutral-700'
+                onClick={() => handleSelectDateFilter('ALL')}
+                className={`px-3.5 h-9 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  dateFilter === 'ALL'
+                    ? 'bg-green-500 text-black shadow-md'
+                    : 'bg-neutral-800 text-zinc-300 hover:bg-neutral-700 border border-neutral-700'
                 }`}
               >
-                {mode === 'BENEFIT' ? 'BENEFITPAY' : mode}
+                <span>All Dates</span>
+                <span className="text-[10px] opacity-75">(الكل)</span>
               </button>
-            ))}
+
+              <button
+                onClick={() => handleSelectDateFilter('TODAY')}
+                className={`px-3.5 h-9 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  dateFilter === 'TODAY'
+                    ? 'bg-green-500 text-black shadow-md'
+                    : 'bg-neutral-800 text-zinc-300 hover:bg-neutral-700 border border-neutral-700'
+                }`}
+              >
+                <span>Today</span>
+                <span className="text-[10px] opacity-75">(اليوم)</span>
+              </button>
+
+              <button
+                onClick={() => handleSelectDateFilter('YESTERDAY')}
+                className={`px-3.5 h-9 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  dateFilter === 'YESTERDAY'
+                    ? 'bg-green-500 text-black shadow-md'
+                    : 'bg-neutral-800 text-zinc-300 hover:bg-neutral-700 border border-neutral-700'
+                }`}
+              >
+                <span>Yesterday</span>
+                <span className="text-[10px] opacity-75">(أمس)</span>
+              </button>
+
+              {/* Pick Date Calendar Input */}
+              <div className={`relative flex items-center rounded-xl border h-9 px-2 transition-all ${
+                dateFilter === 'CUSTOM'
+                  ? 'bg-green-500/10 border-green-500 text-white shadow'
+                  : 'bg-neutral-800 border-neutral-700 text-zinc-300 hover:border-neutral-600'
+              }`}>
+                <Calendar className="w-3.5 h-3.5 mr-1.5 text-zinc-400" />
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleSelectDateFilter('CUSTOM', e.target.value);
+                    }
+                  }}
+                  max={todayKey}
+                  className="bg-transparent text-xs font-black text-white focus:outline-none cursor-pointer"
+                  title="Choose a specific past date"
+                />
+                {dateFilter === 'CUSTOM' && (
+                  <button
+                    onClick={() => handleSelectDateFilter('ALL')}
+                    className="ml-1 text-zinc-400 hover:text-white"
+                    title="Clear date selection"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Right: Payment Mode Filter Chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {(['ALL', 'CASH', 'BENEFIT', 'KHATA'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setFilterMode(mode)}
+                  className={`px-3 h-8 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
+                    filterMode === mode
+                      ? 'bg-white text-black shadow-md'
+                      : 'bg-neutral-800/80 text-zinc-400 hover:bg-neutral-700 hover:text-zinc-200'
+                  }`}
+                >
+                  {mode === 'BENEFIT' ? 'BENEFITPAY' : mode}
+                </button>
+              ))}
+            </div>
+
           </div>
+        </div>
+
+        {/* Daily / Filtered Summary Bar */}
+        <div className="px-6 py-2 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+            <span className="font-bold text-zinc-300">
+              {dateFilter === 'ALL' && 'All Dates (جميع التواريخ)'}
+              {dateFilter === 'TODAY' && `Today: ${todayKey} (اليوم)`}
+              {dateFilter === 'YESTERDAY' && `Yesterday: ${yesterdayKey} (أمس)`}
+              {dateFilter === 'CUSTOM' && `Date: ${customDate}`}
+            </span>
+            <span>•</span>
+            <span className="text-zinc-400">
+              <strong className="text-white">{filteredSales.length}</strong> {filteredSales.length === 1 ? 'bill' : 'bills'}
+            </span>
+            <span>•</span>
+            <span className="text-zinc-400">
+              Total: <strong className="text-green-400 font-black">BD {filteredTotalRevenue.toFixed(3)}</strong>
+            </span>
+          </div>
+
+          <button
+            onClick={handleManualRefresh}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors text-xs font-semibold shrink-0"
+            title="Refresh from SQLite / Server"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-green-400' : ''}`} />
+            <span>Refresh</span>
+          </button>
         </div>
 
         {/* Main Body: List + Slip Preview */}
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
           
-          {/* Bills List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {/* Bills List Grouped By Date */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-5">
             {loading && sales.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-zinc-500 gap-3">
+              <div className="flex flex-col items-center justify-center py-20 text-zinc-500 gap-3">
                 <RefreshCw className="w-8 h-8 animate-spin text-green-500" />
-                <p className="text-sm font-semibold">Loading recent sales from database...</p>
+                <p className="text-sm font-semibold">Loading sales from database...</p>
               </div>
             ) : filteredSales.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-zinc-500 gap-3">
+              <div className="flex flex-col items-center justify-center py-20 text-zinc-500 gap-3">
                 <FileText className="w-12 h-12 text-zinc-700" />
                 <p className="text-base font-bold text-zinc-400">No transactions found</p>
-                <p className="text-xs text-zinc-500">
-                  {searchQuery ? `No sales match "${searchQuery}"` : 'No recent transactions recorded on this terminal.'}
+                <p className="text-xs text-zinc-500 text-center max-w-sm">
+                  {searchQuery 
+                    ? `No sales match "${searchQuery}" for the chosen filters.` 
+                    : dateFilter !== 'ALL'
+                    ? 'No sales recorded for this date on this terminal.'
+                    : 'No recent transactions recorded on this terminal.'}
                 </p>
+                {dateFilter !== 'ALL' && (
+                  <button
+                    onClick={() => handleSelectDateFilter('ALL')}
+                    className="mt-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-zinc-200 text-xs font-bold rounded-xl border border-neutral-700 cursor-pointer"
+                  >
+                    View All Dates (عرض جميع التواريخ)
+                  </button>
+                )}
               </div>
             ) : (
-              filteredSales.map((sale, idx) => {
-                const isPrinting = printingId === sale.invoiceNo;
-                const isSelectedForPreview = previewSale?.invoiceNo === sale.invoiceNo;
+              groupedSales.map((group) => {
+                const isCollapsed = Boolean(collapsedDays[group.dateKey]);
 
                 return (
-                  <div
-                    key={`${sale.invoiceNo}-${idx}`}
-                    className={`p-4 rounded-xl border transition-all ${
-                      isSelectedForPreview
-                        ? 'bg-neutral-800 border-green-500 shadow-lg'
-                        : 'bg-black border-neutral-800 hover:border-neutral-700'
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      
-                      {/* Left: Invoice & Meta */}
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-lg font-black text-white">
-                            #{sale.invoiceNo}
+                  <div key={group.dateKey} className="space-y-2.5">
+                    
+                    {/* Day Group Header */}
+                    <div 
+                      onClick={() => toggleDayCollapse(group.dateKey)}
+                      className="flex items-center justify-between px-4 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl shadow cursor-pointer select-none hover:border-neutral-700 transition-colors sticky top-0 z-10"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Calendar className="w-4 h-4 text-green-400 shrink-0" />
+                        <span className="text-sm font-black text-white truncate">
+                          {group.header.titleEn}
+                        </span>
+                        {group.header.badgeText && (
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 ${group.header.badgeColor}`}>
+                            {group.header.badgeText}
                           </span>
-                          
-                          {/* Payment Mode Badge */}
-                          <span className={`text-[11px] font-black px-2 py-0.5 rounded uppercase ${
-                            sale.paymentMode?.toUpperCase().includes('BENEFIT')
-                              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                              : sale.paymentMode?.toUpperCase().includes('KHATA') || sale.paymentMode?.toUpperCase().includes('CREDIT')
-                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                              : 'bg-green-500/20 text-green-400 border border-green-500/30'
-                          }`}>
-                            {sale.paymentMode || 'CASH'}
-                          </span>
-
-                          <span className="text-xs text-zinc-400 flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />
-                            {formatTimeAgo(sale.timestamp)}
-                          </span>
-                        </div>
-
-                        {/* Customer or Items Snippet */}
-                        <div className="text-xs text-zinc-300 truncate">
-                          {sale.customerName ? (
-                            <span className="font-bold text-white mr-2">👤 {sale.customerName}</span>
-                          ) : null}
-                          <span className="text-zinc-400">
-                            {sale.items && sale.items.length > 0
-                              ? sale.items.map((it) => `${it.name} (${it.qty}${it.is_weighed_item ? 'kg' : ''})`).join(', ')
-                              : 'Standard Sale'}
-                          </span>
-                        </div>
+                        )}
                       </div>
 
-                      {/* Right: Total Amount & Action Buttons */}
-                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-900">
-                        <div className="text-right">
-                          <div className="text-xs text-zinc-400">Total</div>
-                          <div className="text-xl font-black text-green-400">
-                            BD {sale.total.toFixed(3)}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {/* Preview Button */}
-                          <button
-                            onClick={() => setPreviewSale(isSelectedForPreview ? null : sale)}
-                            className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                              isSelectedForPreview
-                                ? 'bg-zinc-200 text-black border-zinc-200'
-                                : 'bg-neutral-900 hover:bg-neutral-800 text-zinc-300 border-neutral-700'
-                            }`}
-                            title="Preview Thermal Receipt"
-                          >
-                            <Eye className="w-5 h-5" />
-                          </button>
-
-                          {/* Print Button (Massive Target) */}
-                          <button
-                            onClick={() => handleReprint(sale)}
-                            disabled={isPrinting}
-                            className="h-11 px-4 bg-green-500 hover:bg-green-400 text-black font-black rounded-xl text-sm flex items-center gap-2 active:scale-95 transition-all shadow cursor-pointer disabled:opacity-50"
-                            title="Reprint Bill"
-                          >
-                            {isPrinting ? (
-                              <>
-                                <RefreshCw className="w-4 h-4 animate-spin" />
-                                <span>PRINTING...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Printer className="w-4 h-4" />
-                                <span>PRINT</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-neutral-900 text-zinc-300 border border-neutral-800">
+                          {group.count} {group.count === 1 ? 'Bill' : 'Bills'}
+                        </span>
+                        <span className="text-sm font-black text-green-400">
+                          BD {group.totalAmount.toFixed(3)}
+                        </span>
+                        {isCollapsed ? (
+                          <ChevronDown className="w-4 h-4 text-zinc-400" />
+                        ) : (
+                          <ChevronUp className="w-4 h-4 text-zinc-400" />
+                        )}
                       </div>
-
                     </div>
+
+                    {/* Bills for this day */}
+                    {!isCollapsed && (
+                      <div className="space-y-2.5 pl-1 sm:pl-2">
+                        {group.sales.map((sale, idx) => {
+                          const isPrinting = printingId === sale.invoiceNo;
+                          const isSelectedForPreview = previewSale?.invoiceNo === sale.invoiceNo;
+
+                          return (
+                            <div
+                              key={`${sale.invoiceNo}-${idx}`}
+                              className={`p-3.5 rounded-xl border transition-all ${
+                                isSelectedForPreview
+                                  ? 'bg-neutral-800/90 border-green-500 shadow-lg ring-1 ring-green-500/50'
+                                  : 'bg-black/90 border-neutral-800 hover:border-neutral-700'
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                
+                                {/* Left: Invoice, Date & Time, Meta */}
+                                <div className="space-y-1.5 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-base font-black text-white tracking-wide">
+                                      #{sale.invoiceNo}
+                                    </span>
+                                    
+                                    {/* Payment Mode Badge */}
+                                    <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider ${
+                                      sale.paymentMode?.toUpperCase().includes('BENEFIT')
+                                        ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                        : sale.paymentMode?.toUpperCase().includes('KHATA') || sale.paymentMode?.toUpperCase().includes('CREDIT')
+                                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                        : 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                    }`}>
+                                      {sale.paymentMode || 'CASH'}
+                                    </span>
+
+                                    {/* Date Badge */}
+                                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-neutral-800 text-zinc-200 border border-neutral-700 flex items-center gap-1.5">
+                                      <Calendar className="w-3.5 h-3.5 text-green-400" />
+                                      {formatBillDate(sale.timestamp)}
+                                    </span>
+
+                                    {/* Exact Time Badge */}
+                                    <span className="text-xs text-zinc-400 flex items-center gap-1 font-medium">
+                                      <Clock className="w-3.5 h-3.5 text-zinc-500" />
+                                      {formatBillTime(sale.timestamp)}
+                                      <span className="text-zinc-500 font-normal">({formatTimeAgo(sale.timestamp)})</span>
+                                    </span>
+                                  </div>
+
+                                  {/* Customer or Items Snippet */}
+                                  <div className="text-xs text-zinc-300 truncate">
+                                    {sale.customerName ? (
+                                      <span className="font-bold text-amber-300 mr-2 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                        👤 {sale.customerName}
+                                      </span>
+                                    ) : null}
+                                    <span className="text-zinc-400">
+                                      {sale.items && sale.items.length > 0
+                                        ? sale.items.map((it) => `${it.name}${it.qty > 1 ? ` (×${it.qty}${it.is_weighed_item ? 'kg' : ''})` : ''}`).join(', ')
+                                        : 'Standard Sale'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Right: Total Amount & Action Buttons */}
+                                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-900">
+                                  <div className="text-right">
+                                    <div className="text-[11px] text-zinc-400">Total</div>
+                                    <div className="text-lg font-black text-green-400">
+                                      BD {sale.total.toFixed(3)}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    {/* Preview Button */}
+                                    <button
+                                      onClick={() => setPreviewSale(isSelectedForPreview ? null : sale)}
+                                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                        isSelectedForPreview
+                                          ? 'bg-zinc-200 text-black border-zinc-200'
+                                          : 'bg-neutral-900 hover:bg-neutral-800 text-zinc-300 border-neutral-700'
+                                      }`}
+                                      title="Preview Thermal Receipt"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+
+                                    {/* Print Button */}
+                                    <button
+                                      onClick={() => handleReprint(sale)}
+                                      disabled={isPrinting}
+                                      className="h-10 px-4 bg-green-500 hover:bg-green-400 text-black font-black rounded-xl text-xs flex items-center gap-1.5 active:scale-95 transition-all shadow cursor-pointer disabled:opacity-50"
+                                      title="Reprint Bill"
+                                    >
+                                      {isPrinting ? (
+                                        <>
+                                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                          <span>PRINTING...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Printer className="w-3.5 h-3.5" />
+                                          <span>PRINT</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
                   </div>
                 );
               })
@@ -449,7 +824,9 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>Date:</span>
-                    <span>{new Date(previewSale.timestamp).toLocaleDateString()}</span>
+                    <span className="font-bold">
+                      {formatBillDate(previewSale.timestamp)} {formatBillTime(previewSale.timestamp)}
+                    </span>
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>Mode:</span>
@@ -499,14 +876,11 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                     <span>BD {previewSale.vat.toFixed(3)}</span>
                   </div>
                   
-                  <div className="border-t border-black my-1" />
-                  
-                  <div className="flex justify-between font-black text-sm my-1">
-                    <span>TOTAL:</span>
-                    <span>BD {previewSale.total.toFixed(3)}</span>
+                  {/* Total Banner */}
+                  <div className="my-2 border-2 border-black p-1.5 text-center bg-gray-50">
+                    <div className="text-[10px] font-bold text-gray-700">NET TOTAL DUE / المبلغ الإجمالي</div>
+                    <div className="text-base font-black">BD {previewSale.total.toFixed(3)}</div>
                   </div>
-
-                  <div className="border-t border-black my-1" />
 
                   {previewSale.cashTendered !== undefined && (
                     <>
@@ -519,6 +893,14 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                         <span>BD {(previewSale.changeDue || 0).toFixed(3)}</span>
                       </div>
                     </>
+                  )}
+
+                  {/* Senior Credit Balance Tab (if Khata) */}
+                  {previewSale.newBalance !== undefined && (
+                    <div className="my-2 border-2 border-black p-1.5 text-center bg-gray-100">
+                      <div className="text-[10px] font-bold text-gray-800">CUSTOMER BALANCE / رصيد الحساب</div>
+                      <div className="text-sm font-black text-black">BD {Number(previewSale.newBalance).toFixed(3)}</div>
+                    </div>
                   )}
 
                   {/* Barcode Mock */}
@@ -563,8 +945,8 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
         </div>
 
         {/* Footer Bar */}
-        <div className="px-6 py-3 bg-black border-t border-neutral-800 flex items-center justify-between text-xs text-zinc-500">
-          <div className="flex items-center gap-4">
+        <div className="px-6 py-2.5 bg-black border-t border-neutral-800 flex items-center justify-between text-xs text-zinc-500">
+          <div className="flex items-center gap-3">
             <span>Showing <strong className="text-white">{filteredSales.length}</strong> of {sales.length} transactions</span>
             <span>•</span>
             <span>Press <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 text-zinc-300 border border-neutral-700">ESC</kbd> to return</span>

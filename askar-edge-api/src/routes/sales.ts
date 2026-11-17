@@ -652,14 +652,27 @@ salesRouter.get('/refunds', requireManagerAuth, async (c) => {
 });
 
 /**
- * Fetch Today's Transactions for Drawer / Shift Review
+ * Fetch Today's Transactions for Drawer / Shift Review and Cashier Previous Bills (with optional Date Query)
  */
 salesRouter.get('/today', async (c) => {
   const db = getDb(c.env);
   const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
   const storeId = c.req.query('storeId') || c.get('storeId') || c.env.DEFAULT_STORE_ID || 'store_askar_01';
+  const targetDate = c.req.query('date') || null;
+  const limit = parseInt(c.req.query('limit') || '100', 10);
 
-  const { startIso } = getRegionalDayRange();
+  let dateWhereClause;
+  let dateArgs: any[];
+
+  if (targetDate) {
+    const { startIso, endIso } = getRegionalDayRange(targetDate);
+    dateWhereClause = `((s.createdAt >= ? AND s.createdAt <= ?) OR (datetime(s.createdAt) >= datetime(?) AND datetime(s.createdAt) <= datetime(?)) OR (s.createdAt LIKE ?) OR (date(s.createdAt) = ?))`;
+    dateArgs = [startIso, endIso, startIso, endIso, `${targetDate}%`, targetDate];
+  } else {
+    const { startIso } = getRegionalDayRange();
+    dateWhereClause = `(s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;
+    dateArgs = [startIso, startIso];
+  }
 
   try {
     const res = await db.execute({
@@ -682,6 +695,8 @@ salesRouter.get('/today', async (c) => {
                            'unitCost', i.costAtSale,
                            'name', COALESCE(p.name, 'Item #' || i.productId),
                            'productName', COALESCE(p.name, 'Item #' || i.productId),
+                           'nameAr', p.name_ar,
+                           'is_weighed_item', p.is_weighed_item,
                            'barcode', COALESCE(p.barcode, i.productId)
                          )
                        ELSE NULL END
@@ -690,12 +705,13 @@ salesRouter.get('/today', async (c) => {
             FROM Sale s
             LEFT JOIN SaleItem i ON s.id = i.saleId
             LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
-            WHERE (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?)) 
+            WHERE ${dateWhereClause} 
               AND (s.tenantId = ? OR s.tenantId IS NULL)
               AND (s.storeId = ? OR ? = 'all' OR s.storeId IS NULL)
             GROUP BY s.id
-            ORDER BY s.createdAt DESC`,
-      args: [startIso, startIso, tenantId, storeId, storeId]
+            ORDER BY s.createdAt DESC
+            LIMIT ?`,
+      args: [...dateArgs, tenantId, storeId, storeId, limit]
     });
 
     const formattedSales = res.rows.map((row: any) => {
@@ -713,10 +729,14 @@ salesRouter.get('/today', async (c) => {
       };
     });
 
-    return c.json({ success: true, sales: formattedSales });
+    return c.json({ success: true, sales: formattedSales, count: formattedSales.length });
   } catch (err: any) {
     return c.json({ error: 'Failed to query today sales', details: err?.message }, 500);
   }
+});
+
+salesRouter.get('/history', async (c) => {
+  return salesRouter.fetch(new Request(new URL(`/today${c.req.url.includes('?') ? c.req.url.substring(c.req.url.indexOf('?')) : ''}`, c.req.url).toString(), c.req.raw), c.env);
 });
 
 /**

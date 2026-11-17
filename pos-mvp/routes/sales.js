@@ -1024,10 +1024,29 @@ fastify.get('/api/sales/refunds', async () => {
 
 // --- BAHRAIN NBR VAT COMPLIANT VOID & CREDIT NOTE ENGINE ---
 
-// 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer (Optimized Single SQL Query)
+// 1. Fetch Today's Completed & Voided Transactions for the Manager's Order History Drawer and Cashier Previous Bills (Optimized Single SQL Query with Date Filtering)
 const handleGetTodaySales = async (req, reply) => {
   try {
-    const { startIso } = getRegionalDayRange();
+    const targetDate = req.query?.date || null;
+    const limit = parseInt(req.query?.limit, 10) || 100;
+
+    let dateWhereClause;
+    let queryArgs;
+
+    if (targetDate) {
+      const { startIso, endIso } = getRegionalDayRange(targetDate);
+      dateWhereClause = `WHERE (
+        (s.createdAt >= ? AND s.createdAt <= ?)
+        OR (datetime(s.createdAt) >= datetime(?) AND datetime(s.createdAt) <= datetime(?))
+        OR (s.createdAt LIKE ?)
+        OR (date(s.createdAt) = ?)
+      )`;
+      queryArgs = [startIso, endIso, startIso, endIso, `${targetDate}%`, targetDate];
+    } else {
+      const { startIso } = getRegionalDayRange();
+      dateWhereClause = `WHERE (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))`;
+      queryArgs = [startIso, startIso];
+    }
 
     const salesRes = await db.execute({
       sql: `SELECT s.*, 
@@ -1049,6 +1068,8 @@ const handleGetTodaySales = async (req, reply) => {
                            'unitCost', i.costAtSale,
                            'name', COALESCE(p.name, 'Item #' || i.productId),
                            'productName', COALESCE(p.name, 'Item #' || i.productId),
+                           'nameAr', p.name_ar,
+                           'is_weighed_item', p.is_weighed_item,
                            'barcode', COALESCE(p.barcode, i.productId)
                          )
                        ELSE NULL END
@@ -1057,10 +1078,11 @@ const handleGetTodaySales = async (req, reply) => {
             FROM Sale s
             LEFT JOIN SaleItem i ON s.id = i.saleId
             LEFT JOIN Product p ON i.productId = p.id OR i.productId = p.barcode
-            WHERE (s.createdAt >= ? OR datetime(s.createdAt) >= datetime(?))
+            ${dateWhereClause}
             GROUP BY s.id
-            ORDER BY s.createdAt DESC`,
-      args: [startIso, startIso]
+            ORDER BY s.createdAt DESC
+            LIMIT ?`,
+      args: [...queryArgs, limit]
     });
 
     const populated = (salesRes.rows || []).map((sale) => {
@@ -1080,15 +1102,16 @@ const handleGetTodaySales = async (req, reply) => {
       };
     });
 
-    return { success: true, sales: populated };
+    return { success: true, sales: populated, count: populated.length, targetDate: targetDate || 'today' };
   } catch (err) {
-    req.log.error(err, 'Failed to fetch today sales');
+    req.log.error(err, 'Failed to fetch sales by date');
     return reply.status(500).send({ success: false, error: err.message });
   }
 };
 
 fastify.get('/sales/today', handleGetTodaySales);
 fastify.get('/api/sales/today', handleGetTodaySales);
+fastify.get('/api/sales/history', handleGetTodaySales);
 
 // 2. Void & Re-ring / Credit Note Reversal Endpoint
 const handleVoidSale = async (req, reply) => {

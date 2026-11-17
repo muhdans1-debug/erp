@@ -837,8 +837,8 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
   } else if (paymentMode === 'MESS_KHATA' || props.isMess) {
     const group = props.groupName || props.customerName || "Shared Mess";
     const prevDebt = Number(props.previousBalance || 0);
-    const finalBalance = props.newBalance !== undefined 
-      ? Number(props.newBalance) 
+    const finalBalance = props.newBalance !== undefined
+      ? Number(props.newBalance)
       : (prevDebt + total);
 
     out += formatTwoCols(`Mess: ${group}`, `Workers: ${props.members?.length || 0}`, width);
@@ -846,8 +846,8 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
     out += lineEqual;
   } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
     const prevDebt = Number(props.previousBalance || 0);
-    const finalBalance = props.newBalance !== undefined 
-      ? Number(props.newBalance) 
+    const finalBalance = props.newBalance !== undefined
+      ? Number(props.newBalance)
       : (prevDebt + total);
 
     if (isCompact && !cfg.showCreditBalanceBox) {

@@ -1416,8 +1416,8 @@ export default function NfcManager({
                             {memberList.slice(0, 5).map((m: any) => (
                               <div key={m.id} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50">
                                 <span className="font-medium text-slate-800 line-clamp-1">{m.name}</span>
-                                <span className={`text-[11px] font-bold ${Number(m.balance || 0) > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                                  {Number(m.balance || 0).toFixed(3)} BHD
+                                <span className={`text-[11px] font-bold ${Number(m.messShare ?? m.balance ?? 0) > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                                  {Number(m.messShare ?? m.balance ?? 0).toFixed(3)} BHD
                                 </span>
                               </div>
                             ))}
@@ -2294,18 +2294,20 @@ export default function NfcManager({
                 </div>
               </div>
 
-              {/* Combined Balance Metric Box */}
+              {/* Group Entity Debt & Enrolled Workers Box */}
               <div className="p-4 bg-indigo-50/60 border border-indigo-100 rounded-2xl flex items-center justify-between">
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-wider text-indigo-900">Total Combined Group Debt</p>
-                  <p className="text-xs text-indigo-700">Calculated live from {editGroupMembers.length} selected worker khatas</p>
+                  <p className="text-[11px] font-black uppercase tracking-wider text-indigo-900">Communal Mess Account Debt</p>
+                  <p className="text-xs text-indigo-700">Independent entity balance • {editGroupMembers.length} active roster workers</p>
                 </div>
-                <p className="text-xl font-black text-indigo-900">
-                  {editGroupMembers.reduce((sum, id) => {
-                    const cust = customersList.find(c => c.id === id);
-                    return sum + (Number(cust?.balance || 0));
-                  }, 0).toFixed(3)} <span className="text-xs font-bold text-indigo-600">BHD</span>
-                </p>
+                <div className="text-right">
+                  <p className="text-xl font-black text-indigo-900">
+                    {Number(selectedMessGroupForEdit?.totalBalance ?? 0).toFixed(3)} <span className="text-xs font-bold text-indigo-600">BHD</span>
+                  </p>
+                  <p className="text-[10px] text-slate-500 font-semibold">
+                    Equal Share: {Number(((Number(selectedMessGroupForEdit?.totalBalance ?? 0)) / Math.max(1, editGroupMembers.length)).toFixed(3))} BHD / worker
+                  </p>
+                </div>
               </div>
             </div>
 

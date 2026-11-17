@@ -316,11 +316,45 @@ const fetchMessGroupDetails = async (messId) => {
 
   if (!group) return null;
 
+  // 1. Fetch group's actual communal mess balance strictly from KhataLedger where mess_id = group.id
+  let messTotalBalance = 0.0;
+  try {
+    const balRes = await db.execute({
+      sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as totalBalance FROM KhataLedger WHERE mess_id = ?`,
+      args: [group.id]
+    });
+    messTotalBalance = Number(balRes.rows?.[0]?.totalBalance ?? 0);
+  } catch (e) {
+    console.warn('Error fetching mess total balance:', e?.message);
+  }
+
+  // 2. Fetch individual members' shares in this specific mess group
+  const memberMessBalances = new Map();
+  try {
+    const memberBalRes = await db.execute({
+      sql: `SELECT customerId, ROUND(COALESCE(SUM(amount), 0), 3) as balance 
+            FROM KhataLedger 
+            WHERE mess_id = ? 
+            GROUP BY customerId`,
+      args: [group.id]
+    });
+    for (const row of (memberBalRes.rows || [])) {
+      memberMessBalances.set(row.customerId, Number(row.balance ?? 0));
+    }
+  } catch (e) {
+    console.warn('Error fetching member mess balances:', e?.message);
+  }
+
   const allCustomers = await getAllCustomersWithBalances();
   const customerMap = new Map(allCustomers.map(c => [c.id, c]));
 
+  const memberCount = Math.max(1, memberRows.length);
+  const equalSplitShare = Number((messTotalBalance / memberCount).toFixed(3));
+
   const members = memberRows.map(m => {
     const matched = customerMap.get(m.id);
+    const messShare = memberMessBalances.get(m.id) ?? 0.0;
+    const personalTotal = matched ? matched.currentBalance : 0.0;
     return {
       id: m.id,
       name: m.name,
@@ -328,28 +362,24 @@ const fetchMessGroupDetails = async (messId) => {
       cpr: m.cpr,
       cardUid: m.cardUid || m.nfcCardId || matched?.cardUid || null,
       batchNo: m.batchNo,
-      currentBalance: matched ? matched.currentBalance : 0.0,
-      balance: matched ? matched.currentBalance : 0.0
+      currentBalance: Number(messShare.toFixed(3)), // Mess group share debt
+      balance: Number(messShare.toFixed(3)),        // Mess group share debt
+      messShare: Number(messShare.toFixed(3)),
+      personalBalance: Number((personalTotal - messShare).toFixed(3)),
+      consolidatedBalance: personalTotal,
+      equalSplitShare,
+      spendPercentage: messTotalBalance > 0 ? Number(((messShare / messTotalBalance) * 100).toFixed(1)) : 0
     };
   });
 
-  const totalBalance = Number(members.reduce((sum, m) => sum + m.currentBalance, 0).toFixed(3));
-  const memberCount = Math.max(1, members.length);
-  const equalSplitShare = Number((totalBalance / memberCount).toFixed(3));
-
-  // Fetch mess group collective ledger
+  // 3. Fetch mess group collective ledger strictly for this mess_id
   let messLedger = [];
   try {
-    const memberIds = members.map(m => m.id);
-    let groupEntries = [];
-    if (memberIds.length > 0) {
-      const placeholders = memberIds.map(() => '?').join(', ');
-      const res = await db.execute({
-        sql: `SELECT * FROM KhataLedger WHERE customerId IN (${placeholders}) ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) ASC`,
-        args: memberIds
-      });
-      groupEntries = res.rows || [];
-    }
+    const res = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE mess_id = ? ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) ASC`,
+      args: [group.id]
+    });
+    const groupEntries = res.rows || [];
     const memberNameMap = new Map(members.map(m => [m.id, m.name]));
 
     let messRunningBalance = 0;
@@ -359,7 +389,7 @@ const fetchMessGroupDetails = async (messId) => {
       const isPayment = numAmount < 0;
       const txType = entry.type === 'WRITE_OFF' ? 'WRITE_OFF' : (isPayment || entry.type === 'PAYMENT' ? 'PAYMENT' : 'CHARGE');
       const d = new Date(entry.created_at || entry.timestamp || entry.createdAt || Date.now());
-      const ref = entry.reference || (txType === 'CHARGE' ? 'Store Purchase' : 'Payment');
+      const ref = entry.reference || (txType === 'CHARGE' ? 'Mess Grocery Purchase' : 'Mess Payment');
 
       // Extract Shopper Name from reference if available e.g. "(Shopper: Ali)"
       let shopper = memberNameMap.get(entry.customerId) || 'Member';
@@ -387,6 +417,12 @@ const fetchMessGroupDetails = async (messId) => {
         type: txType,
         running_balance: Number(messRunningBalance.toFixed(3)),
         runningBalance: Number(messRunningBalance.toFixed(3)),
+        mess_id: group.id,
+        messName: group.group_name,
+        walletName: group.group_name,
+        group_total: entry.group_total ? Number(entry.group_total) : null,
+        member_count: entry.member_count ? Number(entry.member_count) : null,
+        sale_id: entry.sale_id || null,
         timestamp: d.toISOString(),
         created_at: d.toISOString(),
         formattedDate: d.toLocaleDateString('en-GB'),
@@ -404,14 +440,10 @@ const fetchMessGroupDetails = async (messId) => {
     group_name: group.group_name,
     name: group.group_name,
     memberCount: members.length,
-    totalBalance: Number(totalBalance.toFixed(3)),
-    balance: Number(totalBalance.toFixed(3)),
+    totalBalance: Number(messTotalBalance.toFixed(3)),
+    balance: Number(messTotalBalance.toFixed(3)),
     equalSplitShare,
-    members: members.map(m => ({
-      ...m,
-      spendPercentage: totalBalance > 0 ? Number(((m.currentBalance / totalBalance) * 100).toFixed(1)) : 0,
-      equalSplitShare
-    })),
+    members,
     messLedger
   };
 };
@@ -1711,20 +1743,78 @@ fastify.post('/api/customers/:id/bind-card', async (request, reply) => {
 // 2c. Settle Customer Khata Balance (Append-Only Event Sourcing: logs -amount in KhataLedger)
 const handleCustomerSettle = async (request, reply) => {
   const { id } = request.params;
-  const { amount, paymentMethod, amountPaid, reference } = request.body || {};
+  const { amount, paymentMethod, amountPaid, reference, messId, mess_id } = request.body || {};
   const settleAmount = parseFloat(amountPaid !== undefined ? amountPaid : amount);
   if (isNaN(settleAmount) || settleAmount <= 0) {
     return reply.status(400).send({ success: false, error: 'Valid settlement amount is required' });
   }
 
   try {
-    const customer = await db.orm.Customer.where({ id }).all().first();
+    let customer = await db.orm.Customer.where({ id }).all().first();
+    let messGroup = null;
+
     if (!customer) {
-      return reply.status(404).send({ success: false, error: 'Customer not found' });
+      // Check if this is a direct Mess Group settlement
+      const mgRes = await db.execute({
+        sql: `SELECT id, group_name FROM MessGroup WHERE id = ? OR group_name = ? LIMIT 1`,
+        args: [id, id]
+      });
+      if (mgRes.rows && mgRes.rows[0]) {
+        messGroup = await fetchMessGroupDetails(mgRes.rows[0].id);
+      }
+    }
+
+    if (!customer && !messGroup) {
+      return reply.status(404).send({ success: false, error: 'Customer or Mess Group not found' });
     }
 
     const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
     const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
+
+    // Case A: Direct Mess Group Entity Settlement (Split payment equally across mess members)
+    if (messGroup && !customer) {
+      const activeMembers = messGroup.members || [];
+      if (activeMembers.length === 0) {
+        return reply.status(400).send({ success: false, error: 'Mess group has no active members to credit' });
+      }
+
+      const splitCredit = parseFloat((settleAmount / activeMembers.length).toFixed(3));
+      const remainder = parseFloat((settleAmount - (splitCredit * activeMembers.length)).toFixed(3));
+      const nowIso = getRegionalIsoString();
+
+      await db.transaction(async (tx) => {
+        for (let i = 0; i < activeMembers.length; i++) {
+          const m = activeMembers[i];
+          const mCredit = parseFloat((i === 0 ? splitCredit + remainder : splitCredit).toFixed(3));
+          const entryId = crypto.randomUUID();
+
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                  VALUES (?, ?, ?, 'PAYMENT', ?, 'SYNCED', ?, ?, 'tenant_askar_01', ?)`,
+            args: [entryId, m.id, -mCredit, `Mess Settlement: ${messGroup.group_name} (${payRef})`, nowIso, nowIso, messGroup.id]
+          });
+
+          await tx.execute({
+            sql: `UPDATE Customer SET balance = COALESCE(balance, 0) - ?, updatedAt = datetime('now') WHERE id = ?`,
+            args: [mCredit, m.id]
+          });
+        }
+      });
+
+      const updatedMess = await fetchMessGroupDetails(messGroup.id);
+      return reply.send({
+        success: true,
+        isMess: true,
+        message: `Mess debt settled: BD ${settleAmount.toFixed(3)} credited equally across ${activeMembers.length} members`,
+        messGroup: updatedMess,
+        amountPaid: settleAmount,
+        settledAmount: settleAmount,
+        receiptNo
+      });
+    }
+
+    // Case B: Individual Customer Settlement (Optionally tagged with mess_id if earmarked for a mess)
+    const targetMessId = mess_id || messId || null;
     let previousBalance = 0;
     let newBalance = '0.000';
     let ledgerEntry = null;
@@ -1740,8 +1830,16 @@ const handleCustomerSettle = async (request, reply) => {
 
       // Build append-only ledger record (negative amount for payment received)
       const nowIso = getRegionalIsoString();
+      const entryId = crypto.randomUUID();
+
+      await tx.execute({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+              VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', ?)`,
+        args: [entryId, id, -settleAmount, payRef, nowIso, nowIso, targetMessId]
+      });
+
       ledgerEntry = {
-        id: crypto.randomUUID(),
+        id: entryId,
         customerId: id,
         amount: -settleAmount, // Negative for balance deduction
         type: 'PAYMENT',
@@ -1751,10 +1849,8 @@ const handleCustomerSettle = async (request, reply) => {
         timestamp: nowIso,
         created_at: nowIso,
         tenantId: 'tenant_askar_01',
+        mess_id: targetMessId
       };
-
-      // 1. Insert the payment ledger entry
-      await tx.orm.KhataLedger.create(ledgerEntry);
       
       // 2. Lock the ledger and calculate the exact new sum
       const sumResult = await tx.execute({
@@ -2282,9 +2378,9 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
           const txType = delta > 0 ? 'CHARGE' : 'PAYMENT';
 
           statements.push({
-            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, tenantId, syncStatus, timestamp, created_at)
-                  VALUES (?, ?, ?, ?, ?, 'tenant_askar_01', 'SYNCED', ?, ?)`,
-            args: [txId, m.id, delta, txType, ref, now, now]
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, tenantId, syncStatus, timestamp, created_at, mess_id)
+                  VALUES (?, ?, ?, ?, ?, 'tenant_askar_01', 'SYNCED', ?, ?, ?)`,
+            args: [txId, m.id, delta, txType, ref, now, now, id]
           });
 
           statements.push({

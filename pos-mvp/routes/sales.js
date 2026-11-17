@@ -555,65 +555,56 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
     const finalSub = Number((subtotal !== undefined ? subtotal : computedSubtotal).toFixed(3));
     const finalVat = Number((totalVat !== undefined ? totalVat : computedTotalVat).toFixed(3));
 
-    // 4. Atomically Create Master Sale AND Post Split Charges inside a Single Transaction
+    // 4. Atomically Create Master Sale AND Post Split Charges
     const memberSplits = [];
     let verifiedInvoiceNo = finalInv;
 
-    await db.transaction(async (tx) => {
-      const saleResult = await SaleRepository.createSale({
-        id: saleId,
-        invoiceNo: finalInv,
-        invoiceSeq: finalInvoiceSeq,
-        customerId: null,
-        subtotal: finalSub,
-        vatTotal: finalVat,
-        totalVat: finalVat,
-        total: finalTotal,
-        totalAmount: finalTotal,
-        paymentType: 'MESS_KHATA',
-        createdAt: getRegionalIsoString()
-      }, lineItems);
+    const saleResult = await SaleRepository.createSale({
+      id: saleId,
+      invoiceNo: finalInv,
+      invoiceSeq: finalInvoiceSeq,
+      customerId: null,
+      subtotal: finalSub,
+      vatTotal: finalVat,
+      totalVat: finalVat,
+      total: finalTotal,
+      totalAmount: finalTotal,
+      paymentType: 'MESS_KHATA',
+      createdAt: getRegionalIsoString()
+    }, lineItems);
 
-      verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
-      const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
+    verifiedInvoiceNo = saleResult.invoiceNo || finalInv;
+    const shopperTag = shopperName ? ` (Shopper: ${shopperName})` : '';
+    const nowIso = getRegionalIsoString();
+    const statements = [];
 
-      for (let i = 0; i < memberRows.length; i++) {
-        const member = memberRows[i];
-        const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
-        const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
+    for (let i = 0; i < memberRows.length; i++) {
+      const member = memberRows[i];
+      const memberCharge = parseFloat((i === 0 ? splitAmount + remainder : splitAmount).toFixed(3));
+      const ledgerRef = `Mess Split: ${group.group_name} (${memberRows.length} members)${shopperTag} - ${verifiedInvoiceNo}`;
+      const ledgerEntryId = crypto.randomUUID();
 
-        const ledgerEntryId = crypto.randomUUID();
-        try {
-          await tx.execute({
-            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, tenantId, mess_id, sale_id, group_total, member_count)
-                  VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, 'tenant_1', ?, ?, ?, ?)`,
-            args: [ledgerEntryId, member.id, memberCharge, ledgerRef, getRegionalIsoString(), messId, saleId, finalTotal, memberRows.length]
-          });
-        } catch {
-          await tx.orm.KhataLedger.create({
-            id: ledgerEntryId,
-            customerId: member.id,
-            amount: memberCharge,
-            type: 'CHARGE',
-            reference: ledgerRef,
-            syncStatus: 'SYNCED',
-            timestamp: getRegionalIsoString(),
-            tenantId: 'tenant_1'
-          });
-        }
+      statements.push({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id, sale_id, group_total, member_count)
+              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?, 'tenant_1', ?, ?, ?, ?)`,
+        args: [ledgerEntryId, member.id, memberCharge, ledgerRef, nowIso, nowIso, messId, saleId, finalTotal, memberRows.length]
+      });
 
-        await tx.execute({
-          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ?, updatedAt = datetime('now') WHERE id = ?`,
-          args: [memberCharge, member.id]
-        });
+      statements.push({
+        sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ?, updatedAt = datetime('now') WHERE id = ?`,
+        args: [memberCharge, member.id]
+      });
 
-        memberSplits.push({
-          id: member.id,
-          name: member.name,
-          amount: memberCharge
-        });
-      }
-    });
+      memberSplits.push({
+        id: member.id,
+        name: member.name,
+        amount: memberCharge
+      });
+    }
+
+    if (statements.length > 0) {
+      await db.batch(statements);
+    }
 
     return {
       success: true,

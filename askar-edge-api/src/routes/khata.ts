@@ -608,32 +608,65 @@ const fetchMessGroupDetails = async (db: any, messId: string) => {
 
   if (!group) return null;
 
-  const members = memberRows.map((m: any) => ({
-    id: m.id,
-    name: m.name,
-    phone: m.phone,
-    cpr: m.cpr,
-    cardUid: m.nfcCardId || null,
-    currentBalance: Number(m.balance ?? 0),
-    balance: Number(m.balance ?? 0)
-  }));
+  // 1. Fetch group's actual communal mess balance strictly from KhataLedger where mess_id = group.id
+  let messTotalBalance = 0.0;
+  try {
+    const balRes = await db.execute({
+      sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as totalBalance FROM KhataLedger WHERE mess_id = ?`,
+      args: [group.id]
+    });
+    messTotalBalance = Number(balRes.rows?.[0]?.totalBalance ?? 0);
+  } catch (e: any) {
+    console.warn('Error fetching mess total balance on edge:', e?.message);
+  }
 
-  const totalBalance = Number(members.reduce((sum, m) => sum + m.currentBalance, 0).toFixed(3));
-  const memberCount = Math.max(1, members.length);
-  const equalSplitShare = Number((totalBalance / memberCount).toFixed(3));
+  // 2. Fetch individual members' shares in this specific mess group
+  const memberMessBalances = new Map<string, number>();
+  try {
+    const memberBalRes = await db.execute({
+      sql: `SELECT customerId, ROUND(COALESCE(SUM(amount), 0), 3) as balance 
+            FROM KhataLedger 
+            WHERE mess_id = ? 
+            GROUP BY customerId`,
+      args: [group.id]
+    });
+    for (const row of (memberBalRes.rows || [])) {
+      memberMessBalances.set(row.customerId as string, Number(row.balance ?? 0));
+    }
+  } catch (e: any) {
+    console.warn('Error fetching member mess balances on edge:', e?.message);
+  }
 
+  const memberCount = Math.max(1, memberRows.length);
+  const equalSplitShare = Number((messTotalBalance / memberCount).toFixed(3));
+
+  const members = memberRows.map((m: any) => {
+    const messShare = memberMessBalances.get(m.id) ?? 0.0;
+    const personalTotal = Number(m.balance ?? 0);
+    return {
+      id: m.id,
+      name: m.name,
+      phone: m.phone,
+      cpr: m.cpr,
+      cardUid: m.nfcCardId || null,
+      currentBalance: Number(messShare.toFixed(3)),
+      balance: Number(messShare.toFixed(3)),
+      messShare: Number(messShare.toFixed(3)),
+      personalBalance: Number((personalTotal - messShare).toFixed(3)),
+      consolidatedBalance: personalTotal,
+      equalSplitShare,
+      spendPercentage: messTotalBalance > 0 ? Number(((messShare / messTotalBalance) * 100).toFixed(1)) : 0
+    };
+  });
+
+  // 3. Fetch mess group collective ledger strictly for this mess_id
   let messLedger: any[] = [];
   try {
-    const memberIds = members.map(m => m.id);
-    let groupEntries: any[] = [];
-    if (memberIds.length > 0) {
-      const placeholders = memberIds.map(() => '?').join(', ');
-      const res = await db.execute({
-        sql: `SELECT * FROM KhataLedger WHERE customerId IN (${placeholders}) ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) ASC`,
-        args: memberIds
-      });
-      groupEntries = res.rows || [];
-    }
+    const res = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE mess_id = ? ORDER BY datetime(COALESCE(created_at, timestamp, '1970-01-01')) ASC`,
+      args: [group.id]
+    });
+    const groupEntries = res.rows || [];
     const memberNameMap = new Map(members.map(m => [m.id, m.name]));
 
     let messRunningBalance = 0;
@@ -643,7 +676,7 @@ const fetchMessGroupDetails = async (db: any, messId: string) => {
       const isPayment = numAmount < 0;
       const txType = entry.type === 'WRITE_OFF' ? 'WRITE_OFF' : (isPayment || entry.type === 'PAYMENT' ? 'PAYMENT' : 'CHARGE');
       const d = new Date(entry.created_at || entry.timestamp || entry.createdAt || Date.now());
-      const ref = entry.reference || (txType === 'CHARGE' ? 'Store Purchase' : 'Payment');
+      const ref = entry.reference || (txType === 'CHARGE' ? 'Mess Grocery Purchase' : 'Mess Payment');
 
       let shopper = memberNameMap.get(entry.customerId) || 'Member';
       const shopperMatch = ref.match(/\(Shopper:\s*([^)]+)\)/i);
@@ -665,6 +698,12 @@ const fetchMessGroupDetails = async (db: any, messId: string) => {
         type: txType,
         running_balance: Number(messRunningBalance.toFixed(3)),
         runningBalance: Number(messRunningBalance.toFixed(3)),
+        mess_id: group.id,
+        messName: group.group_name,
+        walletName: group.group_name,
+        group_total: entry.group_total ? Number(entry.group_total) : null,
+        member_count: entry.member_count ? Number(entry.member_count) : null,
+        sale_id: entry.sale_id || null,
         timestamp: d.toISOString(),
         created_at: d.toISOString(),
         formattedDate: d.toLocaleDateString('en-GB'),
@@ -682,14 +721,10 @@ const fetchMessGroupDetails = async (db: any, messId: string) => {
     group_name: group.group_name,
     name: group.group_name,
     memberCount: members.length,
-    totalBalance: Number(totalBalance.toFixed(3)),
-    balance: Number(totalBalance.toFixed(3)),
+    totalBalance: Number(messTotalBalance.toFixed(3)),
+    balance: Number(messTotalBalance.toFixed(3)),
     equalSplitShare,
-    members: members.map(m => ({
-      ...m,
-      spendPercentage: totalBalance > 0 ? Number(((m.currentBalance / totalBalance) * 100).toFixed(1)) : 0,
-      equalSplitShare
-    })),
+    members,
     messLedger
   };
 };
@@ -1548,7 +1583,7 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
   const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
 
   try {
-    const [groupsRes, custsRes, cardsRes] = await Promise.all([
+    const [groupsRes, custsRes, cardsRes, messBalRes, memberBalRes] = await Promise.all([
       db.execute({
         sql: `SELECT id, group_name, createdAt FROM MessGroup WHERE (tenantId = ? OR tenantId = 'tenant_1' OR tenantId = 'tenant_askar_01' OR tenantId IS NULL) ORDER BY group_name ASC`,
         args: [tenantId]
@@ -1567,6 +1602,20 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
       db.execute({
         sql: `SELECT tag_id, mess_id FROM NfcCard WHERE mess_id IS NOT NULL`,
         args: []
+      }),
+      db.execute({
+        sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) as totalBalance
+              FROM KhataLedger
+              WHERE mess_id IS NOT NULL AND mess_id != ''
+              GROUP BY mess_id`,
+        args: []
+      }),
+      db.execute({
+        sql: `SELECT mess_id, customerId, ROUND(COALESCE(SUM(amount), 0), 3) as balance
+              FROM KhataLedger
+              WHERE mess_id IS NOT NULL AND mess_id != ''
+              GROUP BY mess_id, customerId`,
+        args: []
       })
     ]);
 
@@ -1582,10 +1631,24 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
       if (card.mess_id) cardByMess.set(card.mess_id as string, card.tag_id as string);
     }
 
+    const messBalances = new Map<string, number>();
+    for (const row of (messBalRes.rows || [])) {
+      if (row.mess_id) messBalances.set(row.mess_id as string, Number(row.totalBalance ?? 0));
+    }
+
+    const memberMessBalances = new Map<string, number>();
+    for (const row of (memberBalRes.rows || [])) {
+      if (row.mess_id && row.customerId) {
+        memberMessBalances.set(`${row.mess_id}_${row.customerId}`, Number(row.balance ?? 0));
+      }
+    }
+
     const messGroups = (groupsRes.rows || []).map((g: any) => {
       const members = customersByMess.get(g.id) || [];
-      const totalBalance = Number(members.reduce((sum, m) => sum + Number(m.balance ?? 0), 0).toFixed(3));
+      const totalBalance = Number((messBalances.get(g.id) ?? 0).toFixed(3));
       const cardTag = cardByMess.get(g.id) || null;
+      const memberCount = Math.max(1, members.length);
+      const equalSplitShare = Number((totalBalance / memberCount).toFixed(3));
 
       return {
         id: g.id,
@@ -1595,9 +1658,24 @@ khataRouter.get('/nfc/mess-groups', async (c) => {
         memberCount: members.length,
         totalBalance,
         balance: totalBalance,
+        equalSplitShare,
         cardTag,
         assignedCard: cardTag,
-        members: members.map(m => ({ id: m.id, name: m.name, phone: m.phone, cpr: m.cpr, balance: Number(m.balance ?? 0) }))
+        members: members.map(m => {
+          const messShare = memberMessBalances.get(`${g.id}_${m.id}`) ?? 0;
+          return {
+            id: m.id,
+            name: m.name,
+            phone: m.phone,
+            cpr: m.cpr,
+            balance: Number(messShare.toFixed(3)),
+            currentBalance: Number(messShare.toFixed(3)),
+            messShare: Number(messShare.toFixed(3)),
+            personalBalance: Number((Number(m.balance ?? 0) - messShare).toFixed(3)),
+            consolidatedBalance: Number(m.balance ?? 0),
+            equalSplitShare
+          };
+        })
       };
     });
 

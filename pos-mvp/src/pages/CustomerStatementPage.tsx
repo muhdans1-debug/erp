@@ -33,6 +33,7 @@ interface LedgerEntry {
   reference?: string;
   type: string;
   amount: number;
+  total?: number;
   raw_amount?: number;
   running_balance?: number;
   runningBalance?: number;
@@ -42,6 +43,11 @@ interface LedgerEntry {
   formattedDate?: string;
   formattedTime?: string;
   memberName?: string;
+  mess_id?: string | null;
+  messName?: string | null;
+  walletName?: string | null;
+  group_total?: number | null;
+  member_count?: number | null;
 }
 
 interface MessMember {
@@ -492,7 +498,9 @@ export default function CustomerStatementPage({
         source = source.filter((item) => item.customerId === selectedMemberFilter);
       }
     } else {
-      source = statement;
+      source = customer?.isMessGroup
+        ? (messGroup?.messLedger || statement)
+        : statement.filter((item) => !item.mess_id || item.mess_id === '');
     }
 
     if (typeFilter === 'CHARGES') {
@@ -514,7 +522,22 @@ export default function CustomerStatementPage({
       });
     }
 
-    return source;
+    // Recompute running balance chronologically along the active tab's entries
+    const chronological = [...source].sort(
+      (a, b) => new Date(a.created_at || a.timestamp || 0).getTime() - new Date(b.created_at || b.timestamp || 0).getTime()
+    );
+    let runBal = 0;
+    const recomputed = chronological.map((item) => {
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (item.type === 'PAYMENT' || item.type === 'WRITE_OFF' ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
+      runBal += amt;
+      return {
+        ...item,
+        running_balance: Number(runBal.toFixed(3)),
+        runningBalance: Number(runBal.toFixed(3))
+      };
+    });
+
+    return recomputed.reverse();
   };
 
   const filteredList = displayedTransactions();

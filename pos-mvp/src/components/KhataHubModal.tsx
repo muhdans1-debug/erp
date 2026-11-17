@@ -537,16 +537,19 @@ function SettleBalanceView({
   };
 
   const filteredStatement = useMemo(() => {
-    let source = statement;
-    if (statementTab === 'MESS' && activeMessGroup?.messLedger) {
-      source = activeMessGroup.messLedger;
+    let source: any[] = [];
+    if (selectedCustomer?.isMessGroup || statementTab === 'MESS') {
+      source = activeMessGroup?.messLedger || statement.filter((item) => Boolean(item.mess_id));
       if (selectedMessMemberFilter) {
         source = source.filter((item) => item.customerId === selectedMessMemberFilter);
       }
+    } else {
+      // PERSONAL TAB: Strictly personal tab entries (opening balances, SIM cards, personal tabs)
+      source = statement.filter((item) => !item.mess_id || item.mess_id === '');
     }
 
     if (!source || !Array.isArray(source)) return [];
-    return source.filter((item) => {
+    const dateFiltered = source.filter((item) => {
       if (statementTypeFilter === 'CHARGES') {
         const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount) > 0;
         if (!isCharge) return false;
@@ -564,7 +567,24 @@ function SettleBalanceView({
       if (statementEndDate) end.setHours(23, 59, 59, 999);
       return txDate >= start && txDate <= end;
     });
-  }, [statement, statementStartDate, statementEndDate, statementTypeFilter, statementTab, activeMessGroup, selectedMessMemberFilter]);
+
+    // Recompute chronological running balance along this filtered subset for mathematical consistency
+    const chronological = [...dateFiltered].sort(
+      (a, b) => new Date(a.created_at || a.timestamp || 0).getTime() - new Date(b.created_at || b.timestamp || 0).getTime()
+    );
+    let runBal = 0;
+    const recomputed = chronological.map((item) => {
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (item.type === 'PAYMENT' || item.type === 'WRITE_OFF' ? -Math.abs(item.amount) : Math.abs(item.amount)));
+      runBal += amt;
+      return {
+        ...item,
+        running_balance: Number(runBal.toFixed(3)),
+        runningBalance: Number(runBal.toFixed(3))
+      };
+    });
+
+    return recomputed.reverse();
+  }, [statement, statementStartDate, statementEndDate, statementTypeFilter, statementTab, activeMessGroup, selectedMessMemberFilter, selectedCustomer]);
 
   const filteredDebitTotal = useMemo(() => {
     return filteredStatement.reduce((acc, item) => {

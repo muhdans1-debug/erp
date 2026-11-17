@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Printer, 
-  Check, 
-  RotateCcw, 
-  FileText, 
-  QrCode, 
-  Barcode, 
-  Building2, 
+import {
+  Printer,
+  Check,
+  RotateCcw,
+  FileText,
+  QrCode,
+  Barcode,
+  Building2,
   Sparkles,
   Sliders,
   X
 } from 'lucide-react';
-import { 
-  getPrinterStyleConfig, 
-  savePrinterStyleConfig, 
-  resetPrinterStyleConfig, 
+import {
+  getPrinterStyleConfig,
+  savePrinterStyleConfig,
+  resetPrinterStyleConfig,
   type SunmiPrinterStyleConfig,
   COMPACT_PROFESSIONAL_CONFIG,
   CLASSIC_FULL_CONFIG
@@ -87,12 +87,12 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
           vatAmount: 0.241
         }, 160);
         if (isMounted) setPreviewQrUrl(qr);
-      } catch {}
+      } catch { }
 
       try {
         const bc = generateBarcodeDataUrl(sampleInvoiceNo);
         if (isMounted) setPreviewBarcodeUrl(bc);
-      } catch {}
+      } catch { }
     })();
     return () => { isMounted = false; };
   }, [config.shopNameEn, config.vatNumber]);
@@ -108,7 +108,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
   if (!isOpen) return null;
 
   const handleUpdate = <K extends keyof SunmiPrinterStyleConfig>(
-    key: K, 
+    key: K,
     value: SunmiPrinterStyleConfig[K]
   ) => {
     setConfig(prev => ({ ...prev, [key]: value }));
@@ -254,7 +254,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 select-none">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl h-[92vh] max-h-[820px] flex flex-col shadow-2xl overflow-hidden text-slate-100">
-        
+
         {/* HEADER BAR */}
         <div className="px-5 py-3.5 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -306,22 +306,20 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
             <button
               type="button"
               onClick={applyCompactPreset}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
-                config.receiptTheme === 'compact_quick'
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${config.receiptTheme === 'compact_quick'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-1 ring-emerald-400'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
-              }`}
+                }`}
             >
               <span>⚡ Compact Professional (Shrunk & Paper Saver)</span>
             </button>
             <button
               type="button"
               onClick={applyClassicPreset}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                config.receiptTheme === 'classic_supermarket'
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${config.receiptTheme === 'classic_supermarket'
                   ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30 ring-1 ring-sky-400'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
-              }`}
+                }`}
             >
               <span>📋 Classic Full</span>
             </button>
@@ -330,20 +328,19 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
 
         {/* MAIN BODY (GRID: CONFIG CONTROLS ON LEFT, LIVE PREVIEW ON RIGHT) */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
-          
+
           {/* LEFT COLUMN: TABS & SETTINGS (7 COLS) */}
           <div className="md:col-span-7 flex flex-col border-r border-slate-700/60 bg-slate-900 overflow-hidden">
-            
+
             {/* TABS HEADER */}
             <div className="flex border-b border-slate-700/70 bg-slate-850 px-2 pt-2 gap-1 shrink-0 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setActiveTab('store')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${
-                  activeTab === 'store'
+                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${activeTab === 'store'
                     ? 'bg-slate-900 text-sky-400 border-t-2 border-sky-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <Building2 size={14} />
                 <span>Store & Tax ID</span>
@@ -352,11 +349,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
               <button
                 type="button"
                 onClick={() => setActiveTab('hardware')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${
-                  activeTab === 'hardware'
+                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${activeTab === 'hardware'
                     ? 'bg-slate-900 text-sky-400 border-t-2 border-sky-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <Sliders size={14} />
                 <span>Paper & Quality</span>
@@ -365,11 +361,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
               <button
                 type="button"
                 onClick={() => setActiveTab('toggles')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${
-                  activeTab === 'toggles'
+                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${activeTab === 'toggles'
                     ? 'bg-slate-900 text-sky-400 border-t-2 border-sky-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <Sparkles size={14} />
                 <span>Layout & Toggles</span>
@@ -378,11 +373,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
               <button
                 type="button"
                 onClick={() => setActiveTab('footer')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${
-                  activeTab === 'footer'
+                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-t-xl transition cursor-pointer ${activeTab === 'footer'
                     ? 'bg-slate-900 text-sky-400 border-t-2 border-sky-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <FileText size={14} />
                 <span>Footer & Policy</span>
@@ -391,7 +385,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
 
             {/* TAB CONTENTS (SCROLLABLE) */}
             <div className="flex-1 p-5 overflow-y-auto space-y-4">
-              
+
               {/* TAB 1: STORE & TAX IDENTITY */}
               {activeTab === 'store' && (
                 <div className="space-y-4">
@@ -523,13 +517,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('seniorHighLegibility', !config.seniorHighLegibility)}
-                      className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer shrink-0 ${
-                        config.seniorHighLegibility ? 'bg-emerald-600 shadow-md shadow-emerald-600/30' : 'bg-slate-700'
-                      }`}
+                      className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer shrink-0 ${config.seniorHighLegibility ? 'bg-emerald-600 shadow-md shadow-emerald-600/30' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-5 h-5 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.seniorHighLegibility ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-5 h-5 rounded-full bg-white absolute top-1 transition-transform ${config.seniorHighLegibility ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -547,11 +539,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                           key={ts}
                           type="button"
                           onClick={() => handleUpdate('totalBannerSize', ts)}
-                          className={`py-2 px-3 rounded-xl border text-center font-bold text-xs capitalize transition cursor-pointer flex flex-col items-center justify-center ${
-                            config.totalBannerSize === ts
+                          className={`py-2 px-3 rounded-xl border text-center font-bold text-xs capitalize transition cursor-pointer flex flex-col items-center justify-center ${config.totalBannerSize === ts
                               ? 'bg-sky-500/20 border-sky-500 text-white'
                               : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                          }`}
+                            }`}
                         >
                           <span>{ts === 'standard' ? 'Standard (20pt)' : (ts === 'extra_bold' ? 'Extra Bold (28pt)' : 'Jumbo (36pt)')}</span>
                           <span className="text-[10px] text-slate-400 font-normal">
@@ -571,11 +562,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('paperWidth', '58mm')}
-                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
-                          config.paperWidth === '58mm'
+                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${config.paperWidth === '58mm'
                             ? 'bg-sky-500/20 border-sky-500 text-white shadow-md shadow-sky-500/10'
                             : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-black text-sm">58mm Roll (Standard)</span>
@@ -589,11 +579,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('paperWidth', '80mm')}
-                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
-                          config.paperWidth === '80mm'
+                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${config.paperWidth === '80mm'
                             ? 'bg-sky-500/20 border-sky-500 text-white shadow-md shadow-sky-500/10'
                             : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-black text-sm">80mm Wide Roll</span>
@@ -617,11 +606,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                           key={sz}
                           type="button"
                           onClick={() => handleUpdate('fontSize', sz)}
-                          className={`py-2 px-3 rounded-xl border text-center font-bold text-xs capitalize transition cursor-pointer ${
-                            config.fontSize === sz
+                          className={`py-2 px-3 rounded-xl border text-center font-bold text-xs capitalize transition cursor-pointer ${config.fontSize === sz
                               ? 'bg-sky-500/20 border-sky-500 text-white'
                               : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                          }`}
+                            }`}
                         >
                           {sz === 'compact' && 'Compact (18pt)'}
                           {sz === 'standard' && 'Standard (20pt)'}
@@ -640,11 +628,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('printDensity', 'normal')}
-                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                          config.printDensity === 'normal'
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${config.printDensity === 'normal'
                             ? 'bg-sky-500/20 border-sky-500 text-white'
                             : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                        }`}
+                          }`}
                       >
                         <div className="font-bold text-xs">Normal</div>
                         <div className="text-[10px] text-slate-400">Standard ESC/POS</div>
@@ -653,11 +640,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('printDensity', 'dark')}
-                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                          config.printDensity === 'dark'
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${config.printDensity === 'dark'
                             ? 'bg-sky-500/20 border-sky-500 text-white'
                             : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                        }`}
+                          }`}
                       >
                         <div className="font-bold text-xs">Dark</div>
                         <div className="text-[10px] text-slate-400">Emphasized Bold</div>
@@ -666,11 +652,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('printDensity', 'deep_burn')}
-                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                          config.printDensity === 'deep_burn'
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${config.printDensity === 'deep_burn'
                             ? 'bg-emerald-500/20 border-emerald-500 text-white'
                             : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-                        }`}
+                          }`}
                       >
                         <div className="font-bold text-xs text-emerald-400">Deep Burn (A+)</div>
                         <div className="text-[10px] text-slate-400">High Contrast Bold</div>
@@ -693,11 +678,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                             key={lines}
                             type="button"
                             onClick={() => handleUpdate('feedLines', lines)}
-                            className={`flex-1 py-1 rounded text-xs font-bold cursor-pointer ${
-                              config.feedLines === lines
+                            className={`flex-1 py-1 rounded text-xs font-bold cursor-pointer ${config.feedLines === lines
                                 ? 'bg-sky-600 text-white'
                                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                            }`}
+                              }`}
                           >
                             {lines}L {lines === 4 ? '★' : ''}
                           </button>
@@ -715,13 +699,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                       <button
                         type="button"
                         onClick={() => handleUpdate('autoCut', !config.autoCut)}
-                        className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                          config.autoCut ? 'bg-emerald-600' : 'bg-slate-700'
-                        }`}
+                        className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.autoCut ? 'bg-emerald-600' : 'bg-slate-700'
+                          }`}
                       >
-                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                          config.autoCut ? 'right-1' : 'left-1'
-                        }`} />
+                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.autoCut ? 'right-1' : 'left-1'
+                          }`} />
                       </button>
                     </div>
                   </div>
@@ -747,13 +729,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showArabicHeader', !config.showArabicHeader)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showArabicHeader ? 'bg-sky-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showArabicHeader ? 'bg-sky-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showArabicHeader ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showArabicHeader ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -767,13 +747,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showArabicItems', !config.showArabicItems)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showArabicItems ? 'bg-sky-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showArabicItems ? 'bg-sky-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showArabicItems ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showArabicItems ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -787,13 +765,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showVatBreakdown', !config.showVatBreakdown)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showVatBreakdown ? 'bg-sky-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showVatBreakdown ? 'bg-sky-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showVatBreakdown ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showVatBreakdown ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -810,13 +786,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showNbrQr', !config.showNbrQr)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showNbrQr ? 'bg-emerald-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showNbrQr ? 'bg-emerald-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showNbrQr ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showNbrQr ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -833,13 +807,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showReturnBarcode', !config.showReturnBarcode)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showReturnBarcode ? 'bg-sky-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showReturnBarcode ? 'bg-sky-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showReturnBarcode ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showReturnBarcode ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -856,13 +828,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showKhataQr', !config.showKhataQr)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showKhataQr ? 'bg-purple-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showKhataQr ? 'bg-purple-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showKhataQr ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showKhataQr ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
 
@@ -878,13 +848,11 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                     <button
                       type="button"
                       onClick={() => handleUpdate('showCreditBalanceBox', !config.showCreditBalanceBox)}
-                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                        config.showCreditBalanceBox ? 'bg-emerald-600' : 'bg-slate-700'
-                      }`}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${config.showCreditBalanceBox ? 'bg-emerald-600' : 'bg-slate-700'
+                        }`}
                     >
-                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        config.showCreditBalanceBox ? 'right-1' : 'left-1'
-                      }`} />
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${config.showCreditBalanceBox ? 'right-1' : 'left-1'
+                        }`} />
                     </button>
                   </div>
                 </div>
@@ -963,7 +931,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
 
           {/* RIGHT COLUMN: LIVE THERMAL RECEIPT SIMULATOR (5 COLS) */}
           <div className="md:col-span-5 flex flex-col bg-slate-950 p-4 overflow-hidden">
-            
+
             {/* SIMULATOR HEADER */}
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3 shrink-0">
               <div className="flex items-center gap-1.5">
@@ -971,18 +939,16 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                   <button
                     type="button"
                     onClick={() => setPreviewReceiptType('CREDIT')}
-                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
-                      previewReceiptType === 'CREDIT' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
+                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${previewReceiptType === 'CREDIT' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
                   >
                     Khata Credit
                   </button>
                   <button
                     type="button"
                     onClick={() => setPreviewReceiptType('CASH')}
-                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
-                      previewReceiptType === 'CASH' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
+                    className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${previewReceiptType === 'CASH' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
                   >
                     Cash Bill
                   </button>
@@ -994,18 +960,16 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                 <button
                   type="button"
                   onClick={() => setPreviewMode('rendered')}
-                  className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
-                    previewMode === 'rendered' ? 'bg-sky-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
-                  }`}
+                  className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${previewMode === 'rendered' ? 'bg-sky-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                    }`}
                 >
                   Visual Slip
                 </button>
                 <button
                   type="button"
                   onClick={() => setPreviewMode('monospaced')}
-                  className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${
-                    previewMode === 'monospaced' ? 'bg-sky-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
-                  }`}
+                  className={`px-2 py-1 text-[11px] font-bold rounded cursor-pointer transition ${previewMode === 'monospaced' ? 'bg-sky-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                    }`}
                 >
                   Monospace
                 </button>
@@ -1014,10 +978,10 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
 
             {/* SIMULATOR SCROLLABLE CANVAS (REALISTIC THERMAL PAPER) */}
             <div className="flex-1 bg-slate-900 rounded-xl border border-slate-800 p-3 overflow-y-auto flex justify-center items-start shadow-inner">
-              
+
               {previewMode === 'rendered' ? (
                 /* RENDERED HTML SLIP */
-                <div 
+                <div
                   className="bg-white text-black shadow-2xl rounded-sm p-3 relative transition-all"
                   style={{
                     width: config.paperWidth === '80mm' ? '300px' : '230px',
@@ -1053,7 +1017,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
                 </div>
               ) : (
                 /* MONOSPACED RAW STREAM */
-                <div 
+                <div
                   className="bg-zinc-900 border border-zinc-700 text-emerald-400 p-4 rounded-lg font-mono text-xs whitespace-pre-wrap leading-tight shadow-xl"
                   style={{
                     width: config.paperWidth === '80mm' ? '320px' : '250px',

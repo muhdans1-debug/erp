@@ -75,7 +75,7 @@ const getFinancialReportData = async (query = {}) => {
 
     const rawPType = String(sale.paymentType || sale.paymentMethod || 'CASH').toUpperCase();
     let pType = 'CASH';
-    if (['CREDIT', 'NFC_CREDIT', 'MESS_KHATA', 'KHATA', 'KHATA_CREDIT'].includes(rawPType)) {
+    if (['CREDIT', 'NFC_CREDIT', 'MESS_KHATA', 'KHATA', 'KHATA_CREDIT', 'CREDIT_PERSONAL', 'CREDIT_MESS'].includes(rawPType)) {
       pType = 'CREDIT';
     } else if (['CARD', 'DEBIT_CARD', 'CREDIT_CARD'].includes(rawPType)) {
       pType = 'CARD';
@@ -576,7 +576,7 @@ fastify.get('/api/reports/unified', { preHandler: managerAuth }, async (request,
             LEFT JOIN Customer c ON k.customerId = c.id
             WHERE ((k.timestamp BETWEEN ? AND ?) OR (datetime(k.timestamp) BETWEEN datetime(?) AND datetime(?)))
               AND (k.type IN ('PAYMENT', 'PAYMENT_IN') OR k.amount < 0)
-              AND (COALESCE(k.reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(k.reference, '') NOT LIKE 'Refund Credit Note%')`,
+              AND (COALESCE(k.reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(k.reference, '') NOT LIKE 'Refund Credit Note%' AND COALESCE(k.reference, '') NOT LIKE 'Mess Equal Split Rebalance%')`,
       args: [startIso, endIso, startIso, endIso]
     });
     const allKhata = khataRes.rows || [];
@@ -718,7 +718,7 @@ fastify.get('/api/reports/unified-cashflow', { preHandler: managerAuth }, async 
             SELECT 'KHATA_PAYMENT' as type, id, ABS(amount) as amount, 'KHATA' as paymentType, timestamp as createdAt FROM KhataLedger 
             WHERE timestamp BETWEEN ? AND ? 
               AND (type IN ('PAYMENT', 'PAYMENT_IN') OR amount < 0)
-              AND (COALESCE(reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(reference, '') NOT LIKE 'Refund Credit Note%')
+              AND (COALESCE(reference, '') NOT LIKE 'VOID Reversal%' AND COALESCE(reference, '') NOT LIKE 'Refund Credit Note%' AND COALESCE(reference, '') NOT LIKE 'Mess Equal Split Rebalance%')
             ORDER BY createdAt DESC`,
       args: [start, end, start, end, start, end]
     });

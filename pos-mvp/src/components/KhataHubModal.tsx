@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown, Check, ShieldCheck, RefreshCw, ShoppingCart, CreditCard, Users, Scale } from 'lucide-react';
+import { X, User, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown, Check, ShoppingCart, CreditCard, Users, Scale } from 'lucide-react';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
-import { getManagerPin, verifyManagerPin } from '../utils/authUtils';
+import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { saveOfflineKhataSettlement, markOfflineKhataSettlementSynced } from '../utils/nativeDb';
-import NfcManager from './NfcManager';
+import { MessGroupsHubView } from './MessGroupsHubView';
+import { PersonalStatementView } from './PersonalStatementView';
 
 interface Customer {
   id: string;
@@ -21,6 +22,7 @@ interface Customer {
   cardUid?: string | null;
   currentBalance: number;
   balance?: number;
+  personalBalance?: number;
   creditLimit?: number;
   isStale?: boolean;
   isOverLimit?: boolean;
@@ -32,7 +34,23 @@ interface Customer {
   messName?: string | null;
   mess_name?: string | null;
   isMessGroup?: boolean;
-  messes?: { id: string; group_name: string }[];
+  messShare?: number;
+  messGroupTotal?: number;
+  mess_group_total?: number;
+  messTotal?: number;
+  mess_total?: number;
+  messMemberCount?: number;
+  members?: any[];
+  messes?: {
+    id: string;
+    group_name: string;
+    name?: string;
+    groupTotal?: number;
+    totalBalance?: number;
+    memberCount?: number;
+    memberShare?: number;
+    myShare?: number;
+  }[];
   mess_ids?: string[];
   isMultiMess?: boolean;
   hasMessGroup?: boolean;
@@ -82,37 +100,13 @@ export default function KhataHubModal({
   lastScannedCardUid,
   showToast
 }: KhataHubModalProps) {
-  const [activeTab, setActiveTab] = useState<'SETTLE' | 'CLAIMS' | 'NEW' | 'CARDS'>('SETTLE');
+  const [activeTab, setActiveTab] = useState<'SETTLE' | 'STATEMENT' | 'GROUPS' | 'NEW'>('SETTLE');
   const [targetCustomerForStatement, setTargetCustomerForStatement] = useState<any | null>(null);
+  const [targetMessGroupId, setTargetMessGroupId] = useState<string | null>(null);
   // Unified single-pipeline state using parent-provided NFC card UID (eliminates duplicate listener collision)
   const [scannedUid, setScannedUid] = useState<string | null>(lastScannedCardUid || null);
   const lastDetectedUid = lastScannedCardUid || scannedUid;
   const clearScan = useCallback(() => setScannedUid(null), []);
-
-  const [pendingClaims, setPendingClaims] = useState<any[]>([]);
-  const [loadingClaims, setLoadingClaims] = useState(false);
-  const [actioningClaimId, setActioningClaimId] = useState<string | null>(null);
-
-  const fetchPendingClaims = useCallback(async () => {
-    try {
-      setLoadingClaims(true);
-      const res = await fetch(`${apiBase}/api/khata/claims/pending`);
-      if (res.ok) {
-        const data = await res.json();
-        setPendingClaims(data.claims || []);
-      }
-    } catch (err) {
-      console.warn('Failed to load pending claims:', err);
-    } finally {
-      setLoadingClaims(false);
-    }
-  }, [apiBase]);
-
-  useEffect(() => {
-    fetchPendingClaims();
-    const timer = setInterval(fetchPendingClaims, 10000);
-    return () => clearInterval(timer);
-  }, [fetchPendingClaims]);
 
   useEffect(() => {
     if (lastScannedCardUid) {
@@ -120,77 +114,26 @@ export default function KhataHubModal({
     }
   }, [lastScannedCardUid]);
 
-  // Live NFC listener directly in KhataHubModal
+  // Live NFC listener directly in KhataHubModal: Any card tap switches to Central Payment immediately
   useEffect(() => {
     const handleSunmiNfc = (e: any) => {
       const uid = e?.detail?.tag_id || e?.detail?.nfcId || (typeof e?.detail === 'string' ? e.detail : '');
       if (uid) {
         setScannedUid(uid.trim().toUpperCase());
+        setActiveTab('SETTLE');
       }
     };
     window.addEventListener('sunmi-nfc-scan', handleSunmiNfc);
-    return () => window.removeEventListener('sunmi-nfc-scan', handleSunmiNfc);
+    window.addEventListener('sunmi-nfc-broadcast', handleSunmiNfc);
+    return () => {
+      window.removeEventListener('sunmi-nfc-scan', handleSunmiNfc);
+      window.removeEventListener('sunmi-nfc-broadcast', handleSunmiNfc);
+    };
   }, []);
-
-  const handleApproveClaim = async (claim: any) => {
-    if (actioningClaimId) return;
-    setActioningClaimId(claim.id);
-    try {
-      const res = await fetch(`${apiBase}/api/khata/claims/${claim.id}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewer: 'POS Cashier' })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast ? showToast(`Approved BD ${Number(data.clearedAmount).toFixed(3)} for ${claim.customerName || 'customer'}!`, 'success') : alert('Approved!');
-        try {
-          kickCashDrawer();
-          playThankYouVoice();
-        } catch { }
-        setPendingClaims((prev) => prev.filter((c) => c.id !== claim.id));
-        onCustomerUpdated?.();
-      } else {
-        const err = data.error || 'Failed to approve claim';
-        showToast ? showToast(err, 'error') : alert(err);
-      }
-    } catch (err: any) {
-      showToast ? showToast(err.message || 'Network error', 'error') : alert('Network error');
-    } finally {
-      setActioningClaimId(null);
-    }
-  };
-
-  const handleRejectClaim = async (claim: any) => {
-    if (actioningClaimId) return;
-    if (!window.confirm(`Are you sure you want to REJECT the BD ${Number(claim.amount).toFixed(3)} payment claim for ${claim.customerName || 'customer'}? Debt balance will remain unpaid.`)) {
-      return;
-    }
-    setActioningClaimId(claim.id);
-    try {
-      const res = await fetch(`${apiBase}/api/khata/claims/${claim.id}/reject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewer: 'POS Cashier', reason: 'Unverified on BenefitPay device' })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast ? showToast(`Claim rejected for ${claim.customerName}`, 'info') : alert('Claim rejected');
-        setPendingClaims((prev) => prev.filter((c) => c.id !== claim.id));
-      } else {
-        const err = data.error || 'Failed to reject claim';
-        showToast ? showToast(err, 'error') : alert(err);
-      }
-    } catch (err: any) {
-      showToast ? showToast(err.message || 'Network error', 'error') : alert('Network error');
-    } finally {
-      setActioningClaimId(null);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header & Tabs */}
         <div className="bg-slate-50 border-b">
           <div className="flex justify-between items-center p-4">
@@ -202,71 +145,89 @@ export default function KhataHubModal({
               <X size={24} />
             </button>
           </div>
-          <div className="flex grid-cols-4 w-full text-base font-bold">
+          <div className="flex w-full text-base font-bold overflow-x-auto">
             <button
               onClick={() => setActiveTab('SETTLE')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${activeTab === 'SETTLE'
-                ? 'border-emerald-500 text-emerald-600 bg-emerald-50'
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'SETTLE'
+                ? 'border-emerald-500 text-emerald-600 bg-emerald-50 font-black'
                 : 'border-transparent text-slate-500 hover:bg-slate-100'
                 }`}
             >
-              Receive Payment
+              <CreditCard size={18} />
+              <span>Central Payment</span>
             </button>
             <button
-              onClick={() => {
-                setActiveTab('CLAIMS');
-                fetchPendingClaims();
-              }}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'CLAIMS'
-                ? 'border-amber-500 text-amber-600 bg-amber-50'
+              onClick={() => setActiveTab('STATEMENT')}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'STATEMENT'
+                ? 'border-teal-600 text-teal-700 bg-teal-50 font-black'
                 : 'border-transparent text-slate-500 hover:bg-slate-100'
                 }`}
             >
-              <span>BenefitPay Claims</span>
-              {pendingClaims.length > 0 && (
-                <span className="px-2 py-0.5 text-xs bg-amber-500 text-white font-black rounded-full animate-pulse">
-                  {pendingClaims.length}
-                </span>
-              )}
+              <FileText size={18} />
+              <span>Personal Statement</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('GROUPS')}
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'GROUPS'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50 font-black'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+                }`}
+            >
+              <Users size={18} />
+              <span>Mess Groups</span>
             </button>
             <button
               onClick={() => setActiveTab('NEW')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer ${activeTab === 'NEW'
-                ? 'border-blue-500 text-blue-600 bg-blue-50'
+              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'NEW'
+                ? 'border-blue-500 text-blue-600 bg-blue-50 font-black'
                 : 'border-transparent text-slate-500 hover:bg-slate-100'
                 }`}
             >
-              <UserPlus className="inline mr-1" size={18} /> New Customer
-            </button>
-            <button
-              onClick={() => setActiveTab('CARDS')}
-              className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'CARDS'
-                ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
-                : 'border-transparent text-slate-500 hover:bg-slate-100'
-                }`}
-            >
-              <CreditCard className="inline mr-1" size={18} />
-              <span>NFC Cards & Mess</span>
+              <UserPlus size={18} />
+              <span>New Customer</span>
             </button>
           </div>
         </div>
 
         {/* Dynamic Content Area */}
         <div className="p-6 bg-white min-h-[420px] max-h-[75vh] overflow-y-auto">
-          {activeTab === 'CARDS' ? (
-            <NfcManager
+          {activeTab === 'GROUPS' ? (
+            <MessGroupsHubView
               apiBase={apiBase}
-              onNavigateToKhata={() => setActiveTab('SETTLE')}
+              initialGroupId={targetMessGroupId}
+              scannedCardUid={lastDetectedUid}
+              onSelectCustomerForCart={onSelectCustomerForCart}
               onOpenCustomerStatement={(cust) => {
                 setTargetCustomerForStatement(cust);
+                setActiveTab('STATEMENT');
+              }}
+              onClose={onClose}
+              showToast={showToast}
+              onCustomerUpdated={onCustomerUpdated}
+            />
+          ) : activeTab === 'STATEMENT' ? (
+            <PersonalStatementView
+              apiBase={apiBase}
+              initialCustomer={targetCustomerForStatement}
+              scannedCardUid={lastDetectedUid}
+              onSelectCustomerForCart={onSelectCustomerForCart}
+              onClose={onClose}
+              showToast={showToast}
+              onCustomerUpdated={onCustomerUpdated}
+            />
+          ) : activeTab === 'NEW' ? (
+            <NewCustomerView
+              apiBase={apiBase}
+              lastScannedCardUid={lastScannedCardUid || lastDetectedUid}
+              scannedCardUid={scannedUid}
+              clearScan={clearScan}
+              onCustomerCreated={() => {
+                onCustomerUpdated?.();
                 setActiveTab('SETTLE');
               }}
-              onSelectCustomerForCart={(selected) => {
-                onSelectCustomerForCart?.(selected);
-                onClose();
-              }}
+              showToast={showToast}
             />
-          ) : activeTab === 'SETTLE' ? (
+          ) : (
             <SettleBalanceView
               apiBase={apiBase}
               onCustomerUpdated={onCustomerUpdated}
@@ -278,98 +239,14 @@ export default function KhataHubModal({
               clearScan={clearScan}
               initialTargetCustomer={targetCustomerForStatement}
               onClearTargetCustomer={() => setTargetCustomerForStatement(null)}
-            />
-          ) : activeTab === 'CLAIMS' ? (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border">
-                <div>
-                  <h4 className="font-extrabold text-slate-800 text-lg">BenefitPay Fawri+ Claims</h4>
-                  <p className="text-xs text-slate-500">
-                    Verify customer's reference against the store BenefitPay phone before approving.
-                  </p>
-                </div>
-                <button
-                  onClick={fetchPendingClaims}
-                  disabled={loadingClaims}
-                  className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-700 flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw size={14} className={loadingClaims ? 'animate-spin' : ''} />
-                  <span>Refresh</span>
-                </button>
-              </div>
-
-              {loadingClaims && pendingClaims.length === 0 ? (
-                <div className="py-12 text-center text-slate-400">Loading claims...</div>
-              ) : pendingClaims.length === 0 ? (
-                <div className="py-12 text-center space-y-2">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 mx-auto flex items-center justify-center text-slate-400">
-                    <ShieldCheck size={24} />
-                  </div>
-                  <p className="text-sm font-bold text-slate-600">No Pending BenefitPay Claims</p>
-                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    When customers submit a Fawri+ transfer reference on their PWA, it will appear here for cashier review.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingClaims.map((claim) => (
-                    <div
-                      key={claim.id}
-                      className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-amber-400 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-extrabold text-slate-900 text-base">
-                            {claim.customerName || 'Customer'}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                            Ref: {claim.reference}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-500 font-mono">
-                          Current Debt: BD {Number(claim.currentBalance ?? 0).toFixed(3)} • Claimed: <strong className="text-emerald-700 font-extrabold text-sm">BD {Number(claim.amount).toFixed(3)}</strong>
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          Submitted {new Date(claim.createdAt || Date.now()).toLocaleTimeString()}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <button
-                          type="button"
-                          onClick={() => handleApproveClaim(claim)}
-                          disabled={actioningClaimId === claim.id}
-                          className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          <Check size={16} />
-                          <span>Approve & Clear</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRejectClaim(claim)}
-                          disabled={actioningClaimId === claim.id}
-                          className="flex-1 sm:flex-none px-3 py-2.5 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                        >
-                          <X size={16} />
-                          <span>Reject</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <NewCustomerView
-              apiBase={apiBase}
-              lastScannedCardUid={lastScannedCardUid || lastDetectedUid}
-              scannedCardUid={scannedUid}
-              clearScan={clearScan}
-              onCustomerCreated={() => {
-                onCustomerUpdated?.();
-                setActiveTab('SETTLE');
+              onOpenStatementTab={(cust) => {
+                setTargetCustomerForStatement(cust);
+                setActiveTab('STATEMENT');
               }}
-              showToast={showToast}
+              onOpenMessGroupTab={(messId) => {
+                setTargetMessGroupId(messId);
+                setActiveTab('GROUPS');
+              }}
             />
           )}
         </div>
@@ -479,7 +356,9 @@ function SettleBalanceView({
   scannedCardUid,
   clearScan,
   initialTargetCustomer,
-  onClearTargetCustomer
+  onClearTargetCustomer,
+  onOpenStatementTab,
+  onOpenMessGroupTab
 }: {
   apiBase: string;
   onCustomerUpdated?: () => void;
@@ -491,6 +370,8 @@ function SettleBalanceView({
   clearScan?: () => Promise<void> | void;
   initialTargetCustomer?: any | null;
   onClearTargetCustomer?: () => void;
+  onOpenStatementTab?: (customer: Customer) => void;
+  onOpenMessGroupTab?: (messId: string) => void;
 }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState('');
@@ -498,6 +379,67 @@ function SettleBalanceView({
   const [payAmount, setPayAmount] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isNfcLoading, setIsNfcLoading] = useState(false);
+  const [paymentTarget, setPaymentTarget] = useState<'TOTAL' | 'PERSONAL' | 'MESS' | 'MESS_GROUP'>('TOTAL');
+  const [selectedPaymentMessId, setSelectedPaymentMessId] = useState<string | null>(null);
+
+  // Helpers for multi-tier balances
+  const getBal = (c: any) => Number(c?.currentBalance ?? c?.balance ?? 0);
+  const getMessGroupTotal = (c: any, specificMessId?: string | null) => {
+    if (!c) return 0;
+    const targetId = specificMessId || (paymentTarget === 'MESS_GROUP' ? selectedPaymentMessId : null);
+    if (targetId && Array.isArray(c.messes)) {
+      const found = c.messes.find((m: any) => m.id === targetId);
+      if (found) {
+        return Number(found.groupTotal ?? found.totalBalance ?? 0);
+      }
+    }
+    return Number(c.messGroupTotal ?? c.mess_group_total ?? c.messTotal ?? c.mess_total ?? (c.isMessGroup ? (c.totalBalance ?? c.balance ?? 0) : 0));
+  };
+  const getMessBal = (c: any, specificMessId?: string | null) => {
+    if (!c) return 0;
+    const targetId = specificMessId || (paymentTarget === 'MESS' ? selectedPaymentMessId : null);
+    if (targetId && Array.isArray(c.messes)) {
+      const found = c.messes.find((m: any) => m.id === targetId);
+      if (found && (found.memberShare !== undefined || found.myShare !== undefined)) {
+        return Math.max(0, Number(found.memberShare ?? found.myShare ?? 0));
+      }
+    }
+    // 1. Direct explicit messShare from DB/API/state (respect 0 as fully paid - NEVER resurrect ghost room debt!)
+    if (c.messShare !== undefined && c.messShare !== null) {
+      return Math.max(0, Number(c.messShare));
+    }
+    // 2. Member share in messes array if explicitly specified
+    if (c.messes && c.messes.length > 0) {
+      const sumShares = c.messes.reduce((acc: number, m: any) => acc + Number(m.memberShare ?? m.myShare ?? 0), 0);
+      if (sumShares > 0) return Number(sumShares.toFixed(3));
+      const primary = c.messes[0];
+      if (primary.members && Array.isArray(primary.members)) {
+        const myMember = primary.members.find((m: any) => m.id === c.id);
+        if (myMember && myMember.messShare !== undefined && myMember.messShare !== null) {
+          return Math.max(0, Number(myMember.messShare));
+        }
+      }
+    }
+    return 0;
+  };
+  const getPersonalBal = (c: any) => {
+    if (!c) return 0;
+    if (c.personalBalance !== undefined && c.personalBalance !== null) {
+      return Math.max(0, Number(c.personalBalance));
+    }
+    const total = Number(c.currentBalance ?? c.balance ?? 0);
+    const mess = getMessBal(c);
+    return Math.max(0, Number((total - mess).toFixed(3)));
+  };
+  const getTotalBal = (c: any) => {
+    if (!c) return 0;
+    if (c.currentBalance !== undefined && c.currentBalance !== null) {
+      return Math.max(0, Number(Number(c.currentBalance).toFixed(3)));
+    }
+    const pBal = getPersonalBal(c);
+    const mBal = getMessBal(c);
+    return Number((pBal + mBal).toFixed(3));
+  };
 
   // New State for Edit/Archive Modal
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -549,32 +491,43 @@ function SettleBalanceView({
     }
 
     if (!source || !Array.isArray(source)) return [];
-    const dateFiltered = source.filter((item) => {
-      if (statementTypeFilter === 'CHARGES') {
-        const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount) > 0;
-        if (!isCharge) return false;
-      } else if (statementTypeFilter === 'PAYMENTS') {
-        const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || item.amount) < 0;
-        if (!isPayment) return false;
-      }
 
-      if (!statementStartDate && !statementEndDate) return true;
+    const start = statementStartDate ? new Date(statementStartDate) : null;
+    const end = statementEndDate ? new Date(statementEndDate) : null;
+    if (end) end.setHours(23, 59, 59, 999);
+
+    let openingBal = 0;
+    const dateFiltered: any[] = [];
+
+    source.forEach((item) => {
       const dateStr = item.created_at || item.timestamp || item.createdAt;
-      if (!dateStr) return true;
-      const txDate = new Date(dateStr);
-      const start = statementStartDate ? new Date(statementStartDate) : new Date('2000-01-01');
-      const end = statementEndDate ? new Date(statementEndDate) : new Date('2100-01-01');
-      if (statementEndDate) end.setHours(23, 59, 59, 999);
-      return txDate >= start && txDate <= end;
+      const txDate = dateStr ? new Date(dateStr) : new Date(0);
+      const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || 0) < 0;
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (isPayment ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
+
+      if (start && txDate < start) {
+        // Prior transaction contributes to Balance Brought Forward (Opening Balance)
+        openingBal += amt;
+      } else if ((!start || txDate >= start) && (!end || txDate <= end)) {
+        if (statementTypeFilter === 'CHARGES') {
+          const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || amt > 0;
+          if (!isCharge) return;
+        } else if (statementTypeFilter === 'PAYMENTS') {
+          if (!isPayment) return;
+        }
+        dateFiltered.push(item);
+      }
     });
 
-    // Recompute chronological running balance along this filtered subset for mathematical consistency
+    // Recompute chronological running balance starting from the true opening balance
     const chronological = [...dateFiltered].sort(
       (a, b) => new Date(a.created_at || a.timestamp || 0).getTime() - new Date(b.created_at || b.timestamp || 0).getTime()
     );
-    let runBal = 0;
+
+    let runBal = openingBal;
     const recomputed = chronological.map((item) => {
-      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (item.type === 'PAYMENT' || item.type === 'WRITE_OFF' ? -Math.abs(item.amount) : Math.abs(item.amount)));
+      const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || 0) < 0;
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (isPayment ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
       runBal += amt;
       return {
         ...item,
@@ -582,6 +535,24 @@ function SettleBalanceView({
         runningBalance: Number(runBal.toFixed(3))
       };
     });
+
+    // If a start date filter was applied and prior balance was non-zero, show explicit Opening Balance row
+    if (start && Math.abs(openingBal) > 0.0001 && statementTypeFilter === 'ALL') {
+      const obRow = {
+        id: `ob_${statementStartDate}`,
+        reference: 'Balance Brought Forward (Opening Balance)',
+        type: 'OPENING_BALANCE',
+        amount: Math.abs(openingBal),
+        raw_amount: openingBal,
+        running_balance: Number(openingBal.toFixed(3)),
+        runningBalance: Number(openingBal.toFixed(3)),
+        formattedDate: new Date(statementStartDate).toLocaleDateString('en-GB'),
+        formattedTime: '00:00',
+        created_at: new Date(statementStartDate).toISOString(),
+        isOpeningBalanceRow: true
+      };
+      recomputed.unshift(obRow);
+    }
 
     return recomputed.reverse();
   }, [statement, statementStartDate, statementEndDate, statementTypeFilter, statementTab, activeMessGroup, selectedMessMemberFilter, selectedCustomer]);
@@ -618,15 +589,13 @@ function SettleBalanceView({
     };
   }, []);
 
-  const getBal = (c: any) => Number(c?.currentBalance ?? c?.balance ?? 0);
-
   // Fetch active customers for the Khata Hub
   const fetchKhataCustomers = async () => {
     try {
       let data: any = null;
       const headers = {
         'x-pos-client': 'store-pos',
-        'x-manager-pin': getManagerPin() || '9999'
+        'x-manager-pin': getManagerPin()
       };
       const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
       const candidates = [
@@ -670,19 +639,103 @@ function SettleBalanceView({
         }
       }
 
+      // Fetch Mess Groups so Central Payment can display room totals & settle full room debt
+      let messGroupsList: any[] = [];
+      for (const url of candidates) {
+        try {
+          const mRes = await fetch(`${url}/api/nfc/mess-groups`, {
+            headers,
+            signal: AbortSignal.timeout(3000)
+          });
+          if (mRes.ok) {
+            const mData = await mRes.json();
+            if (mData?.messGroups && Array.isArray(mData.messGroups)) {
+              messGroupsList = mData.messGroups;
+              break;
+            }
+          }
+        } catch { }
+      }
+
+      const messGroupMap = new Map<string, any>();
+      messGroupsList.forEach((mg) => {
+        if (mg && mg.id) {
+          messGroupMap.set(mg.id, mg);
+        }
+      });
+
       const list = (data && data.customers) || (Array.isArray(data) ? data : []);
       const normalized = list
         .map((c: any) => {
           const isAct = c.is_active !== 0 && c.is_active !== false && c.isActive !== false;
+          const rawMesses = Array.isArray(c.messes) && c.messes.length > 0
+            ? c.messes
+            : (c.mess_id ? [{ id: c.mess_id, group_name: c.messName || c.mess_name || 'Mess Group' }] : []);
+          const messes = rawMesses.map((m: any) => {
+            const gMeta = messGroupMap.get(m.id);
+            const myMember = gMeta?.members?.find((mem: any) => mem.id === c.id);
+            const gTotal = m.groupTotal ?? gMeta?.totalBalance ?? 0;
+            const mCount = m.memberCount ?? gMeta?.memberCount ?? (gMeta?.members?.length || 1);
+            const mShare = m.memberShare ?? myMember?.messShare ?? 0;
+            return {
+              ...m,
+              id: m.id,
+              name: m.group_name || m.name || gMeta?.group_name || 'Mess Group',
+              group_name: m.group_name || m.name || gMeta?.group_name || 'Mess Group',
+              groupTotal: Number(Number(gTotal).toFixed(3)),
+              totalBalance: Number(Number(gTotal).toFixed(3)),
+              memberCount: Number(mCount),
+              memberShare: Number(Number(mShare).toFixed(3)),
+              myShare: Number(Number(mShare).toFixed(3))
+            };
+          });
+          const primaryMessId = messes[0]?.id || c.mess_id || null;
+          const groupMeta = primaryMessId ? messGroupMap.get(primaryMessId) : null;
+          const hasMess = Boolean(c.hasMessGroup || messes.length > 0 || c.mess_id);
+          const mgTotal = Number(c.messGroupTotal ?? c.mess_group_total ?? c.messTotal ?? c.mess_total ?? groupMeta?.totalBalance ?? 0);
+          const mgCount = Number(c.messMemberCount ?? groupMeta?.memberCount ?? (groupMeta?.members?.length || messes.length || 1));
+
+          // Resolve mess share with bulletproof accuracy:
+          // 1. Direct explicit c.messShare from DB/API (respect 0 as fully paid - do NOT resurrect room split!)
+          // 2. Sum of individual mess shares across all enrolled mess groups
+          // 3. Fallback only if completely undefined/null
+          let resolvedMessShare = 0;
+          if (c.messShare !== undefined && c.messShare !== null) {
+            resolvedMessShare = Math.max(0, Number(c.messShare));
+          } else if (messes.length > 0) {
+            resolvedMessShare = messes.reduce((acc: number, m: any) => acc + Number(m.memberShare || 0), 0);
+          } else if (hasMess && groupMeta) {
+            const memberRecord = groupMeta.members?.find((m: any) => m.id === c.id);
+            if (memberRecord && memberRecord.messShare !== undefined && memberRecord.messShare !== null) {
+              resolvedMessShare = Math.max(0, Number(memberRecord.messShare));
+            }
+          }
+
+          const currentBal = Number(c.currentBalance ?? c.balance ?? 0);
+          const personalBal = c.personalBalance !== undefined && c.personalBalance !== null
+            ? Math.max(0, Number(c.personalBalance))
+            : Math.max(0, Number((currentBal - resolvedMessShare).toFixed(3)));
+
           return {
             ...c,
-            currentBalance: Number(c.currentBalance ?? c.balance ?? 0),
-            balance: Number(c.balance ?? c.currentBalance ?? 0),
+            currentBalance: currentBal,
+            balance: currentBal,
+            personalBalance: Number(personalBal.toFixed(3)),
+            messShare: Number(resolvedMessShare.toFixed(3)),
+            messGroupTotal: mgTotal,
+            mess_group_total: mgTotal,
+            messTotal: mgTotal,
+            mess_total: mgTotal,
+            messMemberCount: mgCount,
             creditLimit: Number(c.creditLimit) > 0 ? Number(c.creditLimit) : (Number(c.credit_limit) > 0 ? Number(c.credit_limit) : 30.0),
             cardUid: c.cardUid || c.nfcCardId || null,
-            mess_id: c.mess_id || null,
-            messName: c.messName || c.mess_name || null,
-            mess_name: c.mess_name || c.messName || null,
+            mess_id: primaryMessId,
+            messName: c.messName || c.mess_name || messes.map((m: any) => m.group_name).join(', ') || null,
+            mess_name: c.mess_name || c.messName || messes.map((m: any) => m.group_name).join(', ') || null,
+            messes,
+            hasMessGroup: hasMess,
+            isDual: hasMess && !c.isMessGroup,
+            isMultiMess: messes.length > 1,
             isMessGroup: Boolean(c.isMessGroup),
             is_active: isAct ? 1 : 0,
             isActive: isAct,
@@ -690,8 +743,41 @@ function SettleBalanceView({
           };
         });
 
-      if (normalized.length > 0) {
-        setCustomers(normalized);
+      // Normalize Mess Groups as payable entities for 1-click room settlements
+      const normalizedGroups = messGroupsList.map((mg: any) => ({
+        id: mg.id,
+        name: `👥 ${mg.group_name} (Mess Group Total)`,
+        phone: mg.members?.[0]?.phone || '',
+        cpr: '',
+        cardUid: mg.cardTag || mg.assignedCard || null,
+        batchNo: 'ROOM-MESS',
+        currentBalance: Number(mg.totalBalance || 0),
+        balance: Number(mg.totalBalance || 0),
+        personalBalance: 0,
+        messShare: Number(mg.equalSplitShare || 0),
+        messGroupTotal: Number(mg.totalBalance || 0),
+        mess_group_total: Number(mg.totalBalance || 0),
+        messTotal: Number(mg.totalBalance || 0),
+        mess_total: Number(mg.totalBalance || 0),
+        messMemberCount: Number(mg.memberCount || mg.members?.length || 0),
+        creditLimit: 200.0,
+        mess_id: mg.id,
+        messName: mg.group_name,
+        mess_name: mg.group_name,
+        messes: [{ id: mg.id, group_name: mg.group_name }],
+        hasMessGroup: true,
+        isDual: false,
+        isMultiMess: false,
+        isMessGroup: true,
+        is_active: 1,
+        isActive: true,
+        isFrozen: false,
+        members: mg.members || []
+      }));
+
+      const combined = [...normalized, ...normalizedGroups];
+      if (combined.length > 0) {
+        setCustomers(combined);
       }
     } catch (err) {
       console.error('Failed to load customers', err);
@@ -902,7 +988,7 @@ function SettleBalanceView({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': getManagerPin() || '9999',
+          'x-manager-pin': getManagerPin(),
           'x-pos-client': 'store-pos'
         }
       });
@@ -977,46 +1063,121 @@ function SettleBalanceView({
       customerPhone: selectedCustomer.phone,
       customerCpr: selectedCustomer.cpr,
       statement: formattedStatement,
-      currentBalance: Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0),
+      currentBalance: statementTab === 'PERSONAL'
+        ? Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0)
+        : Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0),
       dateRange: (statementStartDate || statementEndDate)
         ? `${statementStartDate || 'Start'} to ${statementEndDate || 'Today'}`
         : undefined
     });
   };
 
-  // NFC Card Lookup: query /api/customers/nfc/:uid
+  // NFC Card Lookup: Instant 0ms In-Memory Match + Multi-Endpoint Fallback
   const handleNfcLookup = async (uid: string) => {
-    if (!uid) return;
+    if (!uid || !uid.trim()) return;
+    const cleanUid = uid.trim().toUpperCase();
+    const cleanNoColon = cleanUid.replace(/[:\-]/g, '');
     setIsNfcLoading(true);
-    try {
-      const res = await fetch(`${apiBase}/api/customers/nfc/${encodeURIComponent(uid.trim())}`);
-      const data = await res.json();
 
-      if (data.success && data.customer) {
-        // Card recognized: Instantly push them to the payment view
-        setSelectedCustomer(data.customer);
-        setViewMode('PAY');
-        if (showToast) {
-          showToast(`Khata Card Recognized: ${data.customer.name}`, 'success');
-        }
-      } else {
-        // Card unrecognized
-        const errMsg = "This NFC card is not linked to any Khata account in the Askar store database.";
-        if (showToast) {
-          showToast(errMsg, 'error');
-        } else {
-          alert(errMsg);
-        }
-      }
-    } catch (error) {
-      console.error("NFC Lookup Error", error);
+    // 1. ⚡ 0ms Instant In-Memory Match from loaded customers
+    const localMatch = customers.find((c) => {
+      const cUid = String(c.cardUid || (c as any).nfcCardId || '').toUpperCase();
+      const cUidNoColon = cUid.replace(/[:\-]/g, '');
+      return (cUid && cUid === cleanUid) || (cUidNoColon && cUidNoColon === cleanNoColon);
+    });
+
+    if (localMatch) {
+      setSelectedCustomer(localMatch);
+      setPaymentTarget('TOTAL');
+      const bal = getTotalBal(localMatch);
+      setPayAmount(bal > 0 ? bal.toFixed(3) : '');
+      setViewMode('PAY');
       if (showToast) {
-        showToast("NFC lookup failed. Check server connection.", 'error');
+        showToast(`💳 Khata Card Recognized: ${localMatch.name}`, 'success');
       }
-    } finally {
       setIsNfcLoading(false);
+      return;
+    }
+
+    // 2. Multi-Endpoint Candidate Fallback (PC Server LAN IP, Edge API, Localhost)
+    const candidates = [
+      apiBase && !apiBase.includes('localhost') ? apiBase : null,
+      getApiBaseUrl(),
+      'http://192.168.8.7:3000',
+      'http://localhost:3000',
+      DEFAULT_EDGE_API_URL
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+    for (const base of candidates) {
+      try {
+        for (const testUid of [cleanUid, cleanNoColon]) {
+          for (const path of ['/api/khata/nfc', '/api/customers/nfc']) {
+            const res = await fetch(`${base}${path}/${encodeURIComponent(testUid)}`, {
+              headers: { 'x-manager-pin': getManagerPin() },
+              signal: AbortSignal.timeout(3000)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && data.customer) {
+                const cust = data.customer;
+                cust.currentBalance = Number(cust.currentBalance ?? cust.balance ?? 0);
+                cust.balance = cust.currentBalance;
+
+                let nfcMessShare = Number(cust.messShare || 0);
+                if (nfcMessShare === 0 && (cust.hasMessGroup || cust.mess_id)) {
+                  nfcMessShare = Number(cust.messGroup?.equalSplitShare ?? cust.messes?.[0]?.equalSplitShare ?? 0);
+                  if (nfcMessShare === 0 && cust.messGroup?.totalBalance && cust.messGroup?.memberCount) {
+                    nfcMessShare = Number((cust.messGroup.totalBalance / cust.messGroup.memberCount).toFixed(3));
+                  }
+                }
+                cust.messShare = nfcMessShare;
+                cust.personalBalance = cust.personalBalance !== undefined && Number(cust.messShare || 0) > 0
+                  ? Number(cust.personalBalance)
+                  : Number(Math.max(0, cust.currentBalance - nfcMessShare).toFixed(3));
+                cust.messGroupTotal = Number(cust.messGroupTotal ?? cust.messGroup?.totalBalance ?? 0);
+                cust.messMemberCount = Number(cust.messMemberCount ?? cust.messGroup?.memberCount ?? 1);
+
+                setSelectedCustomer(cust);
+                setPaymentTarget('TOTAL');
+                const bal = getTotalBal(cust);
+                setPayAmount(bal > 0 ? bal.toFixed(3) : '');
+                setViewMode('PAY');
+                if (showToast) {
+                  showToast(`💳 Khata Card Recognized: ${cust.name}`, 'success');
+                }
+                setIsNfcLoading(false);
+                return;
+              }
+            }
+          }
+        }
+      } catch { }
+    }
+
+    setIsNfcLoading(false);
+    const errMsg = `NFC Card (${cleanUid}) is not linked to any Khata account.`;
+    if (showToast) {
+      showToast(errMsg, 'error');
+    } else {
+      alert(errMsg);
     }
   };
+
+  // Direct Hardware NFC Listener on Window
+  useEffect(() => {
+    const handleDirectScan = (e: any) => {
+      const uid = e?.detail?.tag_id || e?.detail?.nfcId || (typeof e?.detail === 'string' ? e.detail : '');
+      if (uid) {
+        handleNfcLookup(uid);
+      }
+    };
+    window.addEventListener('sunmi-nfc-scan', handleDirectScan);
+    window.addEventListener('sunmi-nfc-broadcast', handleDirectScan);
+    return () => {
+      window.removeEventListener('sunmi-nfc-scan', handleDirectScan);
+      window.removeEventListener('sunmi-nfc-broadcast', handleDirectScan);
+    };
+  }, [customers]);
 
   // Capacitor NFC Listener: triggers instantly when tag is discovered by SUNMI antenna
   useEffect(() => {
@@ -1050,6 +1211,15 @@ function SettleBalanceView({
     }
   }, [initialTargetCustomer]);
 
+  // Synchronize active payment mess id when selected customer changes
+  useEffect(() => {
+    if (selectedCustomer) {
+      setSelectedPaymentMessId(selectedCustomer.messes?.[0]?.id || selectedCustomer.mess_id || null);
+    } else {
+      setSelectedPaymentMessId(null);
+    }
+  }, [selectedCustomer?.id]);
+
   const handleSettle = async (method: 'CASH' | 'BENEFIT_PAY') => {
     if (!selectedCustomer) {
       alert('Please select a customer to settle.');
@@ -1061,11 +1231,70 @@ function SettleBalanceView({
       return;
     }
 
-    // ⚡ 0ms ZERO-LATENCY INSTANT SETTLEMENT
-    const oldBal = Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0);
-    const newBal = Math.max(0, oldBal - amountNum);
+    const oldTotal = getTotalBal(selectedCustomer);
+    const oldPersonal = getPersonalBal(selectedCustomer);
+    const oldMess = getMessBal(selectedCustomer);
+
+    const isMessGroupPayment = paymentTarget === 'MESS_GROUP' || Boolean(selectedCustomer.isMessGroup);
+    const targetMessId = isMessGroupPayment
+      ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? (selectedCustomer.isMessGroup ? selectedCustomer.id : null)))
+      : (paymentTarget === 'MESS'
+        ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? null))
+        : (paymentTarget === 'TOTAL' && oldPersonal <= 0 && oldMess > 0
+          ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? null))
+          : null));
+
+    let newPersonal = oldPersonal;
+    let newMess = oldMess;
+    let newTotal = Math.max(0, oldTotal - amountNum);
+    let updatedMesses = selectedCustomer.messes;
+
+    if (isMessGroupPayment) {
+      // Paying the full communal room debt:
+      // 1. The customer's personal tab is 100% UNTOUCHED
+      newPersonal = oldPersonal;
+      // 2. The specific mess room debt is paid, so this customer's share in that room becomes 0.000
+      const paidMess = selectedCustomer.messes?.find((m: any) => m.id === targetMessId);
+      const paidShare = paidMess ? Number(paidMess.memberShare ?? paidMess.myShare ?? 0) : oldMess;
+      newMess = Math.max(0, Number((oldMess - paidShare).toFixed(3)));
+      // 3. The customer's new account balance is strictly their untouched personal balance + remaining other mess shares!
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+      if (Array.isArray(selectedCustomer.messes)) {
+        updatedMesses = selectedCustomer.messes.map((m: any) => {
+          if (m.id === targetMessId) {
+            return { ...m, groupTotal: 0, totalBalance: 0, memberShare: 0, myShare: 0 };
+          }
+          return m;
+        });
+      }
+    } else if (paymentTarget === 'PERSONAL') {
+      newPersonal = Math.max(0, oldPersonal - amountNum);
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+    } else if (paymentTarget === 'MESS') {
+      newMess = Math.max(0, oldMess - amountNum);
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+    } else {
+      // Total settlement: clears personal first if any, then mess share
+      if (amountNum >= oldPersonal && oldPersonal > 0) {
+        newPersonal = 0;
+        newMess = Math.max(0, oldMess - (amountNum - oldPersonal));
+      } else {
+        newPersonal = Math.max(0, oldPersonal - amountNum);
+      }
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+    }
+
     const tempReceiptNo = `KH-${Date.now().toString().slice(-6)}`;
-    const updated = { ...selectedCustomer, currentBalance: newBal, balance: newBal };
+    const updated = {
+      ...selectedCustomer,
+      currentBalance: newTotal,
+      balance: newTotal,
+      personalBalance: newPersonal,
+      messShare: newMess,
+      messes: updatedMesses,
+      messGroupTotal: isMessGroupPayment ? 0 : selectedCustomer.messGroupTotal,
+      mess_group_total: isMessGroupPayment ? 0 : selectedCustomer.mess_group_total
+    };
 
     // 1. Immediately update UI state (0ms delay - no modal freeze!)
     setSelectedCustomer(updated);
@@ -1073,7 +1302,14 @@ function SettleBalanceView({
     setPayAmount('');
     setIsSubmitting(false);
 
-    const msg = `✅ Received BD ${amountNum.toFixed(3)} via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}! New Balance: BD ${newBal.toFixed(3)}`;
+    const activeMessName = selectedCustomer.messes?.find((m: any) => m.id === targetMessId)?.group_name || selectedCustomer.messName || 'Mess Room';
+    const targetDesc = isMessGroupPayment
+      ? `Full Mess Group Total (${activeMessName})`
+      : (paymentTarget === 'PERSONAL'
+        ? 'Personal Tab'
+        : (paymentTarget === 'MESS' ? `Mess Share (${activeMessName})` : 'Total Account'));
+
+    const msg = `✅ Received BD ${amountNum.toFixed(3)} for ${targetDesc} via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}! New Total: BD ${newTotal.toFixed(3)}`;
     showToast ? showToast(msg, 'success') : alert(msg);
     onCustomerUpdated?.();
 
@@ -1091,12 +1327,12 @@ function SettleBalanceView({
     // 5. ⚡ NON-BLOCKING THERMAL RECEIPT PRINT (DO NOT AWAIT - eliminates 2s hardware freeze)
     printKhataPaymentReceipt({
       customerId: selectedCustomer.id,
-      customerName: selectedCustomer.name,
+      customerName: `${selectedCustomer.name} (${targetDesc})`,
       customerPhone: selectedCustomer.phone,
       customerCpr: selectedCustomer.cpr,
-      previousBalance: oldBal,
+      previousBalance: oldTotal,
       amountPaid: amountNum,
-      newBalance: newBal,
+      newBalance: newTotal,
       paymentMethod: method,
       receiptNo: tempReceiptNo,
       cashierName: 'Cashier 01',
@@ -1109,22 +1345,44 @@ function SettleBalanceView({
     (async () => {
       const settleId = crypto.randomUUID();
       try {
-        await db.execute({
-          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, runningBalance, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          args: [
-            settleId,
-            selectedCustomer.id,
-            -amountNum,
-            'PAYMENT',
-            tempReceiptNo,
-            newBal,
-            new Date().toISOString()
-          ]
-        });
-        await db.execute({
-          sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
-          args: [newBal, selectedCustomer.id]
-        });
+        if (!isMessGroupPayment) {
+          await db.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, runningBalance, timestamp, mess_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              settleId,
+              selectedCustomer.id,
+              -amountNum,
+              'PAYMENT',
+              `${targetDesc} Payment (${tempReceiptNo})`,
+              newTotal,
+              new Date().toISOString(),
+              targetMessId
+            ]
+          });
+          await db.execute({
+            sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
+            args: [newTotal, selectedCustomer.id]
+          });
+        } else if (oldMess > 0) {
+          // If paying full mess room and this customer had positive mess share, credit their individual share locally
+          await db.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, runningBalance, timestamp, mess_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              settleId,
+              selectedCustomer.id,
+              -oldMess,
+              'PAYMENT',
+              `${targetDesc} Payment (${tempReceiptNo})`,
+              newTotal,
+              new Date().toISOString(),
+              targetMessId
+            ]
+          });
+          await db.execute({
+            sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
+            args: [newTotal, selectedCustomer.id]
+          });
+        }
       } catch (localDbErr) {
         console.warn('Local ledger write notice:', localDbErr);
       }
@@ -1145,10 +1403,20 @@ function SettleBalanceView({
       }
 
       try {
-        const res = await fetch(`${apiBase}/api/customers/${selectedCustomer.id}/settle`, {
+        const settleEndpointId = (isMessGroupPayment && targetMessId) ? targetMessId : selectedCustomer.id;
+        const res = await fetch(`${apiBase}/api/customers/${settleEndpointId}/settle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: amountNum, amountPaid: amountNum, paymentMethod: method }),
+          body: JSON.stringify({
+            amount: amountNum,
+            amountPaid: amountNum,
+            paymentMethod: method,
+            paymentTarget,
+            target: paymentTarget,
+            messId: targetMessId,
+            mess_id: targetMessId,
+            reference: `${targetDesc} Payment (${tempReceiptNo})`
+          }),
           signal: AbortSignal.timeout(3000)
         });
         if (res.ok) {
@@ -1158,13 +1426,10 @@ function SettleBalanceView({
           if (data?.receiptNo) {
             broadcastKhataPayment(updated, amountNum, true, method, data.receiptNo);
           }
+          fetchKhataCustomers();
         }
-      } catch (syncErr) {
-        console.warn('Khata settlement server sync notice (queued offline):', syncErr);
-      }
-
-      if (viewMode === 'STATEMENT') {
-        loadStatement(selectedCustomer.id);
+      } catch (cloudErr) {
+        console.warn('Cloud sync error for settlement:', cloudErr);
       }
     })();
   };
@@ -1189,16 +1454,44 @@ function SettleBalanceView({
     });
   };
 
+  // Auto-select if search query matches exact NFC card UID (wedge scanner or manual punch)
+  useEffect(() => {
+    const sClean = (search || '').trim().toUpperCase().replace(/[:\-]/g, '');
+    if (sClean.length >= 8 && !selectedCustomer) {
+      const exactMatch = customers.find((c) => {
+        const cUid = String(c.cardUid || (c as any).nfcCardId || '').toUpperCase().replace(/[:\-]/g, '');
+        return cUid && cUid === sClean;
+      });
+      if (exactMatch) {
+        setSelectedCustomer(exactMatch);
+        setPaymentTarget('TOTAL');
+        const bal = getTotalBal(exactMatch);
+        setPayAmount(bal > 0 ? bal.toFixed(3) : '');
+        setViewMode('PAY');
+        setSearch('');
+        if (showToast) {
+          showToast(`💳 Khata Card Recognized: ${exactMatch.name}`, 'success');
+        }
+      } else if (/^[0-9A-F]{8,24}$/i.test(sClean)) {
+        handleNfcLookup(sClean);
+      }
+    }
+  }, [search, customers, selectedCustomer]);
+
   const filtered = customers.filter(c => {
     if (messOnlyFilter && !c.mess_id && !c.messName && !c.mess_name) return false;
     const s = (search || '').toLowerCase().trim();
     if (!s) return true;
+    const sNoColon = s.replace(/[:\-]/g, '');
+    const cUid = String(c.cardUid || (c as any).nfcCardId || '').toLowerCase();
+    const cUidNoColon = cUid.replace(/[:\-]/g, '');
+
     return (
       (c.name && c.name.toLowerCase().includes(s)) ||
       (c.phone && c.phone.includes(s)) ||
       (c.cpr && c.cpr.toLowerCase().includes(s)) ||
       (c.batchNo && c.batchNo.toLowerCase().includes(s)) ||
-      (c.cardUid && c.cardUid.toLowerCase().includes(s)) ||
+      (cUid && (cUid.includes(s) || (sNoColon && cUidNoColon.includes(sNoColon)))) ||
       (c.messName && c.messName.toLowerCase().includes(s)) ||
       (c.mess_name && c.mess_name.toLowerCase().includes(s))
     );
@@ -1233,7 +1526,13 @@ function SettleBalanceView({
                 Take Payment
               </button>
               <button
-                onClick={() => loadStatement(selectedCustomer.id)}
+                onClick={() => {
+                  if (onOpenStatementTab) {
+                    onOpenStatementTab(selectedCustomer);
+                  } else {
+                    loadStatement(selectedCustomer.id);
+                  }
+                }}
                 className={`flex items-center gap-2 px-5 py-2 rounded-lg font-bold text-sm transition-all cursor-pointer ${viewMode === 'STATEMENT'
                   ? 'bg-white shadow-sm text-slate-900 border border-slate-200'
                   : 'text-slate-500 hover:text-slate-700'
@@ -1273,130 +1572,378 @@ function SettleBalanceView({
             </div>
           </div>
 
-          {/* Customer Identity Card */}
-          <div className="bg-slate-50 border-2 border-slate-200 rounded-xl p-4 flex justify-between items-center shrink-0 shadow-sm">
-            <div>
-              <div className="flex items-center gap-2">
-                <h4 className="text-2xl font-black text-slate-800">{selectedCustomer.name}</h4>
-                {(selectedCustomer.is_active === 0 || selectedCustomer.isActive === false || selectedCustomer.isFrozen) && (
-                  <span className="text-xs bg-red-100 text-red-700 border border-red-300 px-2.5 py-0.5 rounded-md font-black uppercase tracking-wider flex items-center gap-1 shadow-2xs">
-                    🔒 ACCOUNT FROZEN
-                  </span>
-                )}
-                {selectedCustomer.batchNo && (
-                  <span className="text-xs bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
-                    {selectedCustomer.batchNo}
-                  </span>
-                )}
-                {/* Edit/Archive button for active customer */}
+          {/* Customer Identity & 3-Part Financial Balance Cards */}
+          <div className="bg-slate-50 border-2 border-slate-200 rounded-xl p-4 flex flex-col gap-3 shrink-0 shadow-sm">
+            <div className="flex justify-between items-start flex-wrap gap-2">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-2xl font-black text-slate-800">{selectedCustomer.name}</h4>
+                  {(selectedCustomer.is_active === 0 || selectedCustomer.isActive === false || selectedCustomer.isFrozen) && (
+                    <span className="text-xs bg-red-100 text-red-700 border border-red-300 px-2.5 py-0.5 rounded-md font-black uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                      🔒 ACCOUNT FROZEN
+                    </span>
+                  )}
+                  {selectedCustomer.batchNo && (
+                    <span className="text-xs bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
+                      {selectedCustomer.batchNo}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setEditingCustomer(selectedCustomer)}
+                    title="Edit Customer"
+                    className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                  >
+                    <Settings size={15} /> Edit
+                  </button>
+                </div>
+                <div className="text-slate-500 font-medium flex flex-wrap items-center gap-2 mt-1 text-sm">
+                  <span>{selectedCustomer.phone || 'No Phone on Record'}</span>
+                  {selectedCustomer.cpr && (
+                    <span className="text-slate-400 font-mono text-xs">
+                      · CPR: {selectedCustomer.cpr}
+                    </span>
+                  )}
+                  {selectedCustomer.cardUid && (
+                    <span className="font-mono text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                      💳 NFC: {selectedCustomer.cardUid}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Direct Statement Switchers */}
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setEditingCustomer(selectedCustomer)}
-                  title="Edit / Archive Customer Details"
-                  className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                  onClick={() => onOpenStatementTab?.(selectedCustomer)}
+                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  title="Open Dedicated Chronological Personal Statement"
                 >
-                  <Settings size={16} /> Edit
+                  <FileText size={14} />
+                  <span>📄 Personal Statement</span>
                 </button>
-              </div>
-              <div className="text-slate-500 font-medium flex flex-wrap items-center gap-2 mt-1 text-sm">
-                <span>{selectedCustomer.phone || 'No Phone on Record'}</span>
-                {selectedCustomer.cpr && (
-                  <span className="text-slate-400 font-mono text-xs">
-                    · CPR: {selectedCustomer.cpr}
-                  </span>
-                )}
-                {selectedCustomer.cardUid && (
-                  <span className="font-mono text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
-                    💳 NFC: {selectedCustomer.cardUid}
-                  </span>
-                )}
-                {(selectedCustomer.messName || selectedCustomer.mess_name) && (
-                  <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
-                    👥 {selectedCustomer.messName || selectedCustomer.mess_name}
-                  </span>
+                {(selectedCustomer.mess_id || selectedCustomer.hasMessGroup) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const mId = selectedCustomer.mess_id || selectedCustomer.messes?.[0]?.id;
+                      if (mId && onOpenMessGroupTab) {
+                        onOpenMessGroupTab(mId);
+                      } else {
+                        loadStatement(selectedCustomer.mess_id || selectedCustomer.id, true);
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    title={`Open ${selectedCustomer.messName || 'Mess'} Group Statement`}
+                  >
+                    <Users size={14} />
+                    <span>👥 {selectedCustomer.messName || 'Mess'} Statement</span>
+                  </button>
                 )}
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Owed</p>
-              <p className="text-3xl font-black text-red-500">BD {getBal(selectedCustomer).toFixed(3)}</p>
+
+            {/* Financial Breakdown Cards with Full Mess Room Visibility */}
+            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-${Math.min(6, 2 + (selectedCustomer.messes?.length || (selectedCustomer.mess_id ? 2 : 1)))} gap-2.5 pt-1`}>
+              {/* Personal Tab */}
+              <div
+                onClick={() => {
+                  setPaymentTarget('PERSONAL');
+                  setSelectedPaymentMessId(null);
+                  setPayAmount(Math.max(0, getPersonalBal(selectedCustomer)).toFixed(3));
+                }}
+                className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${paymentTarget === 'PERSONAL'
+                  ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-200 shadow-xs'
+                  : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+              >
+                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
+                  <span>Personal Tab</span>
+                  <User size={14} className="text-emerald-600" />
+                </div>
+                <div className="text-2xl font-black text-slate-800 mt-1">
+                  BD {getPersonalBal(selectedCustomer).toFixed(3)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Private purchases</div>
+              </div>
+
+              {/* My Mess Share */}
+              {(selectedCustomer.mess_id || selectedCustomer.hasMessGroup || selectedCustomer.isMessGroup) && (
+                <div
+                  onClick={() => {
+                    setPaymentTarget('MESS');
+                    setSelectedPaymentMessId(null);
+                    setPayAmount(Math.max(0, getMessBal(selectedCustomer)).toFixed(3));
+                  }}
+                  className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${paymentTarget === 'MESS'
+                    ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
+                    : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                >
+                  <div className="text-xs text-indigo-700 font-bold uppercase tracking-wider flex items-center justify-between">
+                    <span className="truncate">My Mess Share</span>
+                    <Users size={14} className="text-indigo-600 shrink-0" />
+                  </div>
+                  <div className="text-2xl font-black text-indigo-700 mt-1">
+                    BD {getMessBal(selectedCustomer).toFixed(3)}
+                  </div>
+                  <div className="text-[11px] text-indigo-800 font-bold mt-1 truncate">
+                    {selectedCustomer.messes && selectedCustomer.messes.length > 1
+                      ? `${selectedCustomer.messes.length} Mess Groups Combined`
+                      : 'Individual room share'}
+                  </div>
+                </div>
+              )}
+
+              {/* Full Mess Room Balances (Prominently displaying separate room debt for EACH enrolled mess) */}
+              {selectedCustomer.messes && selectedCustomer.messes.length > 0 ? (
+                selectedCustomer.messes.map((m: any) => {
+                  const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                  const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
+                  const mShare = Number(m.memberShare ?? m.myShare ?? 0);
+                  const mName = m.group_name || m.name || 'Room Mess';
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => {
+                        setPaymentTarget('MESS_GROUP');
+                        setSelectedPaymentMessId(m.id);
+                        setPayAmount(Math.max(0, gTotal).toFixed(3));
+                      }}
+                      className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${isSelected
+                        ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 shadow-xs'
+                        : 'bg-purple-50/40 border-purple-200 hover:border-purple-300'
+                        }`}
+                    >
+                      <div className="text-xs text-purple-700 font-bold uppercase tracking-wider flex items-center justify-between">
+                        <span className="truncate" title={mName}>Full Mess: {mName}</span>
+                        <Users size={14} className="text-purple-600 shrink-0" />
+                      </div>
+                      <div className="text-2xl font-black text-purple-800 mt-1">
+                        BD {gTotal.toFixed(3)}
+                      </div>
+                      <div className="text-[11px] text-purple-700 font-bold mt-1 flex items-center justify-between">
+                        <span className="truncate">My Share: BD {mShare.toFixed(3)}</span>
+                        <span className="shrink-0">{m.memberCount || 2} members</span>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (selectedCustomer.mess_id || selectedCustomer.hasMessGroup || selectedCustomer.isMessGroup) ? (
+                <div
+                  onClick={() => {
+                    setPaymentTarget('MESS_GROUP');
+                    setSelectedPaymentMessId(selectedCustomer.mess_id || null);
+                    setPayAmount(Math.max(0, getMessGroupTotal(selectedCustomer)).toFixed(3));
+                  }}
+                  className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${paymentTarget === 'MESS_GROUP'
+                    ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 shadow-xs'
+                    : 'bg-purple-50/40 border-purple-200 hover:border-purple-300'
+                    }`}
+                >
+                  <div className="text-xs text-purple-700 font-bold uppercase tracking-wider flex items-center justify-between">
+                    <span className="truncate">Full Room Mess</span>
+                    <Users size={14} className="text-purple-600 shrink-0" />
+                  </div>
+                  <div className="text-2xl font-black text-purple-800 mt-1">
+                    BD {getMessGroupTotal(selectedCustomer).toFixed(3)}
+                  </div>
+                  <div className="text-[11px] text-purple-700 font-bold mt-1 flex items-center justify-between">
+                    <span className="truncate">👥 {selectedCustomer.messName || 'Room'}</span>
+                    <span className="shrink-0">{selectedCustomer.messMemberCount || 2} members</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Total Owed */}
+              <div
+                onClick={() => {
+                  setPaymentTarget('TOTAL');
+                  setSelectedPaymentMessId(null);
+                  setPayAmount(Math.max(0, getTotalBal(selectedCustomer)).toFixed(3));
+                }}
+                className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${paymentTarget === 'TOTAL'
+                  ? 'bg-red-50 border-red-500 ring-2 ring-red-200 shadow-xs'
+                  : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+              >
+                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
+                  <span>Grand Total Due</span>
+                  <CreditCard size={14} className="text-red-500" />
+                </div>
+                <div className={`text-2xl font-black mt-1 ${getTotalBal(selectedCustomer) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  BD {getTotalBal(selectedCustomer).toFixed(3)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Personal + Mess share</div>
+              </div>
             </div>
           </div>
 
-          {/* Mess Group Affiliation Banner with 1-Click Split Statement Button */}
-          {(selectedCustomer.messName || selectedCustomer.mess_name || selectedCustomer.mess_id || activeMessGroup) && (
-            <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
-                  <Users size={16} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black text-indigo-950">
-                      Mess Account: {activeMessGroup?.group_name || selectedCustomer.messName || selectedCustomer.mess_name || 'Camp Mess'}
-                    </span>
-                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-200/60 text-indigo-800">
-                      {activeMessGroup?.memberCount || 'Shared'} Members
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-indigo-700 font-medium mt-0.5">
-                    {activeMessGroup ? `Total Camp Debt: BD ${activeMessGroup.totalBalance.toFixed(3)} • Equal Share: BD ${(activeMessGroup.equalSplitShare ?? (activeMessGroup.totalBalance / Math.max(1, activeMessGroup.memberCount))).toFixed(3)}/member` : 'Labor camp shared grocery group'}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  loadStatement(selectedCustomer.mess_id || selectedCustomer.id, true);
-                }}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Users size={14} />
-                <span>View Mess Split Statement (كشف الميس)</span>
-              </button>
-            </div>
-          )}
-
           {/* DYNAMIC AREA: Payment vs Statement */}
           {viewMode === 'PAY' ? (
-            <div className="flex-1 space-y-6 pt-2">
-              {/* Quick Balance Buttons */}
-              {getBal(selectedCustomer) > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 font-bold uppercase">Quick Fill:</span>
+            <div className="flex-1 space-y-4 pt-1">
+              {/* Target Allocation Buttons */}
+              <div>
+                <label className="block text-xs text-slate-500 font-black uppercase tracking-wider mb-1.5">
+                  Select Debt to Settle / اختر الحساب المراد سداده:
+                </label>
+                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1.5 flex-wrap">
                   <button
-                    onClick={() => setPayAmount(getBal(selectedCustomer).toFixed(3))}
-                    className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('TOTAL');
+                      setPayAmount(Math.max(0, getTotalBal(selectedCustomer)).toFixed(3));
+                    }}
+                    className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'TOTAL'
+                      ? 'bg-red-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 bg-white/60'
+                      }`}
                   >
-                    Full Balance (BD {getBal(selectedCustomer).toFixed(3)})
+                    <CreditCard size={14} />
+                    <span>Total Due (BD {getTotalBal(selectedCustomer).toFixed(3)})</span>
                   </button>
-                  {getBal(selectedCustomer) > 0.200 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('PERSONAL');
+                      setPayAmount(Math.max(0, getPersonalBal(selectedCustomer)).toFixed(3));
+                    }}
+                    className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'PERSONAL'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 bg-white/60'
+                      }`}
+                  >
+                    <User size={14} />
+                    <span>Personal Tab Only (BD {getPersonalBal(selectedCustomer).toFixed(3)})</span>
+                  </button>
+                  {(selectedCustomer.mess_id || selectedCustomer.hasMessGroup) && (
                     <button
-                      onClick={() => setPayAmount((getBal(selectedCustomer) / 2).toFixed(3))}
-                      className="px-3 py-1.5 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      type="button"
+                      onClick={() => {
+                        setPaymentTarget('MESS');
+                        setPayAmount(Math.max(0, getMessBal(selectedCustomer)).toFixed(3));
+                      }}
+                      className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'MESS'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 bg-white/60'
+                        }`}
                     >
-                      50% Partial (BD {(getBal(selectedCustomer) / 2).toFixed(3)})
+                      <Users size={14} />
+                      <span>My Mess Share Only (BD {getMessBal(selectedCustomer).toFixed(3)})</span>
                     </button>
                   )}
-                  {getBal(selectedCustomer) >= 5 && (
+                  {selectedCustomer.messes && selectedCustomer.messes.length > 1 ? (
+                    selectedCustomer.messes.map((m: any) => {
+                      const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                      const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
+                      const mName = m.group_name || m.name || 'Room';
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setPaymentTarget('MESS_GROUP');
+                            setSelectedPaymentMessId(m.id);
+                            setPayAmount(Math.max(0, gTotal).toFixed(3));
+                          }}
+                          className={`flex-1 min-w-[150px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${isSelected
+                            ? 'bg-purple-700 text-white shadow-xs'
+                            : 'text-purple-700 hover:text-purple-900 bg-purple-50 border border-purple-200'
+                            }`}
+                        >
+                          <Users size={14} />
+                          <span>👥 Pay Full [{mName}] (BD {gTotal.toFixed(3)})</span>
+                        </button>
+                      );
+                    })
+                  ) : (selectedCustomer.mess_id || selectedCustomer.hasMessGroup || selectedCustomer.isMessGroup) ? (
                     <button
-                      onClick={() => setPayAmount('5.000')}
-                      className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      type="button"
+                      onClick={() => {
+                        setPaymentTarget('MESS_GROUP');
+                        setSelectedPaymentMessId(selectedCustomer.mess_id || null);
+                        setPayAmount(Math.max(0, getMessGroupTotal(selectedCustomer)).toFixed(3));
+                      }}
+                      className={`flex-1 min-w-[150px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'MESS_GROUP'
+                        ? 'bg-purple-700 text-white shadow-xs'
+                        : 'text-purple-700 hover:text-purple-900 bg-purple-50 border border-purple-200'
+                        }`}
                     >
-                      BD 5.000
+                      <Users size={14} />
+                      <span>👥 Pay Full Mess (BD {getMessGroupTotal(selectedCustomer).toFixed(3)})</span>
                     </button>
-                  )}
-                  {getBal(selectedCustomer) >= 10 && (
-                    <button
-                      onClick={() => setPayAmount('10.000')}
-                      className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
-                    >
-                      BD 10.000
-                    </button>
-                  )}
+                  ) : null}
                 </div>
-              )}
+                {paymentTarget === 'MESS_GROUP' && (
+                  <div className="mt-2 bg-purple-50 border border-purple-200 text-purple-900 rounded-xl p-2.5 text-xs flex items-center gap-2">
+                    <Users size={16} className="text-purple-600 shrink-0" />
+                    <span>
+                      {(() => {
+                        const activeMess = selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId);
+                        const name = activeMess ? (activeMess.group_name || activeMess.name) : (selectedCustomer.messName || 'Room');
+                        const bal = activeMess ? Number(activeMess.groupTotal ?? 0) : getMessGroupTotal(selectedCustomer);
+                        return (
+                          <>
+                            <strong>Full Mess Room Settlement ({name}):</strong> Clears collective room debt of <strong>BD {bal.toFixed(3)}</strong> for all members. <strong>Personal tab (BD {getPersonalBal(selectedCustomer).toFixed(3)}) will NOT be deducted or affected.</strong>
+                          </>
+                        );
+                      })()}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Dynamic Quick Fill Buttons based on active target */}
+              {(() => {
+                const activeBal = paymentTarget === 'PERSONAL'
+                  ? getPersonalBal(selectedCustomer)
+                  : (paymentTarget === 'MESS'
+                    ? getMessBal(selectedCustomer)
+                    : (paymentTarget === 'MESS_GROUP'
+                      ? getMessGroupTotal(selectedCustomer)
+                      : getTotalBal(selectedCustomer)));
+
+                return activeBal > 0 ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-500 font-bold uppercase">Quick Fill:</span>
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount(activeBal.toFixed(3))}
+                      className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg cursor-pointer active:scale-95 transition-all"
+                    >
+                      Full Target (BD {activeBal.toFixed(3)})
+                    </button>
+                    {activeBal > 0.200 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount((activeBal / 2).toFixed(3))}
+                        className="px-3 py-1.5 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        50% (BD {(activeBal / 2).toFixed(3)})
+                      </button>
+                    )}
+                    {activeBal >= 5 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount('5.000')}
+                        className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        BD 5.000
+                      </button>
+                    )}
+                    {activeBal >= 10 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount('10.000')}
+                        className="px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        BD 10.000
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
 
               {/* Payment Entry Inputs */}
               <div className="grid grid-cols-2 gap-6 pt-2">
@@ -2038,13 +2585,26 @@ function SettleBalanceView({
         {/* Search Bar + Mess Filter + Sort Order Controls */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2">
           <div className="relative flex-1">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+              <CreditCard size={18} className="text-emerald-600" />
+            </div>
             <input
               type="text"
-              placeholder="Search by name, phone, CPR, batch, mess name..."
+              placeholder="🔍 Search Name, Phone, CPR, Mess, or Tap/Type NFC Card UID..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full text-base py-3 pl-4 pr-4 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 font-medium"
+              className="w-full text-base py-3 pl-10 pr-10 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-400 font-medium"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                title="Clear Search"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
@@ -2075,143 +2635,229 @@ function SettleBalanceView({
         </div>
 
         {/* Scrollable Customer List */}
-        <div className="flex-1 overflow-y-auto scroll-zone space-y-2 max-h-[350px] pr-1">
-          {filtered.map((customer) => (
-            <div
-              key={customer.id}
-              className="w-full bg-white border-2 border-slate-100 p-3.5 rounded-xl flex items-center justify-between active:border-emerald-500 transition-all text-left shadow-sm hover:border-slate-300"
-            >
-              <div className="font-bold text-lg text-slate-800 flex items-center gap-2 flex-wrap">
-                <span>{customer.name}</span>
-                {(customer.is_active === 0 || customer.isActive === false || customer.isFrozen) && (
-                  <span className="text-[10px] bg-red-100 text-red-700 border border-red-300 px-2 py-0.5 rounded-md font-black flex items-center gap-1 shadow-2xs">
-                    🔒 FROZEN
-                  </span>
-                )}
-                {customer.batchNo && (
-                  <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
-                    {customer.batchNo}
-                  </span>
-                )}
-                {customer.messes && customer.messes.length > 0 ? (
-                  customer.messes.map((m: any) => (
-                    <span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1 shadow-2xs">
-                      <Users size={11} />
-                      <span>{m.group_name}</span>
-                    </span>
-                  ))
-                ) : (customer.messName || customer.mess_name) ? (
-                  <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1 shadow-2xs">
-                    <Users size={11} />
-                    <span>{customer.messName || customer.mess_name}</span>
-                  </span>
-                ) : null}
-              </div>
+        <div className="flex-1 overflow-y-auto scroll-zone space-y-3 max-h-[380px] pr-1">
+          {filtered.map((customer) => {
+            const personalBal = getPersonalBal(customer);
+            const messBal = getMessBal(customer);
+            const messGroupTotal = getMessGroupTotal(customer);
+            const totalBal = getTotalBal(customer);
+            const hasMess = Boolean(customer.hasMessGroup || customer.mess_id || (customer.messes && customer.messes.length > 0) || customer.isMessGroup);
+            const messName = customer.messName || customer.mess_name || (customer.messes?.[0]?.group_name) || 'Camp Mess';
 
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Direct Mess Statement Button */}
-                {(customer.messName || customer.mess_name || customer.mess_id) && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedCustomer(customer);
-                      loadStatement(customer.mess_id || customer.id, true);
-                    }}
-                    className="px-2.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 active:scale-95 transition-transform rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer shadow-2xs"
-                    title={`View Mess Split Statement for ${customer.messName || customer.mess_name || 'Mess'}`}
-                  >
-                    <Users size={14} />
-                    <span className="hidden sm:inline">Mess Split</span>
-                  </button>
-                )}
-
-                {/* One-Click WhatsApp Reminder Button */}
-                {getBal(customer) > 0 && customer.phone && (
-                  <a
-                    href={`https://wa.me/${(() => {
-                      const d = customer.phone.replace(/[^0-9]/g, '');
-                      return d.length === 8 ? `973${d}` : d;
-                    })()}?text=${encodeURIComponent(
-                      `*ASKAR SUPERMARKET - PAYMENT STATEMENT / كشف حساب أسواق عسكر*\n` +
-                      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                      `👤 *Customer / العميل:* ${customer.name}\n` +
-                      `💰 *Outstanding Balance / المبلغ المستحق:* *BHD ${getBal(customer).toFixed(3)}*\n\n` +
-                      `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
-                      `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(customer.id)}\n\n` +
-                      `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
-                      `• Registered Mobile: *+973 33843855*\n` +
-                      `• Beneficiary Name: *layali sbi*\n` +
-                      `• IBAN: *BH77SBIN02740045310001*\n\n` +
-                      `💡 *سدد فوراً عبر تطبيق بنفت بت (فوري+)*\n` +
-                      `• رقم الهاتف: *33843855*\n` +
-                      `• الاسم: *layali sbi*\n` +
-                      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                      `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-300 active:scale-90 transition-transform cursor-pointer shadow-2xs"
-                    title="Send WhatsApp Fawri+ Debt Reminder"
-                  >
-                    <MessageCircle size={18} className="fill-emerald-600/20" />
-                  </a>
-                )}
-
-                <div
-                  onClick={() => setSelectedCustomer(customer)}
-                  className="text-right cursor-pointer pr-1 select-none"
-                >
-                  <div className="text-[10px] text-slate-400 font-bold uppercase">Balance</div>
-                  <div className={`font-black text-lg ${getBal(customer) > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                    BD {getBal(customer).toFixed(3)}
+            return (
+              <div
+                key={customer.id}
+                className="w-full bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl p-3.5 transition-all text-left shadow-xs flex flex-col gap-2.5"
+              >
+                {/* Top Row: Customer Identity & Tools */}
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-lg text-slate-800">{customer.name}</span>
+                    {(customer.is_active === 0 || customer.isActive === false || customer.isFrozen) && (
+                      <span className="text-[10px] bg-red-100 text-red-700 border border-red-300 px-2 py-0.5 rounded-md font-black flex items-center gap-1 shadow-2xs">
+                        🔒 FROZEN
+                      </span>
+                    )}
+                    {customer.batchNo && (
+                      <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md uppercase tracking-wider font-extrabold">
+                        {customer.batchNo}
+                      </span>
+                    )}
+                    {customer.cardUid && (
+                      <span className="text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                        💳 {customer.cardUid}
+                      </span>
+                    )}
+                    {customer.phone && (
+                      <span className="text-xs text-slate-500 font-medium">
+                        📞 {customer.phone}
+                      </span>
+                    )}
                   </div>
-                  {customer.isStale && (
-                    <div className="text-[9px] font-black bg-rose-100 text-rose-700 px-1 py-0.2 rounded mt-0.5 border border-rose-200">
-                      🚨 STALE ({customer.daysSinceLastPayment ?? 46}d)
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* WhatsApp Reminder Button with Dual Balance Breakdown */}
+                    {totalBal > 0 && customer.phone && (
+                      <a
+                        href={`https://wa.me/${(() => {
+                          const d = customer.phone.replace(/[^0-9]/g, '');
+                          return d.length === 8 ? `973${d}` : d;
+                        })()}?text=${encodeURIComponent(
+                          `*ASKAR SUPERMARKET - ACCOUNT STATEMENT / كشف حساب أسواق عسكر*\n` +
+                          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                          `👤 *Customer / العميل:* ${customer.name}\n` +
+                          `• *Personal Tab / الحساب الشخصي:* BD ${personalBal.toFixed(3)}\n` +
+                          (hasMess ? `• *Mess Room (${messName}) / نصيب الميس:* BD ${messBal.toFixed(3)}\n` : '') +
+                          `💰 *Total Due / المبلغ الإجمالي المستحق:* *BHD ${totalBal.toFixed(3)}*\n\n` +
+                          `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
+                          `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(customer.id)}\n\n` +
+                          `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
+                          `• Registered Mobile: *+973 33843855*\n` +
+                          `• Beneficiary Name: *layali sbi*\n` +
+                          `• IBAN: *BH77SBIN02740045310001*\n` +
+                          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                          `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg border border-emerald-300 active:scale-90 transition-transform cursor-pointer shadow-2xs"
+                        title="Send WhatsApp Dual-Balance Reminder"
+                      >
+                        <MessageCircle size={16} className="fill-emerald-600/20" />
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingCustomer(customer);
+                      }}
+                      title="Edit Customer"
+                      className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg active:scale-90 transition-transform cursor-pointer border border-slate-200"
+                    >
+                      <Settings size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Middle Row: Balances Breakdown */}
+                <div className={`grid grid-cols-1 ${hasMess ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200`}>
+                  {/* Personal Balance */}
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider flex items-center gap-1">
+                      <User size={12} className="text-emerald-600" />
+                      <span>Personal Tab (شخصي)</span>
+                    </div>
+                    <div className={`text-base font-black mt-0.5 ${personalBal > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
+                      BD {personalBal.toFixed(3)}
+                    </div>
+                  </div>
+
+                  {/* My Mess Share */}
+                  {hasMess && (
+                    <div className="bg-white p-2 rounded-lg border border-slate-200">
+                      <div className="text-[10px] text-indigo-700 font-black uppercase tracking-wider flex items-center gap-1">
+                        <Users size={12} className="text-indigo-600" />
+                        <span>My Mess Share</span>
+                      </div>
+                      <div className={`text-base font-black mt-0.5 ${messBal > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>
+                        BD {messBal.toFixed(3)}
+                      </div>
                     </div>
                   )}
+
+                  {/* Full Mess Room Balance */}
+                  {hasMess && (
+                    <div className="bg-purple-50/70 p-2 rounded-lg border border-purple-200">
+                      <div className="text-[10px] text-purple-700 font-black uppercase tracking-wider flex items-center gap-1">
+                        <Users size={12} className="text-purple-600" />
+                        <span>Full Mess Room</span>
+                      </div>
+                      <div className={`text-base font-black mt-0.5 ${messGroupTotal > 0 ? 'text-purple-800' : 'text-slate-400'}`}>
+                        BD {messGroupTotal.toFixed(3)}
+                      </div>
+                      <div className="text-[9px] text-purple-600 font-bold truncate">
+                        👥 {messName}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Total Combined Due */}
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider flex items-center gap-1">
+                      <CreditCard size={12} className="text-red-500" />
+                      <span>Total Due (الإجمالي)</span>
+                    </div>
+                    <div className={`text-base font-black mt-0.5 ${totalBal > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      BD {totalBal.toFixed(3)}
+                    </div>
+                  </div>
                 </div>
 
-                {/* Direct Select / Link to Cart button */}
-                {onSelectCustomerForCart && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectCustomerForCart(customer);
-                      onClose?.();
-                    }}
-                    title={`Link ${customer.name} to active cart`}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl transition-all cursor-pointer font-bold text-xs flex items-center gap-1 shadow-sm"
-                  >
-                    <ShoppingCart size={14} /> Link Cart
-                  </button>
-                )}
+                {/* Bottom Row: Direct Action & Statement Buttons */}
+                <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Direct to Personal Statement */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onOpenStatementTab) {
+                          onOpenStatementTab(customer);
+                        } else {
+                          setSelectedCustomer(customer);
+                          loadStatement(customer.id, false);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 active:scale-95 text-teal-800 font-bold text-xs rounded-lg transition-all border border-teal-200 flex items-center gap-1 cursor-pointer"
+                      title="Open Chronological Personal Statement"
+                    >
+                      <FileText size={14} />
+                      <span>📄 Personal Statement</span>
+                    </button>
 
-                {/* Dedicated Gear Icon for Edit / Archive (Soft Delete) */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingCustomer(customer);
-                  }}
-                  title="Edit / Delete Account"
-                  className="p-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-xl active:scale-90 transition-transform cursor-pointer border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs"
-                >
-                  <Settings size={18} />
-                </button>
+                    {/* Direct to Mess Group Statement */}
+                    {hasMess && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const mId = customer.mess_id || customer.messes?.[0]?.id;
+                          if (onOpenMessGroupTab && mId) {
+                            onOpenMessGroupTab(mId);
+                          } else {
+                            setSelectedCustomer(customer);
+                            loadStatement(customer.mess_id || customer.id, true);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-800 font-bold text-xs rounded-lg transition-all border border-indigo-200 flex items-center gap-1 cursor-pointer"
+                        title={`Open ${messName} Communal Room Statement`}
+                      >
+                        <Users size={14} />
+                        <span>👥 {messName} Mess</span>
+                      </button>
+                    )}
+                  </div>
 
-                <div
-                  onClick={() => setSelectedCustomer(customer)}
-                  className="cursor-pointer pl-1"
-                >
-                  <ChevronRight className="text-slate-300" />
+                  <div className="flex items-center gap-2">
+                    {/* Link to active cart */}
+                    {onSelectCustomerForCart && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectCustomerForCart(customer);
+                          onClose?.();
+                        }}
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title={`Link ${customer.name} to active cart`}
+                      >
+                        <ShoppingCart size={13} />
+                        <span>Link Cart</span>
+                      </button>
+                    )}
+
+                    {/* Open Settle Screen Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCustomer(customer);
+                        setPaymentTarget(customer.isMessGroup ? 'MESS_GROUP' : 'TOTAL');
+                        setPayAmount(totalBal > 0 ? totalBal.toFixed(3) : '');
+                        setViewMode('PAY');
+                      }}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Banknote size={15} />
+                      <span>Settle / Pay (سداد)</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {filtered.length === 0 && (
             <div className="text-center text-slate-400 py-10 font-bold">
               No customers found{search ? ` for "${search}"` : ''}.
@@ -2385,7 +3031,7 @@ function NewCustomerView({
       const headers = {
         'Content-Type': 'application/json',
         'x-pos-client': 'store-pos',
-        'x-manager-pin': getManagerPin() || '9999'
+        'x-manager-pin': getManagerPin()
       };
 
       const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
@@ -2812,7 +3458,7 @@ function KhataEditModal({
       const headers = {
         'Content-Type': 'application/json',
         'x-pos-client': 'store-pos',
-        'x-manager-pin': getManagerPin() || '9999'
+        'x-manager-pin': getManagerPin()
       };
 
       const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
@@ -2908,10 +3554,10 @@ function KhataEditModal({
   };
 
   const handleVerifyPinAndDelete = async (pinToVerify: string) => {
-    // Protected by Manager PIN (master default 9999 or configured manager PIN)
-    const managerPin = getManagerPin();
-    if (pinToVerify !== '9999' && pinToVerify !== managerPin && !verifyManagerPin(pinToVerify)) {
-      setPinError('Unauthorized - Incorrect Manager PIN');
+    // Protected by Manager PIN (bcrypt verified via backend or offline hash)
+    const auth = await verifyManagerPinAsync(pinToVerify, apiBase);
+    if (!auth.authorized) {
+      setPinError(auth.error || 'Unauthorized - Incorrect Manager PIN');
       return;
     }
 

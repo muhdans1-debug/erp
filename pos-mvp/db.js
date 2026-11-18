@@ -73,6 +73,8 @@ if (url && isWellFormedJwt && process.env.ENABLE_TURSO_REPLICA === 'true') {
 }
 
 export const client = createClient(clientConfig);
+// Immediately set SQLite busy timeout to 10s to eliminate SQLITE_BUSY lockouts under concurrent traffic
+client.execute('PRAGMA busy_timeout = 10000;').catch(() => {});
 
 // 2. Direct Cloud Client for background non-blocking mirroring & cloud health
 export let tursoCloudClient = null;
@@ -318,11 +320,27 @@ export const ormHandler = (clientInstance) => new Proxy({}, {
 export const db = client;
 db.orm = ormHandler(client);
 
-// Atomic transaction support with .orm attached
+// Atomic transaction support with .orm attached & SQLite busy retry resilience
 const nativeTransaction = client.transaction.bind(client);
+const getTxWithRetry = async (mode) => {
+  let retries = 5;
+  while (retries > 0) {
+    try {
+      return await nativeTransaction(mode);
+    } catch (err) {
+      if (err.message && err.message.includes('SQLITE_BUSY') && retries > 1) {
+        retries--;
+        await new Promise(res => setTimeout(res, 150));
+        continue;
+      }
+      throw err;
+    }
+  }
+};
+
 db.transaction = async (callbackOrMode = 'write') => {
   if (typeof callbackOrMode === 'function') {
-    const tx = await nativeTransaction('write');
+    const tx = await getTxWithRetry('write');
     tx.orm = ormHandler(tx);
     try {
       const result = await callbackOrMode(tx);
@@ -333,7 +351,7 @@ db.transaction = async (callbackOrMode = 'write') => {
       throw err;
     }
   } else {
-    const tx = await nativeTransaction(callbackOrMode);
+    const tx = await getTxWithRetry(callbackOrMode);
     tx.orm = ormHandler(tx);
     return tx;
   }
@@ -349,9 +367,10 @@ export async function initDatabase() {
 
   // Pure standalone local SQLite mode (only when running without Turso cloud credentials)
   try {
+    await client.execute('PRAGMA busy_timeout = 10000;');
     await client.execute('PRAGMA foreign_keys = ON;');
     await client.execute('PRAGMA journal_mode = WAL;');
-    console.log('🔒 [LibSQL] PRAGMA foreign_keys = ON & WAL mode activated.');
+    console.log('🔒 [LibSQL] PRAGMA busy_timeout = 10000, foreign_keys = ON & WAL mode activated.');
   } catch (pragmaErr) {
     console.warn('⚠️ [LibSQL] PRAGMA setup notice:', pragmaErr.message);
   }

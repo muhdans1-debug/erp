@@ -37,6 +37,13 @@ if (typeof window !== 'undefined') {
     };
   }
 
+  // Purge any legacy plaintext manager credentials from local storage disk
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('askar_manager_pin');
+    localStorage.removeItem('manager_pin');
+    localStorage.removeItem('MANAGER_PIN');
+  }
+
   // ⚡ Auto-inject POS Terminal Handshake header for Sovereign Edge Gateway authentication
   if (window.fetch) {
     const originalFetch = window.fetch;
@@ -45,7 +52,7 @@ if (typeof window !== 'undefined') {
         const urlStr = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || '');
         if (urlStr.includes('/api/') || urlStr.includes('/khata') || urlStr.includes('workers.dev')) {
           const customInit: RequestInit = init ? { ...init } : {};
-          const managerPin = (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('manager_pin') || localStorage.getItem('askar_admin_pin'))) || '';
+          const managerPin = getManagerPin();
           if (customInit.headers instanceof Headers) {
             if (!customInit.headers.has('x-pos-client')) {
               customInit.headers.set('x-pos-client', 'store-pos');
@@ -80,6 +87,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { getManagerPin } from "./utils/authUtils";
 
 // Production & Embedded Android Log Silence (Eliminates logd CPU churn and UI thread lock)
 if (import.meta.env.PROD || (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.())) {

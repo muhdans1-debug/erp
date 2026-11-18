@@ -3,7 +3,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import { db, dataDir } from '../db.js';
-import { managerAuth } from '../middleware/auth.js';
+import { managerAuth, isManagerAuthorized } from '../middleware/auth.js';
 import { mirrorProductToCloud, mirrorProductTombstoneToCloud } from '../services/cloudSync.js';
 
 export default async function productRoutes(fastify, options) {
@@ -183,6 +183,10 @@ export default async function productRoutes(fastify, options) {
   });
 
   fastify.post('/api/quick-products/update', async (request, reply) => {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.status(401).send({ error: 'Manager authorization required to modify quick products' });
+    }
     const { id, barcode, category, quickColor, isQuickProduct } = request.body || {};
     if (!id && !barcode) {
       return reply.status(400).send({ error: 'Missing product id or barcode' });
@@ -211,11 +215,14 @@ export default async function productRoutes(fastify, options) {
     }
     saveQuickConfig(config);
 
-    // Non-blocking mirror to Cloudflare Edge API
+    // Non-blocking mirror to Cloudflare Edge API with POS auth key
     try {
       fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
+        },
         body: JSON.stringify({ id, barcode, category, quickColor, isQuickProduct })
       }).catch(() => {});
     } catch {}
@@ -224,6 +231,10 @@ export default async function productRoutes(fastify, options) {
   });
 
   fastify.post('/api/quick-products/swap', async (request, reply) => {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.status(401).send({ error: 'Manager authorization required to swap quick products' });
+    }
     const { oldId, newId, category, quickColor } = request.body || {};
     if (!oldId || !newId) {
       return reply.status(400).send({ error: 'Missing oldId or newId' });
@@ -246,11 +257,14 @@ export default async function productRoutes(fastify, options) {
 
     saveQuickConfig(config);
 
-    // Non-blocking mirror to Cloudflare Edge API
+    // Non-blocking mirror to Cloudflare Edge API with POS auth key
     try {
       fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/swap', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
+        },
         body: JSON.stringify({ oldId, newId, category, quickColor })
       }).catch(() => {});
     } catch {}
@@ -259,6 +273,10 @@ export default async function productRoutes(fastify, options) {
   });
 
   fastify.post('/api/quick-products/remove', async (request, reply) => {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.status(401).send({ error: 'Manager authorization required to remove quick products' });
+    }
     const { id, barcode } = request.body || {};
     const targetId = String(id || barcode || '');
     if (!targetId) {
@@ -275,11 +293,14 @@ export default async function productRoutes(fastify, options) {
 
     saveQuickConfig(config);
 
-    // Non-blocking mirror to Cloudflare Edge API
+    // Non-blocking mirror to Cloudflare Edge API with POS auth key
     try {
       fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/quick-products/remove', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
+        },
         body: JSON.stringify({ id, barcode })
       }).catch(() => {});
     } catch {}
@@ -384,68 +405,79 @@ export default async function productRoutes(fastify, options) {
     return { ...found, distributor: dist };
   });
 
-  // 5. Bulk CSV Upsert (Protected by managerAuth)
+  let isBulkUpsertLocked = false;
+
+  // 5. Bulk CSV Upsert (Protected by managerAuth & Concurrency Mutex)
   fastify.post('/api/products/bulk-upsert', { preHandler: managerAuth }, async (request, reply) => {
-    const { products } = request.body || {};
-    if (!Array.isArray(products) || products.length === 0) {
-      return reply.status(400).send({ error: 'No products provided' });
+    if (isBulkUpsertLocked) {
+      return reply.status(409).send({ success: false, error: 'A bulk product import is already in progress. Please wait.' });
     }
+    isBulkUpsertLocked = true;
 
-    const allDistributors = await db.orm.Distributor.all();
-    const distByName = new Map(allDistributors.map(d => [d.name.toLowerCase().trim(), d]));
-    const defaultDist = allDistributors[0]?.id || 'dist_local';
-
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    await db.transaction(async (tx) => {
-      for (const p of products) {
-        const pid = String(p.id || p.barcode || crypto.randomUUID()).trim();
-        const existing = await tx.orm.Product.where({ id: pid }).all().first();
-
-        let distId = p.distributorId;
-        if (!distId && p.supplierName) {
-          const matched = distByName.get(String(p.supplierName).toLowerCase().trim());
-          if (matched) distId = matched.id;
-        }
-        if (!distId) distId = defaultDist;
-
-        const cost = Number(p.purchasePrice || p.costPrice || p.unitCost || 0);
-        const sell = Number(p.sellingPrice || p.price || 0);
-        const finalVat = p.vatRate !== undefined ? Number(p.vatRate) : 10.0;
-        const finalTax = p.taxRate !== undefined ? Number(p.taxRate) : finalVat / 100.0;
-
-        const prodRecord = {
-          name: p.name || 'Unnamed Product',
-          purchasePrice: cost,
-          unitCost: cost,
-          sellingPrice: sell,
-          stockQuantity: Number(p.stockQuantity ?? 0),
-          category: p.category ? String(p.category).toUpperCase() : (existing?.category || 'GROCERY'),
-          minThreshold: Number(p.minThreshold ?? 20),
-          maxThreshold: Number(p.maxThreshold ?? 100),
-          distributorId: distId,
-          supplierName: p.supplierName || 'Local Distributor',
-          supplierEmail: p.supplierEmail || 'supplier@askar.bh',
-          barcode: p.barcode ? String(p.barcode).trim() : null,
-          vatRate: finalVat,
-          taxRate: finalTax,
-          is_weighed_item: (p.is_weighed_item === true || p.is_weighed_item === 1 || p.is_weighed_item === 'true') ? 1 : 0,
-          tenantId: p.tenantId || 'tenant_askar_01',
-          updatedAt: new Date()
-        };
-
-        if (existing) {
-          await tx.orm.Product.where({ id: pid }).update(prodRecord);
-          updatedCount++;
-        } else {
-          await tx.orm.Product.create({ id: pid, ...prodRecord });
-          createdCount++;
-        }
+    try {
+      const { products } = request.body || {};
+      if (!Array.isArray(products) || products.length === 0) {
+        return reply.status(400).send({ error: 'No products provided' });
       }
-    });
 
-    return { success: true, createdCount, updatedCount, total: products.length };
+      const allDistributors = await db.orm.Distributor.all();
+      const distByName = new Map(allDistributors.map(d => [d.name.toLowerCase().trim(), d]));
+      const defaultDist = allDistributors[0]?.id || 'dist_local';
+
+      let createdCount = 0;
+      let updatedCount = 0;
+
+      await db.transaction(async (tx) => {
+        for (const p of products) {
+          const pid = String(p.id || p.barcode || crypto.randomUUID()).trim();
+          const existing = await tx.orm.Product.where({ id: pid }).all().first();
+
+          let distId = p.distributorId;
+          if (!distId && p.supplierName) {
+            const matched = distByName.get(String(p.supplierName).toLowerCase().trim());
+            if (matched) distId = matched.id;
+          }
+          if (!distId) distId = defaultDist;
+
+          const cost = Number(p.purchasePrice || p.costPrice || p.unitCost || 0);
+          const sell = Number(p.sellingPrice || p.price || 0);
+          const finalVat = p.vatRate !== undefined ? Number(p.vatRate) : 10.0;
+          const finalTax = p.taxRate !== undefined ? Number(p.taxRate) : finalVat / 100.0;
+
+          const prodRecord = {
+            name: p.name || 'Unnamed Product',
+            purchasePrice: cost,
+            unitCost: cost,
+            sellingPrice: sell,
+            stockQuantity: Number(p.stockQuantity ?? 0),
+            category: p.category ? String(p.category).toUpperCase() : (existing?.category || 'GROCERY'),
+            minThreshold: Number(p.minThreshold ?? 20),
+            maxThreshold: Number(p.maxThreshold ?? 100),
+            distributorId: distId,
+            supplierName: p.supplierName || 'Local Distributor',
+            supplierEmail: p.supplierEmail || 'supplier@askar.bh',
+            barcode: p.barcode ? String(p.barcode).trim() : null,
+            vatRate: finalVat,
+            taxRate: finalTax,
+            is_weighed_item: (p.is_weighed_item === true || p.is_weighed_item === 1 || p.is_weighed_item === 'true') ? 1 : 0,
+            tenantId: p.tenantId || 'tenant_askar_01',
+            updatedAt: new Date()
+          };
+
+          if (existing) {
+            await tx.orm.Product.where({ id: pid }).update(prodRecord);
+            updatedCount++;
+          } else {
+            await tx.orm.Product.create({ id: pid, ...prodRecord });
+            createdCount++;
+          }
+        }
+      });
+
+      return { success: true, createdCount, updatedCount, total: products.length };
+    } finally {
+      isBulkUpsertLocked = false;
+    }
   });
 
   // 6. Feitian F100 PIM Native Push Sync Endpoint (Secured with Manager Auth & Path Traversal Guards)
@@ -1604,9 +1636,17 @@ export default async function productRoutes(fastify, options) {
       }
 
       for (const item of updates) {
-        const pid = String(item.id).trim();
+        const pid = String(item.id || '').trim();
+        if (!pid) {
+          return reply.code(400).send({ error: 'Product ID is required for each produce update item.' });
+        }
         const newSell = Number(item.sellingPrice || 0);
         const newCost = Number(item.purchasePrice !== undefined ? item.purchasePrice : (item.unitCost || 0));
+        if (isNaN(newSell) || newSell < 0 || isNaN(newCost) || newCost < 0) {
+          return reply.code(400).send({ 
+            error: `Invalid price for product "${item.name || pid}": selling price (BD ${item.sellingPrice}) and cost cannot be negative.` 
+          });
+        }
         const oldSell = Number(item.oldPrice || item.previousPrice || newSell);
         const oldCost = Number(item.oldCost || newCost);
         const wastageKg = Number(item.wastageKg || 0);

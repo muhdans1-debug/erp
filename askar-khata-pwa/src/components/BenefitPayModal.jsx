@@ -241,7 +241,10 @@ export default function BenefitPayModal({
           customerId: data.customerId,
           amount: data.amount,
           reference: normalizedRef,
-          clientToken: savedJwt
+          clientToken: savedJwt,
+          paymentTarget: data.paymentTarget,
+          targetMessId: data.targetMessId,
+          targetName: data.targetName
         })
       });
 
@@ -317,9 +320,16 @@ export default function BenefitPayModal({
         {/* Amount Banner */}
         <div className="bg-slate-950/90 px-5 py-3 border-b border-slate-800 flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              {t.amountDue}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                {t.amountDue}
+              </span>
+              {data.targetName && (
+                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  {data.targetName}
+                </span>
+              )}
+            </div>
             <div className="text-2xl font-black font-mono text-emerald-400">
               {amountStr} <span className="text-xs text-slate-300 font-sans">BHD</span>
             </div>

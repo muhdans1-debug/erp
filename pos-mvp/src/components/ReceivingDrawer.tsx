@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   Delete
 } from 'lucide-react';
-import { getManagerPin } from '../utils/authUtils';
+import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
 
 export interface POItem {
   id: string;
@@ -168,15 +168,15 @@ export default function ReceivingDrawer({
   };
 
   // Handle PIN input digits
-  const handlePinDigit = (digit: string) => {
+  const handlePinDigit = async (digit: string) => {
     if (pinInput.length >= 4) return;
     const nextPin = pinInput + digit;
     setPinInput(nextPin);
     setPinError(false);
 
     if (nextPin.length === 4) {
-      const managerPin = getManagerPin();
-      if (nextPin === managerPin) {
+      const auth = await verifyManagerPinAsync(nextPin, apiBase);
+      if (auth.authorized) {
         setIsUnlocked(true);
         playBeep(true);
       } else {

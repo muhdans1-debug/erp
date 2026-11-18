@@ -18,7 +18,10 @@ import {
   PhoneCall,
   MessageCircle,
   Clock,
-  Menu
+  Menu,
+  User,
+  Users,
+  RotateCw
 } from 'lucide-react';
 import BenefitPayModal from './components/BenefitPayModal';
 import HamburgerDrawer from './components/HamburgerDrawer';
@@ -69,7 +72,18 @@ const STATEMENT_TEXTS = {
     storePurchase: 'Store Purchase',
     currency: 'BHD',
     custom: 'Custom',
-    payCustomBtn: 'Pay Custom Amount'
+    payCustomBtn: 'Pay Custom Amount',
+    personalTab: 'Personal Tab',
+    myMessShare: 'My Mess Share',
+    fullMess: 'Full Mess',
+    allDebt: 'All Debt',
+    accountBreakdown: 'Account Breakdown (Tap to Select)',
+    privatePurchases: 'Private grocery purchases',
+    membersLabel: 'members',
+    yourShareInRoom: 'Your individual share in this room',
+    combinedRooms: 'Mess Groups Combined',
+    sharedRoomSplit: 'Your shared room split debt',
+    selectedBadge: 'Selected'
   },
   ar: {
     brand: 'أسواق أسكر المركزية',
@@ -113,7 +127,18 @@ const STATEMENT_TEXTS = {
     storePurchase: 'مشتريات من المحل',
     currency: 'د.ب',
     custom: 'مبلغ مخصص',
-    payCustomBtn: 'سداد مبلغ مخصص'
+    payCustomBtn: 'سداد مبلغ مخصص',
+    personalTab: 'الحساب الشخصي',
+    myMessShare: 'نصيبي من المشترك',
+    fullMess: 'مشترك الغرفة بالكامل',
+    allDebt: 'إجمالي الحساب',
+    accountBreakdown: 'تفاصيل الحسابات (اضغط للاختيار)',
+    privatePurchases: 'مشترياتك الشخصية من السوبرماركت',
+    membersLabel: 'أعضاء',
+    yourShareInRoom: 'نصيبك الفردي في هذه الغرفة',
+    combinedRooms: 'جروبات مشتركة مدمجة',
+    sharedRoomSplit: 'نصيبك من مصاريف المشترك',
+    selectedBadge: 'تم الاختيار'
   },
   ml: {
     brand: 'അസ്കർ സൂപ്പർമാർക്കറ്റ്',
@@ -157,7 +182,18 @@ const STATEMENT_TEXTS = {
     storePurchase: 'സാധനങ്ങൾ വാങ്ങി',
     currency: 'BHD',
     custom: 'മറ്റൊരു തുക',
-    payCustomBtn: 'തുക നൽകുക'
+    payCustomBtn: 'തുക നൽകുക',
+    personalTab: 'പേഴ്സണൽ അക്കൗണ്ട്',
+    myMessShare: 'മെസ്സ് വിഹിതം',
+    fullMess: 'മുഴുവൻ മെസ്സ് തുക',
+    allDebt: 'മുഴുവൻ കുടിശ്ശിക',
+    accountBreakdown: 'അക്കൗണ്ട് വിവരങ്ങൾ (തിരഞ്ഞെടുക്കുക)',
+    privatePurchases: 'സ്വകാര്യ വാങ്ങലുകൾ',
+    membersLabel: 'അംഗങ്ങൾ',
+    yourShareInRoom: 'ഈ മെസ്സിലെ നിങ്ങളുടെ വിഹിതം',
+    combinedRooms: 'മെസ്സ് ഗ്രൂപ്പുകൾ സംയോജിപ്പിച്ചത്',
+    sharedRoomSplit: 'നിങ്ങളുടെ മെസ്സ് വിഹിതം',
+    selectedBadge: 'തിരഞ്ഞെടുത്തു'
   },
   bn: {
     brand: 'আসকার সুপারমার্কেট',
@@ -201,7 +237,18 @@ const STATEMENT_TEXTS = {
     storePurchase: 'দোকান থেকে কেনাকাটা',
     currency: 'BHD',
     custom: 'অন্যান্য',
-    payCustomBtn: 'টাকা পরিশোধ করুন'
+    payCustomBtn: 'টাকা পরিশোধ করুন',
+    personalTab: 'ব্যক্তিগত খাতা',
+    myMessShare: 'মেস শেয়ার',
+    fullMess: 'পুরো মেস হিসাব',
+    allDebt: 'মোট বাকি',
+    accountBreakdown: 'হিসাবের বিবরণ (নির্বাচন করুন)',
+    privatePurchases: 'ব্যক্তিগত কেনাকাটা',
+    membersLabel: 'সদস্য',
+    yourShareInRoom: 'এই মেসে আপনার শেয়ার',
+    combinedRooms: 'সম্মিলিত মেস গ্রুপ',
+    sharedRoomSplit: 'আপনার মেস শেয়ার',
+    selectedBadge: 'নির্বাচিত'
   },
   hi: {
     brand: 'अस्कर सुपरमार्केट',
@@ -245,7 +292,18 @@ const STATEMENT_TEXTS = {
     storePurchase: 'दुकान से खरीदारी',
     currency: 'BHD',
     custom: 'कस्टम',
-    payCustomBtn: 'राशि का भुगतान करें'
+    payCustomBtn: 'राशि का भुगतान करें',
+    personalTab: 'निजी खाता',
+    myMessShare: 'मेस हिस्सा',
+    fullMess: 'पूरा मेस खाता',
+    allDebt: 'कुल बकाया',
+    accountBreakdown: 'खाता विवरण (चुनने के लिए टैप करें)',
+    privatePurchases: 'निजी खरीदारी',
+    membersLabel: 'सदस्य',
+    yourShareInRoom: 'इस रूम में आपका हिस्सा',
+    combinedRooms: 'संयुक्त मेस ग्रुप',
+    sharedRoomSplit: 'आपका साझा मेस खर्च',
+    selectedBadge: 'चयनित'
   }
 };
 
@@ -337,6 +395,8 @@ export function KhataStatement() {
   const [showAutoLockNotice, setShowAutoLockNotice] = useState(false);
 
   // Partial payment state
+  const [paymentTarget, setPaymentTarget] = useState('ALL'); // 'ALL' | 'PERSONAL' | 'MESS' | 'MESS_GROUP'
+  const [selectedPaymentMessId, setSelectedPaymentMessId] = useState(null);
   const [payAmount, setPayAmount] = useState('');
   const [showCustomPay, setShowCustomPay] = useState(false);
 
@@ -683,10 +743,32 @@ export function KhataStatement() {
     }
   };
 
+  const balanceNum = Number(account?.balance || 0);
+  const personalBal = Number(account?.personalBalance ?? balanceNum);
+  const messShareBal = Number(account?.messShare ?? 0);
+  const activeMess = (account?.messes && account.messes.find(m => m.id === selectedPaymentMessId)) || (account?.messes && account.messes[0]);
+
+  let targetDebt = balanceNum;
+  let targetName = t.allDebt || 'All Debt';
+  if (paymentTarget === 'PERSONAL') {
+    targetDebt = Math.max(0, personalBal);
+    targetName = t.personalTab || 'Personal Tab';
+  } else if (paymentTarget === 'MESS') {
+    targetDebt = Math.max(0, messShareBal);
+    targetName = t.myMessShare || 'My Mess Share';
+  } else if (paymentTarget === 'MESS_GROUP' && activeMess) {
+    targetDebt = Math.max(0, Number(activeMess.groupTotal ?? activeMess.totalBalance ?? 0));
+    const rawMessName = activeMess.group_name || activeMess.name || 'Room';
+    targetName = `${t.fullMess || 'Full Mess'}: ${rawMessName}`;
+  }
+  const isTargetDebt = targetDebt > 0.0005;
+
   // Real Tap Payments / BenefitPay Execution with Strict Minimum Validation (Resolved PWA-INT-03 & BP-08)
   const handlePayBenefitPay = async (specifiedAmount) => {
-    if (!account || Number(account.balance) <= 0) return;
-    const finalAmount = Number(Number(specifiedAmount || payAmount || account.balance).toFixed(3));
+    if (!account) return;
+    const activeTargetDebt = targetDebt;
+    if (activeTargetDebt <= 0) return;
+    const finalAmount = Number(Number(specifiedAmount || payAmount || activeTargetDebt).toFixed(3));
     
     if (isNaN(finalAmount) || finalAmount < 0.100) {
       alert('Minimum settlement amount is 0.100 BHD (100 fils)');
@@ -708,8 +790,11 @@ export function KhataStatement() {
         headers,
         body: JSON.stringify({
           customerId: account?.id || uuid,
-          amount: Math.min(finalAmount, Number(account.balance)),
+          amount: Math.min(finalAmount, activeTargetDebt),
           customerName: account.name,
+          paymentTarget,
+          targetMessId: selectedPaymentMessId,
+          targetName,
           sourceView: 'statement'
         })
       });
@@ -723,14 +808,19 @@ export function KhataStatement() {
         window.location.assign(data.checkoutUrl);
       } else {
         // Direct Fawri+ BenefitPay Mode (Dynamic CBB EMVCo QR code & deep link)
-        setBenefitPayData(data);
+        setBenefitPayData({
+          ...data,
+          paymentTarget,
+          targetMessId: selectedPaymentMessId,
+          targetName
+        });
         setShowBenefitModal(true);
       }
     } catch (err) {
       console.warn('Payment API unavailable, falling back to local BenefitPay generator:', err);
       // Offline / Local CBB QR Fallback (BP-08)
       try {
-        const fallbackAmount = Math.min(finalAmount, Number(account.balance));
+        const fallbackAmount = Math.min(finalAmount, activeTargetDebt);
         const invoiceRef = `KHATA-${(account?.id || uuid).slice(0, 8)}`;
         const qrString = generateBenefitPayPayload(fallbackAmount, invoiceRef);
         setBenefitPayData({
@@ -744,7 +834,10 @@ export function KhataStatement() {
           branchId: 'POS-01',
           qrPayload: qrString,
           customerId: account?.id || uuid,
-          customerName: account.name
+          customerName: account.name,
+          paymentTarget,
+          targetMessId: selectedPaymentMessId,
+          targetName
         });
         setShowBenefitModal(true);
       } catch (localErr) {
@@ -1003,7 +1096,6 @@ export function KhataStatement() {
   // ----------------------------------------------------
   // 4. UNLOCKED VIEW: Private Statement & Balance Details
   // ----------------------------------------------------
-  const balanceNum = Number(account?.balance || 0);
   const isDebt = balanceNum > 0.0005;
   const isCredit = balanceNum < -0.0005;
   const isSettled = !isDebt && !isCredit;
@@ -1050,6 +1142,22 @@ export function KhataStatement() {
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then((regs) => {
+                  for (const r of regs) r.update().catch(() => {});
+                });
+              }
+              fetchLedger(uuid, pin);
+            }}
+            className="w-10 h-10 rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-95 border border-slate-800 flex items-center justify-center text-slate-300 hover:text-white transition cursor-pointer shadow-xs"
+            title="Refresh"
+          >
+            <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-400' : 'text-slate-400'}`} />
+          </button>
 
           <button
             onClick={() => handleLockAccount(false)}
@@ -1143,12 +1251,265 @@ export function KhataStatement() {
             </p>
           </div>
 
-          {/* Settle / Payment Actions (Partial & Full Support) */}
-          {isDebt ? (
+          {/* Financial Breakdown Cards with Full Mess Room Visibility (Replicating Central Payment) */}
+          {(account.hasMessGroup || (account.messes && account.messes.length > 0) || Math.abs(personalBal - balanceNum) > 0.001) && (
+            <div className="my-5 text-left no-print">
+              <div className="flex items-center justify-between mb-2.5 px-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  {t.accountBreakdown || 'Account Breakdown (Tap to Select)'}
+                </span>
+                {paymentTarget !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('ALL');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount('');
+                    }}
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer underline"
+                  >
+                    Reset to All Debt
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. Personal Tab */}
+                <div
+                  onClick={() => {
+                    setPaymentTarget('PERSONAL');
+                    setSelectedPaymentMessId(null);
+                    setPayAmount('');
+                  }}
+                  className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
+                    paymentTarget === 'PERSONAL'
+                      ? 'bg-emerald-950/70 border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg shadow-emerald-950/50'
+                      : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-slate-300 uppercase tracking-wider">{t.personalTab || 'Personal Tab'}</span>
+                    <div className="flex items-center gap-1.5">
+                      {paymentTarget === 'PERSONAL' && (
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          {t.selectedBadge || 'Selected'}
+                        </span>
+                      )}
+                      <User className="w-4 h-4 text-emerald-400" />
+                    </div>
+                  </div>
+                  <div className="text-2xl font-black text-white mt-1.5 tracking-tight font-mono">
+                    {t.currency} {personalBal.toFixed(3)}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    {t.privatePurchases || 'Private grocery purchases'}
+                  </div>
+                </div>
+
+                {/* 2. My Mess Share */}
+                {(account.hasMessGroup || (account.messes && account.messes.length > 0)) && (
+                  <div
+                    onClick={() => {
+                      setPaymentTarget('MESS');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount('');
+                    }}
+                    className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
+                      paymentTarget === 'MESS'
+                        ? 'bg-indigo-950/70 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-950/50'
+                        : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-indigo-300 uppercase tracking-wider">{t.myMessShare || 'My Mess Share'}</span>
+                      <div className="flex items-center gap-1.5">
+                        {paymentTarget === 'MESS' && (
+                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                            {t.selectedBadge || 'Selected'}
+                          </span>
+                        )}
+                        <Users className="w-4 h-4 text-indigo-400" />
+                      </div>
+                    </div>
+                    <div className="text-2xl font-black text-white mt-1.5 tracking-tight font-mono">
+                      {t.currency} {messShareBal.toFixed(3)}
+                    </div>
+                    <div className="text-[11px] text-indigo-300/80 mt-1 truncate">
+                      {account.messes && account.messes.length > 1
+                        ? `${account.messes.length} ${t.combinedRooms || 'Mess Groups Combined'}`
+                        : (t.sharedRoomSplit || 'Your shared room split debt')}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Separate Full Mess Room Balances for EACH enrolled mess */}
+                {account.messes && account.messes.length > 0 && account.messes.map((m) => {
+                  const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                  const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
+                  const mShare = Number(m.memberShare ?? m.myShare ?? 0);
+                  const mName = m.group_name || m.name || 'Room Mess';
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => {
+                        setPaymentTarget('MESS_GROUP');
+                        setSelectedPaymentMessId(m.id);
+                        setPayAmount('');
+                      }}
+                      className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
+                        isSelected
+                          ? 'bg-purple-950/70 border-purple-500 ring-2 ring-purple-500/30 shadow-lg shadow-purple-950/50'
+                          : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-purple-300 uppercase tracking-wider truncate" title={mName}>
+                          {t.fullMess || 'Full Mess'}: {mName}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isSelected && (
+                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                              {t.selectedBadge || 'Selected'}
+                            </span>
+                          )}
+                          <Users className="w-4 h-4 text-purple-400" />
+                        </div>
+                      </div>
+                      <div className="text-2xl font-black text-white mt-1.5 tracking-tight font-mono">
+                        {t.currency} {gTotal.toFixed(3)}
+                      </div>
+                      <div className="text-[11px] text-purple-300/80 mt-1 flex items-center justify-between">
+                        <span className="truncate">Share: {t.currency} {mShare.toFixed(3)}</span>
+                        <span className="shrink-0">{m.memberCount || 2} {t.membersLabel || 'members'}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Target Description Alert Note */}
+              {paymentTarget === 'MESS_GROUP' && (
+                <div className="mt-3 p-3 bg-purple-950/50 border border-purple-800/60 rounded-2xl text-purple-200 text-xs flex items-start gap-2.5">
+                  <Users className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-purple-300">
+                      {targetName} Settlement ({t.currency} {targetDebt.toFixed(3)})
+                    </div>
+                    <p className="text-[11px] text-purple-300/80 mt-0.5 leading-relaxed">
+                      Clears collective room debt for all members. Personal tab ({t.currency} {personalBal.toFixed(3)}) will NOT be deducted or affected.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {paymentTarget === 'PERSONAL' && (
+                <div className="mt-3 p-3 bg-emerald-950/50 border border-emerald-800/60 rounded-2xl text-emerald-200 text-xs flex items-start gap-2.5">
+                  <User className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-emerald-300">
+                      {targetName} Settlement ({t.currency} {targetDebt.toFixed(3)})
+                    </div>
+                    <p className="text-[11px] text-emerald-300/80 mt-0.5 leading-relaxed">
+                      Clears only your private supermarket purchases. Mess group debts remain untouched.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {paymentTarget === 'MESS' && (
+                <div className="mt-3 p-3 bg-indigo-950/50 border border-indigo-800/60 rounded-2xl text-indigo-200 text-xs flex items-start gap-2.5">
+                  <Users className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-indigo-300">
+                      {targetName} Settlement ({t.currency} {targetDebt.toFixed(3)})
+                    </div>
+                    <p className="text-[11px] text-indigo-300/80 mt-0.5 leading-relaxed">
+                      Clears your personal split share across room messes ({t.currency} {messShareBal.toFixed(3)}).
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Settle / Payment Actions (Targeted Partial & Full Support) */}
+          {isTargetDebt ? (
             <div className="space-y-3 no-print">
+              {/* Quick Target Filter Pills */}
+              {(account.hasMessGroup || (account.messes && account.messes.length > 0)) && (
+                <div className="flex flex-wrap gap-1.5 p-1 bg-slate-950/80 rounded-2xl border border-slate-800 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('ALL');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount('');
+                    }}
+                    className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                      paymentTarget === 'ALL'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white bg-slate-900'
+                    }`}
+                  >
+                    {t.allDebt || 'All Debt'} ({t.currency} {balanceNum.toFixed(3)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('PERSONAL');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount('');
+                    }}
+                    className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                      paymentTarget === 'PERSONAL'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white bg-slate-900'
+                    }`}
+                  >
+                    {t.personalTab || 'Personal'} ({t.currency} {personalBal.toFixed(3)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentTarget('MESS');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount('');
+                    }}
+                    className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                      paymentTarget === 'MESS'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white bg-slate-900'
+                    }`}
+                  >
+                    {t.myMessShare || 'My Share'} ({t.currency} {messShareBal.toFixed(3)})
+                  </button>
+                  {account.messes && account.messes.map(m => {
+                    const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                    const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
+                    const mName = m.group_name || m.name || 'Room';
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setPaymentTarget('MESS_GROUP');
+                          setSelectedPaymentMessId(m.id);
+                          setPayAmount('');
+                        }}
+                        className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-600 text-white shadow-xs'
+                            : 'text-purple-300 hover:text-white bg-slate-900 border border-purple-800/40'
+                        }`}
+                      >
+                        {t.fullMess || 'Full'} [{mName}] ({t.currency} {gTotal.toFixed(3)})
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Quick Chip Amount Selectors (BP-09) */}
               {(() => {
-                const chips = getDynamicQuickChips(balanceNum);
+                const chips = getDynamicQuickChips(targetDebt);
                 return (
                   <div className={`grid ${chips.length >= 3 ? 'grid-cols-4' : chips.length === 2 ? 'grid-cols-3' : chips.length === 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2 text-xs font-bold font-mono`}>
                     {chips.map((amt) => (
@@ -1157,7 +1518,7 @@ export function KhataStatement() {
                         type="button"
                         onClick={() => handlePayBenefitPay(amt)}
                         disabled={paying}
-                        className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition"
+                        className="py-2.5 px-1 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 rounded-xl border border-slate-700 text-slate-200 transition cursor-pointer"
                       >
                         {amt.toFixed(3)} {t.currency}
                       </button>
@@ -1165,7 +1526,7 @@ export function KhataStatement() {
                     <button
                       type="button"
                       onClick={() => setShowCustomPay(!showCustomPay)}
-                      className={`py-2.5 px-1 rounded-xl border text-slate-200 transition ${
+                      className={`py-2.5 px-1 rounded-xl border text-slate-200 transition cursor-pointer ${
                         showCustomPay ? 'bg-emerald-700 border-emerald-500' : 'bg-slate-800/80 border-slate-700'
                       }`}
                     >
@@ -1188,14 +1549,14 @@ export function KhataStatement() {
                       const clean = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : raw;
                       setPayAmount(clean);
                     }}
-                    placeholder={`Min 0.100 (Max: ${balanceNum.toFixed(3)})`}
+                    placeholder={`Min 0.100 (Max: ${targetDebt.toFixed(3)})`}
                     className="w-full text-center py-2.5 px-3 bg-slate-900 border border-slate-700 rounded-xl text-white font-mono text-sm focus:border-emerald-500 outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => handlePayBenefitPay(payAmount)}
                     disabled={paying || !payAmount || Number(payAmount) < 0.100}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 font-bold text-xs rounded-xl transition"
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 font-bold text-xs rounded-xl transition cursor-pointer"
                   >
                     {t.payCustomBtn || 'Pay Custom Amount'}
                   </button>
@@ -1204,7 +1565,7 @@ export function KhataStatement() {
 
               {/* Settle Full Tab Button */}
               <button
-                onClick={() => handlePayBenefitPay(balanceNum)}
+                onClick={() => handlePayBenefitPay(targetDebt)}
                 disabled={paying}
                 className="w-full min-h-[52px] bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-60 text-white font-bold py-3.5 rounded-2xl text-base shadow-lg shadow-emerald-900/40 transition flex items-center justify-center gap-2 cursor-pointer"
               >
@@ -1215,7 +1576,9 @@ export function KhataStatement() {
                   </>
                 ) : (
                   <>
-                    <span>{t.payBenefit} ({t.currency} {balanceNum.toFixed(3)})</span>
+                    <span>
+                      {t.payBenefit} • {targetName} ({t.currency} {targetDebt.toFixed(3)})
+                    </span>
                     <span className="text-emerald-200">→</span>
                   </>
                 )}
@@ -1224,7 +1587,7 @@ export function KhataStatement() {
           ) : (
             <div className="mt-5 w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
-              <span>All Settled Up — No Debt Owed</span>
+              <span>{t.allSettled} ({targetName})</span>
             </div>
           )}
 

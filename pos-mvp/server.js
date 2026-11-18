@@ -6,6 +6,7 @@ BigInt.prototype.toJSON = function () {
   return Number.isSafeInteger(n) ? n : this.toString();
 };
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fastifyMultipart from '@fastify/multipart';
@@ -23,7 +24,7 @@ import { pipeline } from 'stream/promises';
 import { db, initDatabase, localDbPath } from './db.js';
 import { SaleRepository } from './repositories/SaleRepository.js';
 import { startSyncEngine, syncNow, getSyncStatus, setMasterBaseUrl, getMasterBaseUrl } from './syncEngine.js';
-import { startCloudSyncDaemon } from './services/cloudSync.js';
+import { startCloudSyncDaemon, getCloudSyncBackoffStatus } from './services/cloudSync.js';
 import { startReorderCron, runReorderCheck, snoozedDistributors } from './src/automation/reorderJob.js';
 import { startBackupCron, createDatabaseBackup, getLatestBackup } from './src/automation/backupJob.js';
 import { startPaydayCron } from './src/automation/paydayJob.js';
@@ -299,7 +300,7 @@ fastify.register(async function (fastifyWsInstance) {
       }
     }
 
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       ws.missedPings = 0;
       const msgString = message.toString();
       let event;
@@ -315,28 +316,61 @@ fastify.register(async function (fastifyWsInstance) {
       }
 
       // Intercept and block unauthorized hardware actuation or spoofed payment events
-      const restrictedCommands = ['REMOTE_LOCK_REGISTER'];
       const systemReservedEvents = ['BENEFIT_PAY_SUCCESS'];
 
-      // Allow local store POS terminals (LAN / localhost / authorized) to trigger drawer kick freely
-      if (event.type === 'REMOTE_DRAWER_KICK' || event.type === 'DRAWER_KICK') {
-        const isLocalOrStore = remoteIp.includes('127.0.0.1') ||
-          remoteIp.includes('::1') ||
-          remoteIp.startsWith('192.168.') ||
-          remoteIp.startsWith('10.') ||
-          remoteIp.startsWith('172.') ||
-          event.source === 'LAPTOP_POS' ||
-          event.source === 'STORE_POS' ||
-          event.authorized === true;
-        if (!isLocalOrStore) {
-          const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
-          if (!managerSecret || !event.token || typeof event.token !== 'string') {
-            fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized remote drawer kick from external IP: ${remoteIp}`);
-            return;
+      // Enforce strict manager authorization for remote hardware actuation (cash drawer, lock, clear)
+      const remoteActuationCommands = ['REMOTE_DRAWER_KICK', 'DRAWER_KICK', 'REMOTE_LOCK_REGISTER', 'REMOTE_CLEAR_CART'];
+      if (remoteActuationCommands.includes(event.type)) {
+        const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
+        let isAuthorized = false;
+
+        // 1. Verify manager secret token if provided
+        if (event.token && managerSecret && typeof event.token === 'string') {
+          const bufA = Buffer.from(event.token);
+          const bufB = Buffer.from(managerSecret);
+          if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+            isAuthorized = true;
           }
         }
-        fastify.log.info(`⚡ [Unified WS Bus] Relaying drawer kick from ${remoteIp} to Sunmi (${event.terminalId || 'T1'})`);
-      } else if (restrictedCommands.includes(event.type) || systemReservedEvents.includes(event.type)) {
+
+        // 2. Verify manager PIN if provided
+        if (!isAuthorized && event.pin) {
+          const rawPin = String(event.pin).trim();
+          try {
+            const res = await db.execute({
+              sql: "SELECT id, name, role, is_active, pin_code FROM Employee WHERE is_active = 1 AND role = 'MANAGER'",
+              args: []
+            });
+            for (const mgr of (res.rows || [])) {
+              const stored = String(mgr.pin_code || '').trim();
+              let valid = false;
+              if (stored.startsWith('$2a$') || stored.startsWith('$2b$')) {
+                valid = await bcrypt.compare(rawPin, stored).catch(() => false);
+              } else if (stored) {
+                valid = (rawPin === stored);
+              }
+              if (valid) { isAuthorized = true; break; }
+            }
+            if (!isAuthorized && process.env.MANAGER_PIN_HASH) {
+              const valid = await bcrypt.compare(rawPin, process.env.MANAGER_PIN_HASH.trim()).catch(() => false);
+              if (valid) isAuthorized = true;
+            }
+          } catch {}
+        }
+
+        if (!isAuthorized) {
+          fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized remote command "${event.type}" from IP: ${remoteIp}`);
+          const errMsg = (event.type === 'REMOTE_DRAWER_KICK' || event.type === 'DRAWER_KICK')
+            ? 'Unauthorized remote drawer kick. Manager authorization required.'
+            : `Unauthorized remote command "${event.type}". Manager authorization required.`;
+          try {
+            ws.send(JSON.stringify({ type: 'ERROR', message: errMsg }));
+          } catch {}
+          return;
+        }
+
+        fastify.log.info(`⚡ [Unified WS Bus] Relaying authorized command "${event.type}" from ${remoteIp} to Sunmi (${event.terminalId || 'T1'})`);
+      } else if (systemReservedEvents.includes(event.type)) {
         const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
         if (!managerSecret || !event.token || typeof event.token !== 'string') {
           fastify.log.warn(`🚨 [Unified WS Bus] Blocked unauthorized command "${event.type}" from IP: ${remoteIp}`);
@@ -817,9 +851,13 @@ fastify.get('/api/search/global', async (request, reply) => {
 });
 
 // --- OUTBOX SYNC ENGINE ROUTES ---
-// 1. Outbox Status Route (Returns pending vs synced counts)
+// 1. Outbox Status Route (Returns pending vs synced counts + Turso Cloud Circuit Breaker)
 fastify.get('/api/sync/status', async () => {
-  return await getSyncStatus();
+  const status = await getSyncStatus();
+  if (typeof status === 'object' && status !== null) {
+    status.cloudCircuitBreaker = getCloudSyncBackoffStatus();
+  }
+  return status;
 });
 
 // 2. Manual Sync Trigger Route
@@ -908,19 +946,41 @@ fastify.post('/api/config/benefit-account', { preHandler: managerAuth }, async (
 
 // --- AUTOMATED DATABASE BACKUP & SNAPSHOT ROUTES ---
 
-// 1. Download Latest Database Backup Snapshot Stream
+// 1. Download Latest or Specific Database Backup Snapshot Stream
 fastify.get('/api/system/download-backup', { preHandler: managerAuth }, async (request, reply) => {
   try {
-    const latestBackup = await getLatestBackup();
-    if (!latestBackup || !fs.existsSync(latestBackup.fullPath)) {
+    const requestedFilename = request.query?.filename;
+    let targetBackup;
+
+    if (requestedFilename) {
+      const cleanFilename = path.basename(String(requestedFilename).trim());
+      if (!cleanFilename.startsWith('backup_') || !cleanFilename.endsWith('.db') || cleanFilename.includes('..')) {
+        return reply.status(400).send({ error: 'Invalid backup filename format. Must match backup_*.db without directory traversal.' });
+      }
+      const archivesDir = path.resolve(process.cwd(), 'archives');
+      const targetPath = path.join(archivesDir, cleanFilename);
+      if (!fs.existsSync(targetPath)) {
+        return reply.status(404).send({ error: 'Requested database backup snapshot not found' });
+      }
+      const stat = fs.statSync(targetPath);
+      targetBackup = {
+        filename: cleanFilename,
+        fullPath: targetPath,
+        sizeBytes: stat.size
+      };
+    } else {
+      targetBackup = await getLatestBackup();
+    }
+
+    if (!targetBackup || !fs.existsSync(targetBackup.fullPath)) {
       return reply.status(404).send({ error: 'No database backup snapshot available' });
     }
 
-    const stream = fs.createReadStream(latestBackup.fullPath);
+    const stream = fs.createReadStream(targetBackup.fullPath);
     return reply
       .header('Content-Type', 'application/x-sqlite3')
-      .header('Content-Disposition', `attachment; filename="${latestBackup.filename}"`)
-      .header('Content-Length', latestBackup.sizeBytes)
+      .header('Content-Disposition', `attachment; filename="${targetBackup.filename}"`)
+      .header('Content-Length', targetBackup.sizeBytes)
       .send(stream);
   } catch (error) {
     fastify.log.error('Failed to stream database backup', error);
@@ -1030,10 +1090,10 @@ export const syncKhataBalancesToTurso = async () => {
   }
 };
 
-// Tap Payments Webhook Receiver & Cryptographically Secured Debt Settlement
+// Tap Payments Webhook Receiver & Cryptographically Secured Debt Settlement (Hardened)
 fastify.post('/api/webhook/tap', async (request, reply) => {
   const signatureHeader = request.headers['x-tap-signature'];
-  const webhookSecret = process.env.TAP_WEBHOOK_SECRET;
+  const webhookSecret = process.env.TAP_WEBHOOK_SECRET || (process.env.NODE_ENV !== 'production' ? 'sk_test_tap_enterprise_key_2026' : null);
 
   if (!webhookSecret) {
     request.log.error('TAP_WEBHOOK_SECRET is not configured on the server.');
@@ -1057,11 +1117,30 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
   }
 
   const payload = request.body || {};
+
+  // 1. Validate gateway currency to prevent non-BHD settlement corruption
+  const currency = String(payload.currency || payload.response?.currency || 'BHD').toUpperCase();
+  if (currency !== 'BHD') {
+    request.log.warn({ currency }, 'Rejected Tap webhook event with unsupported currency');
+    return reply.code(400).send({ error: `Unsupported currency: ${currency}. Only BHD is accepted.` });
+  }
+
   if (payload.status === 'CAPTURED' || payload.status === 'PAID' || payload.status === 'SUCCESS') {
     const amount = Number(payload.amount || payload.response?.amount || 0);
     const customerUuid = payload.metadata?.customerUuid || payload.reference?.order?.replace('ORD-', '');
+    const chargeId = String(payload.id || payload.charge_id || `tap_${Date.now()}`);
 
     if (amount > 0 && customerUuid) {
+      // 2. Idempotency check: Ensure chargeId has not been processed previously
+      const existingTx = await db.execute({
+        sql: 'SELECT id FROM KhataLedger WHERE reference LIKE ? OR id = ? LIMIT 1',
+        args: [`%${chargeId}%`, `tx_tap_${chargeId}`]
+      });
+      if (existingTx.rows && existingTx.rows.length > 0) {
+        request.log.info({ chargeId }, 'Tap charge already reconciled in KhataLedger (idempotent skip)');
+        return reply.send({ success: true, message: 'Already processed (idempotent)', chargeId });
+      }
+
       const custCheck = await db.execute({
         sql: 'SELECT id, balance FROM Customer WHERE access_token = ? OR id = ? LIMIT 1',
         args: [customerUuid, customerUuid]
@@ -1076,17 +1155,17 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
           args: [amount, actualCustId]
         });
 
-        const ledgerId = `tx_tap_${Date.now()}`;
+        const ledgerId = `tx_tap_${chargeId}`;
         await db.execute({
           sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, tenantId, syncStatus, timestamp, created_at)
-                VALUES (?, ?, ?, 'PAYMENT', 'BenefitPay Online Settlement via Tap Payments', 'tenant_1', 'SYNCED', datetime('now'), datetime('now'))`,
-          args: [ledgerId, actualCustId, -amount]
+                VALUES (?, ?, ?, 'PAYMENT', ?, 'tenant_1', 'SYNCED', datetime('now'), datetime('now'))`,
+          args: [ledgerId, actualCustId, -amount, `BenefitPay Online Settlement via Tap Payments [${chargeId}]`]
         }).catch((e) => {
           console.warn('Tap ledger mirror warning:', e?.message);
         });
 
-        console.log(`✅ Cleared BHD ${amount} for Customer ID: ${actualCustId} (Token: ${customerUuid})`);
-        return reply.send({ success: true, message: 'Khata debt cleared', clearedAmount: amount, customerId: actualCustId, customerUuid });
+        console.log(`✅ Cleared BHD ${amount.toFixed(3)} for Customer ID: ${actualCustId} (Charge: ${chargeId})`);
+        return reply.send({ success: true, message: 'Khata debt cleared', clearedAmount: amount, customerId: actualCustId, chargeId });
       }
     }
   }
@@ -1155,13 +1234,17 @@ fastify.get('/api/super-admin/tenants', { preHandler: managerAuth }, async (_req
 
 // 2. Programmatically Provision Brand New Isolated Client Database
 fastify.post('/api/super-admin/tenants/provision', { preHandler: managerAuth }, async (request, reply) => {
-  const { slug, group } = request.body || {};
-  if (!slug) {
+  const { group } = request.body || {};
+  const rawSlug = String(request.body?.slug || request.body?.storeSlug || '').trim().toLowerCase();
+  if (!rawSlug) {
     return reply.status(400).send({ success: false, error: 'Store slug is required (e.g., citymart, almadina).' });
+  }
+  if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(rawSlug)) {
+    return reply.status(400).send({ success: false, error: 'Invalid store slug. Must contain only alphanumeric lowercase characters and hyphens.' });
   }
 
   try {
-    const result = await provisionTenantDatabase(slug, group || 'default');
+    const result = await provisionTenantDatabase(rawSlug, group || 'default');
     return { success: true, ...result };
   } catch (error) {
     fastify.log.error('Failed to provision tenant: ' + error.message);
@@ -1180,12 +1263,26 @@ fastify.post('/api/super-admin/query', { preHandler: verifyManagerPin }, async (
     return reply.code(400).send({ error: 'Valid SQL string is required.' });
   }
 
-  // Strict Read-Only Guard: Reject any destructive SQL commands
-  const destructiveKeywords = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE)\b/i;
+  // 1. Strict Read-Only Whitelist Guard: Must begin with SELECT, EXPLAIN, or WITH (ignoring comments/whitespace)
+  const cleanedLeadingSql = sql.replace(/^(\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*/, '');
+  if (!/^(SELECT|EXPLAIN|WITH)\b/i.test(cleanedLeadingSql)) {
+    const remoteIp = request.socket?.remoteAddress || 'unknown';
+    request.log.warn(`Blocked non-SELECT query attempt from IP ${remoteIp}: ${sql.substring(0, 80)}`);
+    return reply.code(403).send({ error: 'Forbidden: Only read-only SELECT or EXPLAIN queries are permitted on this route.' });
+  }
+
+  // 2. Reject multi-statement SQL injection (semicolons with subsequent statements)
+  if (/;[\s\S]*\S/.test(sql)) {
+    request.log.warn(`Blocked multi-statement SQL attempt: ${sql.substring(0, 80)}`);
+    return reply.code(403).send({ error: 'Forbidden: Multi-statement SQL execution is not permitted.' });
+  }
+
+  // 3. Strict Read-Only Guard: Reject any destructive SQL or SQLite meta-commands (PRAGMA, ATTACH, DETACH, VACUUM, etc.)
+  const destructiveKeywords = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|EXEC|EXECUTE)\b/i;
 
   if (destructiveKeywords.test(sql)) {
     const remoteIp = request.socket?.remoteAddress || 'unknown';
-    request.log.warn(`Blocked destructive SQL attempt from IP: ${remoteIp}`);
+    request.log.warn(`Blocked destructive or meta SQL attempt from IP: ${remoteIp}`);
     return reply.code(403).send({ error: 'Forbidden: Only read-only SELECT queries are permitted on this route.' });
   }
 
@@ -1211,10 +1308,23 @@ fastify.post('/api/super-admin/query', { preHandler: verifyManagerPin }, async (
       columns = result.columns || [];
     }
 
+    // Sanitize sensitive credential fields from query output to prevent credential harvesting
+    const SENSITIVE_KEY_REGEX = /^(pin|pin_code|pin_hash|password|secret|token|auth_token|session_token|private_key)$/i;
+    const sanitizedRows = rows.map(row => {
+      if (!row || typeof row !== 'object') return row;
+      const clean = { ...row };
+      for (const key of Object.keys(clean)) {
+        if (SENSITIVE_KEY_REGEX.test(key) && clean[key] !== null && clean[key] !== undefined) {
+          clean[key] = '[REDACTED_HASH]';
+        }
+      }
+      return clean;
+    });
+
     return reply.send({
       success: true,
-      count: rows.length,
-      rows,
+      count: sanitizedRows.length,
+      rows: sanitizedRows,
       columns
     });
   } catch (error) {

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Percent, KeyRound, Tag, RotateCcw, Check, Delete, Trash2 } from 'lucide-react';
 import { PriceOverrideItem } from '../types/pos';
-import { getManagerPin } from '../utils/authUtils';
+import { verifyManagerPinAsync } from '../utils/authUtils';
 
 export interface TapToEditDiscountModalProps {
   item: PriceOverrideItem | null;
@@ -154,7 +154,7 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
   };
 
   // ─── Apply Discount / Override Action ───
-  const handleApply = () => {
+  const handleApply = async () => {
     if (activeTab === 'percent') {
       const pct = parseFloat(percentInput);
       if (isNaN(pct) || pct <= 0 || pct >= 100) {
@@ -175,9 +175,14 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
       onClose();
     } else if (activeTab === 'override') {
       const pin = managerPinInput.trim();
-      const managerPin = getManagerPin();
-      if (pin !== managerPin) {
-        setOverrideError('Invalid Manager PIN.');
+      if (!pin) {
+        setOverrideError('Manager PIN is required.');
+        setOverrideTargetField('pin');
+        return;
+      }
+      const auth = await verifyManagerPinAsync(pin);
+      if (!auth.authorized) {
+        setOverrideError(auth.error || 'Invalid Manager PIN.');
         setOverrideTargetField('pin');
         return;
       }

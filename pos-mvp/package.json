@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "deploy": "wrangler deploy",
     "preview": "vite preview",
+    "test:audit": "node tests/audit/run_all_audits.mjs",
     "db:hydrate": "node scripts/hydrate_from_turso.mjs"
   },
   "dependencies": {

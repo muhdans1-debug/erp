@@ -1911,7 +1911,7 @@ export const printCreditNote = async (props: CreditNoteProps): Promise<boolean> 
     await Printer.printText({
       textToPrint: formatTwoCols("Time:", new Date(props.date || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
     });
-    await Printer.printText({ textToPrint: formatTwoCols("Staff:", props.cashierName || "Manager 9999") });
+    await Printer.printText({ textToPrint: formatTwoCols("Staff:", props.cashierName || "Store Staff") });
     await Printer.printText({ textToPrint: "--------------------------------\n" });
 
     // 4. Line Items if present

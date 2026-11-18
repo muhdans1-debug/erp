@@ -7,7 +7,7 @@ import { processSecureRefund } from '../services/salesService';
 import { playThankYouVoice } from '../utils/sound';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
-import { getManagerPin } from '../utils/authUtils';
+import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
 // --- LAZY-LOADED BACK-OFFICE PAGES (never parsed on Sunmi in cashier mode) ---
 const StockManagement = lazy(() => import('./StockManagement'));
 const FinancialDashboard = lazy(() => import('./FinancialDashboard'));
@@ -236,6 +236,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Active Linked Customer for Checkout
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [showMultiMessPickerModal, setShowMultiMessPickerModal] = useState(false);
 
   // Customer Management & Enrollment State
   const [showCustomersModal, setShowCustomersModal] = useState(false);
@@ -438,8 +439,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   } | null>(null);
 
   const handleAuthorizeCreditOverride = async (pin: string): Promise<boolean> => {
-    const managerPin = getManagerPin();
-    if (pin.trim() !== managerPin) {
+    const auth = await verifyManagerPinAsync(pin.trim(), apiBase);
+    if (!auth.authorized) {
       return false;
     }
     const info = creditLimitBlockedInfo;
@@ -732,7 +733,24 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
 
     updateQuickProductsLocally(currentList);
-  }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally]);
+
+    // Persist swap to backend and edge cloud
+    const swapPayload = {
+      oldId: oldProduct.id || oldProduct.barcode,
+      newId: newProduct.id || newProduct.barcode,
+      category: targetCategory
+    };
+    fetch(`${apiBase}/api/quick-products/swap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(swapPayload)
+    }).catch(() => {});
+    fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/swap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(swapPayload)
+    }).catch(() => {});
+  }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally, apiBase]);
 
   // 2. Change category/color of a quick product
   const handleUpdateQuickProductColor = useCallback((product: Product, newCategory: string) => {
@@ -745,29 +763,79 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         category: newCategory,
       };
       updateQuickProductsLocally(currentList);
+
+      // Persist update to backend and edge cloud
+      const updatePayload = {
+        id: product.id,
+        barcode: product.barcode,
+        category: newCategory,
+        isQuickProduct: true
+      };
+      fetch(`${apiBase}/api/quick-products/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload)
+      }).catch(() => {});
+      fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload)
+      }).catch(() => {});
     }
-  }, [activeQuickProducts, updateQuickProductsLocally]);
+  }, [activeQuickProducts, updateQuickProductsLocally, apiBase]);
 
   // 3. Remove quick product from grid
   const handleRemoveQuickProduct = useCallback((product: Product) => {
     const currentList = Array.isArray(activeQuickProducts) ? [...activeQuickProducts] : [];
     const updated = currentList.filter((p) => p.id !== product.id && (!product.barcode || p.barcode !== product.barcode));
     updateQuickProductsLocally(updated);
-  }, [activeQuickProducts, updateQuickProductsLocally]);
+
+    // Persist remove to backend and edge cloud
+    const removePayload = { id: product.id, barcode: product.barcode };
+    fetch(`${apiBase}/api/quick-products/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(removePayload)
+    }).catch(() => {});
+    fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(removePayload)
+    }).catch(() => {});
+  }, [activeQuickProducts, updateQuickProductsLocally, apiBase]);
 
   // 4. Add product to grid
   const handleAddQuickProduct = useCallback((product: Product, category: string) => {
     const currentList = Array.isArray(activeQuickProducts) ? [...activeQuickProducts] : [];
     const exists = currentList.some((p) => p.id === product.id || (p.barcode && product.barcode && p.barcode === product.barcode));
     if (!exists) {
+      const targetCategory = category || (selectedQuickCategory !== 'ALL' ? selectedQuickCategory : 'ESSENTIALS');
       currentList.push({
         ...product,
-        category: category || (selectedQuickCategory !== 'ALL' ? selectedQuickCategory : 'ESSENTIALS'),
+        category: targetCategory,
         isQuickProduct: true,
       });
       updateQuickProductsLocally(currentList);
+
+      // Persist add to backend and edge cloud
+      const addPayload = {
+        id: product.id,
+        barcode: product.barcode,
+        isQuickProduct: true,
+        category: targetCategory
+      };
+      fetch(`${apiBase}/api/quick-products/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(addPayload)
+      }).catch(() => {});
+      fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(addPayload)
+      }).catch(() => {});
     }
-  }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally]);
+  }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally, apiBase]);
 
   // 5. Swap positions of two cards in the grid
   const handleSwapPosition = useCallback((sourceProduct: Product, targetProduct: Product) => {
@@ -1463,7 +1531,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // Fetch all customers for enrollment list
   const loadCustomers = async () => {
     try {
-      const headers = { 'x-pos-client': 'store-pos', 'x-manager-pin': '9999' };
+      const headers = { 'x-pos-client': 'store-pos', 'x-manager-pin': getManagerPin() };
       const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
       const candidates = [
         targetBase,
@@ -1664,12 +1732,26 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const handleBindBarcode = async (productId: string, barcodeToBind: string) => {
     const cleanBarcode = barcodeToBind.trim();
     const product = catalog.find((p) => p.id === productId);
+    let managerPin = getManagerPin();
+    if (!managerPin) {
+      const pinInput = (window.prompt('🔒 Manager Authorization Required to Modify Barcodes\nEnter 4-digit PIN:') || '').trim();
+      if (!pinInput) {
+        showToast('❌ Manager authorization required to bind barcode', 'error');
+        return;
+      }
+      const auth = await verifyManagerPinAsync(pinInput, apiBase);
+      if (!auth.authorized) {
+        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
+        return;
+      }
+      managerPin = pinInput;
+    }
     try {
       const res = await fetch(`${apiBase}/api/products/${productId}/bind-barcode`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': getManagerPin(),
+          'x-manager-pin': managerPin,
           'x-pos-client': 'store-pos'
         },
         body: JSON.stringify({ barcode: cleanBarcode })
@@ -2159,15 +2241,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       let checkoutEndpoint = `${apiBase}/checkout`;
       let checkoutPayload: any = salePayload;
 
-      const isMessCheckout = paymentMethod === 'CREDIT_MESS' || (paymentMethod === 'CREDIT' && (customer?.isMess || (customer?.hasMessGroup && !customer?.isDual)));
+      const isMessCheckout = paymentMethod === 'CREDIT_MESS' || (paymentMethod === 'CREDIT' && (customer?.isMess || (customer?.hasMessGroup && !customer?.isDual && (!customer?.messes || customer?.messes?.length <= 1))));
 
       if (isMessCheckout) {
         checkoutEndpoint = `${apiBase}/api/sales/mess-checkout`;
-        const chosenMessId = overrideMessGroup?.id || customer?.mess_id || customer?.messGroup?.id || customer?.id;
+        const chosenMessId = overrideMessGroup?.id || (customer?.isMess ? (customer?.mess_id || customer?.id) : (overrideMessGroup?.id || customer?.messGroup?.id || (customer?.messes && customer?.messes.length === 1 ? customer.messes[0].id : customer?.mess_id)));
         checkoutPayload = {
           ...salePayload,
           paymentType: 'MESS_KHATA',
           messId: chosenMessId,
+          mess_id: chosenMessId,
+          groupName: overrideMessGroup?.group_name || customer?.group_name,
           cardUid: customer?.tag_id || customer?.cardUid || lastDetectedUid,
           shopperName: customer?.shopper?.name || customer?.name,
           shopperId: customer?.shopper?.id || customer?.id
@@ -2192,7 +2276,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           reqHeaders['x-dr-secret'] = drSecret;
         }
         if (isCloudModeActive) {
-          checkoutEndpoint = `${activeApiBase}/api/sales/sync`;
+          checkoutEndpoint = isMessCheckout
+            ? `${activeApiBase}/api/sales/mess-checkout`
+            : `${activeApiBase}/api/sales/sync`;
         }
 
         const res = await fetch(checkoutEndpoint, {
@@ -2560,6 +2646,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setShowPreviousBillsModal,
     showHamburgerMenu,
     setShowHamburgerMenu,
+    showMultiMessPickerModal,
+    setShowMultiMessPickerModal,
   });
 
   useEffect(() => {
@@ -2594,6 +2682,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       setShowF12SearchModal,
       setShowDevPanel,
       setRightPaneMode,
+      showMultiMessPickerModal,
+      setShowMultiMessPickerModal,
     };
   });
 
@@ -2618,8 +2708,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         return;
       }
 
-      // Escape: Close F12 Search Modal, Omni-Pad, Previous Bills, or Hamburger Menu if open
+      // Escape: Close F12 Search Modal, Omni-Pad, Previous Bills, Hamburger Menu, or Multi-Mess Picker if open
       if (e.key === 'Escape') {
+        if (s.showMultiMessPickerModal) {
+          e.preventDefault();
+          s.setShowMultiMessPickerModal(false);
+          return;
+        }
         if (s.showHamburgerMenu) {
           e.preventDefault();
           s.setShowHamburgerMenu(false);
@@ -2642,6 +2737,30 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         }
       }
 
+      // Hotkeys inside Multi-Mess / Dual-Wallet Picker Modal
+      if (s.showMultiMessPickerModal) {
+        if (e.key === '1') {
+          e.preventDefault();
+          s.setShowMultiMessPickerModal(false);
+          s.processCheckout('CREDIT_PERSONAL');
+          return;
+        }
+        if (e.key >= '2' && e.key <= '9') {
+          e.preventDefault();
+          const targetIndex = Number(e.key) - 2;
+          const messesList = (s.customer?.messes && s.customer.messes.length > 0)
+            ? s.customer.messes
+            : (s.customer?.messGroup ? [s.customer.messGroup] : (s.customer?.mess_id ? [{ id: s.customer.mess_id, group_name: s.customer.group_name }] : []));
+          const targetMess = messesList[targetIndex];
+          if (targetMess) {
+            s.setShowMultiMessPickerModal(false);
+            s.processCheckout('CREDIT_MESS', false, undefined, targetMess);
+            return;
+          }
+        }
+        return;
+      }
+
       // Ctrl + Shift + D: Toggle Developer Diagnostics Panel
       if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault();
@@ -2651,6 +2770,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       // Check if modal dialogs are open; don't trigger background checkouts
       const isAnyModalOpen =
+        s.showMultiMessPickerModal ||
         s.priceOverrideItem !== null ||
         s.showF12SearchModal ||
         s.showKhataHub ||
@@ -2687,14 +2807,22 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       if (e.key === 'F3') {
         e.preventDefault();
         if (s.cart.length > 0 && s.customer) {
-          if (s.customer.hasMessGroup && s.customer.isDual) {
-            s.processCheckout('CREDIT_MESS');
+          const custMesses = (s.customer.messes && s.customer.messes.length > 0)
+            ? s.customer.messes
+            : (s.customer.hasMessGroup && s.customer.mess_id ? [{ id: s.customer.mess_id, group_name: s.customer.group_name }] : []);
+
+          if (!s.customer.isMess && custMesses.length > 0) {
+            // Customer has enrolled Mess group(s) AND a Personal account!
+            // Open Multi-Mess / Dual-Wallet Picker modal so cashier chooses Personal vs specific Mess group
+            s.setShowMultiMessPickerModal(true);
+            return;
           } else if (s.customer.isMess) {
             s.processCheckout('CREDIT_MESS');
+            return;
           } else {
-            s.processCheckout('CREDIT');
+            s.processCheckout('CREDIT_PERSONAL');
+            return;
           }
-          return;
         }
         s.setShowKhataHub(true);
         s.loadCustomers();
@@ -2930,8 +3058,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 className="flex-1 text-center font-mono text-lg py-2 bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
               <button
-                onClick={() => {
-                  if (emergencyPinInput.trim() === getManagerPin()) {
+                onClick={async () => {
+                  const auth = await verifyManagerPinAsync(emergencyPinInput.trim(), apiBase);
+                  if (auth.authorized) {
                     setEmergencyUnlocked(true);
                     setEmergencyPinError(false);
                   } else {
@@ -3641,14 +3770,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   {/* FINANCIALS & P&L */}
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setShowHamburgerMenu(false);
-                      const storedPin = getManagerPin();
                       const inputPin = window.prompt('🔒 Enter Manager PIN to view Financials & P&L Statement:');
-                      if (inputPin !== storedPin) {
-                        if (inputPin !== null) {
-                          showToast('❌ Invalid Manager PIN', 'error');
-                        }
+                      if (!inputPin) return;
+                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
+                      if (!auth.authorized) {
+                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
                         return;
                       }
                       setEmergencyUnlocked(true);
@@ -3663,14 +3791,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   {/* ALL TRANSACTIONS */}
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setShowHamburgerMenu(false);
-                      const storedPin = getManagerPin();
                       const inputPin = window.prompt('🔒 Enter Manager PIN to view Full Transaction History:');
-                      if (inputPin !== storedPin) {
-                        if (inputPin !== null) {
-                          showToast('❌ Invalid Manager PIN', 'error');
-                        }
+                      if (!inputPin) return;
+                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
+                      if (!auth.authorized) {
+                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
                         return;
                       }
                       setEmergencyUnlocked(true);
@@ -4165,7 +4292,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     <Lock size={15} className="text-red-600 shrink-0" />
                     <span>🚫 KHATA FROZEN: In-store credit locked by customer</span>
                   </div>
-                ) : customer.hasMessGroup && customer.isDual ? (
+                ) : ((customer.hasMessGroup || (customer.messes && customer.messes.length > 0)) && !customer.isMess) ? (
                   // MULTI-MESS or DUAL-WALLET BUTTONS: Cashier chooses Personal Khata vs Specific Shared Mess Split
                   <div className={`grid gap-2 ${customer.messes && customer.messes.length > 1 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'}`}>
                     <button
@@ -4175,7 +4302,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       className="py-2.5 px-2 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
                       title={`Charge entirely to ${customer.name}'s Personal Khata (Balance: BD ${(customer.personalBalance ?? customer.currentBalance ?? 0).toFixed(3)})`}
                     >
-                      <span className="text-[10px] opacity-90 font-normal">Personal [F1]</span>
+                      <span className="text-[10px] opacity-90 font-normal">Personal [1]</span>
                       <span className="truncate w-full text-center">👤 {customer.name}</span>
                     </button>
                     {((customer.messes && customer.messes.length > 0) 
@@ -4200,7 +4327,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                         className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
                         title={`Split equally across ${mg.group_name} (${mg.members?.length || mg.memberCount || 0} members) with ${customer.name} as shopper`}
                       >
-                        <span className="text-[10px] opacity-90 font-normal">Split Mess</span>
+                        <span className="text-[10px] opacity-90 font-normal">Split Mess [{idx + 2}]</span>
                         <span className="truncate w-full text-center">👥 {mg.group_name}</span>
                       </button>
                     ))}
@@ -4831,6 +4958,110 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             showToast("💸 Expense recorded! Cash drawer updated.", 'success');
           }}
         />
+      )}
+
+      {/* MULTI-MESS / DUAL-WALLET PICKER MODAL */}
+      {showMultiMessPickerModal && customer && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <CreditCard size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Choose Account to Charge</h3>
+                  <p className="text-xs text-slate-400">Customer: <strong className="text-slate-200">{customer.name}</strong></p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMultiMessPickerModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Select whether to charge {customer.name}'s individual account or split the bill across a shared labor camp mess group:
+            </p>
+
+            <div className="space-y-2">
+              {/* Option 1: Personal Account */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMultiMessPickerModal(false);
+                  processCheckout('CREDIT_PERSONAL');
+                }}
+                className="w-full p-3.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">1</span>
+                  <div>
+                    <div className="text-sm font-bold text-amber-200 flex items-center gap-1.5">
+                      <span>👤 Personal Account</span>
+                    </div>
+                    <div className="text-xs text-slate-400">Charge directly to {customer.name}</div>
+                  </div>
+                </div>
+                <div className="text-right font-mono text-xs font-bold text-amber-400">
+                  Press [1]
+                </div>
+              </button>
+
+              {/* Option 2+: Enrolled Mess Groups */}
+              {((customer.messes && customer.messes.length > 0)
+                ? customer.messes
+                : [customer.messGroup || { id: customer.mess_id, group_name: customer.group_name, members: customer.members, memberCount: customer.memberCount }]
+              ).map((mg: any, idx: number) => (
+                <button
+                  key={mg.id || idx}
+                  type="button"
+                  onClick={() => {
+                    setShowMultiMessPickerModal(false);
+                    setCustomer((prev: any) => ({
+                      ...prev,
+                      mess_id: mg.id,
+                      group_name: mg.group_name,
+                      messGroup: mg,
+                      members: mg.members,
+                      memberCount: mg.memberCount || mg.members?.length || 0
+                    }));
+                    processCheckout('CREDIT_MESS', false, undefined, mg);
+                  }}
+                  className="w-full p-3.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">{idx + 2}</span>
+                    <div>
+                      <div className="text-sm font-bold text-emerald-200 flex items-center gap-1.5">
+                        <span>👥 Split Mess: {mg.group_name}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Split bill equally across all {mg.members?.length || mg.memberCount || 'camp'} members
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right font-mono text-xs font-bold text-emerald-400">
+                    Press [{idx + 2}]
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowMultiMessPickerModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel [Esc]
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ADD PRODUCT MODAL (DISTRIBUTOR BINDING) */}

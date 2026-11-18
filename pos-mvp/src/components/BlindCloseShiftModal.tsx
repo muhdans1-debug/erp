@@ -105,10 +105,12 @@ export default function BlindCloseShiftModal({
     setIsSubmitting(true);
     setError(null);
 
+    const activeEmpId = (typeof localStorage !== 'undefined' && localStorage.getItem('active_employee_id')) || 'emp_cashier_1';
     const payload = {
       actualCash: actualCashTotal,
       closingCash: actualCashTotal,
       shiftId: resolvedShiftId || shiftId || undefined,
+      employeeId: activeEmpId,
       denominations: useDenominationPad ? denominations : null,
       notes: notes ? notes.trim() : null
     };
@@ -129,7 +131,8 @@ export default function BlindCloseShiftModal({
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
-              'x-pos-client': 'store-pos'
+              'x-pos-client': 'store-pos',
+              'x-employee-id': activeEmpId
             },
             body: JSON.stringify(payload)
           });
@@ -139,7 +142,8 @@ export default function BlindCloseShiftModal({
               method: 'POST',
               headers: { 
                 'Content-Type': 'application/json',
-                'x-pos-client': 'store-pos'
+                'x-pos-client': 'store-pos',
+                'x-employee-id': activeEmpId
               },
               body: JSON.stringify(payload)
             });

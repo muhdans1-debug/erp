@@ -3,11 +3,18 @@ import { createClient } from '@libsql/client';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
 import { generateBenefitPayPayload, DEFAULT_BENEFIT_CONFIG } from '../src/utils/benefitPay.js';
 
 // 1. Native .env loader for Node 20+ standalone execution
 try {
   process.loadEnvFile?.();
+} catch {}
+try {
+  process.loadEnvFile?.('pos-mvp/.env');
+} catch {}
+try {
+  process.loadEnvFile?.('askar-khata-pwa/.env');
 } catch {}
 
 const fastify = Fastify({ logger: true });
@@ -47,8 +54,8 @@ fastify.addHook('onRequest', async (request, reply) => {
   }
 });
 
-const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io';
-const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg';
+const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL;
+const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN;
 
 // Secure JWT secret initialization (Requires env in production)
 const _isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
@@ -62,8 +69,12 @@ if (!JWT_SECRET) {
 
 // Fallback to serverless-writable directory if local
 const fallbackDbPath = process.env.VERCEL ? 'file:/tmp/local_replica.db' : 'file:pos-mvp/local.db';
+const dbTargetUrl = (process.env.VERCEL && tursoUrl) 
+  ? tursoUrl 
+  : (fs.existsSync('pos-mvp/local.db') ? 'file:pos-mvp/local.db' : (tursoUrl || fallbackDbPath));
+
 const rawClient = createClient({
-  url: tursoUrl || fallbackDbPath,
+  url: dbTargetUrl,
   authToken: tursoAuthToken
 });
 
@@ -448,10 +459,78 @@ fastify.get('/api/distributors', async (_req, reply) => {
 
 fastify.post('/api/verify-pin', async (req, reply) => {
   const { pin } = req.body || {};
-  if (pin === '9999' || pin === '1234') {
-    return { success: true, role: 'manager', valid: true, user: { name: 'Store Manager', role: 'MANAGER' } };
+  const cleanPin = String(pin || '').trim();
+  if (!cleanPin) {
+    return reply.status(400).send({ success: false, error: 'PIN is required' });
   }
-  return { success: true, role: 'cashier', valid: true, user: { name: 'Cashier', role: 'CASHIER' } };
+
+  // Rate limiting per IP to prevent brute-force attacks
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown_ip';
+  const rateCheck = checkRateLimit(`emp_${ip}`);
+  if (!rateCheck.allowed) {
+    return reply.status(429).send({
+      success: false,
+      error: `Too many failed PIN attempts. Locked for ${rateCheck.remainingMins} minute(s).`
+    });
+  }
+
+  try {
+    const res = await db.execute({
+      sql: 'SELECT id, tenantId, name, pin_code, role, is_active FROM Employee WHERE is_active = 1',
+      args: []
+    });
+
+    for (const emp of (res.rows || [])) {
+      const stored = String(emp.pin_code || '').trim();
+      let match = false;
+      if (stored.startsWith('$2a$') || stored.startsWith('$2b$')) {
+        match = await bcrypt.compare(cleanPin, stored).catch(() => false);
+      } else if (stored) {
+        match = (cleanPin === stored);
+      }
+      if (match) {
+        clearFailedAttempts(`emp_${ip}`);
+        const roleLower = String(emp.role).toLowerCase();
+        return {
+          success: true,
+          role: roleLower,
+          valid: true,
+          employee: { id: emp.id, name: emp.name, role: emp.role },
+          user: { name: emp.name, role: emp.role }
+        };
+      }
+    }
+
+    if (process.env.MANAGER_PIN_HASH) {
+      const match = await bcrypt.compare(cleanPin, process.env.MANAGER_PIN_HASH.trim()).catch(() => false);
+      if (match) {
+        clearFailedAttempts(`emp_${ip}`);
+        return {
+          success: true,
+          role: 'manager',
+          valid: true,
+          employee: { id: 'emp_mgr_env', name: 'Store Manager', role: 'MANAGER' },
+          user: { name: 'Store Manager', role: 'MANAGER' }
+        };
+      }
+    }
+
+    recordFailedAttempt(`emp_${ip}`);
+    return reply.status(401).send({ success: false, error: 'Invalid PIN code' });
+  } catch (err) {
+    fastify.log.error('Employee PIN verification error:', err);
+    return reply.status(500).send({ success: false, error: 'Database verification error' });
+  }
+});
+
+// Alias /api/employees/verify-pin to the exact same handler
+fastify.post('/api/employees/verify-pin', async (req, reply) => {
+  return fastify.inject({
+    method: 'POST',
+    url: '/api/verify-pin',
+    payload: req.body,
+    headers: req.headers
+  }).then(res => reply.status(res.statusCode).headers(res.headers).send(res.payload));
 });
 
 // Telemetry & Register Spy In-Memory Relays
@@ -793,9 +872,25 @@ fastify.post('/api/customers/lookup', async (request, reply) => {
       .replace(/^0+/, '');
     const sanitizedCpr = cleanQuery.replace(/[\s-]/g, '');
 
-    const isPosClient = request.headers['x-pos-client'] === 'store-pos' || 
-                        request.headers['x-manager-pin'] === '9999' ||
-                        request.query?.source === 'pos';
+    const machineToken = request.headers['x-manager-token'] || request.headers['x-pos-token'];
+    const configuredToken = process.env.POS_MACHINE_TOKEN || process.env.INTERNAL_SYNC_SECRET || process.env.DEV_SECRET;
+    const authHeader = String(request.headers['authorization'] || '');
+    let isManagerJwt = false;
+    if (authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
+        isManagerJwt = decoded?.role === 'MANAGER' || decoded?.role === 'SUPER_ADMIN';
+      } catch {}
+    }
+    let isMachineAuth = false;
+    if (machineToken && configuredToken && typeof machineToken === 'string') {
+      const bufA = Buffer.from(machineToken);
+      const bufB = Buffer.from(configuredToken);
+      if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+        isMachineAuth = true;
+      }
+    }
+    const isPosClient = Boolean(isMachineAuth || isManagerJwt);
 
     let result;
     if (isPosClient) {
@@ -1009,6 +1104,84 @@ fastify.post('/api/auth/change-pin', async (request, reply) => {
   }
 });
 
+// Calculate enriched multi-mess breakdown and personal tab balances for PWA Central Payment parity
+async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
+  let customerMesses = [];
+  let totalMessShare = 0;
+
+  try {
+    const messQuery = await db.execute({
+      sql: `SELECT DISTINCT mg.id, mg.group_name 
+            FROM MessGroup mg
+            JOIN MessMember mm ON mm.mess_id = mg.id
+            WHERE mm.customer_id = ?
+            UNION
+            SELECT id, group_name FROM MessGroup WHERE id = ?`,
+      args: [customerId, customerMessId || '']
+    });
+
+    if (messQuery.rows && messQuery.rows.length > 0) {
+      for (const m of messQuery.rows) {
+        if (!m || !m.id) continue;
+        let gTotal = 0;
+        let mCount = 1;
+        try {
+          const gTot = await db.execute({
+            sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as total, COUNT(DISTINCT customerId) as count 
+                  FROM KhataLedger WHERE mess_id = ?`,
+            args: [m.id]
+          });
+          if (gTot.rows && gTot.rows.length > 0) {
+            gTotal = Number(gTot.rows[0].total || 0);
+            mCount = Number(gTot.rows[0].count || 1);
+          }
+        } catch {}
+
+        let mShare = 0;
+        try {
+          const sQuery = await db.execute({
+            sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as share 
+                  FROM KhataLedger WHERE mess_id = ? AND customerId = ?`,
+            args: [m.id, customerId]
+          });
+          if (sQuery.rows && sQuery.rows.length > 0) {
+            mShare = Number(sQuery.rows[0].share || 0);
+          }
+        } catch {}
+
+        totalMessShare += mShare;
+
+        customerMesses.push({
+          id: m.id,
+          name: m.group_name || 'Room Mess',
+          group_name: m.group_name || 'Room Mess',
+          groupTotal: Number(gTotal.toFixed(3)),
+          totalBalance: Number(gTotal.toFixed(3)),
+          memberCount: mCount,
+          memberShare: Number(mShare.toFixed(3)),
+          myShare: Number(mShare.toFixed(3))
+        });
+      }
+    }
+  } catch (err) {
+    fastify.log.warn('Error fetching customer messes in PWA api:', err.message);
+  }
+
+  totalMessShare = Number(totalMessShare.toFixed(3));
+  let personalBalance = Number((Number(rawBalance || 0) - totalMessShare).toFixed(3));
+  if (customerMesses.length === 0) {
+    personalBalance = Number(Number(rawBalance || 0).toFixed(3));
+  }
+
+  return {
+    customerMesses,
+    totalMessShare,
+    personalBalance,
+    hasMessGroup: customerMesses.length > 0,
+    isMultiMess: customerMesses.length > 1
+  };
+}
+
 // Unified Khata Customer Statement & Public Tab Endpoint (Protected with Rate Limiter & JWT Verification)
 const handleKhataStatementOrTab = async (request, reply) => {
   const targetId = request.params.uuid || request.params.id;
@@ -1039,6 +1212,7 @@ const handleKhataStatementOrTab = async (request, reply) => {
 
     if (authCheck.rows && authCheck.rows.length > 0) {
       const customer = authCheck.rows[0];
+      const messDetails = await getCustomerMessDetails(customer.id, customer.mess_id, customer.balance);
 
       // Check for valid 90-Day JWT Device Pairing Token
       let isJwtAuthenticated = false;
@@ -1064,32 +1238,27 @@ const handleKhataStatementOrTab = async (request, reply) => {
           args: [customer.id]
         }).catch(() => ({ rows: [] }));
 
-        const recentPurchases = await db.execute({
-          sql: `SELECT id, amount, type, reference, running_balance, timestamp, created_at 
-                FROM KhataLedger 
-                WHERE customerId = ? 
-                ORDER BY timestamp DESC, id DESC LIMIT 100`,
-          args: [customer.id]
-        }).catch(() => ({ rows: [] }));
-
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
-        const allLedger = recentPurchases.rows || [];
-        const enrichedLedger = await enrichLedgerWithItems(allLedger);
         return reply.send({
           success: true,
           id: customer.id,
           name: customer.name,
           balance: Number(customer.balance ?? 0),
+          personalBalance: messDetails.personalBalance,
+          messShare: messDetails.totalMessShare,
+          messes: messDetails.customerMesses,
+          hasMessGroup: messDetails.hasMessGroup,
+          isMultiMess: messDetails.isMultiMess,
           credit_limit: Number(customer.credit_limit ?? 30.0),
           is_active: isActiveNum,
           isActive: Boolean(isActiveNum),
-          isLocked: false,
+          isLocked: true,
           pendingClaims: pendingClaims.rows || [],
-          recentPurchases: enrichedLedger,
-          transactions: enrichedLedger,
-          ledger: enrichedLedger,
-          totalTransactions: enrichedLedger.length,
-          message: 'Khata Tab with complete transaction ledger'
+          recentPurchases: [],
+          transactions: [],
+          ledger: [],
+          totalTransactions: 0,
+          message: 'Khata Tab summary. PIN verification required for full itemized transaction ledger.'
         });
       }
 
@@ -1154,6 +1323,11 @@ const handleKhataStatementOrTab = async (request, reply) => {
         id: customer.id,
         name: customer.name,
         balance: Number(customer.balance ?? 0),
+        personalBalance: messDetails.personalBalance,
+        messShare: messDetails.totalMessShare,
+        messes: messDetails.customerMesses,
+        hasMessGroup: messDetails.hasMessGroup,
+        isMultiMess: messDetails.isMultiMess,
         credit_limit: Number(customer.credit_limit ?? 30.0),
         is_active: isActiveNum,
         isActive: Boolean(isActiveNum),
@@ -1417,11 +1591,27 @@ const handleKhataFreezeCloud = async (request, reply) => {
     const shouldFreeze = freeze !== undefined ? Boolean(freeze) : isCurrentlyActive;
     const newActiveState = shouldFreeze ? 0 : 1;
 
-    // Optional PIN verification if unfreezing an account that has a PIN set
-    if (!shouldFreeze && customer.pin && pin) {
-      const isValid = await verifyAndMigratePin(customer.id, pin, customer.pin);
-      if (!isValid) {
-        return reply.code(403).send({ success: false, error: 'Invalid PIN to unfreeze account' });
+    // Strict authentication verification when unfreezing an account that has a PIN set
+    if (!shouldFreeze && customer.pin) {
+      const authHeader = String(request.headers['authorization'] || '').trim();
+      let isJwtValid = false;
+      if (authHeader.startsWith('Bearer ')) {
+        try {
+          const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
+          if (decoded && (decoded.id === customer.id || decoded.accessToken === customer.access_token)) {
+            isJwtValid = true;
+          }
+        } catch {}
+      }
+
+      if (!isJwtValid) {
+        if (!pin) {
+          return reply.code(401).send({ success: false, error: 'Customer PIN or authorization token required to unfreeze account' });
+        }
+        const isValid = await verifyAndMigratePin(customer.id, String(pin).trim(), customer.pin);
+        if (!isValid) {
+          return reply.code(403).send({ success: false, error: 'Invalid PIN to unfreeze account' });
+        }
       }
     }
 
@@ -1453,7 +1643,7 @@ fastify.post('/customers/:id/freeze', handleKhataFreezeCloud);
 
 // Secure Tap Payments Gateway & Direct Fawri+ BenefitPay Initialization
 fastify.post('/api/checkout/init', async (request, reply) => {
-  const { customerId, amount, customerName, mode, directBenefitPay, sourceView } = request.body || {};
+  const { customerId, amount, customerName, mode, directBenefitPay, sourceView, paymentTarget, targetMessId, targetName } = request.body || {};
 
   if (!customerId || !amount) {
     return reply.code(400).send({ error: 'Missing customerId or amount' });
@@ -1486,12 +1676,25 @@ fastify.post('/api/checkout/init', async (request, reply) => {
   const liveCustomer = custCheck.rows[0];
   const currentBalance = Number(liveCustomer.balance || 0);
 
-  if (currentBalance <= 0) {
+  let maxAllowableDebt = currentBalance;
+  if (paymentTarget === 'MESS_GROUP' && targetMessId) {
+    try {
+      const messCheck = await db.execute({
+        sql: 'SELECT ROUND(COALESCE(SUM(amount), 0), 3) as total FROM KhataLedger WHERE mess_id = ?',
+        args: [targetMessId]
+      });
+      if (messCheck.rows && messCheck.rows.length > 0) {
+        maxAllowableDebt = Math.max(maxAllowableDebt, Number(messCheck.rows[0].total || 0));
+      }
+    } catch {}
+  }
+
+  if (maxAllowableDebt <= 0 && currentBalance <= 0) {
     return reply.code(400).send({ error: 'Customer has no outstanding balance to settle.' });
   }
 
-  // Enforce payment cannot exceed current balance
-  const chargeAmount = Math.min(numericAmount, currentBalance);
+  // Enforce payment cannot exceed current balance (or full room balance if settling a mess group)
+  const chargeAmount = Math.min(numericAmount, maxAllowableDebt > 0 ? maxAllowableDebt : currentBalance);
   const tapSecretKey = process.env.TAP_SECRET_KEY || '';
 
   // Sanitize customer name to prevent payload injection or buffer overflow (Resolved ADV-03)
@@ -1623,7 +1826,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
 
 // Authenticated Direct Fawri+ BenefitPay Settlement Confirmation & Ledger Reconciler
 fastify.post('/api/checkout/confirm', async (request, reply) => {
-  const { customerId, customerUuid, amount, reference, clientToken } = request.body || {};
+  const { customerId, customerUuid, amount, reference, clientToken, paymentTarget, targetMessId, targetName } = request.body || {};
   const targetId = normalizeArabicNumerals(String(customerId || customerUuid || '')).trim();
   const numericAmount = Number(Number(amount).toFixed(3));
 
@@ -1687,11 +1890,24 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
     }
 
     const prevBalance = Number(liveCustomer.balance || 0);
-    if (prevBalance <= 0) {
+    let maxAllowableDebt = prevBalance;
+    if (paymentTarget === 'MESS_GROUP' && targetMessId) {
+      try {
+        const messCheck = await db.execute({
+          sql: 'SELECT ROUND(COALESCE(SUM(amount), 0), 3) as total FROM KhataLedger WHERE mess_id = ?',
+          args: [targetMessId]
+        });
+        if (messCheck.rows && messCheck.rows.length > 0) {
+          maxAllowableDebt = Math.max(maxAllowableDebt, Number(messCheck.rows[0].total || 0));
+        }
+      } catch {}
+    }
+
+    if (maxAllowableDebt <= 0 && prevBalance <= 0) {
       return reply.code(400).send({ error: 'Customer has no outstanding balance to settle.' });
     }
 
-    const clearAmount = Math.min(numericAmount, prevBalance);
+    const clearAmount = Math.min(numericAmount, maxAllowableDebt > 0 ? maxAllowableDebt : prevBalance);
 
     // Arabic-Indic numeral normalization for references (BP-06)
     const normalizedRawRef = normalizeArabicNumerals(String(reference || '')).trim();
@@ -1713,13 +1929,15 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
     }
 
     const dupClaim = await db.execute({
-      sql: "SELECT id FROM KhataSettlementClaim WHERE reference = ? AND status != 'REJECTED' LIMIT 1",
-      args: [cleanRef]
+      sql: "SELECT id FROM KhataSettlementClaim WHERE reference LIKE ? AND status != 'REJECTED' LIMIT 1",
+      args: [`${cleanRef}%`]
     });
     if (dupClaim.rows && dupClaim.rows.length > 0) {
       return reply.code(400).send({ error: 'This payment reference has already been submitted and is awaiting cashier verification.' });
     }
 
+    const targetTag = targetName ? ` [${targetName.slice(0, 30)}]` : '';
+    const claimRef = `${cleanRef}${targetTag}`;
     const tenantId = liveCustomer.tenantId || 'tenant_askar_01';
     const claimId = `claim_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -1727,7 +1945,7 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
     await db.execute({
       sql: `INSERT INTO KhataSettlementClaim (id, customerId, customerName, amount, reference, channel, status, tenantId, createdAt)
             VALUES (?, ?, ?, ?, ?, 'FAWRI_PLUS', 'PENDING', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      args: [claimId, liveCustomer.id, liveCustomer.name, clearAmount, cleanRef, tenantId]
+      args: [claimId, liveCustomer.id, liveCustomer.name, clearAmount, claimRef, tenantId]
     });
 
     fastify.log.info({ claimId, customerId: liveCustomer.id, clearAmount, cleanRef, tenantId }, 'BenefitPay Fawri+ claim submitted for cashier review');
@@ -1766,7 +1984,33 @@ fastify.get('/api/khata/:uuid/claims', async (request, reply) => {
   }
 });
 
+// --- Centralized POS & Back-Office Auth Verification ---
+function verifyPosOrManagerAuth(request) {
+  const machineToken = request.headers['x-manager-token'] || request.headers['x-pos-token'];
+  const configuredToken = process.env.POS_MACHINE_TOKEN || process.env.INTERNAL_SYNC_SECRET || process.env.DEV_SECRET;
+  
+  if (machineToken && configuredToken && typeof machineToken === 'string') {
+    const bufA = Buffer.from(machineToken);
+    const bufB = Buffer.from(configuredToken);
+    if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+      return true;
+    }
+  }
+
+  const authHeader = String(request.headers['authorization'] || '');
+  if (authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
+      if (decoded?.role === 'MANAGER' || decoded?.role === 'SUPER_ADMIN') return true;
+    } catch {}
+  }
+  return false;
+}
+
 fastify.get('/api/khata/claims/pending', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   try {
     const claims = await db.execute(`
       SELECT c.id, c.customerId, c.customerName, c.amount, c.reference, c.channel, c.status, c.createdAt,
@@ -1784,6 +2028,9 @@ fastify.get('/api/khata/claims/pending', async (request, reply) => {
 });
 
 fastify.post('/api/khata/claims/:claimId/approve', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   const { claimId } = request.params;
   const { reviewer = 'Cashier' } = request.body || {};
 
@@ -1850,6 +2097,9 @@ fastify.post('/api/khata/claims/:claimId/approve', async (request, reply) => {
 });
 
 fastify.post('/api/khata/claims/:claimId/reject', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   const { claimId } = request.params;
   const { reviewer = 'Cashier', reason = 'Unverified payment reference' } = request.body || {};
 
@@ -2011,6 +2261,9 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
 
 // 1. Direct Khata Customer Debt Settlement & Repayment
 const handleCustomerSettleCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   const { id } = request.params || {};
   const { customerId, amount, amountPaid, paymentMethod, reference } = request.body || {};
   const targetId = id || customerId;
@@ -2086,6 +2339,9 @@ fastify.post('/khata/pay', handleCustomerSettleCloud);
 
 // 2. Direct Append-Only Khata Charge Endpoint
 const handleKhataChargeCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   const { customerId, customer_id, id, amount, invoiceNo, reference, timestamp, createdAt } = request.body || {};
   const effectiveId = customerId || customer_id || id;
   const numAmount = Number(amount || 0);
@@ -2154,6 +2410,9 @@ fastify.post('/khata/charge', handleKhataChargeCloud);
 
 // 3. Direct Sales Sync Batch Drain Endpoint
 const handleSyncSalesCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
+  }
   const { sales } = request.body || {};
   if (!Array.isArray(sales) || sales.length === 0) {
     return reply.status(400).send({ error: 'No sales provided in sync batch' });

@@ -122,7 +122,6 @@ export const HardCreditLimitModal: React.FC<HardCreditLimitModalProps> = ({
           <div className="space-y-2">
             <label className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center justify-between">
               <span>Enter Manager PIN to Override</span>
-              <span className="text-[10px] font-normal text-slate-400">Default PIN: 9999</span>
             </label>
             <div className="relative">
               <input

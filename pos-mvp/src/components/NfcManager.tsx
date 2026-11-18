@@ -5,6 +5,7 @@ import {
   ExternalLink, Banknote, FileText
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
+import { getManagerPin } from '../utils/authUtils';
 
 interface NfcCardItem {
   tag_id: string;
@@ -52,7 +53,7 @@ export default function NfcManager({
   const getHeaders = (hasBody = false) => {
     const headers: Record<string, string> = {
       'x-pos-client': 'store-pos',
-      'x-manager-pin': '9999'
+      'x-manager-pin': getManagerPin()
     };
     if (hasBody) headers['Content-Type'] = 'application/json';
     return headers;
@@ -637,7 +638,7 @@ export default function NfcManager({
           : `Mess Group "${data.messGroup?.group_name || editGroupName}" roster updated with ${editGroupMembers.length} members!`);
         setShowMessRosterModal(false);
         setSelectedMessGroupForEdit(null);
-        await Promise.allSettled([loadMessGroups(), loadCardsData()]);
+        await Promise.allSettled([loadMessGroups(), loadCardsData(), loadCustomers()]);
       } else {
         showNotification('error', data?.error || 'Failed to save mess group');
       }
@@ -654,18 +655,33 @@ export default function NfcManager({
       return;
     }
     setActionLoading(true);
+    // Optimistically eliminate from UI immediately to avoid any flickering resurrection
+    setMessGroupsList(prev => prev.filter(g => g.id !== groupId && g.group_name !== groupName));
+
     try {
-      const res = await resilientApiFetch(`/api/nfc/mess-groups/${groupId}`, {
-        method: 'DELETE',
-        headers: getHeaders()
+      // Multi-node broadcast delete: Send DELETE to both Local POS daemon and Cloud Edge concurrently
+      const candidates = [
+        apiBase,
+        DEFAULT_EDGE_API_URL,
+        getApiBaseUrl(),
+        'https://askar-edge-api.layali-askar-pos.workers.dev'
+      ].filter((val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx);
+
+      const deletePromises = candidates.map(async (base) => {
+        try {
+          const cleanBase = base.trim().replace(/\/$/, '');
+          return await fetch(`${cleanBase}/api/nfc/mess-groups/${groupId}`, {
+            method: 'DELETE',
+            headers: getHeaders()
+          });
+        } catch {
+          return null;
+        }
       });
-      const data = await res.json();
-      if (data?.success) {
-        showNotification('success', `Mess Group "${groupName}" disbanded successfully.`);
-        await Promise.allSettled([loadMessGroups(), loadCardsData()]);
-      } else {
-        showNotification('error', data?.error || 'Failed to disband group');
-      }
+      await Promise.allSettled(deletePromises);
+
+      showNotification('success', `Mess Group "${groupName}" disbanded successfully.`);
+      await Promise.allSettled([loadMessGroups(), loadCardsData(), loadCustomers()]);
     } catch (err: any) {
       showNotification('error', err.message || 'Error deleting group');
     } finally {

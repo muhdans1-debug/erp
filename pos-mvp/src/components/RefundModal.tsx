@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner';
 import { kickCashDrawer } from '../services/cashDrawerService';
-import { getManagerPin } from '../utils/authUtils';
+import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
 import { printRefundReceipt } from '../utils/printer';
 import { 
   X, 
@@ -244,14 +244,21 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
     });
 
     try {
-      let managerPin = (getManagerPin() || localStorage.getItem('manager_pin') || '').trim();
+      let managerPin = getManagerPin();
       if (!managerPin) {
-        managerPin = (window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter PIN to process refund:") || '').trim();
-      }
-      if (!managerPin) {
-        setErrorMessage('Manager authorization PIN is required to process refunds.');
-        setSubmitting(false);
-        return;
+        const inputPin = (window.prompt("MANAGER AUTHORIZATION REQUIRED\nEnter 4-digit PIN to process refund:") || '').trim();
+        if (!inputPin) {
+          setErrorMessage('Manager authorization PIN is required to process refunds.');
+          setSubmitting(false);
+          return;
+        }
+        const auth = await verifyManagerPinAsync(inputPin, apiBase);
+        if (!auth.authorized) {
+          setErrorMessage(auth.error || 'Invalid Manager PIN. Refund rejected.');
+          setSubmitting(false);
+          return;
+        }
+        managerPin = inputPin;
       }
 
       const res = await fetch(`${apiBase}/api/sales/refund`, {

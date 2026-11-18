@@ -20,7 +20,6 @@ import {
   WifiOff
 } from 'lucide-react';
 import { useCartStore, calculateCartTotals } from '../store/cartStore';
-import { useBarcodeWedge } from '../hooks/useBarcodeWedge';
 import { useNfcReader } from '../hooks/useNfcReader';
 import { generateNextInvoiceNumber } from '../utils/nbrInvoice';
 import { printFullReceipt } from '../utils/printer';
@@ -28,6 +27,7 @@ import { saveSaleOffline, getOfflineSales, markOfflineSalesSynced, saveOfflineKh
 import { lookupProductFast, fetchProductByBarcode, getCachedCatalog, reindexCatalog } from '../services/localDb';
 import { playThankYouVoice, playNfcChime } from '../utils/sound';
 import { getApiBaseUrl } from '../utils/apiConfig';
+import { getManagerPin, verifyManagerPin } from '../utils/authUtils';
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import QRCode from 'qrcode';
@@ -119,8 +119,7 @@ const DEFAULT_NON_BARCODE_PRODUCTS = [
 ];
 
 export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenProps) {
-  // Ensure hardware barcode wedge runs in background
-  useBarcodeWedge();
+  // Global hardware barcode wedge is managed at App root level
 
   const [apiBase] = useState(() => getApiBaseUrl());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -526,7 +525,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
         headers: {
           'Content-Type': 'application/json',
           'x-pos-client': 'f100-mobile-pos',
-          'x-manager-pin': '9999'
+          'x-manager-pin': getManagerPin()
         },
         body: JSON.stringify(pending)
       });
@@ -1027,7 +1026,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
   };
 
   const handleManagerPinSubmit = () => {
-    if (managerPinInput === '9999') {
+    if (verifyManagerPin(managerPinInput)) {
       setIsOverLimitModalOpen(false);
       setManagerPinError(false);
       handleExecuteCheckout('CREDIT', undefined, true);
@@ -2784,7 +2783,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
                 type="password"
                 maxLength={4}
                 autoFocus
-                placeholder="Manager PIN (9999)"
+                placeholder="Manager PIN"
                 value={managerPinInput}
                 onChange={(e) => {
                   setManagerPinInput(e.target.value);

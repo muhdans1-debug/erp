@@ -3,7 +3,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { db, dataDir } from '../db.js';
-import { managerAuth } from '../middleware/auth.js';
+import { managerAuth, isManagerAuthorized, isStaffAuthorized, generateKhataDeviceToken, verifyKhataDeviceToken } from '../middleware/auth.js';
 import { ensureRegionalIso, getRegionalIsoString, REGIONAL_TIMEZONE } from '../utils/time.js';
 import { mirrorCustomerToCloud, mirrorCustomerDeleteToCloud, mirrorLedgerEntryToCloud, mirrorCustomerMessMembershipsToCloud } from '../services/cloudSync.js';
 import { generatePaydayBatch } from '../src/automation/paydayJob.js';
@@ -36,8 +36,8 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
     SELECT c.id, c.tenantId, c.name, c.phone, c.credit_limit, c.credit_limit AS creditLimit, c.is_active,
            c.cardUid, c.mess_id, mg.group_name AS messName, mg.group_name AS mess_name, c.batchNo, c.description, c.createdAt,
            ROUND(COALESCE(SUM(l.amount), 0), 3) AS currentBalance,
-           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NULL OR l.mess_id = '' THEN l.amount ELSE 0 END), 0), 3) AS personalBalance,
-           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NOT NULL AND l.mess_id != '' THEN l.amount ELSE 0 END), 0), 3) AS messShare,
+           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NULL OR l.mess_id = '' OR l.mess_id NOT IN (SELECT id FROM MessGroup) THEN l.amount ELSE 0 END), 0), 3) AS personalBalance,
+           ROUND(COALESCE(SUM(CASE WHEN l.mess_id IS NOT NULL AND l.mess_id != '' AND l.mess_id IN (SELECT id FROM MessGroup) THEN l.amount ELSE 0 END), 0), 3) AS messShare,
            MAX(CASE WHEN l.amount < 0 THEN l.timestamp END) AS lastPaymentDate,
            (SELECT ABS(amount) FROM KhataLedger WHERE customerId = c.id AND amount < 0 ORDER BY timestamp DESC LIMIT 1) AS lastPaymentAmount,
            MAX(l.timestamp) AS lastActivityDate,
@@ -68,6 +68,38 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
     }
   } catch (err) { }
 
+  // Query total mess group balances across the whole ledger
+  const messGroupStatsMap = new Map();
+  try {
+    const mTotRes = await db.execute(`
+      SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) as totalBalance, COUNT(DISTINCT customerId) as memberCount
+      FROM KhataLedger
+      WHERE mess_id IS NOT NULL AND mess_id != ''
+      GROUP BY mess_id
+    `);
+    for (const r of mTotRes.rows || []) {
+      messGroupStatsMap.set(r.mess_id, {
+        totalBalance: Number(r.totalBalance || 0),
+        memberCount: Number(r.memberCount || 0)
+      });
+    }
+  } catch (err) { }
+
+  // Query individual customer shares per mess across the whole ledger
+  const customerMessShareMap = new Map();
+  try {
+    const shareRes = await db.execute(`
+      SELECT customerId, mess_id, ROUND(COALESCE(SUM(amount), 0), 3) as share
+      FROM KhataLedger
+      WHERE mess_id IS NOT NULL AND mess_id != ''
+      GROUP BY customerId, mess_id
+    `);
+    for (const r of shareRes.rows || []) {
+      const key = `${r.customerId}_${r.mess_id}`;
+      customerMessShareMap.set(key, Number(r.share || 0));
+    }
+  } catch (err) { }
+
   const khataConfig = loadKhataConfig();
   const nowTime = Date.now();
 
@@ -76,14 +108,32 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
     const isAct = c.is_active === 1 || c.is_active === true || c.is_active === undefined || c.is_active === null;
 
     // Multi-Mess Resolution
-    const customerMesses = messMemberMap.get(c.id) || [];
-    if (customerMesses.length === 0 && c.mess_id && (c.messName || c.mess_name)) {
-      customerMesses.push({ id: c.mess_id, group_name: c.messName || c.mess_name });
+    const rawMesses = messMemberMap.get(c.id) || [];
+    if (rawMesses.length === 0 && c.mess_id && (c.messName || c.mess_name)) {
+      rawMesses.push({ id: c.mess_id, group_name: c.messName || c.mess_name });
     }
+    const customerMesses = rawMesses.map(m => {
+      const stats = messGroupStatsMap.get(m.id) || { totalBalance: 0, memberCount: 1 };
+      const share = customerMessShareMap.get(`${c.id}_${m.id}`) || 0;
+      return {
+        id: m.id,
+        group_name: m.group_name,
+        name: m.group_name,
+        groupTotal: Number(stats.totalBalance.toFixed(3)),
+        totalBalance: Number(stats.totalBalance.toFixed(3)),
+        memberCount: Number(stats.memberCount || 1),
+        memberShare: Number(share.toFixed(3)),
+        myShare: Number(share.toFixed(3))
+      };
+    });
     const messNames = customerMesses.map(m => m.group_name).join(', ');
     const messIds = customerMesses.map(m => m.id);
     const isMultiMess = customerMesses.length > 1;
     const hasMessGroup = customerMesses.length > 0;
+    const primaryMessId = customerMesses[0]?.id || c.mess_id || null;
+    const groupStats = primaryMessId ? messGroupStatsMap.get(primaryMessId) : null;
+    const messGroupTotal = groupStats ? groupStats.totalBalance : Number((c.messShare || 0).toFixed(3));
+    const messMemberCount = groupStats ? groupStats.memberCount : (customerMesses.length || 1);
 
     // 1. Calculate Last Payment Date & Aging
     const lastPaymentDate = c.lastPaymentDate || null;
@@ -111,10 +161,16 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
       messes: customerMesses,
       mess_ids: messIds,
       hasMessGroup,
+      isDual: hasMessGroup,
       isMultiMess,
       messName: messNames || c.messName || null,
       mess_name: messNames || c.mess_name || c.messName || null,
-      mess_id: customerMesses[0]?.id || c.mess_id || null,
+      mess_id: primaryMessId,
+      messGroupTotal: Number(messGroupTotal.toFixed(3)),
+      mess_group_total: Number(messGroupTotal.toFixed(3)),
+      messTotal: Number(messGroupTotal.toFixed(3)),
+      mess_total: Number(messGroupTotal.toFixed(3)),
+      messMemberCount,
       is_active: isAct ? 1 : 0,
       isActive: isAct,
       currentBalance: Number(currentBalance.toFixed(3)),
@@ -166,6 +222,9 @@ const getAllCustomersWithBalances = async (includeArchived = false, sortParam = 
 const getCustomerWithBalanceById = async (id) => {
   const customer = await db.orm.Customer.where({ id }).all().first();
   if (!customer) return null;
+
+  // Sanitize sensitive credentials to prevent hash leakage via NFC / customer queries
+  const { pin: _p, khataPin: _kp, khata_pin: _k_p, access_token: _at, ...safeCustomer } = customer;
 
   let customerMesses = [];
   try {
@@ -264,15 +323,58 @@ const getCustomerWithBalanceById = async (id) => {
 
   const effectiveCreditLimit = algorithmicCreditLimit;
 
+  const enrichedCustomerMesses = [];
+  for (const m of customerMesses) {
+    let gTotal = 0;
+    let mCount = 1;
+    try {
+      const gTot = await db.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as total, COUNT(DISTINCT customerId) as count FROM KhataLedger WHERE mess_id = ?`,
+        args: [m.id]
+      });
+      if (gTot.rows && gTot.rows.length > 0) {
+        gTotal = Number(gTot.rows[0].total || 0);
+        mCount = Number(gTot.rows[0].count || 1);
+      }
+    } catch {}
+    const mShare = customerLedger
+      .filter(e => e.mess_id === m.id)
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    enrichedCustomerMesses.push({
+      id: m.id,
+      name: m.group_name,
+      group_name: m.group_name,
+      groupTotal: Number(gTotal.toFixed(3)),
+      totalBalance: Number(gTotal.toFixed(3)),
+      memberCount: mCount,
+      memberShare: Number(mShare.toFixed(3)),
+      myShare: Number(mShare.toFixed(3))
+    });
+  }
+
+  let messGroupTotal = Number(messSum.toFixed(3));
+  let messMemberCount = 1;
+  const targetMessId = enrichedCustomerMesses[0]?.id || customer.mess_id;
+  if (enrichedCustomerMesses.length > 0) {
+    messGroupTotal = enrichedCustomerMesses[0].groupTotal;
+    messMemberCount = enrichedCustomerMesses[0].memberCount;
+  }
+
   return {
-    ...customer,
-    messes: customerMesses,
-    mess_ids: customerMesses.map(m => m.id),
+    ...safeCustomer,
+    messes: enrichedCustomerMesses,
+    mess_ids: enrichedCustomerMesses.map(m => m.id),
     hasMessGroup: customerMesses.length > 0,
+    isDual: customerMesses.length > 0,
     isMultiMess: customerMesses.length > 1,
     messName,
     mess_name: messName,
-    mess_id: customerMesses[0]?.id || customer.mess_id || null,
+    mess_id: targetMessId || null,
+    messGroupTotal: Number(messGroupTotal.toFixed(3)),
+    mess_group_total: Number(messGroupTotal.toFixed(3)),
+    messTotal: Number(messGroupTotal.toFixed(3)),
+    mess_total: Number(messGroupTotal.toFixed(3)),
+    messMemberCount,
     is_active: isAct ? 1 : 0,
     isActive: isAct,
     currentBalance: Number(currentBalance.toFixed(3)),
@@ -662,6 +764,29 @@ const handleGetCustomerStatement = async (request, reply) => {
       return reply.status(404).send({ success: false, error: 'Customer or Mess Group not found' });
     }
 
+    // Customer Statement Identity & PIN Verification Gate
+    if (!isMessGroupStatement && customer) {
+      const storedPin = String(customer.khataPin || customer.khata_pin || customer.pin || '').trim();
+      if (storedPin) {
+        const auth = await isManagerAuthorized(request);
+        const isPosTerminal = request.headers['x-pos-client'] === 'store-pos' || request.headers['x-pos-client'] === 'pim-admin' || request.query?.pos === 'true';
+        const khataToken = request.headers['x-khata-token'] || 
+                           (request.headers['authorization']?.startsWith('Bearer ') ? request.headers['authorization'].slice(7) : null) || 
+                           request.query?.token;
+        const isTokenValid = khataToken ? verifyKhataDeviceToken(khataToken, id, storedPin) : false;
+
+        if (!auth.authorized && !isPosTerminal && !isTokenValid) {
+          return reply.code(401).send({
+            success: false,
+            error: 'Customer PIN authentication required to access ledger statement.',
+            requiresPin: true,
+            customerId: customer.id,
+            customerName: customer.name
+          });
+        }
+      }
+    }
+
     // Direct Mess Group Statement response
     if (isMessGroupStatement && messGroup) {
       const statement = messGroup.messLedger || [];
@@ -709,14 +834,26 @@ const handleGetCustomerStatement = async (request, reply) => {
       }
     }
 
-    if (detailedMesses.length > 0) {
-      messGroup = detailedMesses[0];
-    } else if (customer.mess_id) {
-      try {
-        messGroup = await fetchMessGroupDetails(customer.mess_id);
-        if (messGroup) detailedMesses.push(messGroup);
-      } catch (err) {
-        console.warn('Error fetching fallback messGroup in statement:', err.message);
+    const targetMessId = request.query?.mess_id || request.query?.messId;
+    if (targetMessId) {
+      messGroup = detailedMesses.find(dm => dm.id === targetMessId) || null;
+      if (!messGroup) {
+        try {
+          messGroup = await fetchMessGroupDetails(targetMessId);
+          if (messGroup) detailedMesses.push(messGroup);
+        } catch {}
+      }
+    }
+    if (!messGroup) {
+      if (detailedMesses.length > 0) {
+        messGroup = detailedMesses[0];
+      } else if (customer.mess_id) {
+        try {
+          messGroup = await fetchMessGroupDetails(customer.mess_id);
+          if (messGroup) detailedMesses.push(messGroup);
+        } catch (err) {
+          console.warn('Error fetching fallback messGroup in statement:', err.message);
+        }
       }
     }
 
@@ -852,15 +989,22 @@ const handleGetCustomerStatement = async (request, reply) => {
       }))
     };
 
-    // Newest transactions at the top
-    const statement = [...enriched].reverse();
+    // Newest transactions at the top with pagination support
+    const allTransactions = [...enriched].reverse();
+    const isAll = request.query?.all === 'true' || request.query?.all === true;
+    const limit = isAll ? allTransactions.length : Math.min(1000, Math.max(1, Number(request.query?.limit || 200)));
+    const offset = Math.max(0, Number(request.query?.offset || 0));
+    const paginatedStatement = allTransactions.slice(offset, offset + limit);
 
     const enrichedCust = await getCustomerWithBalanceById(id);
 
     return {
       success: true,
-      statement,
-      sales: statement, // Backward compatibility for legacy UI
+      statement: paginatedStatement,
+      sales: paginatedStatement, // Backward compatibility for legacy UI
+      totalCount: allTransactions.length,
+      limit,
+      offset,
       customer: {
         ...(enrichedCust || customer),
         messName: messGroup?.group_name || enrichedCust?.messName || null,
@@ -902,25 +1046,33 @@ fastify.get('/statement', async (request, reply) => {
   return reply.redirect(`http://${targetHost}:5173/?view=statement${id ? `&id=${id}` : ''}`);
 });
 
-// Customer Tab Safe Public Ledger Query (for Thermal QR Code Scans)
+// Customer Tab Safe Public Ledger Query (for Thermal QR Code Scans & Customer PWA)
 fastify.get('/api/customers/:id/tab', async (request, reply) => {
   const { id } = request.params;
   try {
+    const cust = await getCustomerWithBalanceById(id);
+    if (cust) {
+      return reply.send({
+        id: cust.id,
+        name: cust.name,
+        balance: Number(cust.currentBalance.toFixed(3)),
+        personalBalance: Number(cust.personalBalance.toFixed(3)),
+        messShare: Number(cust.messShare.toFixed(3)),
+        credit_limit: Number(cust.creditLimit ?? 30.0),
+        messes: cust.messes || [],
+        hasMessGroup: Boolean(cust.hasMessGroup),
+        isMultiMess: Boolean(cust.isMultiMess),
+        is_active: cust.isActive !== false ? 1 : 0,
+        isActive: cust.isActive !== false
+      });
+    }
+
     const result = await db.execute({
       sql: 'SELECT id, name, COALESCE(balance, 0.0) as balance, COALESCE(credit_limit, 30.0) as credit_limit, phone FROM Customer WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1',
       args: [id, id, id]
     });
 
     if (result.rows.length === 0) {
-      const cust = await getCustomerWithBalanceById(id);
-      if (cust) {
-        return reply.send({
-          id: cust.id,
-          name: cust.name,
-          balance: Number(cust.personalBalance ?? cust.currentBalance ?? 0),
-          credit_limit: Number(cust.creditLimit ?? 30.0)
-        });
-      }
       return reply.code(404).send({ error: 'Ledger not found.' });
     }
 
@@ -928,9 +1080,42 @@ fastify.get('/api/customers/:id/tab', async (request, reply) => {
     return reply.send({
       id: row.id,
       name: row.name,
-      balance: Number(row.balance || 0),
-      credit_limit: Number(row.credit_limit || 30.0)
+      balance: Number(Number(row.balance || 0).toFixed(3)),
+      personalBalance: Number(Number(row.balance || 0).toFixed(3)),
+      messShare: 0,
+      credit_limit: Number(row.credit_limit || 30.0),
+      messes: [],
+      hasMessGroup: false,
+      isMultiMess: false
     });
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Database connection failed.' });
+  }
+});
+
+// Alias /api/khata/:id/tab for parity with askar-khata-pwa client
+fastify.get('/api/khata/:id/tab', async (request, reply) => {
+  const { id } = request.params;
+  try {
+    const cust = await getCustomerWithBalanceById(id);
+    if (cust) {
+      return reply.send({
+        success: true,
+        id: cust.id,
+        name: cust.name,
+        balance: Number(cust.currentBalance.toFixed(3)),
+        personalBalance: Number(cust.personalBalance.toFixed(3)),
+        messShare: Number(cust.messShare.toFixed(3)),
+        credit_limit: Number(cust.creditLimit ?? 30.0),
+        messes: cust.messes || [],
+        hasMessGroup: Boolean(cust.hasMessGroup),
+        isMultiMess: Boolean(cust.isMultiMess),
+        is_active: cust.isActive !== false ? 1 : 0,
+        isActive: cust.isActive !== false
+      });
+    }
+    return reply.code(404).send({ error: 'Ledger not found.' });
   } catch (error) {
     fastify.log.error(error);
     return reply.code(500).send({ error: 'Database connection failed.' });
@@ -1207,8 +1392,8 @@ fastify.post('/api/khata/verify-pin', async (request, reply) => {
     // Success: clear failed attempts
     khataPinAttempts.delete(targetId);
 
-    // Issue a 90-day trusted device token
-    const deviceToken = `khata_tok_${targetId}_${Date.now()}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    // Issue a cryptographically signed, tamper-proof 90-day trusted device token bound to PIN hash
+    const deviceToken = generateKhataDeviceToken(targetId, storedPin);
 
     return {
       success: true,
@@ -1592,13 +1777,33 @@ const handleArchiveCustomer = async (request, reply) => {
       return reply.status(404).send({ success: false, error: 'Customer not found' });
     }
 
-    // Strict Financial Integrity Rule: Cannot delete a customer with an active balance
-    if (customerWithBal.currentBalance > 0.001) {
+    // Strict Financial Integrity Rule: Cannot delete a customer with an active non-zero balance
+    if (Math.abs(customerWithBal.currentBalance) > 0.001) {
       return reply.status(400).send({
         success: false,
-        error: `Cannot delete customer with an outstanding balance (BD ${customerWithBal.currentBalance.toFixed(3)}). Customer must pay and settle all dues to BD 0.000 first.`,
+        error: `Cannot delete customer with an active balance (BD ${customerWithBal.currentBalance.toFixed(3)}). Customer must pay and settle all dues to BD 0.000 first.`,
         balance: customerWithBal.currentBalance
       });
+    }
+
+    // Strict Communal Integrity Rule: Cannot delete a customer while enrolled in an active Mess Group
+    try {
+      const messCheck = await db.execute({
+        sql: `SELECT m.group_name 
+              FROM MessMember mm 
+              JOIN MessGroup m ON mm.mess_id = m.id 
+              WHERE mm.customer_id = ? 
+              LIMIT 1`,
+        args: [id]
+      });
+      if (messCheck.rows && messCheck.rows.length > 0) {
+        return reply.status(400).send({
+          success: false,
+          error: `Cannot delete customer while enrolled in Mess Group "${messCheck.rows[0].group_name}". Remove customer from mess group first.`
+        });
+      }
+    } catch (messErr) {
+      console.warn('Mess membership check notice:', messErr.message);
     }
 
     // 1. Unbind any linked NFC card from both NfcCard and Customer
@@ -1661,12 +1866,12 @@ fastify.delete('/api/khata/:id', { preHandler: managerAuth }, handleArchiveCusto
 // Customer / Cashier Khata Freeze & Lock Endpoint
 const handleLocalKhataFreeze = async (request, reply) => {
   const { id } = request.params;
-  const { freeze } = request.body || {};
+  const { freeze, pin } = request.body || {};
   const cleanId = String(id || '').trim();
 
   try {
     const custRes = await db.execute({
-      sql: `SELECT id, name, is_active, isActive FROM Customer WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1`,
+      sql: `SELECT id, name, is_active, isActive, COALESCE(NULLIF(khataPin, ''), NULLIF(khata_pin, ''), NULLIF(pin, '')) as pin FROM Customer WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1`,
       args: [cleanId, cleanId, cleanId]
     });
 
@@ -1678,6 +1883,42 @@ const handleLocalKhataFreeze = async (request, reply) => {
     const isCurrentlyActive = !(customer.is_active === 0 || customer.isActive === 0);
     const shouldFreeze = freeze !== undefined ? Boolean(freeze) : isCurrentlyActive;
     const newActiveState = shouldFreeze ? 0 : 1;
+
+    // Strict verification when UNFREEZING an account that has a PIN set
+    if (!shouldFreeze && customer.pin) {
+      const auth = await isManagerAuthorized(request);
+      if (!auth.authorized) {
+        if (!pin) {
+          return reply.code(401).send({ success: false, error: 'Customer PIN or manager authorization required to unfreeze account' });
+        }
+
+        // Rate limiting: 5 failed unfreeze attempts locks for 15 minutes
+        const now = Date.now();
+        const attemptRecord = khataPinAttempts.get(customer.id) || { count: 0, lockedUntil: 0 };
+        if (attemptRecord.lockedUntil > now) {
+          const remainingSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
+          return reply.code(429).send({ success: false, error: `Account unfreeze temporarily locked due to failed attempts. Try again in ${remainingSec}s.` });
+        }
+
+        const storedPin = String(customer.pin || '').trim();
+        const inputPin = String(pin || '').trim();
+        let isMatch = false;
+        if (storedPin.startsWith('$2b$') || storedPin.startsWith('$2a$')) {
+          isMatch = await bcrypt.compare(inputPin, storedPin).catch(() => false);
+        } else {
+          isMatch = (inputPin === storedPin);
+        }
+        if (!isMatch) {
+          attemptRecord.count += 1;
+          if (attemptRecord.count >= 5) {
+            attemptRecord.lockedUntil = now + (15 * 60 * 1000);
+          }
+          khataPinAttempts.set(customer.id, attemptRecord);
+          return reply.code(403).send({ success: false, error: 'Invalid PIN to unfreeze account' });
+        }
+        khataPinAttempts.delete(customer.id);
+      }
+    }
 
     await db.execute({
       sql: `UPDATE Customer SET is_active = ?, isActive = ?, updatedAt = datetime('now') WHERE id = ?`,
@@ -1763,6 +2004,117 @@ fastify.post('/api/customers/:id/bind-card', async (request, reply) => {
   }
 });
 
+// Debt-aware settlement of Mess Group debt:
+// Allocates payment strictly to room members with outstanding positive mess debt.
+// NEVER credits negative mess balances or deducts from members' personal balances!
+const settleMessGroupDebtAware = async (messGroup, settleAmount, payRef, receiptNo, payingCustomer = null) => {
+  const activeMembers = messGroup.members || [];
+  if (activeMembers.length === 0) {
+    return { success: false, error: 'Mess group has no active members to credit' };
+  }
+
+  // 1. Query current positive mess debt for each member in this mess group
+  const memberDebts = [];
+  let totalPositiveDebt = 0;
+  for (const m of activeMembers) {
+    const dRes = await db.execute({
+      sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND mess_id = ?`,
+      args: [m.id, messGroup.id]
+    });
+    const bal = Number(dRes.rows?.[0]?.bal || 0);
+    const debt = Math.max(0, bal);
+    memberDebts.push({ id: m.id, name: m.name, debt });
+    totalPositiveDebt = Number((totalPositiveDebt + debt).toFixed(3));
+  }
+
+  // 2. Allocate credits strictly up to each member's positive debt
+  const credits = new Map();
+  if (totalPositiveDebt > 0) {
+    if (settleAmount >= totalPositiveDebt) {
+      // Full room clearance: each member with mess debt gets exactly their mess debt cleared to 0.000
+      for (const md of memberDebts) {
+        if (md.debt > 0) {
+          credits.set(md.id, md.debt);
+        }
+      }
+    } else {
+      // Partial payment: distribute proportionally among members with positive debt
+      let allocatedTotal = 0;
+      for (const md of memberDebts) {
+        if (md.debt > 0) {
+          const c = Math.min(md.debt, parseFloat(((settleAmount * md.debt) / totalPositiveDebt).toFixed(3)));
+          credits.set(md.id, c);
+          allocatedTotal = Number((allocatedTotal + c).toFixed(3));
+        }
+      }
+      let remainder = Number((settleAmount - allocatedTotal).toFixed(3));
+      if (remainder > 0) {
+        const sorted = [...memberDebts].filter(md => (credits.get(md.id) || 0) < md.debt).sort((a, b) => b.debt - a.debt);
+        if (sorted.length > 0) {
+          credits.set(sorted[0].id, Number(((credits.get(sorted[0].id) || 0) + remainder).toFixed(3)));
+        }
+      }
+    }
+  }
+
+  // 3. Atomically record payments for credited members and sync balances
+  const nowIso = getRegionalIsoString();
+  await db.transaction(async (tx) => {
+    for (const [memberId, creditAmt] of credits.entries()) {
+      if (creditAmt <= 0) continue;
+      const entryId = crypto.randomUUID();
+      await tx.execute({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+              VALUES (?, ?, ?, 'PAYMENT', ?, 'SYNCED', ?, ?, 'tenant_askar_01', ?)`,
+        args: [entryId, memberId, -creditAmt, `Mess Settlement: ${messGroup.group_name} (${payRef})`, nowIso, nowIso, messGroup.id]
+      });
+
+      await tx.execute({
+        sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+        args: [memberId, memberId]
+      });
+    }
+
+    // Overpayment protection: if customer paid more than the total room debt, credit the excess to paying customer's personal tab as advance credit so no cash evaporates!
+    if (settleAmount > totalPositiveDebt && payingCustomer) {
+      const excess = Number((settleAmount - totalPositiveDebt).toFixed(3));
+      if (excess > 0) {
+        const advanceId = crypto.randomUUID();
+        await tx.execute({
+          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                VALUES (?, ?, ?, 'PAYMENT', ?, 'SYNCED', ?, ?, 'tenant_askar_01', NULL)`,
+          args: [advanceId, payingCustomer.id, -excess, `Advance Payment from Mess Settlement: ${messGroup.group_name} (${payRef})`, nowIso, nowIso]
+        });
+
+        await tx.execute({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+          args: [payingCustomer.id, payingCustomer.id]
+        });
+      }
+    }
+  });
+
+  const updatedMess = await fetchMessGroupDetails(messGroup.id);
+  let updatedPayingCustomer = null;
+  if (payingCustomer) {
+    updatedPayingCustomer = await getCustomerWithBalanceById(payingCustomer.id);
+  }
+
+  return {
+    success: true,
+    isMess: true,
+    message: `Mess debt settled: BD ${settleAmount.toFixed(3)} allocated to clear communal room debt`,
+    messGroup: updatedMess,
+    customer: updatedPayingCustomer,
+    amountPaid: settleAmount,
+    settledAmount: settleAmount,
+    newBalance: updatedPayingCustomer ? updatedPayingCustomer.currentBalance : '0.000',
+    personalBalance: updatedPayingCustomer ? updatedPayingCustomer.personalBalance : 0,
+    messShare: updatedPayingCustomer ? updatedPayingCustomer.messShare : 0,
+    receiptNo
+  };
+};
+
 // 2c. Settle Customer Khata Balance (Append-Only Event Sourcing: logs -amount in KhataLedger)
 const handleCustomerSettle = async (request, reply) => {
   const { id } = request.params;
@@ -1794,78 +2146,92 @@ const handleCustomerSettle = async (request, reply) => {
     const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
     const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
 
-    // Case A: Direct Mess Group Entity Settlement (Split payment equally across mess members)
+    // Case A: Direct Mess Group Entity Settlement (Debt-Aware allocation across mess members)
     if (messGroup && !customer) {
-      const activeMembers = messGroup.members || [];
-      if (activeMembers.length === 0) {
-        return reply.status(400).send({ success: false, error: 'Mess group has no active members to credit' });
+      const result = await settleMessGroupDebtAware(messGroup, settleAmount, payRef, receiptNo);
+      if (!result.success) {
+        return reply.status(400).send(result);
       }
-
-      const splitCredit = parseFloat((settleAmount / activeMembers.length).toFixed(3));
-      const remainder = parseFloat((settleAmount - (splitCredit * activeMembers.length)).toFixed(3));
-      const nowIso = getRegionalIsoString();
-
-      await db.transaction(async (tx) => {
-        for (let i = 0; i < activeMembers.length; i++) {
-          const m = activeMembers[i];
-          const mCredit = parseFloat((i === 0 ? splitCredit + remainder : splitCredit).toFixed(3));
-          const entryId = crypto.randomUUID();
-
-          await tx.execute({
-            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
-                  VALUES (?, ?, ?, 'PAYMENT', ?, 'SYNCED', ?, ?, 'tenant_askar_01', ?)`,
-            args: [entryId, m.id, -mCredit, `Mess Settlement: ${messGroup.group_name} (${payRef})`, nowIso, nowIso, messGroup.id]
-          });
-
-          await tx.execute({
-            sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
-            args: [m.id, m.id]
-          });
-        }
-      });
-
-      const updatedMess = await fetchMessGroupDetails(messGroup.id);
-      return reply.send({
-        success: true,
-        isMess: true,
-        message: `Mess debt settled: BD ${settleAmount.toFixed(3)} credited equally across ${activeMembers.length} members`,
-        messGroup: updatedMess,
-        amountPaid: settleAmount,
-        settledAmount: settleAmount,
-        receiptNo
-      });
+      return reply.send(result);
     }
 
     // Case B: Individual Customer Settlement (Optionally tagged with mess_id if earmarked for a mess)
-    let targetMessId = mess_id || messId || null;
-    if (!targetMessId) {
-      try {
-        const pDebtRes = await db.execute({
-          sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND (mess_id IS NULL OR mess_id = '')`,
-          args: [id]
-        });
-        const pDebt = Number(pDebtRes.rows?.[0]?.bal || 0);
+    const { target, paymentTarget } = request.body || {};
+    const isExplicitPersonal = target === 'PERSONAL' || paymentTarget === 'PERSONAL';
+    const isExplicitMess = target === 'MESS' || paymentTarget === 'MESS';
+    const isMessGroupPayment = target === 'MESS_GROUP' || paymentTarget === 'MESS_GROUP';
 
-        if (pDebt <= 0) {
-          // If personal debt is already zero or cleared, allocate payment to customer's active mess debt
-          const mDebtRes = await db.execute({
-            sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) AS bal 
-                  FROM KhataLedger 
-                  WHERE customerId = ? AND mess_id IS NOT NULL AND mess_id != '' 
-                  GROUP BY mess_id 
-                  HAVING bal > 0 
-                  LIMIT 1`,
+    let targetMessId = mess_id || messId || null;
+    if (isExplicitPersonal) {
+      targetMessId = null;
+    }
+
+    // If paying Full Mess Group from an individual customer account, run debt-aware settlement for that room
+    if (isMessGroupPayment) {
+      if (!targetMessId) {
+        targetMessId = customer.mess_id;
+        if (!targetMessId) {
+          const mmRes = await db.execute({
+            sql: `SELECT mess_id FROM MessMember WHERE customer_id = ? AND is_active = 1 LIMIT 1`,
             args: [id]
           });
-          if (mDebtRes.rows && mDebtRes.rows.length > 0) {
-            targetMessId = mDebtRes.rows[0].mess_id;
+          if (mmRes.rows && mmRes.rows[0]) {
+            targetMessId = mmRes.rows[0].mess_id;
           }
         }
-      } catch { }
+      }
+      if (targetMessId) {
+        const mg = await fetchMessGroupDetails(targetMessId);
+        if (mg) {
+          const result = await settleMessGroupDebtAware(mg, settleAmount, payRef, receiptNo, customer);
+          if (!result.success) {
+            return reply.status(400).send(result);
+          }
+          return reply.send(result);
+        }
+      }
     }
+
+    let pDebt = 0;
+    let mDebt = 0;
+    let activeMessId = null;
+
+    try {
+      const pDebtRes = await db.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND (mess_id IS NULL OR mess_id = '' OR mess_id NOT IN (SELECT id FROM MessGroup))`,
+        args: [id]
+      });
+      pDebt = Math.max(0, Number(pDebtRes.rows?.[0]?.bal || 0));
+
+      const mDebtRes = await db.execute({
+        sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) AS bal 
+              FROM KhataLedger 
+              WHERE customerId = ? AND mess_id IS NOT NULL AND mess_id != '' AND mess_id IN (SELECT id FROM MessGroup)
+              GROUP BY mess_id 
+              HAVING bal > 0 
+              ORDER BY bal DESC`,
+        args: [id]
+      });
+      const activeMesses = (mDebtRes.rows || []).map(r => ({
+        mess_id: r.mess_id,
+        bal: Math.max(0, Number(r.bal || 0))
+      }));
+      if (activeMesses.length > 0) {
+        mDebt = Number(activeMesses.reduce((sum, m) => sum + m.bal, 0).toFixed(3));
+        activeMessId = activeMesses[0].mess_id;
+      }
+
+      if (!targetMessId && !isExplicitPersonal) {
+        if (pDebt <= 0 && activeMesses.length === 1) {
+          targetMessId = activeMesses[0].mess_id;
+        }
+      }
+    } catch { }
 
     let previousBalance = 0;
     let newBalance = '0.000';
+    let newPersonalBalance = 0;
+    let newMessShare = 0;
     let ledgerEntry = null;
 
     // NEW: Atomic transaction to prevent split-brain balance overwrites
@@ -1881,25 +2247,79 @@ const handleCustomerSettle = async (request, reply) => {
       const nowIso = getRegionalIsoString();
       const entryId = crypto.randomUUID();
 
-      await tx.execute({
-        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
-              VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', ?)`,
-        args: [entryId, id, -settleAmount, payRef, nowIso, nowIso, targetMessId]
-      });
+      // Check if we need to split payment between personal and mess (e.g. paying Total Due when both debts exist, or paying across multiple messes)
+      if (!targetMessId && !isExplicitPersonal && (pDebt > 0 || (activeMesses && activeMesses.length > 1)) && settleAmount > pDebt) {
+        const pAmt = parseFloat(Math.min(pDebt, settleAmount).toFixed(3));
+        let remainingMessToPay = parseFloat((settleAmount - pAmt).toFixed(3));
 
-      ledgerEntry = {
-        id: entryId,
-        customerId: id,
-        amount: -settleAmount, // Negative for balance deduction
-        type: 'PAYMENT',
-        reference: payRef,
-        running_balance: Number((previousBalance - settleAmount).toFixed(3)),
-        syncStatus: 'PENDING',
-        timestamp: nowIso,
-        created_at: nowIso,
-        tenantId: 'tenant_askar_01',
-        mess_id: targetMessId
-      };
+        if (pAmt > 0) {
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                  VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', NULL)`,
+            args: [entryId, id, -pAmt, payRef, nowIso, nowIso]
+          });
+        }
+
+        // Allocate remaining payment sequentially across all active mess debts
+        const messList = activeMesses || (activeMessId ? [{ mess_id: activeMessId, bal: mDebt }] : []);
+        for (const m of messList) {
+          if (remainingMessToPay <= 0) break;
+          const payToThisMess = parseFloat(Math.min(m.bal, remainingMessToPay).toFixed(3));
+          if (payToThisMess > 0) {
+            const entryIdMess = crypto.randomUUID();
+            await tx.execute({
+              sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                    VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', ?)`,
+              args: [entryIdMess, id, -payToThisMess, `${payRef} (Mess Balance)`, nowIso, nowIso, m.mess_id]
+            });
+            remainingMessToPay = Number((remainingMessToPay - payToThisMess).toFixed(3));
+          }
+        }
+
+        // If payment exceeds both personal and all mess debts, credit remainder to personal tab as advance payment
+        if (remainingMessToPay > 0) {
+          const entryIdAdvance = crypto.randomUUID();
+          await tx.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                  VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', NULL)`,
+            args: [entryIdAdvance, id, -remainingMessToPay, `${payRef} (Advance Credit)`, nowIso, nowIso]
+          });
+        }
+
+        ledgerEntry = {
+          id: entryId,
+          customerId: id,
+          amount: -settleAmount,
+          type: 'PAYMENT',
+          reference: payRef,
+          running_balance: Number((previousBalance - settleAmount).toFixed(3)),
+          syncStatus: 'PENDING',
+          timestamp: nowIso,
+          created_at: nowIso,
+          tenantId: 'tenant_askar_01',
+          mess_id: null
+        };
+      } else {
+        await tx.execute({
+          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id)
+                VALUES (?, ?, ?, 'PAYMENT', ?, 'PENDING', ?, ?, 'tenant_askar_01', ?)`,
+          args: [entryId, id, -settleAmount, payRef, nowIso, nowIso, targetMessId]
+        });
+
+        ledgerEntry = {
+          id: entryId,
+          customerId: id,
+          amount: -settleAmount,
+          type: 'PAYMENT',
+          reference: payRef,
+          running_balance: Number((previousBalance - settleAmount).toFixed(3)),
+          syncStatus: 'PENDING',
+          timestamp: nowIso,
+          created_at: nowIso,
+          tenantId: 'tenant_askar_01',
+          mess_id: targetMessId
+        };
+      }
       
       // 2. Lock the ledger and calculate the exact new sum
       const sumResult = await tx.execute({
@@ -1907,6 +2327,17 @@ const handleCustomerSettle = async (request, reply) => {
         args: [id]
       });
       newBalance = Number(sumResult.rows[0].balance).toFixed(3);
+
+      const pResult = await tx.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(CASE WHEN mess_id IS NULL OR mess_id = '' OR mess_id NOT IN (SELECT id FROM MessGroup) THEN amount ELSE 0 END), 0), 3) AS bal FROM KhataLedger WHERE customerId = ?`,
+        args: [id]
+      });
+      const mResult = await tx.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(CASE WHEN mess_id IS NOT NULL AND mess_id != '' AND mess_id IN (SELECT id FROM MessGroup) THEN amount ELSE 0 END), 0), 3) AS bal FROM KhataLedger WHERE customerId = ?`,
+        args: [id]
+      });
+      newPersonalBalance = Number(pResult.rows[0]?.bal || 0);
+      newMessShare = Number(mResult.rows[0]?.bal || 0);
       
       // 3. Update the Customer profile with the validated sum
       await tx.execute({ 
@@ -1937,6 +2368,8 @@ const handleCustomerSettle = async (request, reply) => {
       ...customer,
       balance: Number(newBalance),
       currentBalance: Number(newBalance),
+      personalBalance: Number(newPersonalBalance),
+      messShare: Number(newMessShare)
     };
 
     return reply.send({
@@ -1990,6 +2423,11 @@ fastify.post('/api/khata/pay', async (request, reply) => {
 
   // --- Khata BenefitPay Settlement Claims (Option 3: Cashier Approval Workflow) ---
   fastify.get('/api/khata/claims/pending', async (request, reply) => {
+    const auth = await isStaffAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Staff or Manager authorization required.' });
+    }
+
     try {
       const claims = await db.execute(`
         SELECT c.id, c.customerId, c.customerName, c.amount, c.reference, c.channel, c.status, c.createdAt,
@@ -2007,8 +2445,13 @@ fastify.post('/api/khata/pay', async (request, reply) => {
   });
 
   fastify.post('/api/khata/claims/:claimId/approve', async (request, reply) => {
+    const auth = await isStaffAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Staff or Manager authorization required.' });
+    }
+
     const { claimId } = request.params;
-    const { reviewer = 'Cashier' } = request.body || {};
+    const reviewer = auth.user?.name || request.body?.reviewer || 'Cashier';
 
     try {
       const claimRes = await db.execute({
@@ -2089,8 +2532,14 @@ fastify.post('/api/khata/pay', async (request, reply) => {
   });
 
   fastify.post('/api/khata/claims/:claimId/reject', async (request, reply) => {
+    const auth = await isStaffAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Staff or Manager authorization required.' });
+    }
+
     const { claimId } = request.params;
-    const { reviewer = 'Cashier', reason = 'Unverified payment reference' } = request.body || {};
+    const reviewer = auth.user?.name || request.body?.reviewer || 'Cashier';
+    const { reason = 'Unverified payment reference' } = request.body || {};
 
     try {
       const claimRes = await db.execute({
@@ -2344,53 +2793,14 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
         return reply.code(404).send({ success: false, error: 'Unrecognized NFC Card. Please register this card to a Khata account or Mess group.', uid: scannedUid });
       }
 
-      const customerRes = await db.execute({
-        sql: `SELECT id, name, phone, cpr, balance, credit_limit, is_active, nfcCardId, cardUid, mess_id FROM Customer WHERE id = ? LIMIT 1`,
-        args: [customerId]
-      });
-
-      if (!customerRes.rows || customerRes.rows.length === 0) {
+      const customer = await getCustomerWithBalanceById(customerId);
+      if (!customer) {
         return reply.code(404).send({ success: false, error: 'Customer record missing' });
       }
 
-      const row = customerRes.rows[0];
-      const balance = Number(row.balance ?? 0);
-      const rawLimit = Number(row.credit_limit);
-      const limit = rawLimit > 0 ? rawLimit : 30.0;
-      const finalMessId = row.mess_id || messId;
-
-      let groupName = null;
-      let groupMembers = [];
-      if (finalMessId) {
-        try {
-          const [gRes, mRes] = await Promise.all([
-            db.execute({ sql: `SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [finalMessId] }),
-            db.execute({ sql: `SELECT id, name, balance FROM Customer WHERE mess_id = ? AND (is_active = 1 OR is_active IS NULL)`, args: [finalMessId] })
-          ]);
-          if (gRes.rows && gRes.rows.length > 0) groupName = gRes.rows[0].group_name;
-          groupMembers = (mRes.rows || []).map((m) => ({ ...m, balance: Number(m.balance ?? 0) }));
-        } catch {}
+      if (!customer.cardUid) {
+        customer.cardUid = scannedUid;
       }
-
-      const isFrozen = (row.is_active === 0 || row.isActive === 0);
-      const customer = {
-        ...row,
-        currentBalance: balance,
-        balance: balance,
-        creditLimit: limit,
-        credit_limit: limit,
-        cardUid: row.nfcCardId || row.cardUid || scannedUid,
-        card_type: finalMessId ? 'DUAL' : 'PERSONAL',
-        hasMessGroup: Boolean(finalMessId),
-        isDual: Boolean(finalMessId),
-        mess_id: finalMessId,
-        group_name: groupName,
-        members: groupMembers,
-        isOverLimit: balance > limit,
-        isFrozen,
-        is_active: isFrozen ? 0 : 1,
-        isActive: !isFrozen
-      };
 
       return reply.send({ success: true, customer });
     } catch (err) {
@@ -2449,6 +2859,24 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
 
       if (statements.length > 0) {
         await db.batch(statements);
+        // Non-blocking background mirror of rebalanced cards to Turso Cloud
+        for (const st of statements) {
+          if (st.sql && st.sql.includes('INSERT INTO KhataLedger')) {
+            const [txId, custId, amt, txType, ref, ts1, ts2, mId] = st.args;
+            mirrorLedgerEntryToCloud({
+              id: txId,
+              customerId: custId,
+              amount: amt,
+              type: txType,
+              reference: ref,
+              timestamp: ts1,
+              created_at: ts2,
+              mess_id: mId,
+              tenantId: 'tenant_askar_01',
+              syncStatus: 'SYNCED'
+            }).catch(() => {});
+          }
+        }
       }
 
       const updated = await fetchMessGroupDetails(id);
@@ -2463,8 +2891,14 @@ fastify.get('/api/sync/khata-ledger', async (request, reply) => {
     }
   });
 
-  // Autonomous Payday Debt Recovery Engine (BenefitPay Fawri+ Batch Broadcaster)
+  // Autonomous Payday Debt Recovery Engine (BenefitPay Fawri+ Batch Broadcaster) - Manager Protected
   fastify.get('/api/khata/payday-batch', async (request, reply) => {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({
+        error: 'Manager authorization required to access payday debt recovery batch.'
+      });
+    }
     try {
       const minBalance = parseFloat(request.query?.minBalance || '0.001');
       const batch = await generatePaydayBatch({ minBalance });

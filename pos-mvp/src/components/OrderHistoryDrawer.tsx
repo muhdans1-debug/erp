@@ -13,7 +13,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { printCreditNote } from '../utils/printer';
-import { getManagerPin } from '../utils/authUtils';
+import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
 
 export interface SaleItem {
   id: string;
@@ -128,15 +128,15 @@ export default function OrderHistoryDrawer({
   }, [isOpen, fetchSales]);
 
   // Handle PIN input digits
-  const handlePinDigit = (digit: string) => {
+  const handlePinDigit = async (digit: string) => {
     if (pinInput.length >= 4) return;
     const nextPin = pinInput + digit;
     setPinInput(nextPin);
     setPinError(false);
 
     if (nextPin.length === 4) {
-      const managerPin = getManagerPin();
-      if (nextPin === managerPin) {
+      const auth = await verifyManagerPinAsync(nextPin, apiBase);
+      if (auth.authorized) {
         setIsUnlocked(true);
         playBeep(true);
       } else {
@@ -514,7 +514,7 @@ export default function OrderHistoryDrawer({
                               onClick={() => setConfirmSale(sale)}
                               disabled={voidingSaleId === sale.id}
                               className="px-3.5 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black text-xs cursor-pointer shadow-md transition-all flex items-center gap-1.5"
-                              title="Void Bill & Restore Inventory (Manager PIN 9999)"
+                              title="Void Bill & Restore Inventory (Requires Manager PIN)"
                             >
                               <Ban size={13} />
                               Void Bill

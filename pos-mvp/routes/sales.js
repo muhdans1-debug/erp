@@ -2,7 +2,7 @@ import { SaleRepository } from '../repositories/SaleRepository.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { db } from '../db.js';
-import { managerAuth } from '../middleware/auth.js';
+import { managerAuth, isManagerAuthorized } from '../middleware/auth.js';
 import { generateNextInvoiceNumber } from '../services/invoiceSequence.js';
 import { ensureRegionalIso, getRegionalIsoString, getRegionalDayRange } from '../utils/time.js';
 import { mirrorSaleToCloud } from '../services/cloudSync.js';
@@ -50,13 +50,27 @@ export default async function salesRoutes(fastify, options) {
       return { success: true, processed: 0, message: 'All sales already synced' };
     }
 
+    // Guard against corrupted mock / zero-price dummy records before opening transaction
+    const validSalesToSync = salesToSync.filter(sale => {
+      if (!sale || !sale.id) return false;
+      const total = Number(sale.total || sale.totalAmount || 0);
+      const items = (Array.isArray(sale.items) && sale.items.length > 0)
+        ? sale.items
+        : (Array.isArray(sale.cart) && sale.cart.length > 0 ? sale.cart : []);
+      return !(total <= 0 && items.length === 0);
+    });
+
+    if (validSalesToSync.length === 0) {
+      return { success: true, processed: 0, message: 'All sales already synced or filtered' };
+    }
+
     // Open a secure transaction so partial failures roll back completely
     const transaction = await db.transaction();
     const affectedCustomerIds = new Set();
 
     try {
       let processedCount = 0;
-      for (const sale of salesToSync) {
+      for (const sale of validSalesToSync) {
         if (!sale || !sale.id) continue;
 
         const providedInvoiceNo = sale.invoiceNo || sale.invoice_number;
@@ -71,11 +85,6 @@ export default async function salesRoutes(fastify, options) {
           ? sale.items
           : (Array.isArray(sale.cart) && sale.cart.length > 0 ? sale.cart : []);
 
-        // Guard against corrupted mock / zero-price dummy records
-        if (total <= 0 && items.length === 0) {
-          fastify.log.warn(`[Sync Sales] Skipping empty phantom sale: ${sale.id} (${invoiceNo})`);
-          continue;
-        }
 
         const paymentType = sale.paymentType || sale.payment_type || 'CASH';
         const status = sale.status || 'COMPLETED';
@@ -588,7 +597,7 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
 
       statements.push({
         sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id, sale_id, group_total, member_count)
-              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?, 'tenant_1', ?, ?, ?, ?)`,
+              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?, 'tenant_askar_01', ?, ?, ?, ?)`,
         args: [ledgerEntryId, member.id, memberCharge, ledgerRef, nowIso, nowIso, messId, saleId, finalTotal, memberRows.length]
       });
 
@@ -633,8 +642,43 @@ const handleCheckout = async (request, reply) => {
   const { cart, items, subtotal, vat, vatTotal, totalVat, total, totalAmount, customerId, paymentType, invoiceNo, id, employeeId, shiftId } = request.body || {};
 
   try {
-    const saleId = id || crypto.randomUUID();
-    const rawItems = items || cart || [];
+    const rawItems = Array.isArray(items) ? items : (Array.isArray(cart) ? cart : null);
+    if (!rawItems || rawItems.length === 0) {
+      return reply.status(400).send({ success: false, error: 'Cannot checkout an empty cart or invalid items array.' });
+    }
+
+    // 0. Idempotency Check: Prevent duplicate sales / double charges during network retries
+    const clientSaleId = request.headers['x-idempotency-key'] || request.body?.idempotencyKey || request.body?.id;
+    if (clientSaleId && typeof clientSaleId === 'string' && clientSaleId.trim()) {
+      try {
+        const existing = await db.execute({
+          sql: `SELECT id, invoiceNo, invoiceSeq, total, totalAmount, subtotal, totalVat, vatTotal, paymentType, createdAt 
+                FROM Sale 
+                WHERE id = ? LIMIT 1`,
+          args: [clientSaleId.trim()]
+        });
+        if (existing.rows && existing.rows.length > 0) {
+          const s = existing.rows[0];
+          return reply.status(200).send({
+            success: true,
+            idempotentReplay: true,
+            invoice: s.invoiceNo,
+            invoiceNo: s.invoiceNo,
+            invoiceNumber: s.invoiceSeq || 0,
+            formattedInvoice: s.invoiceNo,
+            subtotal: Number(s.subtotal || 0),
+            totalVat: Number(s.totalVat || s.vatTotal || 0),
+            totalAmount: Number(s.totalAmount || s.total || 0)
+          });
+        }
+      } catch (checkErr) {
+        fastify.log.warn(`[handleCheckout] Idempotency check warning: ${checkErr.message}`);
+      }
+    }
+
+    const saleId = (clientSaleId && typeof clientSaleId === 'string' && clientSaleId.trim()) 
+      ? clientSaleId.trim() 
+      : crypto.randomUUID();
 
     // 1. Fetch catalog data to verify prices server-side
     const productLookupIds = rawItems
@@ -646,7 +690,7 @@ const handleCheckout = async (request, reply) => {
       try {
         const placeholders = productLookupIds.map(() => '?').join(',');
         const dbProducts = await db.execute({
-          sql: `SELECT id, barcode, name, sellingPrice, vatRate, taxRate, purchasePrice, unitCost 
+          sql: `SELECT id, barcode, name, sellingPrice, vatRate, taxRate, purchasePrice, unitCost, is_weighed_item 
                 FROM Product 
                 WHERE id IN (${placeholders}) OR barcode IN (${placeholders})`,
           args: [...productLookupIds, ...productLookupIds]
@@ -664,12 +708,41 @@ const handleCheckout = async (request, reply) => {
       }
     }
 
-    // Check manager authorization if price overrides or custom discounts are present
-    const managerPin = request.headers['x-manager-pin'] || request.body?.managerPin || request.body?.pin;
-    let isManagerAuthorized = false;
-    if (managerPin && process.env.MANAGER_PIN_HASH) {
-      isManagerAuthorized = await bcrypt.compare(String(managerPin).trim(), process.env.MANAGER_PIN_HASH.trim()).catch(() => false);
+    // 2. Strict Input Sanitation: Validate quantities and prices for all line items
+    for (const item of rawItems) {
+      const rawQty = item.quantity ?? item.qty;
+      const numQty = Number(rawQty);
+      if (isNaN(numQty) || numQty <= 0) {
+        return reply.status(400).send({
+          success: false,
+          error: `Invalid quantity for item "${item.name || item.id || 'Unknown'}": must be greater than zero.`
+        });
+      }
+
+      const rawPrice = item.priceAtSale ?? item.sellingPrice ?? item.price;
+      const numPrice = Number(rawPrice);
+      if (isNaN(numPrice) || numPrice < 0) {
+        return reply.status(400).send({
+          success: false,
+          error: `Invalid price for item "${item.name || item.id || 'Unknown'}": price cannot be negative.`
+        });
+      }
+
+      const rawPid = item.productId || item.id;
+      const dbProd = rawPid ? productMap.get(String(rawPid)) : null;
+
+      // Discrete non-weighable items must have whole integer quantities
+      if (dbProd && !dbProd.is_weighed_item && !Number.isInteger(numQty)) {
+        return reply.status(400).send({
+          success: false,
+          error: `Item "${dbProd.name || item.name}" is a discrete item and requires an integer quantity (${numQty} provided).`
+        });
+      }
     }
+
+    // Check manager authorization if price overrides or custom discounts are present
+    const managerAuth = await isManagerAuthorized(request);
+    const isManagerAuthorizedFlag = managerAuth.authorized;
 
     // Calculate line-item VAT and extract inclusive 10% VAT vs 0% zero-rated
     let computedSubtotal = 0;
@@ -688,12 +761,12 @@ const handleCheckout = async (request, reply) => {
       if (dbProd && dbProd.sellingPrice !== undefined && dbProd.sellingPrice !== null) {
         const catalogPrice = Number(dbProd.sellingPrice);
         if (Math.abs(safePrice - catalogPrice) > 0.001) {
-          if (!isManagerAuthorized) {
+          if (!isManagerAuthorizedFlag) {
             fastify.log.warn(`[handleCheckout] Price tampering prevented for ${rawPid}: client requested BD ${safePrice}, enforced catalog BD ${catalogPrice}`);
             safePrice = catalogPrice;
           }
         }
-      } else if (!dbProd && !isManagerAuthorized) {
+      } else if (!dbProd && !isManagerAuthorizedFlag) {
         if (safePrice <= 0) {
           throw new Error(`Custom line item "${item.name || 'Custom Item'}" requires manager PIN authorization.`);
         }
@@ -747,16 +820,23 @@ const handleCheckout = async (request, reply) => {
     const finalTotalVat = Number(computedTotalVat.toFixed(3));
     const finalTotal = Number(computedFinalTotal.toFixed(3));
 
-    // Resolve effective shift ID: always bind to active OPEN shift
+    // Resolve effective shift ID & cashier identity: always bind to active OPEN shift
     let effectiveShiftId = shiftId;
+    let effectiveEmployeeId = employeeId;
     try {
       const activeShift = await db.orm.Shift.where({ status: 'OPEN' }).all().first();
       if (activeShift) {
         effectiveShiftId = activeShift.id;
+        if (!effectiveEmployeeId && activeShift.employeeId) {
+          effectiveEmployeeId = activeShift.employeeId;
+        }
       } else {
-        const openSession = await queryLocalDevDb(`SELECT id FROM ShiftSession WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`);
+        const openSession = await queryLocalDevDb(`SELECT id, employee_id FROM ShiftSession WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`);
         if (openSession && openSession.length > 0) {
           effectiveShiftId = openSession[0].id;
+          if (!effectiveEmployeeId && openSession[0].employee_id) {
+            effectiveEmployeeId = openSession[0].employee_id;
+          }
         }
       }
     } catch (err) { }
@@ -780,7 +860,7 @@ const handleCheckout = async (request, reply) => {
       total: finalTotal,
       totalAmount: finalTotal,
       paymentType: paymentType || 'CASH',
-      employeeId: employeeId || null,
+      employeeId: effectiveEmployeeId || 'emp_cashier_1',
       shiftId: effectiveShiftId || shiftId || null,
       terminalId: request.body?.terminalId || request.body?.terminal_id || 'T1',
       storeId: request.body?.storeId || request.body?.store_id || 'store_askar_01',
@@ -830,6 +910,16 @@ const handleCheckout = async (request, reply) => {
 
     return {
       success: true,
+      sale: {
+        id: result.id,
+        invoiceNo: result.invoiceNo,
+        employeeId: saleData.employeeId,
+        shiftId: saleData.shiftId,
+        subtotal: finalSubtotal,
+        totalVat: finalTotalVat,
+        total: finalTotal,
+        totalAmount: finalTotal
+      },
       invoice: result.invoiceNo,
       invoiceNo: result.invoiceNo,
       invoiceNumber: result.invoiceSeq || 0,

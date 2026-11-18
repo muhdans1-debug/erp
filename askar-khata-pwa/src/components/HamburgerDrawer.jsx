@@ -19,7 +19,8 @@ import {
   ArrowRight,
   ExternalLink,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 
 const DRAWER_TEXTS = {
@@ -50,6 +51,7 @@ const DRAWER_TEXTS = {
     vatNumber: 'VAT: 200000000000002',
     address: 'Block 951, Askar, Bahrain',
     nbrCompliant: 'NBR 10% VAT Compliant',
+    refreshApp: 'Refresh & Check Updates',
     close: 'Close Menu'
   },
   ar: {
@@ -79,6 +81,7 @@ const DRAWER_TEXTS = {
     vatNumber: 'الرقم الضريبي: 200000000000002',
     address: 'مجمع 951، عسكر، البحرين',
     nbrCompliant: 'معتمد لدى الجهاز الوطني للإيرادات',
+    refreshApp: 'تحديث التطبيق والبيانات',
     close: 'إغلاق القائمة'
   },
   ml: {
@@ -108,6 +111,7 @@ const DRAWER_TEXTS = {
     vatNumber: 'VAT: 200000000000002',
     address: 'ബ്ലോക്ക് 951, അസ്കർ, ബഹ്‌റൈൻ',
     nbrCompliant: 'NBR 10% വാറ്റ് അംഗീകൃതം',
+    refreshApp: 'റീഫ്രഷ് & അപ്‌ഡേറ്റ്',
     close: 'മെനു അടയ്ക്കുക'
   },
   bn: {
@@ -137,6 +141,7 @@ const DRAWER_TEXTS = {
     vatNumber: 'VAT: 200000000000002',
     address: 'ব্লক ৯৫১, আসকার, বাহরাইন',
     nbrCompliant: 'NBR ১০% ভ্যাট অনুমোদিত',
+    refreshApp: 'রিফ্রেশ ও আপডেট চেক',
     close: 'মেনু বন্ধ করুন'
   },
   hi: {
@@ -166,6 +171,7 @@ const DRAWER_TEXTS = {
     vatNumber: 'VAT: 200000000000002',
     address: 'ब्लॉक 951, अस्कर, बहरीन',
     nbrCompliant: 'NBR 10% वैट अनुपालन',
+    refreshApp: 'रिफ्रेश और अपडेट चेक',
     close: 'मेनू बंद करें'
   }
 };
@@ -366,6 +372,29 @@ export default function HamburgerDrawer({
                 )}
               </>
             )}
+
+            {/* 1-Tap App Refresh & Service Worker Update Check */}
+            <button
+              type="button"
+              onClick={() => {
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then((regs) => {
+                    for (const r of regs) r.update().catch(() => {});
+                  });
+                }
+                onClose();
+                window.location.reload();
+              }}
+              className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800 text-slate-200 hover:text-white transition group cursor-pointer text-left"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </div>
+                <span className="font-semibold text-xs">{t.refreshApp}</span>
+              </div>
+              <ChevronRight className={`w-3.5 h-3.5 text-slate-500 group-hover:text-white ${isRtl ? 'rotate-180' : ''}`} />
+            </button>
           </div>
 
           {/* Privacy & Accessibility Toggles */}

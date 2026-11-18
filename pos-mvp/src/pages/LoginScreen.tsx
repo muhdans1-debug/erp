@@ -1,17 +1,28 @@
 import { useState, useEffect } from 'react';
 import { Lock, Delete, Settings, Wifi, CheckCircle2, AlertCircle } from 'lucide-react';
 import { getServerIp, setServerIp, getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
+import { setManagerSessionPin, hashPinSha256 } from '../utils/authUtils';
 
-// 1. Native Web Crypto Hashing Function
-async function generateSha256(pin: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(pin);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+function mergeCachedEmployees(newEmployees: any[]) {
+  try {
+    const raw = localStorage.getItem('askar_cached_employees');
+    const existing: any[] = raw ? JSON.parse(raw) : [];
+    const merged = newEmployees.map((ne: any) => {
+      const match = existing.find((ex: any) => ex.id === ne.id);
+      return {
+        id: ne.id,
+        name: ne.name,
+        role: ne.role,
+        pin_hash: match?.pin_hash,
+        is_active: ne.is_active ?? 1
+      };
+    });
+    localStorage.setItem('askar_cached_employees', JSON.stringify(merged));
+  } catch {}
 }
 
 interface LoginScreenProps {
-  onLogin: (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string }) => void;
+  onLogin: (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string; pin?: string }) => void;
   apiBase?: string;
 }
 
@@ -57,7 +68,7 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
       .then(r => r.json())
       .then(d => {
         if (d && d.success && Array.isArray(d.employees)) {
-          localStorage.setItem('askar_cached_employees', JSON.stringify(d.employees));
+          mergeCachedEmployees(d.employees);
         }
       })
       .catch(() => {});
@@ -83,7 +94,7 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
           if (res.ok) {
             const data = await res.json();
             if (data && data.success && Array.isArray(data.employees)) {
-              localStorage.setItem('askar_cached_employees', JSON.stringify(data.employees));
+              mergeCachedEmployees(data.employees);
               break;
             }
           }
@@ -117,7 +128,7 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
           if (data && data.success && data.employee) {
             // Update cached employees with hashed PIN (never plaintext)
             try {
-              const hashedPin = await generateSha256(cleanPin);
+              const hashedPin = await hashPinSha256(cleanPin);
               const raw = localStorage.getItem('askar_cached_employees');
               const list: any[] = raw ? JSON.parse(raw) : [];
               const safeEmployee = {
@@ -141,9 +152,14 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
               localStorage.setItem('master_server_url', base);
             }
 
+            if (data.employee.role === 'MANAGER') {
+              setManagerSessionPin(cleanPin);
+            }
+
             onLogin(data.employee.role === 'MANAGER' ? 'MANAGER' : 'CASHIER', {
               id: data.employee.id,
-              name: data.employee.name
+              name: data.employee.name,
+              pin: cleanPin
             });
             verified = true;
             break;
@@ -164,16 +180,23 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
 
     // 2. Offline fallback: check cached employee PIN hashes in localStorage
     try {
-      const hashedInput = await generateSha256(cleanPin);
+      const hashedInput = await hashPinSha256(cleanPin);
       const raw = localStorage.getItem('askar_cached_employees');
       if (raw) {
         const list: any[] = JSON.parse(raw);
         const match = list.find((e: any) => 
-          (e.pin_hash === hashedInput || e.pin_code === hashedInput || (e.pin_code && String(e.pin_code).trim() === cleanPin)) && 
+          (e.pin_hash === hashedInput || e.pin_code === hashedInput) && 
           (e.is_active === 1 || e.is_active === true || e.is_active === undefined)
         );
         if (match) {
-          onLogin(match.role === 'MANAGER' ? 'MANAGER' : 'CASHIER', { id: match.id, name: match.name });
+          if (match.role === 'MANAGER') {
+            setManagerSessionPin(cleanPin);
+          }
+          onLogin(match.role === 'MANAGER' ? 'MANAGER' : 'CASHIER', {
+            id: match.id,
+            name: match.name,
+            pin: cleanPin
+          });
           setIsVerifying(false);
           return;
         }

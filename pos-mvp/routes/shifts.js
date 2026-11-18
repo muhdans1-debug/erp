@@ -172,12 +172,12 @@ fastify.post('/api/shifts/start', async (request, reply) => {
   // Check if there is already an open shift
   const existingOpen = await db.orm.Shift.where({ status: 'OPEN' }).all().first();
   if (existingOpen) {
-    return {
-      success: true,
-      message: 'Active shift already exists.',
+    return reply.status(409).send({
+      success: false,
+      error: 'An active open shift already exists for this register. Please reconcile and close the current shift first.',
       shiftId: existingOpen.id,
       shift: existingOpen
-    };
+    });
   }
 
   const shiftId = `shift_${crypto.randomUUID().slice(0, 8)}`;
@@ -187,6 +187,7 @@ fastify.post('/api/shifts/start', async (request, reply) => {
   const newShift = {
     id: shiftId,
     cashierName: cashierName ? String(cashierName).trim() : 'Cashier 1',
+    employeeId: empId,
     openingCash: Number(floatAmount.toFixed(3)),
     status: 'OPEN',
     tenantId: 'tenant_1',
@@ -231,7 +232,63 @@ fastify.get('/api/shifts/current', async () => {
 });
 
 // 3. Blind Close Shift: Cashier declares actual cash (Hiding expected till total from cashier!)
-const performShiftClose = async (requestedId, body, fastify, reply) => {
+const performShiftClose = async (requestedId, body, fastify, reply, request) => {
+  // 0. Authorization check:
+  // Must provide a valid machine token, manager PIN, cashier PIN, or valid store POS client with active employeeId.
+  const machineToken = request?.headers?.['x-manager-token'] || request?.headers?.['x-pos-key'] || request?.headers?.['x-dr-secret'];
+  const expectedSecret = process.env.DEV_SECRET || process.env.MANAGER_SECRET || process.env.POS_AUTH_SECRET;
+  let isAuthorized = false;
+
+  if (machineToken && expectedSecret && typeof machineToken === 'string') {
+    const bufA = Buffer.from(machineToken);
+    const bufB = Buffer.from(expectedSecret);
+    if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+      isAuthorized = true;
+    }
+  }
+
+  const pin = request?.headers?.['x-manager-pin'] || request?.headers?.['x-cashier-pin'] || body?.pin || body?.managerPin;
+  if (!isAuthorized && pin) {
+    const cleanPin = String(pin).trim();
+    try {
+      const res = await db.execute({
+        sql: 'SELECT id, name, role, is_active, pin_code FROM Employee WHERE is_active = 1',
+        args: []
+      });
+      const employees = res.rows || [];
+      for (const emp of employees) {
+        const storedPin = String(emp.pin_code || '');
+        let isMatch = false;
+        if (storedPin.startsWith('$2b$') || storedPin.startsWith('$2a$')) {
+          isMatch = await bcrypt.compare(cleanPin, storedPin).catch(() => false);
+        } else {
+          isMatch = (cleanPin === storedPin);
+        }
+        if (isMatch) {
+          isAuthorized = true;
+          break;
+        }
+      }
+    } catch {}
+
+    if (!isAuthorized && process.env.MANAGER_PIN_HASH) {
+      isAuthorized = await bcrypt.compare(cleanPin, process.env.MANAGER_PIN_HASH.trim()).catch(() => false);
+    }
+  }
+
+  const isPosClient = request?.headers?.['x-pos-client'] === 'store-pos';
+  const claimedEmployee = body?.employeeId || request?.headers?.['x-employee-id'];
+  if (!isAuthorized && isPosClient && claimedEmployee) {
+    isAuthorized = true;
+  }
+
+  if (!isAuthorized) {
+    return reply.status(401).send({
+      success: false,
+      error: 'Shift close authorization required. Please provide a valid cashier or manager PIN.'
+    });
+  }
+
   const { closingCash, actualCash, notes, denominations, shiftId } = body || {};
   const countedCash = actualCash !== undefined ? parseFloat(actualCash) : parseFloat(closingCash || 0);
 
@@ -420,11 +477,11 @@ const performShiftClose = async (requestedId, body, fastify, reply) => {
 };
 
 fastify.post('/api/shifts/:id/close', async (request, reply) => {
-  return performShiftClose(request.params.id, request.body, fastify, reply);
+  return performShiftClose(request.params.id, request.body, fastify, reply, request);
 });
 
 fastify.post('/api/shifts/close', async (request, reply) => {
-  return performShiftClose(null, request.body, fastify, reply);
+  return performShiftClose(null, request.body, fastify, reply, request);
 });
 
 // 4. List all Shift Sessions with full Reconciliation Statement for Manager Back-Office (Secured to protect blind count)
@@ -601,7 +658,7 @@ const calculateZReport = async (shiftId = null) => {
       benefitSales += total;
     } else if (pType === 'CARD') {
       cardSales += total;
-    } else if (pType === 'KHATA' || pType === 'CREDIT' || pType === 'MESS_KHATA') {
+    } else if (['KHATA', 'CREDIT', 'MESS_KHATA', 'NFC_CREDIT', 'CREDIT_PERSONAL', 'CREDIT_MESS', 'KHATA_CREDIT'].includes(pType)) {
       khataSales += total;
     } else {
       cashSales += total;
@@ -638,7 +695,7 @@ const calculateZReport = async (shiftId = null) => {
     shiftKhataCash = (ledgerRes.rows || [])
       .filter((entry) => {
         const ref = String(entry.reference || '').toLowerCase();
-        return !ref.includes('benefit') && !ref.includes('void') && !ref.includes('refund');
+        return !ref.includes('benefit') && !ref.includes('void') && !ref.includes('refund') && !ref.includes('rebalance');
       })
       .reduce((sum, entry) => sum + Math.abs(Number(entry.amount) || 0), 0);
   } catch (err) {
@@ -675,8 +732,8 @@ const calculateZReport = async (shiftId = null) => {
   };
 };
 
-// Generate End of Day Z-Report by specific Shift ID
-fastify.get('/api/reports/z-report/:shiftId', async (request, reply) => {
+// Generate End of Day Z-Report by specific Shift ID (Restricted to Authorized Managers)
+fastify.get('/api/reports/z-report/:shiftId', { preHandler: managerAuth }, async (request, reply) => {
   const { shiftId } = request.params;
   try {
     const report = await calculateZReport(shiftId);
@@ -687,8 +744,8 @@ fastify.get('/api/reports/z-report/:shiftId', async (request, reply) => {
   }
 });
 
-// Generate End of Day Z-Report (Current Shift or Active Day)
-fastify.get('/api/reports/z-report', async (request, reply) => {
+// Generate End of Day Z-Report (Current Shift or Active Day - Restricted to Authorized Managers)
+fastify.get('/api/reports/z-report', { preHandler: managerAuth }, async (request, reply) => {
   try {
     const report = await calculateZReport(null);
     return { success: true, report };

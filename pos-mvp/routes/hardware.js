@@ -1,18 +1,24 @@
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails, syncCustomerMessMemberships } from './khata.js';
-import { verifyManagerPin } from '../middleware/auth.js';
-import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud, mirrorMessCardToCloud } from '../services/cloudSync.js';
+import { verifyManagerPin, isManagerAuthorized } from '../middleware/auth.js';
+import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud, mirrorMessCardToCloud, mirrorMessGroupTombstoneToCloud } from '../services/cloudSync.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
 const resolveNfcTagDetails = async (uid) => {
-  if (!uid) return null;
+  if (!uid || typeof uid !== 'string') return null;
   const cleanUid = uid.trim().toUpperCase().replace(/^#+|#+$/g, '');
   const cleanNoColon = cleanUid.replace(/[:\-]/g, '');
 
+  // Strict physical transponder validation: only hex characters and minimum 4-digit UID length
+  if (cleanNoColon.length < 4 || !/^[0-9A-F]+$/.test(cleanNoColon)) {
+    return null;
+  }
+
   let nfcCard = null;
 
-  // 1. Try local LibSQL replica
+  // 1. Try local LibSQL replica (Exact match only - wildcards rejected to prevent identity confusion)
   try {
     const res = await db.execute({
       sql: `
@@ -20,10 +26,9 @@ const resolveNfcTagDetails = async (uid) => {
         FROM NfcCard 
         WHERE UPPER(tag_id) = ? 
            OR REPLACE(UPPER(tag_id), ':', '') = ?
-           OR UPPER(tag_id) LIKE ?
         LIMIT 1
       `,
-      args: [cleanUid, cleanNoColon, `%${cleanNoColon}%`]
+      args: [cleanUid, cleanNoColon]
     });
     if (res.rows && res.rows.length > 0) {
       nfcCard = res.rows[0];
@@ -90,9 +95,28 @@ const resolveNfcTagDetails = async (uid) => {
 
   // CASE A: DUAL-WALLET or MULTI-MESS (Customer identified AND belongs to 1 or more Mess Groups)
   if (customer && (customerMesses.length > 0 || primaryMess)) {
+    const rawMessShare = customer.messShare !== undefined && customer.messShare !== null
+      ? Math.max(0, Number(customer.messShare))
+      : (primaryMess?.equalSplitShare !== undefined ? Number(primaryMess.equalSplitShare) : 0);
+    const resolvedMessShare = Number(rawMessShare.toFixed(3));
+    const resolvedMessGroupTotal = Number((customer.messGroupTotal || primaryMess?.totalBalance || 0).toFixed(3));
+    const resolvedMemberCount = Number(customer.messMemberCount || primaryMess?.memberCount || (primaryMess?.members?.length || 1));
+    const currentBal = Number(customer.currentBalance ?? customer.balance ?? 0);
+    const personalBal = customer.personalBalance !== undefined && customer.personalBalance !== null
+      ? Number(customer.personalBalance)
+      : Math.max(0, Number((currentBal - resolvedMessShare).toFixed(3)));
+
     return {
       ...customer,
-      personalBalance: customer.personalBalance !== undefined ? customer.personalBalance : (customer.currentBalance - (customer.messShare || 0)),
+      currentBalance: currentBal,
+      balance: currentBal,
+      personalBalance: personalBal,
+      messShare: resolvedMessShare,
+      messGroupTotal: resolvedMessGroupTotal,
+      mess_group_total: resolvedMessGroupTotal,
+      messTotal: resolvedMessGroupTotal,
+      mess_total: resolvedMessGroupTotal,
+      messMemberCount: resolvedMemberCount,
       hasMessGroup: true,
       isDual: true,
       isMultiMess: customerMesses.length > 1,
@@ -104,7 +128,7 @@ const resolveNfcTagDetails = async (uid) => {
       group_name: primaryMess?.group_name,
       messGroup: primaryMess,
       members: primaryMess?.members,
-      memberCount: primaryMess?.memberCount,
+      memberCount: resolvedMemberCount,
       shopper: {
         id: customer.id,
         name: customer.name
@@ -438,33 +462,16 @@ fastify.post('/api/register/cart/live', async (request) => {
   return { ok: true, commands, serverEpoch: Date.now(), serverTime: Date.now() };
 });
 
-// Cash Drawer Kick Endpoint (Supports Manager PIN, Authorized POS Session, and Fleet Relay)
+// Cash Drawer Kick Endpoint (Supports Manager PIN, Authorized Token, and Fleet Relay)
 const handleDrawerKick = async (request, reply) => {
   try {
     const body = request.body || {};
-    const rawTerminal = body.terminalId || body.targetTerminal || request.query?.terminalId || 'T1';
+    const rawTerminal = body.terminalId || body.targetTerminal || 'T1';
     const terminalId = normalizeTerminal(rawTerminal);
-    const pin = request.headers['x-manager-pin'] || body.pin || body.managerPin;
-    const isPosClient = request.headers['x-pos-client'] === 'store-pos' || 
-                        body.authorized === true || 
-                        body.source === 'LAPTOP_POS' || 
-                        body.source === 'POS_CHECKOUT';
 
-    // Verify manager PIN if passed
-    if (pin) {
-      const hash = process.env.MANAGER_PIN_HASH;
-      if (hash) {
-        const isValid = await bcrypt.compare(String(pin).trim(), hash.trim()).catch(() => false);
-        if (!isValid && String(pin).trim() !== '9999' && String(pin).trim() !== '1234') {
-          return reply.code(403).send({ success: false, error: 'Invalid Manager PIN.' });
-        }
-      }
-    } else if (!isPosClient) {
-      const ip = request.socket?.remoteAddress || request.ip || '';
-      const isLocal = ip.includes('127.0.0.1') || ip.includes('::1') || ip.includes('192.168.') || ip.includes('10.');
-      if (!isLocal) {
-        return reply.code(401).send({ success: false, error: 'Manager PIN or authorized POS session required.' });
-      }
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager PIN or valid manager token required to actuate cash drawer.' });
     }
 
     const kickPayload = {
@@ -518,7 +525,7 @@ const handleDrawerKick = async (request, reply) => {
 };
 
 fastify.post('/api/hardware/drawer-kick', handleDrawerKick);
-fastify.get('/api/hardware/drawer-kick', handleDrawerKick);
+fastify.post('/api/hardware/drawer/kick', handleDrawerKick);
 
 // GET /api/nfc/cards - List all enrolled NFC cards with comprehensive balances and metadata
 fastify.get('/api/nfc/cards', async (request, reply) => {
@@ -634,9 +641,14 @@ fastify.get('/api/nfc/cards', async (request, reply) => {
   }
 });
 
-// POST /api/nfc/assign - Assign card to Personal Customer or Mess Group
+// POST /api/nfc/assign - Assign card to Personal Customer or Mess Group (Secured by Manager Authorization)
 fastify.post('/api/nfc/assign', async (request, reply) => {
   try {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager authorization required to assign NFC card.' });
+    }
+
     const { tag_id, card_type, customer_id, mess_id, mess_ids, mess_name, member_ids } = request.body || {};
     const cleanTag = (tag_id || '').trim().toUpperCase();
     if (!cleanTag) {
@@ -755,9 +767,14 @@ fastify.post('/api/nfc/assign', async (request, reply) => {
   }
 });
 
-// POST /api/nfc/unlink - Unbind / Erase an NFC card
+// POST /api/nfc/unlink - Unbind / Erase an NFC card (Secured by Manager Authorization)
 fastify.post('/api/nfc/unlink', async (request, reply) => {
   try {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager authorization required to unlink NFC card.' });
+    }
+
     const { tag_id } = request.body || {};
     const cleanTag = (tag_id || '').trim().toUpperCase();
     if (!cleanTag) {
@@ -800,7 +817,7 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
   try {
     let groups = [];
     try {
-      const res = await db.execute(`SELECT id, group_name, createdAt FROM MessGroup ORDER BY group_name ASC`);
+      const res = await db.execute(`SELECT id, group_name, createdAt FROM MessGroup WHERE id NOT IN (SELECT id FROM DisbandedMessGroup) ORDER BY group_name ASC`);
       groups = res.rows || [];
     } catch { }
 
@@ -824,6 +841,8 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
         memberCount: details?.memberCount || 0,
         members: details?.members || [],
         totalBalance: details?.totalBalance || 0,
+        equalSplitShare: details?.equalSplitShare || (details?.totalBalance ? Number((details.totalBalance / Math.max(1, (details.members?.length || 1))).toFixed(3)) : 0),
+        messLedger: details?.messLedger || [],
         assignedCard: cardTag,
         cardTag: cardTag
       });
@@ -836,9 +855,14 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
   }
 });
 
-// POST /api/nfc/mess-groups - Create a new Mess Group with initial members and optional NFC Card
+// POST /api/nfc/mess-groups - Create a new Mess Group with initial members and optional NFC Card (Secured by Manager Authorization)
 fastify.post('/api/nfc/mess-groups', async (request, reply) => {
   try {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager authorization required to create mess group.' });
+    }
+
     const { group_name, member_ids, tag_id } = request.body || {};
     if (!group_name || !group_name.trim()) {
       return reply.status(400).send({ success: false, error: 'group_name is required' });
@@ -848,6 +872,10 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
     const cleanName = group_name.trim();
 
     try {
+      await db.execute({
+        sql: `DELETE FROM DisbandedMessGroup WHERE id = ?`,
+        args: [messId]
+      });
       await db.execute({
         sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt) VALUES (?, 'tenant_1', ?, datetime('now'))`,
         args: [messId, cleanName]
@@ -903,9 +931,14 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
   }
 });
 
-// PUT /api/nfc/mess-groups/:id - Update Mess Group Name and/or Member Roster
+// PUT /api/nfc/mess-groups/:id - Update Mess Group Name and/or Member Roster (Secured by Manager Authorization)
 fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
   try {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager authorization required to update mess group.' });
+    }
+
     const { id } = request.params;
     const { group_name, member_ids, tag_id } = request.body || {};
 
@@ -937,6 +970,21 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
           await db.execute({
             sql: `UPDATE Customer SET mess_id = ? WHERE id = ? AND (mess_id IS NULL OR mess_id = '')`,
             args: [id, mId]
+          });
+        }
+
+        // Cleanly unlink members that were removed from this mess group
+        if (member_ids.length > 0) {
+          const placeholders = member_ids.map(() => '?').join(',');
+          await db.execute({
+            sql: `UPDATE Customer SET mess_id = (SELECT mess_id FROM MessMember WHERE customer_id = Customer.id LIMIT 1) 
+                  WHERE mess_id = ? AND id NOT IN (${placeholders})`,
+            args: [id, ...member_ids]
+          });
+        } else {
+          await db.execute({
+            sql: `UPDATE Customer SET mess_id = (SELECT mess_id FROM MessMember WHERE customer_id = Customer.id LIMIT 1) WHERE mess_id = ?`,
+            args: [id]
           });
         }
       }
@@ -987,21 +1035,37 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
   }
 });
 
-// DELETE /api/nfc/mess-groups/:id - Disband Mess Group and unlink its cards
+// DELETE /api/nfc/mess-groups/:id - Disband Mess Group and unlink its cards (Secured by Manager Authorization)
 fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
   try {
+    const auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager authorization required to disband mess group.' });
+    }
+
     const { id } = request.params;
     if (!id) {
       return reply.status(400).send({ success: false, error: 'Group ID is required' });
     }
 
     try {
+      const gRes = await db.execute({ sql: `SELECT group_name FROM MessGroup WHERE id = ? LIMIT 1`, args: [id] });
+      const gName = gRes.rows?.[0]?.group_name || 'Disbanded Group';
+
+      await db.execute({
+        sql: `INSERT INTO DisbandedMessGroup (id, group_name, tenantId, disbandedAt)
+              VALUES (?, ?, 'tenant_askar_01', datetime('now'))
+              ON CONFLICT(id) DO NOTHING`,
+        args: [id, gName]
+      });
       await db.execute({ sql: `DELETE FROM MessMember WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM NfcCard WHERE mess_id = ?`, args: [id] });
       await db.execute({ sql: `DELETE FROM MessGroup WHERE id = ?`, args: [id] });
-      mirrorMessCardToCloud(id, null).catch(() => {});
-    } catch { }
+      mirrorMessGroupTombstoneToCloud(id, gName).catch(() => {});
+    } catch (err) {
+      fastify.log.warn('Disband mess group notice:', err.message);
+    }
 
     return { success: true, message: `Mess Group ${id} disbanded successfully` };
   } catch (err) {
@@ -1192,6 +1256,12 @@ fastify.post('/api/register/command', async (request, reply) => {
     if (!rawCmd) return reply.status(400).send({ error: 'command required' });
 
     const cleanCmd = rawCmd.startsWith('REMOTE_') ? rawCmd.replace('REMOTE_', '') : rawCmd;
+    if (cleanCmd === 'DRAWER_KICK' || cleanCmd.includes('DRAWER')) {
+      const auth = await isManagerAuthorized(request);
+      if (!auth.authorized) {
+        return reply.status(401).send({ error: 'Manager authorization required for drawer actuation' });
+      }
+    }
     const cmdId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
     const newCmd = {

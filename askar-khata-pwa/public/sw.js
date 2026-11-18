@@ -1,5 +1,5 @@
-// Askar Khata PWA Offline Service Worker (Hardened v4 - BenefitPay Fawri+ Enabled)
-const CACHE_NAME = 'askar-khata-v4';
+// Askar Khata PWA Offline Service Worker (Hardened v5 - Dual Mess Sub-Ledger & Fawri+ Parity)
+const CACHE_NAME = 'askar-khata-v5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

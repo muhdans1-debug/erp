@@ -3,6 +3,7 @@ import { Save, X, Barcode, Truck, Percent, Scale, AlertCircle, RotateCcw, Search
 import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
+import { getManagerPin } from '../utils/authUtils';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -229,7 +230,7 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-manager-pin': (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('MANAGER_PIN'))) || '9999',
+            'x-manager-pin': getManagerPin(),
             'x-pos-client': 'store-pos'
           },
           body: JSON.stringify(payload),

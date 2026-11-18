@@ -7,6 +7,56 @@ import { db, tursoCloudClient } from '../db.js';
 
 let isReconciling = false;
 
+// --- EXPONENTIAL BACKOFF & CIRCUIT BREAKER STATE ---
+let consecutiveCloudErrors = 0;
+let cloudBackoffUntil = 0;
+const MAX_BACKOFF_MS = 60000; // 60 seconds maximum backoff
+const BASE_BACKOFF_MS = 1000; // 1 second initial backoff
+
+/**
+ * Get current circuit breaker and exponential backoff status
+ */
+export function getCloudSyncBackoffStatus() {
+  const now = Date.now();
+  return {
+    consecutiveCloudErrors,
+    isCircuitOpen: now < cloudBackoffUntil,
+    backoffRemainingMs: Math.max(0, cloudBackoffUntil - now),
+    cloudBackoffUntil
+  };
+}
+
+/**
+ * Manually reset the circuit breaker (e.g. for testing or after confirmed network recovery)
+ */
+export function resetCloudSyncCircuitBreaker() {
+  consecutiveCloudErrors = 0;
+  cloudBackoffUntil = 0;
+}
+
+/**
+ * Trip the circuit breaker and calculate exponential backoff delay with random jitter
+ */
+export function tripCloudSyncCircuitBreaker(error) {
+  consecutiveCloudErrors++;
+  const exp = Math.min(6, consecutiveCloudErrors - 1);
+  const backoffDelay = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * Math.pow(2, exp));
+  const jitter = Math.floor(Math.random() * 500);
+  cloudBackoffUntil = Date.now() + backoffDelay + jitter;
+  console.warn(`⏳ [CloudSync Circuit Breaker] Tripped (attempt #${consecutiveCloudErrors}). Pausing cloud writes for ${(backoffDelay + jitter)}ms. Reason: ${error?.message || error}`);
+}
+
+/**
+ * Record a successful cloud operation to reset consecutive error counter
+ */
+export function recordCloudSyncSuccess() {
+  if (consecutiveCloudErrors > 0) {
+    console.log(`✅ [CloudSync Circuit Breaker] Recovered. Resetting error counter after successful cloud write.`);
+  }
+  consecutiveCloudErrors = 0;
+  cloudBackoffUntil = 0;
+}
+
 /**
  * Safely format argument for SQL queries
  */
@@ -23,6 +73,9 @@ function toSqlArg(val) {
  */
 export async function mirrorSaleToCloud(saleId) {
   if (!tursoCloudClient || !saleId) return false;
+  if (Date.now() < cloudBackoffUntil) {
+    return false; // Circuit breaker active: throttle request
+  }
 
   try {
     // 1. Fetch sale from local database
@@ -110,10 +163,12 @@ export async function mirrorSaleToCloud(saleId) {
       args: [saleId]
     });
 
+    recordCloudSyncSuccess();
     console.log(`☁️ [CloudSync] Sale ${s.invoiceNo} (${saleId}) mirrored to Turso Cloud.`);
     return true;
   } catch (err) {
-    console.warn(`⚠️ [CloudSync] Could not mirror sale ${saleId} to cloud (will retry in background):`, err.message);
+    tripCloudSyncCircuitBreaker(err);
+    console.warn(`⚠️ [CloudSync] Could not mirror sale ${saleId} to cloud (circuit tripped, will retry after backoff):`, err.message);
     return false;
   }
 }
@@ -211,7 +266,7 @@ export async function mirrorCustomerToCloud(customer) {
 
   try {
     const updatedAt = customer.updatedAt ? new Date(customer.updatedAt).toISOString() : new Date().toISOString();
-    const pin = customer.khataPin || customer.khata_pin || customer.pin || '1234';
+    const pin = customer.khataPin || customer.khata_pin || customer.pin || null;
 
     await tursoCloudClient.execute({
       sql: `INSERT INTO Customer (
@@ -354,6 +409,62 @@ export async function mirrorMessCardToCloud(messId, tagId) {
 }
 
 /**
+ * Mirror Mess Group disband / deletion tombstone to Turso Cloud and Cloudflare Edge
+ */
+export async function mirrorMessGroupTombstoneToCloud(id, groupName) {
+  if (!id) return false;
+
+  if (tursoCloudClient) {
+    try {
+      await tursoCloudClient.batch([
+        {
+          sql: `INSERT INTO DisbandedMessGroup (id, group_name, tenantId, disbandedAt)
+                VALUES (?, ?, 'tenant_askar_01', CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO NOTHING`,
+          args: [id, groupName || 'Disbanded Group']
+        },
+        {
+          sql: `DELETE FROM MessMember WHERE mess_id = ?`,
+          args: [id]
+        },
+        {
+          sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`,
+          args: [id]
+        },
+        {
+          sql: `DELETE FROM NfcCard WHERE mess_id = ?`,
+          args: [id]
+        },
+        {
+          sql: `DELETE FROM MessGroup WHERE id = ?`,
+          args: [id]
+        }
+      ], 'write');
+      console.log(`☁️ [CloudSync] Mess group tombstone ${id} mirrored to Turso Cloud.`);
+    } catch (err) {
+      console.warn(`⚠️ [CloudSync] Could not mirror mess group deletion to cloud:`, err.message);
+    }
+  }
+
+  // Also notify Cloudflare Edge API
+  try {
+    const edgeUrl = `https://askar-edge-api.layali-askar-pos.workers.dev/api/nfc/mess-groups/${encodeURIComponent(id)}`;
+    await fetch(edgeUrl, {
+      method: 'DELETE',
+      headers: {
+        'x-manager-pin': '9999',
+        'x-pos-client': 'store-pos'
+      },
+      signal: AbortSignal.timeout(3000)
+    });
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync] Could not notify Cloudflare edge of disbanded group:`, err.message);
+  }
+
+  return true;
+}
+
+/**
  * Mirror Customer's multiple mess memberships to Turso Cloud
  */
 export async function mirrorCustomerMessMembershipsToCloud(customerId, messIds) {
@@ -404,6 +515,9 @@ export async function mirrorCustomerDeleteToCloud(customerId) {
  */
 export async function mirrorLedgerEntryToCloud(entry) {
   if (!tursoCloudClient || !entry || !entry.id) return false;
+  if (Date.now() < cloudBackoffUntil) {
+    return false; // Circuit breaker active: throttle request
+  }
 
   try {
     const timestamp = entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString();
@@ -450,10 +564,12 @@ export async function mirrorLedgerEntryToCloud(entry) {
       args: [entry.id]
     });
 
+    recordCloudSyncSuccess();
     console.log(`☁️ [CloudSync] Ledger entry ${entry.id} (${entry.type} ${entry.amount}) mirrored to Turso Cloud.`);
     return true;
   } catch (err) {
-    console.warn(`⚠️ [CloudSync] Could not mirror ledger entry ${entry.id} to cloud:`, err.message);
+    tripCloudSyncCircuitBreaker(err);
+    console.warn(`⚠️ [CloudSync] Could not mirror ledger entry ${entry.id} to cloud (circuit tripped, will retry after backoff):`, err.message);
     return false;
   }
 }
@@ -463,6 +579,13 @@ export async function mirrorLedgerEntryToCloud(entry) {
  */
 export async function syncAllPendingToCloud() {
   if (!tursoCloudClient) return { pushedSales: 0, pushedLedger: 0 };
+
+  // Circuit Breaker Guard: Skip drain cycle if currently in exponential backoff
+  if (Date.now() < cloudBackoffUntil) {
+    const waitSec = Math.ceil((cloudBackoffUntil - Date.now()) / 1000);
+    console.log(`⏸️ [CloudSync] Circuit breaker OPEN (${consecutiveCloudErrors} consecutive errors). Skipping outbox drain for ${waitSec}s.`);
+    return { pushedSales: 0, pushedLedger: 0, backedOff: true, waitSec };
+  }
 
   let pushedSales = 0;
   let pushedLedger = 0;
@@ -476,48 +599,64 @@ export async function syncAllPendingToCloud() {
 
     const pendingSaleIds = (pendingSalesRes.rows || []).map(r => r.id);
     for (const sid of pendingSaleIds) {
+      if (Date.now() < cloudBackoffUntil) break; // Break out immediately if circuit tripped
       const ok = await mirrorSaleToCloud(sid);
       if (ok) pushedSales++;
+      else if (Date.now() < cloudBackoffUntil) break;
     }
 
-    // B. Pending Khata Ledger
-    const pendingLedgerRes = await db.execute({
-      sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' OR syncStatus IS NULL LIMIT 200`,
-      args: []
-    });
+    // B. Pending Khata Ledger (only if circuit breaker remains healthy)
+    if (Date.now() >= cloudBackoffUntil) {
+      const pendingLedgerRes = await db.execute({
+        sql: `SELECT * FROM KhataLedger WHERE syncStatus = 'PENDING' OR syncStatus IS NULL LIMIT 200`,
+        args: []
+      });
 
-    const pendingLedgers = pendingLedgerRes.rows || [];
-    for (const l of pendingLedgers) {
-      const ok = await mirrorLedgerEntryToCloud(l);
-      if (ok) pushedLedger++;
+      const pendingLedgers = pendingLedgerRes.rows || [];
+      for (const l of pendingLedgers) {
+        if (Date.now() < cloudBackoffUntil) break;
+        const ok = await mirrorLedgerEntryToCloud(l);
+        if (ok) pushedLedger++;
+        else if (Date.now() < cloudBackoffUntil) break;
+      }
     }
 
     // C. Reconcile Mess Groups & Members to Cloud
-    try {
-      const lGroups = await db.execute(`SELECT * FROM MessGroup`);
-      for (const g of lGroups.rows || []) {
-        await tursoCloudClient.execute({
-          sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
-          args: [g.id, g.tenantId || 'tenant_askar_01', g.group_name, g.createdAt || new Date().toISOString()]
-        });
+    if (Date.now() >= cloudBackoffUntil) {
+      try {
+        const lGroups = await db.execute(`SELECT * FROM MessGroup WHERE id NOT IN (SELECT id FROM DisbandedMessGroup)`);
+        for (const g of lGroups.rows || []) {
+          if (Date.now() < cloudBackoffUntil) break;
+          await tursoCloudClient.execute({
+            sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
+                  VALUES (?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET group_name = excluded.group_name`,
+            args: [g.id, g.tenantId || 'tenant_askar_01', g.group_name, g.createdAt || new Date().toISOString()]
+          });
+        }
+        const lMembers = await db.execute(`
+          SELECT mm.* FROM MessMember mm 
+          WHERE mm.mess_id NOT IN (SELECT id FROM DisbandedMessGroup)
+        `);
+        for (const m of lMembers.rows || []) {
+          if (Date.now() < cloudBackoffUntil) break;
+          await tursoCloudClient.execute({
+            sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = excluded.is_active`,
+            args: [m.id, m.tenantId || 'tenant_askar_01', m.mess_id, m.customer_id, m.role || 'MEMBER', m.is_active ?? 1, m.joined_at || new Date().toISOString()]
+          });
+        }
+      } catch (err) {
+        tripCloudSyncCircuitBreaker(err);
       }
-      const lMembers = await db.execute(`SELECT * FROM MessMember`);
-      for (const m of lMembers.rows || []) {
-        await tursoCloudClient.execute({
-          sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = excluded.is_active`,
-          args: [m.id, m.tenantId || 'tenant_askar_01', m.mess_id, m.customer_id, m.role || 'MEMBER', m.is_active ?? 1, m.joined_at || new Date().toISOString()]
-        });
-      }
-    } catch { }
+    }
 
     if (pushedSales > 0 || pushedLedger > 0) {
       console.log(`☁️ [CloudSync] Outbox drain completed: ${pushedSales} sales, ${pushedLedger} ledger entries synced to cloud.`);
     }
   } catch (err) {
+    tripCloudSyncCircuitBreaker(err);
     console.warn(`⚠️ [CloudSync] Outbox push notice:`, err.message);
   }
 
@@ -548,7 +687,7 @@ async function upsertLocalCustomer(c) {
     args: [c.id]
   });
 
-  const pin = c.khataPin || c.khata_pin || c.pin || '1234';
+  const pin = c.khataPin || c.khata_pin || c.pin || null;
   const token = c.access_token || c.id;
 
   try {
@@ -633,6 +772,9 @@ async function upsertLocalCustomer(c) {
  */
 export async function pullCloudDeltas() {
   if (!tursoCloudClient) return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0 };
+  if (Date.now() < cloudBackoffUntil) {
+    return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0, backedOff: true };
+  }
 
   let pulledCustomers = 0;
   let pulledSales = 0;
@@ -830,8 +972,28 @@ export async function pullCloudDeltas() {
 
     // Pull Mess Groups & Members from Cloud
     try {
-      const cGroups = await tursoCloudClient.execute(`SELECT * FROM MessGroup`);
+      // 1. Sync disbanded mess group tombstones first
+      try {
+        const cTombstones = await tursoCloudClient.execute(`SELECT * FROM DisbandedMessGroup`);
+        for (const t of cTombstones.rows || []) {
+          await db.execute({
+            sql: `INSERT INTO DisbandedMessGroup (id, group_name, tenantId, disbandedAt)
+                  VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+            args: [t.id, t.group_name || 'Disbanded Group', t.tenantId || 'tenant_askar_01', t.disbandedAt || new Date().toISOString()]
+          });
+          await db.execute({ sql: `DELETE FROM MessMember WHERE mess_id = ?`, args: [t.id] });
+          await db.execute({ sql: `UPDATE Customer SET mess_id = NULL WHERE mess_id = ?`, args: [t.id] });
+          await db.execute({ sql: `DELETE FROM NfcCard WHERE mess_id = ?`, args: [t.id] });
+          await db.execute({ sql: `DELETE FROM MessGroup WHERE id = ?`, args: [t.id] });
+        }
+      } catch { }
+
+      // 2. Pull only active, non-tombstoned groups
+      const cGroups = await tursoCloudClient.execute(`SELECT * FROM MessGroup WHERE id NOT IN (SELECT id FROM DisbandedMessGroup)`);
       for (const g of cGroups.rows || []) {
+        const isTombstoned = await db.execute({ sql: `SELECT 1 FROM DisbandedMessGroup WHERE id = ?`, args: [g.id] });
+        if (isTombstoned.rows && isTombstoned.rows.length > 0) continue;
+
         await db.execute({
           sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt)
                 VALUES (?, ?, ?, ?)
@@ -839,8 +1001,15 @@ export async function pullCloudDeltas() {
           args: [g.id, g.tenantId || 'tenant_askar_01', g.group_name, g.createdAt || new Date().toISOString()]
         });
       }
-      const cMembers = await tursoCloudClient.execute(`SELECT * FROM MessMember`);
+      const cMembers = await tursoCloudClient.execute(`
+        SELECT mm.* FROM MessMember mm 
+        JOIN MessGroup mg ON mm.mess_id = mg.id
+        WHERE mm.mess_id NOT IN (SELECT id FROM DisbandedMessGroup)
+      `);
       for (const m of cMembers.rows || []) {
+        const isTombstoned = await db.execute({ sql: `SELECT 1 FROM DisbandedMessGroup WHERE id = ?`, args: [m.mess_id] });
+        if (isTombstoned.rows && isTombstoned.rows.length > 0) continue;
+
         await db.execute({
           sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active, joined_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -853,7 +1022,9 @@ export async function pullCloudDeltas() {
     if (pulledCustomers > 0 || pulledSales > 0 || pulledLedger > 0) {
       console.log(`☁️ [CloudSync] Pulled from Turso Cloud: ${pulledCustomers} customers, ${pulledSales} sales, ${pulledLedger} ledger events.`);
     }
+    recordCloudSyncSuccess();
   } catch (err) {
+    tripCloudSyncCircuitBreaker(err);
     console.warn(`⚠️ [CloudSync] Cloud deltas pull notice:`, err.message);
   }
 
@@ -865,12 +1036,16 @@ export async function pullCloudDeltas() {
  */
 export async function syncAllWithCloud() {
   if (!tursoCloudClient || isReconciling) return;
+  if (Date.now() < cloudBackoffUntil) return;
   isReconciling = true;
 
   try {
     await syncAllPendingToCloud();
-    await pullCloudDeltas();
+    if (Date.now() >= cloudBackoffUntil) {
+      await pullCloudDeltas();
+    }
   } catch (err) {
+    tripCloudSyncCircuitBreaker(err);
     console.warn(`⚠️ [CloudSync] Sync cycle notice:`, err.message);
   } finally {
     isReconciling = false;

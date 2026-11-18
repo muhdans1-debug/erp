@@ -3,6 +3,7 @@ import { PackagePlus, X, ScanBarcode, Truck, Percent, Scale, Tag, Layers, CheckC
 import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
+import { getManagerPin } from '../utils/authUtils';
 
 export interface PosAddProductModalProps {
   onClose: () => void;
@@ -310,7 +311,7 @@ export default function PosAddProductModal({
     let pushedToServer = false;
     for (const url of candidates) {
       try {
-        const managerPin = (typeof localStorage !== 'undefined' && (localStorage.getItem('askar_manager_pin') || localStorage.getItem('MANAGER_PIN'))) || '9999';
+        const managerPin = getManagerPin();
         const res = await fetch(`${url}/api/products`, {
           method: 'POST',
           headers: {

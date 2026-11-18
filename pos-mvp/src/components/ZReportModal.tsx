@@ -53,9 +53,17 @@ export default function ZReportModal({
       ? `${apiBase}/api/reports/z-report/${activeId}`
       : `${apiBase}/api/reports/z-report`;
 
+    let pinToSend = getManagerPin();
+    if (!pinToSend && typeof window !== 'undefined') {
+      const prompted = window.prompt('🔒 Manager PIN Required to View End-of-Day Z-Report:');
+      if (prompted) {
+        pinToSend = prompted.trim();
+      }
+    }
+
     fetch(endpoint, {
       headers: {
-        'x-manager-pin': getManagerPin()
+        'x-manager-pin': pinToSend
       }
     })
       .then((res) => res.json())
@@ -136,11 +144,17 @@ export default function ZReportModal({
         ? `${apiBase}/api/shifts/${targetShiftId}/close`
         : `${apiBase}/api/shifts/close`;
         
+      const activeEmpId = (typeof localStorage !== 'undefined' && localStorage.getItem('active_employee_id')) || 'emp_cashier_1';
       let res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos',
+          'x-employee-id': activeEmpId
+        },
         body: JSON.stringify({
           closingCash: report?.expectedDrawerCash,
+          employeeId: activeEmpId,
           notes: `Auto-closed from Z-Report. Expected Drawer Cash: BD ${report?.expectedDrawerCash.toFixed(3)}`
         })
       });
@@ -148,9 +162,14 @@ export default function ZReportModal({
       if (res.status === 404 && url !== `${apiBase}/api/shifts/close`) {
         await fetch(`${apiBase}/api/shifts/close`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-pos-client': 'store-pos',
+            'x-employee-id': activeEmpId
+          },
           body: JSON.stringify({
             closingCash: report?.expectedDrawerCash,
+            employeeId: activeEmpId,
             notes: `Auto-closed from Z-Report. Expected Drawer Cash: BD ${report?.expectedDrawerCash.toFixed(3)}`
           })
         });

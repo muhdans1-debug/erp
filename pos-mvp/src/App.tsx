@@ -22,6 +22,7 @@ import { initNativeOfflineStorage } from './utils/nativeDb';
 import { getApiBaseUrl, getServerIp, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
 import { syncClockWithMasterServer, updateClockOffsetFromHeartbeat } from './utils/time';
 import { useBarcodeWedge } from './hooks/useBarcodeWedge';
+import { setManagerSessionPin, clearManagerSessionPin } from './utils/authUtils';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
@@ -721,13 +722,11 @@ export default function App() {
   }, [apiBase, userRole]);
 
   // Securely update state and storage together
-  const handleLogin = (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string }) => {
+  const handleLogin = (role: 'CASHIER' | 'MANAGER', employee?: { id: string; name: string; pin?: string }) => {
     setUserRole(role);
     localStorage.setItem('askar_role', role);
-    if (role === 'MANAGER') {
-      localStorage.setItem('askar_manager_pin', '9999');
-      localStorage.setItem('manager_pin', '9999');
-      localStorage.setItem('askar_admin_pin', '9999');
+    if (role === 'MANAGER' && employee?.pin) {
+      setManagerSessionPin(employee.pin);
     }
     if (employee) {
       localStorage.setItem('active_employee_id', employee.id);
@@ -738,13 +737,11 @@ export default function App() {
   const handleLockTerminal = () => {
     setUserRole('NONE');
     setActiveShiftId(null);
+    clearManagerSessionPin();
     localStorage.removeItem('askar_role');
     localStorage.removeItem('active_employee_id');
     localStorage.removeItem('askar_shift_id');
     localStorage.removeItem('active_shift_id');
-    localStorage.removeItem('askar_manager_pin');
-    localStorage.removeItem('manager_pin');
-    localStorage.removeItem('askar_admin_pin');
   };
 
   const handleShiftStart = (newShiftId: string) => {

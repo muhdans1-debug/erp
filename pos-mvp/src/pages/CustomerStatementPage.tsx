@@ -25,6 +25,7 @@ import { printKhataStatement } from '../utils/printer';
 import { playThankYouVoice } from '../utils/sound';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { getApiBaseUrl } from '../utils/apiConfig';
+import { getManagerPin } from '../utils/authUtils';
 
 interface LedgerEntry {
   id: string;
@@ -320,8 +321,20 @@ export default function CustomerStatementPage({
     setError(null);
     try {
       const resolvedApiBase = resolveApiBase();
+      const token = localStorage.getItem(`khata_token_${customerId}`);
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['x-khata-token'] = token;
+      }
 
-      const res = await fetch(`${resolvedApiBase}/api/customers/${customerId}/statement`);
+      const res = await fetch(`${resolvedApiBase}/api/customers/${customerId}/statement`, { headers });
+      if (res.status === 401) {
+        // Device token expired or invalidated by PIN change: force re-authentication
+        localStorage.removeItem(`khata_token_${customerId}`);
+        setIsAuthenticated(false);
+        setLoading(false);
+        return;
+      }
       if (!res.ok) {
         throw new Error(`Failed to load statement (HTTP ${res.status})`);
       }
@@ -395,7 +408,7 @@ export default function CustomerStatementPage({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': '9999',
+          'x-manager-pin': getManagerPin(),
           'x-pos-client': 'store-pos'
         }
       });
@@ -487,14 +500,25 @@ export default function CustomerStatementPage({
   };
 
   const creditLimit = customer?.creditLimit || 50.0;
-  const creditUsagePercent = Math.min(100, Math.round((currentBalance / creditLimit) * 100));
+
+  const isMessView = activeTab === 'MESS' && messGroup !== null;
+  const messMemberCount = Math.max(1, messGroup?.members?.length || messGroup?.memberCount || 1);
+  const messTotalBalance = Number(messGroup?.totalBalance ?? 0);
+  const messEqualShare = Number(messGroup?.equalSplitShare ?? (messTotalBalance / messMemberCount));
+  const personalOutstanding = Number((wallets?.personal !== undefined ? wallets.personal : ((customer as any)?.personalBalance ?? currentBalance)) || 0);
+
+  const displayOutstanding = isMessView ? messTotalBalance : personalOutstanding;
+  const displayLimit = isMessView ? ((messGroup as any)?.creditLimit || 500.0) : creditLimit;
+  const displayUsagePercent = Math.min(100, Math.round((displayOutstanding / Math.max(1, displayLimit)) * 100));
 
   // Determine active transactions to display based on tab & filters
   const displayedTransactions = () => {
     let source: LedgerEntry[] = [];
 
-    if (activeTab === 'MESS' && messGroup?.messLedger) {
-      source = messGroup.messLedger;
+    if (activeTab === 'MESS') {
+      source = (messGroup?.messLedger && messGroup.messLedger.length > 0)
+        ? messGroup.messLedger
+        : statement.filter((item) => (item.mess_id && messGroup?.id ? item.mess_id === messGroup.id : (item.mess_id || (item.reference && item.reference.includes('Mess Split')))));
       if (selectedMemberFilter) {
         source = source.filter((item) => item.customerId === selectedMemberFilter);
       }
@@ -504,32 +528,39 @@ export default function CustomerStatementPage({
         : statement.filter((item) => !item.mess_id || item.mess_id === '');
     }
 
-    if (typeFilter === 'CHARGES') {
-      source = source.filter((item) => item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount || 0) > 0);
-    }
-    if (typeFilter === 'PAYMENTS') {
-      source = source.filter((item) => item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || item.amount || 0) < 0);
-    }
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    if (end) end.setHours(23, 59, 59, 999);
 
-    if (startDate || endDate) {
-      const start = startDate ? new Date(startDate) : new Date('2000-01-01');
-      const end = endDate ? new Date(endDate) : new Date('2100-01-01');
-      if (endDate) end.setHours(23, 59, 59, 999);
-      source = source.filter((item) => {
-        const dStr = item.created_at || item.timestamp || (item as any).createdAt;
-        if (!dStr) return true;
-        const txDate = new Date(dStr);
-        return txDate >= start && txDate <= end;
-      });
-    }
+    let openingBal = 0;
+    const dateFiltered: any[] = [];
 
-    // Recompute running balance chronologically along the active tab's entries
-    const chronological = [...source].sort(
+    source.forEach((item) => {
+      const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || 0) < 0;
+      const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || Number(item.raw_amount || item.amount || 0) > 0;
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (isPayment ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
+
+      const dStr = item.created_at || item.timestamp || (item as any).createdAt;
+      const txDate = dStr ? new Date(dStr) : new Date(0);
+
+      if (start && txDate < start) {
+        openingBal += amt;
+      } else if ((!start || txDate >= start) && (!end || txDate <= end)) {
+        if (typeFilter === 'CHARGES' && !isCharge) return;
+        if (typeFilter === 'PAYMENTS' && !isPayment) return;
+        dateFiltered.push(item);
+      }
+    });
+
+    // Recompute running balance chronologically along the active tab's entries starting from Opening Balance
+    const chronological = [...dateFiltered].sort(
       (a, b) => new Date(a.created_at || a.timestamp || 0).getTime() - new Date(b.created_at || b.timestamp || 0).getTime()
     );
-    let runBal = 0;
+
+    let runBal = openingBal;
     const recomputed = chronological.map((item) => {
-      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (item.type === 'PAYMENT' || item.type === 'WRITE_OFF' ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
+      const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.raw_amount || 0) < 0;
+      const amt = Number(item.raw_amount !== undefined ? item.raw_amount : (isPayment ? -Math.abs(item.amount || item.total || 0) : Math.abs(item.amount || item.total || 0)));
       runBal += amt;
       return {
         ...item,
@@ -537,6 +568,24 @@ export default function CustomerStatementPage({
         runningBalance: Number(runBal.toFixed(3))
       };
     });
+
+    // If start date filter is active and opening balance != 0, show explicit Opening Balance row
+    if (start && Math.abs(openingBal) > 0.0001 && typeFilter === 'ALL') {
+      const obRow: LedgerEntry = {
+        id: `ob_${startDate}`,
+        reference: 'Balance Brought Forward (Opening Balance)',
+        type: 'OPENING_BALANCE',
+        amount: Math.abs(openingBal),
+        raw_amount: openingBal,
+        running_balance: Number(openingBal.toFixed(3)),
+        runningBalance: Number(openingBal.toFixed(3)),
+        formattedDate: new Date(startDate).toLocaleDateString('en-GB'),
+        formattedTime: '00:00',
+        created_at: new Date(startDate).toISOString(),
+        paymentType: 'OPENING_BALANCE'
+      };
+      recomputed.unshift(obRow);
+    }
 
     return recomputed.reverse();
   };
@@ -889,54 +938,62 @@ export default function CustomerStatementPage({
         <div className="bg-gradient-to-b from-slate-900 to-slate-900/80 border border-slate-800 rounded-3xl p-5 shadow-2xl relative overflow-hidden">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Current Outstanding Balance
+              {isMessView ? `Camp Mess Total Outstanding (${messGroup?.group_name || 'Camp Mess'})` : `Personal Outstanding Balance (${customer?.name || 'Account'})`}
             </span>
             <span
               className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
-                currentBalance > 0
+                displayOutstanding > 0
                   ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
                   : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
               }`}
             >
-              {currentBalance > 0 ? 'Balance Due' : 'Account Cleared'}
+              {displayOutstanding > 0 ? (isMessView ? 'Camp Group Debt' : 'Balance Due') : 'Account Cleared'}
             </span>
           </div>
 
-          <div className="flex items-baseline gap-2 mb-4">
+          <div className="flex items-baseline gap-2 mb-2">
             <span
               className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${
-                currentBalance > 0 ? 'text-rose-400' : 'text-emerald-400'
+                displayOutstanding > 0 ? 'text-rose-400' : 'text-emerald-400'
               }`}
             >
-              BD {currentBalance.toFixed(3)}
+              BD {displayOutstanding.toFixed(3)}
             </span>
             <span className="text-xs font-arabic text-slate-400">دينار بحريني</span>
           </div>
 
+          {isMessView && (
+            <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-bold">
+              <span>👥 Your Equal Share:</span>
+              <span className="font-mono text-white text-sm">BD {messEqualShare.toFixed(3)}</span>
+              <span className="text-[10px] text-indigo-400">({messMemberCount} Members)</span>
+            </div>
+          )}
+
           {/* Credit Limit Progress Bar */}
           <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
             <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-              <span>Credit Limit: BD {creditLimit.toFixed(3)}</span>
-              <span className={creditUsagePercent >= 90 ? 'text-rose-400 font-bold' : 'text-slate-300'}>
-                {creditUsagePercent}% Used
+              <span>{isMessView ? 'Group Credit Limit:' : 'Credit Limit:'} BD {displayLimit.toFixed(3)}</span>
+              <span className={displayUsagePercent >= 90 ? 'text-rose-400 font-bold' : 'text-slate-300'}>
+                {displayUsagePercent}% Used
               </span>
             </div>
             <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
               <div
                 className={`h-full transition-all duration-500 rounded-full ${
-                  creditUsagePercent >= 90
+                  displayUsagePercent >= 90
                     ? 'bg-rose-500'
-                    : creditUsagePercent >= 70
+                    : displayUsagePercent >= 70
                     ? 'bg-amber-500'
                     : 'bg-emerald-500'
                 }`}
-                style={{ width: `${creditUsagePercent}%` }}
+                style={{ width: `${displayUsagePercent}%` }}
               />
             </div>
             <p className="text-[11px] text-slate-400 text-right">
               Remaining Credit:{' '}
               <span className="text-emerald-400 font-mono font-bold">
-                BD {Math.max(0, creditLimit - currentBalance).toFixed(3)}
+                BD {Math.max(0, displayLimit - displayOutstanding).toFixed(3)}
               </span>
             </p>
           </div>
@@ -947,16 +1004,19 @@ export default function CustomerStatementPage({
           <div className="mt-5 pt-4 border-t border-slate-800/80">
             <button
               onClick={() => {
-                setCustomPayAmount(currentBalance > 0 ? currentBalance.toFixed(3) : '5.000');
+                const targetPay = isMessView 
+                  ? (messEqualShare > 0 ? messEqualShare.toFixed(3) : '5.000')
+                  : (displayOutstanding > 0 ? displayOutstanding.toFixed(3) : '5.000');
+                setCustomPayAmount(targetPay);
                 setIsPayModalOpen(true);
               }}
               className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 active:scale-[0.98] transition-all text-slate-950 font-black rounded-2xl text-base shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2.5"
             >
               <CreditCard className="w-5 h-5 stroke-[2.5]" />
-              <span>Pay via BenefitPay (ادفع عبر بنفت بي)</span>
-              {currentBalance > 0 && (
+              <span>{isMessView ? 'Pay My Share via BenefitPay (ادفع حصتي عبر بنفت بي)' : 'Pay via BenefitPay (ادفع عبر بنفت بي)'}</span>
+              {(isMessView ? messEqualShare : displayOutstanding) > 0 && (
                 <span className="bg-slate-950/20 px-2 py-0.5 rounded-lg text-xs font-mono font-bold text-slate-950">
-                  BD {currentBalance.toFixed(3)}
+                  BD {(isMessView ? messEqualShare : displayOutstanding).toFixed(3)}
                 </span>
               )}
             </button>
@@ -1727,39 +1787,79 @@ export default function CustomerStatementPage({
               </label>
 
               <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCustomPayAmount(currentBalance.toFixed(3))}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                    customPayAmount === currentBalance.toFixed(3)
-                      ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  Full (BD {currentBalance.toFixed(3)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCustomPayAmount('10.000')}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                    customPayAmount === '10.000'
-                      ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  BD 10.000
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCustomPayAmount('5.000')}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                    customPayAmount === '5.000'
-                      ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  BD 5.000
-                </button>
+                {isMessView ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount(messEqualShare.toFixed(3))}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === messEqualShare.toFixed(3)
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      My Share (BD {messEqualShare.toFixed(3)})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount(messTotalBalance.toFixed(3))}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === messTotalBalance.toFixed(3)
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Camp Full (BD {messTotalBalance.toFixed(3)})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount('10.000')}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === '10.000'
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      BD 10.000
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount(displayOutstanding.toFixed(3))}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === displayOutstanding.toFixed(3)
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Full (BD {displayOutstanding.toFixed(3)})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount('10.000')}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === '10.000'
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      BD 10.000
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPayAmount('5.000')}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                        customPayAmount === '5.000'
+                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      BD 5.000
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Custom Input */}

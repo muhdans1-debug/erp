@@ -78,34 +78,56 @@ export function useBarcodeWedge() {
 
     // 2. High-speed USB / Laser Keyboard Wedge Listener
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 1. Ignore keystrokes if the cashier is actively typing in a search bar, modal input, or CPR field
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      // 1. Password and security PIN fields must never capture keystrokes
+      if (
+        (e.target instanceof HTMLInputElement && e.target.type === 'password') ||
+        (e.target as HTMLElement)?.getAttribute('data-prevent-scanner') === 'true'
+      ) {
         return;
       }
 
-      // 2. Intercept the hardware carriage return (Enter key)
-      if (e.key === 'Enter') {
+      const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+
+      // 2. Intercept hardware terminator (Enter or Tab key)
+      const isTerminator =
+        e.key === 'Enter' ||
+        e.keyCode === 13 ||
+        e.code === 'Enter' ||
+        e.code === 'NumpadEnter' ||
+        e.key === 'Tab' ||
+        e.keyCode === 9;
+
+      if (isTerminator) {
         if (timeout.current) clearTimeout(timeout.current);
         const scannedCode = buffer.current.trim();
         buffer.current = '';
 
-        if (scannedCode) {
+        if (scannedCode.length >= 2) {
           e.preventDefault();
+          e.stopPropagation();
           processBarcode(scannedCode, 'keyboard');
+          return;
         }
         return;
       }
 
       // 3. Accumulate hardware keystrokes (ignoring Shift/Ctrl/Alt modifiers)
-      if (e.key.length === 1) {
+      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         buffer.current += e.key;
       }
 
-      // 4. Reset the buffer if typing pauses (Scanners fire characters < 20ms apart)
+      // 4. Sliding window timeout (250ms):
+      // On Android POS terminals, WebView event dispatching inter-character delays can reach 70-120ms.
+      // 250ms allows fast scanner bursts without premature buffer truncation.
+      // If no terminator is configured on the physical scanner, flush after 250ms if buffer >= 4 digits!
       if (timeout.current) clearTimeout(timeout.current);
       timeout.current = setTimeout(() => {
+        const potentialCode = buffer.current.trim();
         buffer.current = '';
-      }, 50);
+        if (potentialCode.length >= 4 && !isInput) {
+          processBarcode(potentialCode, 'keyboard');
+        }
+      }, 250);
     };
 
     window.addEventListener('keydown', handleKeyDown);

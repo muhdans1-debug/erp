@@ -5,6 +5,7 @@ import {
   ExternalLink, Banknote
 } from 'lucide-react';
 import { getApiBaseUrl } from './utils/apiConfig';
+import { getAdminPin } from './utils/auth';
 
 interface NfcCardItem {
   tag_id: string;
@@ -42,10 +43,13 @@ export default function NfcManager({
 
   // Standard POS Authorization Headers
   const getHeaders = (hasBody = false) => {
+    const adminPin = getAdminPin();
     const headers: Record<string, string> = {
-      'x-pos-client': 'store-pos',
-      'x-manager-pin': '9999'
+      'x-pos-client': 'store-pos'
     };
+    if (adminPin) {
+      headers['x-manager-pin'] = adminPin;
+    }
     if (hasBody) headers['Content-Type'] = 'application/json';
     return headers;
   };

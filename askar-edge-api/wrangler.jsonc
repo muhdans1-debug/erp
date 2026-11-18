@@ -10,8 +10,7 @@
   "vars": {
     "ENVIRONMENT": "production",
     "DEFAULT_TENANT_ID": "tenant_askar_01",
-    "DEFAULT_STORE_ID": "store_askar_01",
-    "MANAGER_PIN": "9999"
+    "DEFAULT_STORE_ID": "store_askar_01"
   }
 }
 

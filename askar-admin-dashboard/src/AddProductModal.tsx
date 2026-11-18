@@ -119,7 +119,7 @@ export default function AddProductModal({ onClose, onSuccess, apiBase }: AddProd
           headers: {
             'Content-Type': 'application/json',
             'x-pos-client': 'pim-admin',
-            'x-manager-pin': getAdminPin() || '9999'
+            'x-manager-pin': getAdminPin()
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(4000)

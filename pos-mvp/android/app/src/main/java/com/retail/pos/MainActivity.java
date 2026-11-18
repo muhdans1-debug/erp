@@ -29,6 +29,56 @@ public class MainActivity extends BridgeActivity {
         return false;
     }
 
+    private final StringBuilder nativeKeyBuffer = new StringBuilder();
+    private long lastNativeKeyTime = 0;
+    private final android.os.Handler nativeKeyHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable nativeKeyFlushRunnable = () -> {
+        synchronized (nativeKeyBuffer) {
+            if (nativeKeyBuffer.length() >= 4) {
+                final String code = nativeKeyBuffer.toString().trim();
+                nativeKeyBuffer.setLength(0);
+                dispatchScannedCodeToWebView(code);
+            } else {
+                nativeKeyBuffer.setLength(0);
+            }
+        }
+    };
+
+    private void dispatchScannedCodeToWebView(final String cleanCode) {
+        if (cleanCode == null || cleanCode.trim().isEmpty()) return;
+        final String code = cleanCode.trim();
+        android.util.Log.i("MainActivity", "⚡ Dispatching Scanned Barcode to WebView: " + code);
+        WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+        if (webView != null) {
+            webView.post(() -> {
+                String escaped = code.replace("\\", "\\\\").replace("'", "\\'");
+                // Pure numeric codes (e.g. EAN-13, EAN-8, UPC) are retail grocery barcodes, NEVER NFC tags.
+                // Only treat as NFC card if delimited (contains ':' or '-') or hex containing letter A-F.
+                boolean isHexNfc = (code.contains(":") || code.contains("-"))
+                        || (code.matches("(?i)^[0-9A-F]{8,32}$") && code.matches(".*[a-zA-Z].*"));
+                if (isHexNfc) {
+                    String nfcId = code.replace(":", "").replace("-", "").toUpperCase();
+                    if (isDuplicateNfcScan(nfcId)) {
+                        android.util.Log.d("MainActivity", "⏳ Suppressing duplicate NFC scanner broadcast: " + nfcId);
+                        return;
+                    }
+                    android.util.Log.i("MainActivity", "📡 Dispatching Sunmi NFC Scan Event: " + nfcId);
+                    relayTagToCloudAsync(nfcId);
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: '" + nfcId + "', tag_id: '" + escaped + "' } }));" +
+                        "window.dispatchEvent(new CustomEvent('sunmiBarcodeScan', { detail: { barcode: '" + escaped + "' } }));",
+                        null
+                    );
+                } else {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('sunmiBarcodeScan', { detail: { barcode: '" + escaped + "' } }));",
+                        null
+                    );
+                }
+            });
+        }
+    }
+
     private final BroadcastReceiver scannerReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -40,6 +90,7 @@ public class MainActivity extends BridgeActivity {
                 barcode = intent.getStringExtra("data");
                 if (barcode == null) {
                     byte[] bytes = intent.getByteArrayExtra("sourcebytes");
+                    if (bytes == null) bytes = intent.getByteArrayExtra("source_byte");
                     if (bytes != null) barcode = new String(bytes);
                 }
             } else if ("sunmi.intent.action.SCAN_RESULT".equals(action)) {
@@ -53,35 +104,7 @@ public class MainActivity extends BridgeActivity {
             if (barcode != null && !barcode.trim().isEmpty()) {
                 final String cleanCode = barcode.trim();
                 android.util.Log.i("MainActivity", "⚡ Sunmi Scanner Broadcast Intercepted: " + cleanCode);
-                WebView webView = getBridge() != null ? getBridge().getWebView() : null;
-                if (webView != null) {
-                    webView.post(() -> {
-                        String escaped = cleanCode.replace("\\", "\\\\").replace("'", "\\'");
-                        // Pure numeric codes (e.g. EAN-13, EAN-8, UPC) are retail grocery barcodes, NEVER NFC tags.
-                        // Only treat as NFC card if delimited (contains ':' or '-') or hex containing letter A-F.
-                        boolean isHexNfc = (cleanCode.contains(":") || cleanCode.contains("-"))
-                                || (cleanCode.matches("(?i)^[0-9A-F]{8,32}$") && cleanCode.matches(".*[a-zA-Z].*"));
-                        if (isHexNfc) {
-                            String nfcId = cleanCode.replace(":", "").replace("-", "").toUpperCase();
-                            if (isDuplicateNfcScan(nfcId)) {
-                                android.util.Log.d("MainActivity", "⏳ Suppressing duplicate NFC scanner broadcast: " + nfcId);
-                                return;
-                            }
-                            android.util.Log.i("MainActivity", "📡 Dispatching Sunmi NFC Scan Event: " + nfcId);
-                            relayTagToCloudAsync(nfcId);
-                            webView.evaluateJavascript(
-                                "window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: '" + nfcId + "', tag_id: '" + escaped + "' } }));" +
-                                "window.dispatchEvent(new CustomEvent('sunmiBarcodeScan', { detail: { barcode: '" + escaped + "' } }));",
-                                null
-                            );
-                        } else {
-                            webView.evaluateJavascript(
-                                "window.dispatchEvent(new CustomEvent('sunmiBarcodeScan', { detail: { barcode: '" + escaped + "' } }));",
-                                null
-                            );
-                        }
-                    });
-                }
+                dispatchScannedCodeToWebView(cleanCode);
             }
         }
     };
@@ -125,16 +148,63 @@ public class MainActivity extends BridgeActivity {
             filter.addAction("sunmi.intent.action.SCAN_RESULT");
             filter.addAction("com.android.server.scannerservice.broadcast");
             filter.addAction("android.intent.action.SCANNER_RESULT");
+            filter.addAction("com.sunmi.scan");
+            filter.addAction("com.summi.scan");
             registerReceiver(scannerReceiver, filter);
 
-            // Configure Sunmi scanner daemon to broadcast scan intents directly
-            Intent configIntent = new Intent("com.sunmi.scanner.ACTION_BAR_DEVICES_SETTING");
-            configIntent.putExtra("action", "com.sunmi.scanner.ACTION_DATA_CODE_RECEIVED");
-            configIntent.putExtra("data_key", "data");
-            configIntent.putExtra("out_mode", 2); // 2 = Broadcast mode
-            sendBroadcast(configIntent);
+            configureSunmiScannerBroadcastMode();
         } catch (Exception e) {
             android.util.Log.w("MainActivity", "Scanner receiver registration notice: " + e.getMessage());
+        }
+    }
+
+    private void configureSunmiScannerBroadcastMode() {
+        try {
+            // 1. General Sunmi Scanner setting to Broadcast Mode (type = 2)
+            Intent configIntent = new Intent("com.sunmi.scanner.ACTION_BAR_DEVICES_SETTING");
+            configIntent.putExtra("type", 2); // 2 = Broadcast mode
+            configIntent.putExtra("toast", false);
+            sendBroadcast(configIntent);
+
+            // 2. Configure known Sunmi hardware scanner devices
+            int[][] knownDevices = {
+                {102, 7847},  // Sunmi built-in / Blink
+                {65, 12879},  // Sunmi handheld 2D scanner
+                {528, 536}    // Sunmi integrated optical module
+            };
+            for (int[] dev : knownDevices) {
+                Intent devIntent = new Intent("com.sunmi.scanner.ACTION_BAR_DEVICES_SETTING");
+                devIntent.putExtra("vid", dev[0]);
+                devIntent.putExtra("pid", dev[1]);
+                devIntent.putExtra("type", 2);
+                devIntent.putExtra("toast", false);
+                sendBroadcast(devIntent);
+            }
+
+            // 3. Enumerate connected USB devices to configure any attached USB scanner gun to broadcast
+            android.hardware.usb.UsbManager usbManager = (android.hardware.usb.UsbManager) getSystemService(Context.USB_SERVICE);
+            if (usbManager != null) {
+                for (android.hardware.usb.UsbDevice device : usbManager.getDeviceList().values()) {
+                    Intent usbDevIntent = new Intent("com.sunmi.scanner.ACTION_BAR_DEVICES_SETTING");
+                    usbDevIntent.putExtra("name", device.getProductName());
+                    usbDevIntent.putExtra("vid", device.getVendorId());
+                    usbDevIntent.putExtra("pid", device.getProductId());
+                    usbDevIntent.putExtra("type", 2);
+                    usbDevIntent.putExtra("toast", false);
+                    sendBroadcast(usbDevIntent);
+                }
+            }
+
+            // 4. Update system settings if possible
+            try {
+                android.provider.Settings.Global.putString(
+                    getContentResolver(),
+                    "sunmi_scanner_devices",
+                    "102:7847:2-65:12879:2-528:536:2"
+                );
+            } catch (Exception ignored) {}
+        } catch (Exception e) {
+            android.util.Log.w("MainActivity", "Configuring Sunmi scanner broadcast mode notice: " + e.getMessage());
         }
     }
 
@@ -234,6 +304,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         try {
+            nativeKeyHandler.removeCallbacks(nativeKeyFlushRunnable);
             unregisterReceiver(scannerReceiver);
         } catch (Exception e) {
             // Ignore if not registered
@@ -245,6 +316,9 @@ public class MainActivity extends BridgeActivity {
      * Intercept physical hardware volume keys on Feitian F100 terminal
      * Maps Volume Up / Down directly to WebView DOM events for hands-off quantity adjustment
      * Suppresses native Android OS volume slider HUD
+     * 
+     * Intercepts physical USB HID barcode scanners and Sunmi keyboard wedge input
+     * at native OS level with zero latency, buffer-safe sliding window, and Enter/Tab triggers.
      */
     @Override
     public boolean dispatchKeyEvent(android.view.KeyEvent event) {
@@ -275,6 +349,42 @@ public class MainActivity extends BridgeActivity {
                 }
             }
             return true; // Suppress native volume popup
+        }
+
+        // Hardware Barcode Scanner / USB HID Wedge Interception at Native Android OS level
+        if (action == android.view.KeyEvent.ACTION_DOWN) {
+            long now = System.currentTimeMillis();
+            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER 
+                    || keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER 
+                    || keyCode == android.view.KeyEvent.KEYCODE_TAB) {
+                nativeKeyHandler.removeCallbacks(nativeKeyFlushRunnable);
+                String codeToDispatch = null;
+                synchronized (nativeKeyBuffer) {
+                    if (nativeKeyBuffer.length() >= 2) {
+                        codeToDispatch = nativeKeyBuffer.toString().trim();
+                        nativeKeyBuffer.setLength(0);
+                    }
+                }
+                if (codeToDispatch != null && !codeToDispatch.isEmpty()) {
+                    android.util.Log.i("MainActivity", "⚡ Native dispatchKeyEvent Intercepted Barcode: " + codeToDispatch);
+                    dispatchScannedCodeToWebView(codeToDispatch);
+                    return true; // Consume hardware Enter to prevent form submission or modal close
+                }
+            } else {
+                int unicodeChar = event.getUnicodeChar();
+                if (unicodeChar >= 32 && unicodeChar <= 126) {
+                    synchronized (nativeKeyBuffer) {
+                        // If pause between keystrokes exceeds 350ms, start a fresh barcode buffer
+                        if (now - lastNativeKeyTime > 350) {
+                            nativeKeyBuffer.setLength(0);
+                        }
+                        nativeKeyBuffer.append((char) unicodeChar);
+                        lastNativeKeyTime = now;
+                    }
+                    nativeKeyHandler.removeCallbacks(nativeKeyFlushRunnable);
+                    nativeKeyHandler.postDelayed(nativeKeyFlushRunnable, 300);
+                }
+            }
         }
 
         return super.dispatchKeyEvent(event);

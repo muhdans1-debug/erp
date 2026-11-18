@@ -9,6 +9,12 @@ export interface Env {
   DEFAULT_TENANT_ID?: string;
   DEFAULT_STORE_ID?: string;
   MANAGER_PIN?: string;
+  DEV_SECRET?: string;
+  MANAGER_SECRET?: string;
+  POS_AUTH_SECRET?: string;
+  DR_SYNC_SECRET?: string;
+  DEVICE_TOKEN_SECRET?: string;
+  BENEFIT_WEBHOOK_SECRET?: string;
 }
 
 let cachedClient: DbClient | null = null;

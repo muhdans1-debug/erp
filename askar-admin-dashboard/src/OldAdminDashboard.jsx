@@ -125,18 +125,33 @@ export default function App() {
   } = useLaptopBridge(handleCustomerDetectedOnSunmi, handleUnknownNfcScanned);
 
   // Authentication Handler
-  const handlePinSubmit = (e) => {
+  const handlePinSubmit = async (e) => {
     e?.preventDefault();
-    if (pinInput === getAdminPin()) {
-      setIsAuthenticated(true);
-      sessionStorage.setItem('askar_admin_auth', 'true');
-      sessionStorage.setItem('askar_admin_pin', pinInput);
-      setAuthError(false);
-      setPinInput('');
-    } else {
+    if (!pinInput || pinInput.trim().length < 4) {
       setAuthError(true);
       setPinInput('');
+      return;
     }
+    const cleanPin = pinInput.trim();
+    try {
+      const apiBase = getApiBaseUrl();
+      const res = await fetch(`${apiBase}/api/employees/verify-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: cleanPin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && (data.employee?.role === 'MANAGER' || data.employee?.role === 'ADMIN')) {
+        setIsAuthenticated(true);
+        sessionStorage.setItem('askar_admin_auth', 'true');
+        sessionStorage.setItem('askar_admin_pin', cleanPin);
+        setAuthError(false);
+        setPinInput('');
+        return;
+      }
+    } catch {}
+    setAuthError(true);
+    setPinInput('');
   };
 
   const handleLogout = () => {

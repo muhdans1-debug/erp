@@ -405,6 +405,14 @@
       "isQuickProduct": true,
       "category": "GROCERY",
       "quickColor": null
+    },
+    "test_prod": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
+    },
+    "test_p1": {
+      "isQuickProduct": true,
+      "category": "ESSENTIALS"
     }
   },
   "removedIds": [

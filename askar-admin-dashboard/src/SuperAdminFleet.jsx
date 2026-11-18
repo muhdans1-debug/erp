@@ -69,15 +69,18 @@ export default function SuperAdminFleet() {
     setLoading(true);
     setStatusMessage('');
     try {
+      const adminPin = getAdminPin();
+      const headers = adminPin ? { 'x-manager-pin': adminPin } : {};
+
       // 1. Fetch Fleet Terminals
-      const fleetRes = await fetch(`${API_BASE}/api/super-admin/fleet`);
+      const fleetRes = await fetch(`${API_BASE}/api/super-admin/fleet`, { headers });
       const fleetData = await fleetRes.json();
       if (fleetData.success) {
         setFleet(fleetData.fleet || []);
       }
 
       // 2. Fetch Turso Databases via Platform API
-      const tenantsRes = await fetch(`${API_BASE}/api/super-admin/tenants`);
+      const tenantsRes = await fetch(`${API_BASE}/api/super-admin/tenants`, { headers });
       const tenantsData = await tenantsRes.json();
       if (tenantsData.success) {
         setTenants(tenantsData.databases || []);
@@ -87,14 +90,14 @@ export default function SuperAdminFleet() {
       }
 
       // 3. Fetch Audit Logs
-      const auditRes = await fetch(`${API_BASE}/api/super-admin/audit-logs`);
+      const auditRes = await fetch(`${API_BASE}/api/super-admin/audit-logs`, { headers });
       const auditData = await auditRes.json();
       if (auditData.success) {
         setAuditLogs(auditData.logs || []);
       }
 
       // 4. Fetch GitOps Fleet Telemetry & Canary Rollout Status
-      const rolloutRes = await fetch(`${API_BASE}/api/telemetry`);
+      const rolloutRes = await fetch(`${API_BASE}/api/telemetry`, { headers });
       const rolloutJson = await rolloutRes.json();
       if (rolloutJson.success) {
         setRolloutData(rolloutJson);

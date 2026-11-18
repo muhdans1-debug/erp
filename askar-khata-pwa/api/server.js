@@ -54,8 +54,8 @@ fastify.addHook('onRequest', async (request, reply) => {
   }
 });
 
-const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL;
-const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN;
+const tursoUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io';
+const tursoAuthToken = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg';
 
 // Secure JWT secret initialization (Requires env in production)
 const _isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
@@ -69,9 +69,9 @@ if (!JWT_SECRET) {
 
 // Fallback to serverless-writable directory if local
 const fallbackDbPath = process.env.VERCEL ? 'file:/tmp/local_replica.db' : 'file:pos-mvp/local.db';
-const dbTargetUrl = (process.env.VERCEL && tursoUrl) 
+const dbTargetUrl = process.env.VERCEL 
   ? tursoUrl 
-  : (fs.existsSync('pos-mvp/local.db') ? 'file:pos-mvp/local.db' : (tursoUrl || fallbackDbPath));
+  : (fs.existsSync('pos-mvp/local.db') ? 'file:pos-mvp/local.db' : tursoUrl);
 
 const rawClient = createClient({
   url: dbTargetUrl,

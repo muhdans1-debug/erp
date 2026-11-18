@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Lock, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiConfig';
+import { setAdminPin, clearAdminPin } from '../utils/auth';
 
 const API_BASE = (typeof window !== 'undefined' && getApiBaseUrl()) || import.meta.env.VITE_API_BASE || 'https://askar-edge-api.layali-askar-pos.workers.dev';
+
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes of inactivity
+const MAX_SESSION_LIFETIME_MS = 12 * 60 * 60 * 1000; // 12 hours absolute shift duration
 
 export default function AdminAuthGuard({ children }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -13,16 +17,33 @@ export default function AdminAuthGuard({ children }) {
 
   // Validate existing session PIN on mount
   useEffect(() => {
-    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    const urlPin = urlParams?.get('pin') || urlParams?.get('managerPin') || urlParams?.get('auth');
-    const savedPin = urlPin || sessionStorage.getItem('askar_admin_pin');
+    const savedPin = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('askar_admin_pin') : null;
+    const loginAt = typeof sessionStorage !== 'undefined' ? Number(sessionStorage.getItem('askar_admin_login_at') || '0') : 0;
+    const lastActivity = typeof sessionStorage !== 'undefined' ? Number(sessionStorage.getItem('askar_admin_last_activity') || '0') : 0;
+    const now = Date.now();
+
     if (savedPin) {
+      if (loginAt && (now - loginAt > MAX_SESSION_LIFETIME_MS)) {
+        clearAdminPin();
+        setError('Session expired (12h maximum lifetime). Please re-enter PIN.');
+        setCheckingInitial(false);
+        return;
+      }
+      if (lastActivity && (now - lastActivity > INACTIVITY_TIMEOUT_MS)) {
+        clearAdminPin();
+        setError('Session expired due to 30 minutes of inactivity. Please re-enter PIN.');
+        setCheckingInitial(false);
+        return;
+      }
+
       verifyPinOnServer(savedPin).then((valid) => {
         if (valid) {
-          sessionStorage.setItem('askar_admin_pin', savedPin);
+          setAdminPin(savedPin);
+          sessionStorage.setItem('askar_admin_login_at', String(loginAt || now));
+          sessionStorage.setItem('askar_admin_last_activity', String(now));
           setIsAuthenticated(true);
         } else {
-          sessionStorage.removeItem('askar_admin_pin');
+          clearAdminPin();
         }
         setCheckingInitial(false);
       });
@@ -31,31 +52,58 @@ export default function AdminAuthGuard({ children }) {
     }
   }, []);
 
+  // Inactivity auto-lock listener
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const updateActivity = () => {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('askar_admin_last_activity', String(Date.now()));
+      }
+    };
+    window.addEventListener('mousemove', updateActivity, { passive: true });
+    window.addEventListener('keydown', updateActivity, { passive: true });
+    window.addEventListener('click', updateActivity, { passive: true });
+
+    const interval = setInterval(() => {
+      const lastActivity = typeof sessionStorage !== 'undefined' ? Number(sessionStorage.getItem('askar_admin_last_activity') || '0') : 0;
+      if (lastActivity && Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
+        clearAdminPin();
+        setIsAuthenticated(false);
+        setError('Session locked due to 30 minutes of inactivity.');
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('click', updateActivity);
+      clearInterval(interval);
+    };
+  }, [isAuthenticated]);
+
   const verifyPinOnServer = async (testPin) => {
-    // 0. Instant verification for Master Manager PIN (Prevents lockout during cloud outage/rate-limiting)
-    const masterManagerPin = (import.meta.env?.VITE_MANAGER_PIN || '9999').trim();
-    if (testPin && (testPin.trim() === masterManagerPin || testPin.trim() === '9999')) {
-      return true;
+    if (!testPin || typeof testPin !== 'string' || testPin.trim().length < 4) {
+      return false;
     }
 
     try {
-      // 1. First test via employees endpoint
+      // 1. Test via employees endpoint
       const res = await fetch(`${API_BASE}/api/employees/verify-pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: testPin }),
+        body: JSON.stringify({ pin: testPin.trim() }),
         signal: AbortSignal.timeout(3000)
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && data.employee?.role === 'MANAGER') {
+        if (data.success && (data.employee?.role === 'MANAGER' || data.employee?.role === 'ADMIN')) {
           return true;
         }
       }
 
       // 2. Also check super-admin / fleet verification with x-manager-pin header
       const fleetRes = await fetch(`${API_BASE}/api/super-admin/fleet`, {
-        headers: { 'x-manager-pin': testPin },
+        headers: { 'x-manager-pin': testPin.trim() },
         signal: AbortSignal.timeout(3000)
       });
       if (fleetRes.ok) {
@@ -64,10 +112,6 @@ export default function AdminAuthGuard({ children }) {
 
       return false;
     } catch {
-      // Security fallback: Allow master manager PIN if network error occurs
-      if (testPin && (testPin.trim() === masterManagerPin || testPin.trim() === '9999')) {
-        return true;
-      }
       return false;
     }
   };
@@ -99,7 +143,10 @@ export default function AdminAuthGuard({ children }) {
 
     const isValid = await verifyPinOnServer(pinToTest);
     if (isValid) {
-      sessionStorage.setItem('askar_admin_pin', pinToTest);
+      setAdminPin(pinToTest);
+      const now = String(Date.now());
+      sessionStorage.setItem('askar_admin_login_at', now);
+      sessionStorage.setItem('askar_admin_last_activity', now);
       setIsAuthenticated(true);
     } else {
       setError('Invalid Manager PIN. Access Denied.');

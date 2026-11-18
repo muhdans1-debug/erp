@@ -1112,7 +1112,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': getAdminPin() || '1234',
+          'x-manager-pin': getAdminPin(),
           'x-pos-client': 'dashboard'
         },
         body: JSON.stringify({
@@ -1275,7 +1275,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
         headers: {
           'Content-Type': 'application/json',
           'x-pos-client': 'store-pos',
-          'x-manager-pin': getAdminPin() || '9999'
+          'x-manager-pin': getAdminPin()
         },
         body: JSON.stringify({
           amount: amt,
@@ -1312,7 +1312,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
 
     const headers = {
       'x-pos-client': 'store-pos',
-      'x-manager-pin': getAdminPin() || '9999'
+      'x-manager-pin': getAdminPin()
     };
 
     const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
@@ -1384,7 +1384,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-manager-pin': getAdminPin() || '9999',
+          'x-manager-pin': getAdminPin(),
           'x-pos-client': 'admin-dashboard'
         }
       });
@@ -1483,7 +1483,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
       ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
 
       const headers = {
-        'x-manager-pin': getAdminPin() || '9999',
+        'x-manager-pin': getAdminPin(),
         'x-pos-client': 'store-pos'
       };
 
@@ -2181,7 +2181,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Enter Manager PIN (9999) *</label>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Enter Manager PIN *</label>
               <input
                 type="password"
                 maxLength={4}
@@ -2256,7 +2256,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
 
             <div>
               <label className="block text-xs font-bold uppercase text-slate-700 mb-1">
-                Enter Manager PIN (Default: 9999) *
+                Enter Manager PIN *
               </label>
               <input
                 type="password"

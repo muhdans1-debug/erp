@@ -113,7 +113,7 @@ productsRouter.get('/quick-products', async (c) => {
 /**
  * Add / Update Quick Product
  */
-productsRouter.post('/quick-products/update', async (c) => {
+productsRouter.post('/quick-products/update', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();
@@ -151,7 +151,7 @@ productsRouter.post('/quick-products/update', async (c) => {
 /**
  * Remove Quick Product
  */
-productsRouter.post('/quick-products/remove', async (c) => {
+productsRouter.post('/quick-products/remove', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();
@@ -171,7 +171,7 @@ productsRouter.post('/quick-products/remove', async (c) => {
 /**
  * Swap Quick Products positions
  */
-productsRouter.post('/quick-products/swap', async (c) => {
+productsRouter.post('/quick-products/swap', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();

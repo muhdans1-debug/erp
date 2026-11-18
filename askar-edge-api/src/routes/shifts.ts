@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { getDb, type Env } from '../db.ts';
 import { tenantMiddleware, type TenantContext } from '../middleware/tenant.ts';
-import { requirePosOrManagerAuth } from '../middleware/auth.ts';
+import { requirePosOrManagerAuth, requireManagerAuth } from '../middleware/auth.ts';
 import { getRegionalIsoString } from '../utils/time.ts';
 
 export const shiftsRouter = new Hono<{ Bindings: Env; Variables: TenantContext }>();
@@ -274,5 +274,5 @@ const getShiftReconciliationHandler = async (c: any) => {
   }
 };
 
-shiftsRouter.get('/reconciliation', getShiftReconciliationHandler);
-shiftsRouter.get('/audits', getShiftReconciliationHandler);
+shiftsRouter.get('/reconciliation', requireManagerAuth, getShiftReconciliationHandler);
+shiftsRouter.get('/audits', requireManagerAuth, getShiftReconciliationHandler);

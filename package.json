@@ -18,6 +18,7 @@
     "build:khata": "npm --prefix askar-khata-pwa run build",
     "build:apk": "powershell.exe -ExecutionPolicy Bypass -File pos-mvp/build_and_package_apk.ps1",
     "deploy:edge": "npm --prefix askar-edge-api run deploy",
-    "deploy:dashboard": "npm --prefix askar-admin-dashboard run deploy"
+    "deploy:dashboard": "npm --prefix askar-admin-dashboard run deploy",
+    "test:audit": "npm --prefix pos-mvp run test:audit"
   }
 }

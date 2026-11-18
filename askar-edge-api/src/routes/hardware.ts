@@ -1,32 +1,12 @@
 import { Hono } from 'hono';
 import { getDb, type Env } from '../db.ts';
 import { tenantMiddleware, type TenantContext } from '../middleware/tenant.ts';
-import { requirePosOrManagerAuth } from '../middleware/auth.ts';
+import { requirePosOrManagerAuth, requireManagerAuth } from '../middleware/auth.ts';
 import { getRegionalIsoString } from '../utils/time.ts';
 
 export const hardwareRouter = new Hono<{ Bindings: Env; Variables: TenantContext }>();
 
 hardwareRouter.use('*', tenantMiddleware);
-
-// Helper to validate authorized POS terminal or Manager for hardware bridge
-const validateRelayAuth = (c: any): boolean => {
-  const posClient = (c.req.header('x-pos-client') || c.req.query('client') || '').trim();
-  const managerPin = (c.req.header('x-manager-pin') || c.req.query('pin') || '').trim();
-  const envPin = (c.env?.MANAGER_PIN || '9999').trim();
-
-  return Boolean(
-    posClient === 'store-pos' ||
-    posClient === 'pim-admin' ||
-    posClient === 'sunmi-d2mini' ||
-    posClient === 'f100-mobile-pos' ||
-    posClient === 'f100' ||
-    posClient === 'f100-pim' ||
-    posClient === 'ios-relay' ||
-    posClient === 'mobile-tap' ||
-    (posClient && (posClient.includes('pos') || posClient.includes('f100') || posClient.includes('pim') || posClient.includes('iphone'))) ||
-    (managerPin && (managerPin === envPin || managerPin === '9999'))
-  );
-};
 
 // In-memory relay cache for remote POS -> Manager laptop bridge
 let latestNfcScan: {
@@ -176,10 +156,7 @@ async function processNfcRelay(c: any, rawTag: string, terminalId: string, custo
   });
 }
 
-hardwareRouter.post('/nfc/relay', async (c) => {
-  if (!validateRelayAuth(c)) {
-    return c.json({ error: 'Unauthorized: Valid POS terminal handshake or Manager PIN required.' }, 401);
-  }
+hardwareRouter.post('/nfc/relay', requirePosOrManagerAuth, async (c) => {
   try {
     let body: any = {};
     try { body = await c.req.json(); } catch { }
@@ -191,10 +168,7 @@ hardwareRouter.post('/nfc/relay', async (c) => {
   }
 });
 
-hardwareRouter.get('/nfc/relay', async (c) => {
-  if (!validateRelayAuth(c)) {
-    return c.json({ error: 'Unauthorized: Valid POS terminal handshake or Manager PIN required.' }, 401);
-  }
+hardwareRouter.get('/nfc/relay', requirePosOrManagerAuth, async (c) => {
   try {
     const rawTag = c.req.query('tag_id') || c.req.query('tagId') || c.req.query('uid') || c.req.query('id') || '';
     const terminalId = c.req.query('terminalId') || c.req.query('terminal_id') || 'iPhone 16 Pro';
@@ -723,7 +697,7 @@ hardwareRouter.post('/register/cart/live', async (c) => {
 });
 
 // 4. Remote Fleet Command Dispatcher (Drawer Kick, Remote Clear Cart, Lock Register)
-hardwareRouter.post('/drawer-kick', async (c) => {
+hardwareRouter.post('/drawer-kick', requireManagerAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const rawTid = body.terminalId || body.terminal || c.req.query('terminalId') || 'T1';
@@ -753,7 +727,7 @@ hardwareRouter.post('/drawer-kick', async (c) => {
   }
 });
 
-hardwareRouter.post('/register/command', async (c) => {
+hardwareRouter.post('/register/command', requireManagerAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const rawTid = body.terminalId || body.terminal || c.req.query('terminalId');
@@ -790,7 +764,7 @@ hardwareRouter.post('/register/command', async (c) => {
 });
 
 // 4B. Dedicated Network Print Relay (Billing on Laptop -> Instant Print on Sunmi)
-hardwareRouter.post('/print', async (c) => {
+hardwareRouter.post('/print', requirePosOrManagerAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const rawTid = body.terminalId || body.targetTerminal || c.req.query('terminalId') || 'T1';
@@ -936,6 +910,39 @@ export function parseFawriPaymentMessage(rawText: string, meta: any = {}): Parse
 }
 
 const handleBenefitWebhook = async (c: any) => {
+  // 1. Enforce Pre-Shared Secret Authentication for Automated Fawri+ Relay
+  const incomingSecret = (
+    c.req.header('x-benefit-secret') ||
+    c.req.header('x-webhook-secret') ||
+    c.req.header('x-pos-key') ||
+    c.req.header('authorization')?.replace(/^Bearer\s+/i, '') ||
+    c.req.query('secret') ||
+    ''
+  ).trim();
+
+  const expectedSecret = (
+    (c.env as any).BENEFIT_WEBHOOK_SECRET ||
+    (c.env as any).DEV_SECRET ||
+    (c.env as any).POS_AUTH_SECRET ||
+    ''
+  ).trim();
+
+  let isSecretValid = false;
+  if (incomingSecret && expectedSecret && incomingSecret.length === expectedSecret.length) {
+    let diff = 0;
+    for (let i = 0; i < incomingSecret.length; i++) {
+      diff |= incomingSecret.charCodeAt(i) ^ expectedSecret.charCodeAt(i);
+    }
+    isSecretValid = (diff === 0);
+  }
+
+  if (!isSecretValid) {
+    return c.json({
+      success: false,
+      error: 'Unauthorized: Valid BenefitPay webhook secret required.'
+    }, 401);
+  }
+
   const db = getDb(c.env);
   await loadFleetRegistryFromDb(db);
 

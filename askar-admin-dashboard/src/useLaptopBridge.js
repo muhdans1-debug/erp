@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getAdminPin } from './utils/auth';
 
 export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
   const ws = useRef(null);
@@ -218,15 +219,17 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
   // Command: Remote Cash Drawer Kick on Terminal Hardware
   const remoteDrawerKick = useCallback((terminalId = 'T1') => {
     let sent = false;
+    const adminPin = getAdminPin();
+    const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || '';
+
     if (ws.current?.readyState === WebSocket.OPEN) {
       console.log(`⚡ [Laptop RJ45 Bridge] Sending REMOTE_DRAWER_KICK to terminal ${terminalId}...`);
-      const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || 'askar-manager-secret-2026';
       ws.current.send(JSON.stringify({
         type: 'REMOTE_DRAWER_KICK',
         terminalId,
-        authorized: true,
         source: 'ADMIN_DASHBOARD',
-        token: managerSecret,
+        token: managerSecret || undefined,
+        pin: adminPin || undefined,
         sentAt: new Date().toISOString()
       }));
       sent = true;
@@ -235,10 +238,14 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
     // HTTP backup to Central Server
     try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+      const headers = { 'Content-Type': 'application/json' };
+      if (managerSecret) headers['x-manager-token'] = managerSecret;
+      if (adminPin) headers['x-manager-pin'] = adminPin;
+
       fetch(`${backendUrl}/api/hardware/drawer-kick`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
-        body: JSON.stringify({ terminalId, command: 'DRAWER_KICK', authorized: true, source: 'ADMIN_DASHBOARD' })
+        headers,
+        body: JSON.stringify({ terminalId, command: 'DRAWER_KICK', source: 'ADMIN_DASHBOARD', pin: adminPin })
       }).then(() => { sent = true; }).catch(() => {});
     } catch {}
 
@@ -247,11 +254,17 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
 
   // Command: Remote Clear Cart on Terminal
   const remoteClearCart = useCallback((terminalId = 'T1') => {
+    const adminPin = getAdminPin();
+    const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || '';
+
     if (ws.current?.readyState === WebSocket.OPEN) {
       console.log(`🗑️ [Laptop RJ45 Bridge] Sending REMOTE_CLEAR_CART to terminal ${terminalId}...`);
       ws.current.send(JSON.stringify({
         type: 'REMOTE_CLEAR_CART',
         terminalId,
+        token: managerSecret || undefined,
+        pin: adminPin || undefined,
+        source: 'ADMIN_DASHBOARD',
         sentAt: new Date().toISOString()
       }));
       return true;
@@ -261,11 +274,17 @@ export function useLaptopBridge(onCustomerDetected, onUnknownNfcScanned) {
 
   // Command: Remote Lock Terminal Register
   const remoteLockRegister = useCallback((terminalId = 'T1') => {
+    const adminPin = getAdminPin();
+    const managerSecret = (typeof window !== 'undefined' ? (localStorage.getItem('askar_manager_secret') || import.meta.env?.VITE_MANAGER_SECRET) : null) || '';
+
     if (ws.current?.readyState === WebSocket.OPEN) {
       console.log(`🔒 [Laptop RJ45 Bridge] Sending REMOTE_LOCK_REGISTER to terminal ${terminalId}...`);
       ws.current.send(JSON.stringify({
         type: 'REMOTE_LOCK_REGISTER',
         terminalId,
+        token: managerSecret || undefined,
+        pin: adminPin || undefined,
+        source: 'ADMIN_DASHBOARD',
         sentAt: new Date().toISOString()
       }));
       return true;

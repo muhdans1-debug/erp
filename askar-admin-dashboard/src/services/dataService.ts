@@ -1,13 +1,22 @@
 import { createClient } from '@libsql/client/web';
 import { getAdminPin } from '../utils/auth.js';
 
-const TURSO_URL = 'libsql://askar-pos-primary-muhdans1.aws-ap-south-1.turso.io';
-const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTM5MDgyNDAsImlkIjoiMDFhMTg0YjgtMjIwMS03YzJhLThlY2EtZDVkNDcyZjkxZGRlIiwia2lkIjoiQ0cxaFB3c3d5VWgwUlE5dzNZRDZRRmxuYk9rWUNCYklfVWJkSEhXS1hNNCIsInJpZCI6Ijk3MzEwYzA5LTMxYjUtNDNkNi1hY2ViLWNmYWY1MTIzZDRkNSJ9.U5P8GYK31KnUbgtrdvNKwau-ARB17g-Zk3PFBkz_Olu3DV5QQaFFTwbylLPV_LZMDwzwwJr-2lOelcD3IWyjAg';
+const TURSO_URL = import.meta.env?.VITE_TURSO_URL || '';
+const TURSO_TOKEN = import.meta.env?.VITE_TURSO_TOKEN || '';
 
-export const turso = createClient({
+export const turso: any = (TURSO_URL && TURSO_TOKEN) ? createClient({
   url: TURSO_URL,
   authToken: TURSO_TOKEN,
-});
+}) : {
+  execute: async () => {
+    console.warn('⚡ Turso direct database access is disabled in client bundle for security. Route requests through backend API.');
+    return { rows: [] };
+  },
+  batch: async () => {
+    console.warn('⚡ Turso direct database batch is disabled in client bundle for security. Route requests through backend API.');
+    return [];
+  }
+};
 
 const REGIONAL_TIMEZONE = 'Asia/Bahrain';
 

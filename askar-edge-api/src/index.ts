@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import bcrypt from 'bcryptjs';
 import { getDb, type Env } from './db.ts';
 import { tenantMiddleware, type TenantContext } from './middleware/tenant.ts';
 import { checkPinRateLimit, recordFailedPinAttempt, resetPinAttempts, requireManagerAuth, requirePosOrManagerAuth } from './middleware/auth.ts';
@@ -82,7 +83,7 @@ app.get('/api/sync/status', (c) => c.json({
   masterTime: getMasterServerTimeInfo()
 }));
 
-// Employee & Manager PIN Authentication with Rate Limiting & No Hardcoded Backdoors
+// Employee & Manager PIN Authentication with Rate Limiting & Bcrypt Defense (No Hardcoded Backdoors)
 const verifyPinHandler = async (c: any) => {
   const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
   const rateLimit = checkPinRateLimit(clientIp);
@@ -96,29 +97,40 @@ const verifyPinHandler = async (c: any) => {
     const cleanPin = String(body.pin || '').trim();
     if (!cleanPin) return c.json({ error: 'PIN required' }, 400);
 
-    // 1. Direct targeted database lookup (never dumps full employee table or pins into memory)
+    // 1. Fetch active employees to compare bcrypt hash safely
     const res = await db.execute({
-      sql: 'SELECT id, name, role, is_active FROM Employee WHERE is_active = 1 AND pin_code = ? LIMIT 1',
-      args: [cleanPin]
+      sql: 'SELECT id, name, role, pin_code, is_active FROM Employee WHERE is_active = 1',
+      args: []
     });
 
     if (res.rows && res.rows.length > 0) {
-      resetPinAttempts(clientIp);
-      const emp = res.rows[0];
-      return c.json({
-        success: true,
-        employee: {
-          id: emp.id,
-          name: emp.name,
-          role: emp.role,
-          is_active: emp.is_active
+      for (const row of res.rows) {
+        const storedPin = String(row.pin_code || '').trim();
+        let isMatch = false;
+        if (storedPin.startsWith('$2a$') || storedPin.startsWith('$2b$')) {
+          isMatch = await bcrypt.compare(cleanPin, storedPin);
+        } else if (storedPin) {
+          isMatch = (storedPin === cleanPin);
         }
-      });
+
+        if (isMatch) {
+          resetPinAttempts(clientIp);
+          return c.json({
+            success: true,
+            employee: {
+              id: row.id,
+              name: row.name,
+              role: row.role,
+              is_active: row.is_active
+            }
+          });
+        }
+      }
     }
 
-    // 2. Strict environment PIN check (if configured)
+    // 2. Strict environment PIN check (if configured and non-default)
     const envManagerPin = c.env.MANAGER_PIN?.trim();
-    if (envManagerPin && cleanPin === envManagerPin) {
+    if (envManagerPin && envManagerPin !== '9999' && cleanPin === envManagerPin) {
       resetPinAttempts(clientIp);
       return c.json({
         success: true,
@@ -167,6 +179,12 @@ const saveEmployeeHandler = async (c: any) => {
     const activeVal = is_active !== false ? 1 : 0;
     const resolvedTenant = tenantId || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
 
+    // Bcrypt-hash 4-digit PIN if not already hashed
+    let storedPin = cleanPin;
+    if (!storedPin.startsWith('$2a$') && !storedPin.startsWith('$2b$')) {
+      storedPin = await bcrypt.hash(cleanPin, 10);
+    }
+
     await db.execute({
       sql: `INSERT INTO Employee (id, tenantId, name, pin_code, role, is_active)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -175,7 +193,7 @@ const saveEmployeeHandler = async (c: any) => {
               pin_code = excluded.pin_code,
               role = excluded.role,
               is_active = excluded.is_active`,
-      args: [empId, resolvedTenant, empName, cleanPin, empRole, activeVal]
+      args: [empId, resolvedTenant, empName, storedPin, empRole, activeVal]
     });
 
     return c.json({ success: true, employeeId: empId, message: 'Employee saved successfully' });
@@ -188,8 +206,8 @@ app.post('/api/employees/verify-pin', verifyPinHandler);
 app.post('/employees/verify-pin', verifyPinHandler);
 app.get('/api/employees', getEmployeesHandler);
 app.get('/employees', getEmployeesHandler);
-app.post('/api/employees', saveEmployeeHandler);
-app.post('/employees', saveEmployeeHandler);
+app.post('/api/employees', requireManagerAuth, saveEmployeeHandler);
+app.post('/employees', requireManagerAuth, saveEmployeeHandler);
 app.get('/api/super-admin/fleet', requireManagerAuth, (c) => {
   return c.json({ success: true, authorized: true });
 });
@@ -338,7 +356,7 @@ app.get('/quick-products', async (c) => {
   return c.redirect('/api/quick-products');
 });
 
-app.post('/api/quick-products/update', async (c) => {
+app.post('/api/quick-products/update', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();
@@ -373,7 +391,7 @@ app.post('/api/quick-products/update', async (c) => {
   }
 });
 
-app.post('/api/quick-products/remove', async (c) => {
+app.post('/api/quick-products/remove', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();
@@ -390,7 +408,7 @@ app.post('/api/quick-products/remove', async (c) => {
   }
 });
 
-app.post('/api/quick-products/swap', async (c) => {
+app.post('/api/quick-products/swap', requirePosOrManagerAuth, async (c) => {
   const db = getDb(c.env);
   try {
     const body = await c.req.json();

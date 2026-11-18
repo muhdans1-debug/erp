@@ -2148,7 +2148,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       customerId = customer.id;
       customerName = customer.name;
-      previousBalance = customer.personalBalance ?? customer.currentBalance ?? 0;
+      previousBalance = customer.balance ?? customer.personalBalance ?? customer.currentBalance ?? 0;
       newBalance = previousBalance + total;
 
       // Hard Credit Limit Enforcement (Idea 2: POS Blocking)
@@ -2399,6 +2399,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           customerCardUid: customer?.cardUid || customer?.tag_id || undefined,
           previousBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? previousBalance : undefined,
           newBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? newBalance : undefined,
+          personalBalance: customer?.personalBalance !== undefined ? Number(customer.personalBalance) : undefined,
+          messBalance: customer?.messBalance !== undefined ? Number(customer.messBalance) : undefined,
           cashierName: "Register 01"
         }).catch((printErr) => console.warn("Background receipt printing warning:", printErr));
       }

@@ -388,6 +388,8 @@ export interface FullReceiptProps {
   customerCardUid?: string;
   previousBalance?: number;
   newBalance?: number;
+  personalBalance?: number;
+  messBalance?: number;
   cashierName?: string;
   transactionRef?: string;
   isMess?: boolean;
@@ -971,6 +973,8 @@ export const generateFullReceiptHtml = async (props: FullReceiptProps): Promise<
     customerCardUid: props.customerCardUid || (props.cardUid ? String(props.cardUid) : undefined),
     previousBalance: props.previousBalance,
     newBalance: props.newBalance,
+    personalBalance: props.personalBalance,
+    messBalance: props.messBalance,
     isMess: props.isMess,
     groupName: props.groupName,
     shopperName: props.shopperName,

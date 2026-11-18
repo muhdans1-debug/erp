@@ -47,6 +47,7 @@ export interface Customer {
   currentBalance: number;
   balance?: number;
   personalBalance?: number;
+  messBalance?: number;
   creditLimit?: number;
   credit_limit?: number;
   isStale?: boolean;

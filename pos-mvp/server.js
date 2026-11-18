@@ -21,7 +21,7 @@ import reportRoutes from './routes/reports.js';
 import procurementRoutes from './routes/procurement.js';
 import { verifyManagerPin, managerAuth } from './middleware/auth.js';
 import { pipeline } from 'stream/promises';
-import { db, initDatabase, localDbPath } from './db.js';
+import { db, tursoCloudClient, initDatabase, localDbPath } from './db.js';
 import { SaleRepository } from './repositories/SaleRepository.js';
 import { startSyncEngine, syncNow, getSyncStatus, setMasterBaseUrl, getMasterBaseUrl } from './syncEngine.js';
 import { startCloudSyncDaemon, getCloudSyncBackoffStatus } from './services/cloudSync.js';
@@ -1073,17 +1073,29 @@ export const syncKhataBalancesToTurso = async () => {
   try {
     const customers = await getAllCustomersWithBalances(true);
     for (const c of customers) {
+      const bal = Number(c.currentBalance || 0);
+      const token = c.access_token || c.id;
+
+      // 1. Update local database
       await tursoDb.execute({
         sql: `UPDATE Customer SET 
               balance = ?,
               access_token = COALESCE(access_token, ?)
               WHERE id = ?`,
-        args: [
-          Number(c.currentBalance || 0),
-          c.access_token || c.id,
-          c.id
-        ]
+        args: [bal, token, c.id]
       });
+
+      // 2. Mirror balance update directly to Turso Cloud (Zero-SPOF)
+      if (tursoCloudClient) {
+        await tursoCloudClient.execute({
+          sql: `UPDATE Customer SET 
+                balance = ?,
+                access_token = COALESCE(access_token, ?),
+                updatedAt = datetime('now')
+                WHERE id = ?`,
+          args: [bal, token, c.id]
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.warn('Sync Khata balances to Customer warning:', err?.message);

@@ -1250,6 +1250,18 @@ const handleKhataStatementOrTab = async (request, reply) => {
         const allLedger = ledgerRes.rows || [];
         const enrichedLedger = await enrichLedgerWithItems(allLedger);
 
+        // Dynamically reconcile running balance anchored to true customer.balance
+        let runningTracker = Number(customer.balance ?? 0);
+        const reconciledLedger = enrichedLedger.map((tx) => {
+          const currentRunning = runningTracker;
+          const amt = Number(tx.amount || 0);
+          runningTracker = Number((runningTracker - amt).toFixed(3));
+          return {
+            ...tx,
+            running_balance: Number(currentRunning.toFixed(3))
+          };
+        });
+
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
         return reply.send({
           success: true,
@@ -1266,10 +1278,10 @@ const handleKhataStatementOrTab = async (request, reply) => {
           isActive: Boolean(isActiveNum),
           isLocked: false,
           pendingClaims: pendingClaims.rows || [],
-          recentPurchases: enrichedLedger,
-          transactions: enrichedLedger,
-          ledger: enrichedLedger,
-          totalTransactions: enrichedLedger.length,
+          recentPurchases: reconciledLedger,
+          transactions: reconciledLedger,
+          ledger: reconciledLedger,
+          totalTransactions: reconciledLedger.length,
           message: 'Khata Tab summary and transaction ledger.'
         });
       }
@@ -1330,6 +1342,19 @@ const handleKhataStatementOrTab = async (request, reply) => {
       const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
       const statementLedger = ledgerQuery.rows || [];
       const enrichedStatement = await enrichLedgerWithItems(statementLedger);
+
+      // Dynamically reconcile running balance anchored to true customer.balance
+      let statementTracker = Number(customer.balance ?? 0);
+      const reconciledStatement = enrichedStatement.map((tx) => {
+        const currentRunning = statementTracker;
+        const amt = Number(tx.amount || 0);
+        statementTracker = Number((statementTracker - amt).toFixed(3));
+        return {
+          ...tx,
+          running_balance: Number(currentRunning.toFixed(3))
+        };
+      });
+
       return reply.send({
         success: true,
         id: customer.id,
@@ -1347,10 +1372,10 @@ const handleKhataStatementOrTab = async (request, reply) => {
         cpr: maskedCpr,
         token,
         pendingClaims: pendingClaims.rows || [],
-        recentPurchases: enrichedStatement,
-        transactions: enrichedStatement,
-        ledger: enrichedStatement,
-        totalTransactions: enrichedStatement.length
+        recentPurchases: reconciledStatement,
+        transactions: reconciledStatement,
+        ledger: reconciledStatement,
+        totalTransactions: reconciledStatement.length
       });
     }
 

@@ -180,7 +180,7 @@ export default async function salesRoutes(fastify, options) {
                 sql: `INSERT INTO KhataLedger (
                   id, tenantId, customerId, amount, type, reference, running_balance,
                   syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
-                ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'PENDING', ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING`,
                 args: [ledgerId, member.id, memberCharge, ledgerRef, createdAt, createdAt, targetMessId, sale.id, total, memberRows.length],
               });
@@ -194,7 +194,7 @@ export default async function salesRoutes(fastify, options) {
               sql: `INSERT INTO KhataLedger (
                 id, tenantId, customerId, amount, type, reference, running_balance,
                 syncStatus, timestamp, created_at, sale_id
-              ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
+              ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'PENDING', ?, ?, ?)
               ON CONFLICT(id) DO NOTHING`,
               args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt, sale.id],
             });
@@ -207,7 +207,7 @@ export default async function salesRoutes(fastify, options) {
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance,
               syncStatus, timestamp, created_at, sale_id
-            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'SYNCED', ?, ?, ?)
+            ) VALUES (?, 'tenant_askar_01', ?, ?, 'CHARGE', ?, 0, 'PENDING', ?, ?, ?)
             ON CONFLICT(id) DO NOTHING`,
             args: [deterministicLedgerId, customerId, total, invoiceNo, createdAt, createdAt, sale.id],
           });
@@ -597,7 +597,7 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
 
       statements.push({
         sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, syncStatus, timestamp, created_at, tenantId, mess_id, sale_id, group_total, member_count)
-              VALUES (?, ?, ?, 'CHARGE', ?, 'SYNCED', ?, ?, 'tenant_askar_01', ?, ?, ?, ?)`,
+              VALUES (?, ?, ?, 'CHARGE', ?, 'PENDING', ?, ?, 'tenant_askar_01', ?, ?, ?, ?)`,
         args: [ledgerEntryId, member.id, memberCharge, ledgerRef, nowIso, nowIso, messId, saleId, finalTotal, memberRows.length]
       });
 
@@ -615,6 +615,8 @@ fastify.post('/api/sales/mess-checkout', async (request, reply) => {
 
     if (statements.length > 0) {
       await db.batch(statements);
+      // Asynchronously mirror sale and mess split ledger entries to Turso Cloud (Zero-SPOF)
+      mirrorSaleToCloud(saleId).catch(() => {});
     }
 
     return {
@@ -1076,7 +1078,7 @@ const handleRefundSale = async (request, reply) => {
               await tx.execute({
                 sql: `INSERT INTO KhataLedger (
                   id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, sale_id
-                ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'PENDING', ?, ?, ?, ?)`,
                 args: [
                   refId,
                   m.tenantId || sale.tenantId || 'tenant_1',
@@ -1102,7 +1104,7 @@ const handleRefundSale = async (request, reply) => {
           await tx.execute({
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id
-            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'PENDING', ?, ?, ?)`,
             args: [
               refId,
               sale.tenantId || 'tenant_1',
@@ -1146,6 +1148,9 @@ const handleRefundSale = async (request, reply) => {
     console.log(
       `↩️ Refund Processed: Invoice #${invoiceNo} -> Credit Note ${result.creditNoteNo} (BD ${result.refundedAmount}) via ${result.destination}`
     );
+    if (result.sale?.id) {
+      mirrorSaleToCloud(result.sale.id).catch(() => {});
+    }
     return {
       success: true,
       message: 'Refund processed, stock adjusted, and financial ledger updated.',
@@ -1340,7 +1345,7 @@ const handleVoidSale = async (req, reply) => {
           await tx.execute({
             sql: `INSERT INTO KhataLedger (
               id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, sale_id, group_total, member_count
-            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'PENDING', ?, ?, ?, ?, ?, ?)`,
             args: [
               revId,
               entry.tenantId || sale.tenantId || 'tenant_1',
@@ -1368,7 +1373,7 @@ const handleVoidSale = async (req, reply) => {
         await tx.execute({
           sql: `INSERT INTO KhataLedger (
             id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, sale_id
-          ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'SYNCED', ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, 'PAYMENT_IN', ?, 0, 'PENDING', ?, ?, ?)`,
           args: [
             revId,
             sale.tenantId || 'tenant_1',
@@ -1421,6 +1426,10 @@ const handleVoidSale = async (req, reply) => {
         restoredProducts,
       };
     });
+
+    if (result.voidedSale?.id) {
+      mirrorSaleToCloud(result.voidedSale.id).catch(() => {});
+    }
 
     return reply.send({
       success: true,

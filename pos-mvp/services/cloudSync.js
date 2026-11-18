@@ -155,13 +155,77 @@ export async function mirrorSaleToCloud(saleId) {
       });
     }
 
+    // 2b. Zero-Drift Khata Ledger Mirroring: Capture all credit / mess split ledger entries for this sale
+    const ledgerRes = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE sale_id = ? OR reference LIKE ? OR reference LIKE ?`,
+      args: [saleId, `%${s.invoiceNo}%`, `%${saleId}%`]
+    });
+    const ledgerEntries = ledgerRes.rows || [];
+    const affectedCustomerIds = new Set();
+    if (s.customerId) affectedCustomerIds.add(s.customerId);
+
+    for (const kl of ledgerEntries) {
+      statements.push({
+        sql: `INSERT INTO KhataLedger (
+          id, tenantId, customerId, amount, type, reference,
+          running_balance, syncStatus, timestamp, created_at,
+          storeId, mess_id, sale_id, group_total, member_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          syncStatus = 'SYNCED',
+          running_balance = excluded.running_balance,
+          mess_id = excluded.mess_id,
+          sale_id = excluded.sale_id,
+          group_total = excluded.group_total,
+          member_count = excluded.member_count`,
+        args: [
+          kl.id,
+          kl.tenantId || 'tenant_askar_01',
+          kl.customerId,
+          kl.amount,
+          kl.type,
+          kl.reference || null,
+          kl.running_balance ?? 0,
+          kl.timestamp || kl.created_at || new Date().toISOString(),
+          kl.created_at || new Date().toISOString(),
+          kl.storeId || 'store_askar_01',
+          kl.mess_id || null,
+          kl.sale_id || saleId,
+          kl.group_total || null,
+          kl.member_count || null
+        ]
+      });
+      if (kl.customerId) {
+        affectedCustomerIds.add(kl.customerId);
+      }
+    }
+
+    // Recalculate customer balance in Turso Cloud for all affected customers
+    for (const custId of affectedCustomerIds) {
+      statements.push({
+        sql: `UPDATE Customer SET
+          balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+          updatedAt = datetime('now')
+        WHERE id = ?`,
+        args: [custId, custId]
+      });
+    }
+
     await tursoCloudClient.batch(statements, 'write');
 
-    // 4. Mark local sale as SYNCED
+    // 4. Mark local sale and its ledger entries as SYNCED
     await db.execute({
       sql: `UPDATE Sale SET syncStatus = 'SYNCED' WHERE id = ?`,
       args: [saleId]
     });
+    if (ledgerEntries.length > 0) {
+      for (const kl of ledgerEntries) {
+        await db.execute({
+          sql: `UPDATE KhataLedger SET syncStatus = 'SYNCED' WHERE id = ?`,
+          args: [kl.id]
+        });
+      }
+    }
 
     recordCloudSyncSuccess();
     console.log(`☁️ [CloudSync] Sale ${s.invoiceNo} (${saleId}) mirrored to Turso Cloud.`);
@@ -527,11 +591,16 @@ export async function mirrorLedgerEntryToCloud(entry) {
       {
         sql: `INSERT INTO KhataLedger (
           id, tenantId, customerId, amount, type, reference,
-          running_balance, syncStatus, timestamp, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+          running_balance, syncStatus, timestamp, created_at,
+          storeId, mess_id, sale_id, group_total, member_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           syncStatus = 'SYNCED',
-          running_balance = excluded.running_balance`,
+          running_balance = excluded.running_balance,
+          mess_id = excluded.mess_id,
+          sale_id = excluded.sale_id,
+          group_total = excluded.group_total,
+          member_count = excluded.member_count`,
         args: [
           entry.id,
           entry.tenantId || 'tenant_askar_01',
@@ -541,7 +610,12 @@ export async function mirrorLedgerEntryToCloud(entry) {
           entry.reference || null,
           entry.running_balance ?? 0,
           timestamp,
-          timestamp
+          entry.created_at || timestamp,
+          entry.storeId || 'store_askar_01',
+          entry.mess_id || null,
+          entry.sale_id || null,
+          entry.group_total || null,
+          entry.member_count || null
         ]
       }
     ];
@@ -1032,6 +1106,61 @@ export async function pullCloudDeltas() {
 }
 
 /**
+ * 8b. Zero-Drift Anti-Entropy Sentinel: Periodically validates that all local KhataLedger
+ * entries exist in Turso Cloud and all Customer balances in Turso match the ledger sum.
+ */
+export async function reconcileCloudKhataIntegrity() {
+  if (!tursoCloudClient || Date.now() < cloudBackoffUntil) return { checked: 0, reconciled: 0 };
+
+  try {
+    // 1. Check for any missing local KhataLedger entries in Turso Cloud
+    const localEntriesRes = await db.execute(`SELECT id FROM KhataLedger ORDER BY created_at DESC LIMIT 300`);
+    const localIds = (localEntriesRes.rows || []).map(r => r.id);
+    if (localIds.length === 0) return { checked: 0, reconciled: 0 };
+
+    const cloudEntriesRes = await tursoCloudClient.execute(`SELECT id FROM KhataLedger ORDER BY created_at DESC LIMIT 300`);
+    const cloudIdSet = new Set((cloudEntriesRes.rows || []).map(r => r.id));
+
+    const missingIds = localIds.filter(id => !cloudIdSet.has(id));
+    if (missingIds.length > 0) {
+      console.log(`🔍 [CloudSync Sentinel] Auto-reconciling ${missingIds.length} missing KhataLedger entries to Turso Cloud...`);
+      for (const mid of missingIds) {
+        if (Date.now() < cloudBackoffUntil) break;
+        const entryRes = await db.execute({ sql: `SELECT * FROM KhataLedger WHERE id = ?`, args: [mid] });
+        if (entryRes.rows && entryRes.rows[0]) {
+          await mirrorLedgerEntryToCloud(entryRes.rows[0]);
+        }
+      }
+    }
+
+    // 2. Anti-Entropy Balance Invariant Check: Verify Customer balances match ledger sum
+    const driftingRes = await tursoCloudClient.execute(`
+      SELECT c.id, c.balance as current_bal, ROUND(COALESCE(SUM(kl.amount), 0), 3) as true_bal
+      FROM Customer c
+      LEFT JOIN KhataLedger kl ON c.id = kl.customerId
+      GROUP BY c.id
+      HAVING ABS(COALESCE(c.balance, 0) - ROUND(COALESCE(SUM(kl.amount), 0), 3)) > 0.0005
+      LIMIT 20
+    `);
+
+    if (driftingRes.rows && driftingRes.rows.length > 0) {
+      console.log(`⚖️ [CloudSync Sentinel] Auto-aligning ${driftingRes.rows.length} drifting customer balances in Turso Cloud...`);
+      for (const d of driftingRes.rows) {
+        await tursoCloudClient.execute({
+          sql: `UPDATE Customer SET balance = ?, updatedAt = datetime('now') WHERE id = ?`,
+          args: [d.true_bal, d.id]
+        });
+      }
+    }
+
+    return { checked: localIds.length, missingSynced: missingIds.length, balancesAdjusted: driftingRes.rows?.length || 0 };
+  } catch (err) {
+    console.warn(`⚠️ [CloudSync Sentinel] Auto-reconciliation check deferred: ${err.message}`);
+    return { error: err.message };
+  }
+}
+
+/**
  * 9. Master Reconciliation Routine
  */
 export async function syncAllWithCloud() {
@@ -1043,6 +1172,9 @@ export async function syncAllWithCloud() {
     await syncAllPendingToCloud();
     if (Date.now() >= cloudBackoffUntil) {
       await pullCloudDeltas();
+    }
+    if (Date.now() >= cloudBackoffUntil) {
+      await reconcileCloudKhataIntegrity();
     }
   } catch (err) {
     tripCloudSyncCircuitBreaker(err);

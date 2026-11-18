@@ -1,5 +1,5 @@
-// Askar Khata PWA Offline Service Worker (Hardened v6 - Itemized Transaction History & Live Dual-Mess Search)
-const CACHE_NAME = 'askar-khata-v6';
+// Askar Khata PWA Offline Service Worker (Hardened v7 - Zero-Drift Real-time Balance & Itemized Reconciled Ledger)
+const CACHE_NAME = 'askar-khata-v7';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

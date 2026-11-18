@@ -21,7 +21,11 @@ import {
   Menu,
   User,
   Users,
-  RotateCw
+  RotateCw,
+  Search,
+  X,
+  ShoppingBag,
+  CreditCard
 } from 'lucide-react';
 import BenefitPayModal from '../components/BenefitPayModal';
 import HamburgerDrawer from '../components/HamburgerDrawer';
@@ -61,8 +65,15 @@ const TAB_TEXTS = {
     recentPurchases: 'Transaction History',
     transactionsHistory: 'Full Transaction History',
     filterAll: 'All',
+    filterPersonal: 'Personal Tab',
+    filterMess: 'Mess Splits',
     filterPurchases: 'Purchases',
     filterPayments: 'Payments',
+    searchTxPlaceholder: 'Search transactions, items, or invoice #...',
+    clearSearch: 'Clear',
+    noTxFound: 'No transactions matching search',
+    showingCount: 'Showing',
+    of: 'of',
     runningBal: 'Balance',
     showMore: 'Show More Transactions',
     showLess: 'Show Less',
@@ -119,8 +130,15 @@ const TAB_TEXTS = {
     recentPurchases: 'سجل المعاملات والتواريخ',
     transactionsHistory: 'سجل المعاملات والتواريخ بالكامل',
     filterAll: 'الكل',
+    filterPersonal: 'الحساب الشخصي',
+    filterMess: 'مصاريف السكن',
     filterPurchases: 'مشتريات',
     filterPayments: 'سدادات',
+    searchTxPlaceholder: 'البحث في المشتريات أو الفواتير...',
+    clearSearch: 'مسح',
+    noTxFound: 'لم يتم العثور على أي معاملات',
+    showingCount: 'عرض',
+    of: 'من أصل',
     runningBal: 'الرصيد',
     showMore: 'عرض المزيد من المعاملات',
     showLess: 'عرض أقل',
@@ -177,8 +195,15 @@ const TAB_TEXTS = {
     recentPurchases: 'ഇടപാടുകളുടെ വിവരങ്ങൾ',
     transactionsHistory: 'മുഴുവൻ ഇടപാടുകളുടെ വിവരങ്ങൾ',
     filterAll: 'എല്ലാം',
+    filterPersonal: 'പേഴ്സണൽ',
+    filterMess: 'മെസ്സ് വിഹിതം',
     filterPurchases: 'വാങ്ങിയവ',
     filterPayments: 'അടച്ചവ',
+    searchTxPlaceholder: 'ബില്ലുകൾ അല്ലെങ്കിൽ സാധനങ്ങൾ തിരയുക...',
+    clearSearch: 'ക്ലിയർ',
+    noTxFound: 'ഇടപാടുകൾ ഒന്നും കണ്ടെത്തിയില്ല',
+    showingCount: 'കാണിക്കുന്നത്',
+    of: '/',
     runningBal: 'ബാക്കി',
     showMore: 'കൂടുതൽ ഇടപാടുകൾ കാണുക',
     showLess: 'കുറച്ചു കാണിക്കുക',
@@ -235,8 +260,15 @@ const TAB_TEXTS = {
     recentPurchases: 'লেনদেনের বিস্তারিত ইতিহাস',
     transactionsHistory: 'সম্পূর্ণ লেনদেনের ইতিহাস ও তারিখ',
     filterAll: 'সকল',
+    filterPersonal: 'ব্যক্তিগত',
+    filterMess: 'মেস হিসাব',
     filterPurchases: 'ক্রয়',
     filterPayments: 'পরিশোধ',
+    searchTxPlaceholder: 'বিল বা পণ্য অনুসন্ধান করুন...',
+    clearSearch: 'মুছুন',
+    noTxFound: 'কোনো লেনদেন পাওয়া যায়নি',
+    showingCount: 'প্রদর্শন',
+    of: '/',
     runningBal: 'ব্যালেন্স',
     showMore: 'আরও লেনদেন দেখুন',
     showLess: 'কম দেখুন',
@@ -293,8 +325,15 @@ const TAB_TEXTS = {
     recentPurchases: 'पूरा लेन-देन इतिहास',
     transactionsHistory: 'पूरा लेन-देन इतिहास एवं तारीखें',
     filterAll: 'सभी',
+    filterPersonal: 'पर्सनल',
+    filterMess: 'मेस का हिस्सा',
     filterPurchases: 'खरीदारी',
     filterPayments: 'भुगतान',
+    searchTxPlaceholder: 'बिल या सामान खोजें...',
+    clearSearch: 'साफ़ करें',
+    noTxFound: 'कोई लेनदेन नहीं मिला',
+    showingCount: 'दिखा रहे हैं',
+    of: 'में से',
     runningBal: 'बकाया',
     showMore: 'और लेन-देन देखें',
     showLess: 'कम दिखाएं',
@@ -398,7 +437,8 @@ export default function CustomerTab() {
   const [showBenefitModal, setShowBenefitModal] = useState(false);
   const [benefitPayData, setBenefitPayData] = useState(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [txFilter, setTxFilter] = useState('ALL'); // 'ALL' | 'PURCHASE' | 'PAYMENT'
+  const [txFilter, setTxFilter] = useState('ALL'); // 'ALL' | 'PERSONAL' | 'MESS' | 'PURCHASE' | 'PAYMENT'
+  const [txSearch, setTxSearch] = useState('');
   const [visibleTxCount, setVisibleTxCount] = useState(10);
   const [hideBalance, setHideBalance] = useState(() => {
     try {
@@ -1439,8 +1479,16 @@ export default function CustomerTab() {
             const allTransactions = ledger.transactions || ledger.recentPurchases || ledger.ledger || [];
             if (allTransactions.length === 0) {
               return (
-                <div className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-center text-xs text-slate-500">
-                  {t.noRecentPurchases || 'No transactions recorded'}
+                <div className="my-4 p-6 bg-slate-950/80 border border-slate-800 rounded-2xl text-center space-y-2">
+                  <div className="w-10 h-10 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-400">
+                    <ShoppingBag className="w-5 h-5 text-slate-500" />
+                  </div>
+                  <p className="text-xs font-bold text-slate-300 font-sans">
+                    {t.noRecentPurchases || 'No transactions recorded'}
+                  </p>
+                  <p className="text-[11px] text-slate-500 max-w-xs mx-auto leading-relaxed">
+                    When grocery purchases or BenefitPay payments are recorded on your account, they will appear here with full itemized tax receipts.
+                  </p>
                 </div>
               );
             }
@@ -1457,78 +1505,201 @@ export default function CustomerTab() {
               return type.includes('PAY') || type.includes('SETTLE') || amt < 0;
             });
 
-            const displayedTransactions = txFilter === 'PURCHASE'
-              ? purchases
-              : txFilter === 'PAYMENT'
-              ? payments
-              : allTransactions;
+            const messTransactions = allTransactions.filter(tx => {
+              const ref = (tx.reference || '').toLowerCase();
+              const type = (tx.type || '').toUpperCase();
+              return Boolean(tx.mess_id || tx.category === 'MESS_SPLIT' || ref.includes('mess split') || type.includes('MESS'));
+            });
+
+            const personalTransactions = allTransactions.filter(tx => {
+              const ref = (tx.reference || '').toLowerCase();
+              const type = (tx.type || '').toUpperCase();
+              return !tx.mess_id && tx.category !== 'MESS_SPLIT' && !ref.includes('mess split') && !type.includes('MESS');
+            });
+
+            const hasMessTransactions = messTransactions.length > 0 || Boolean(ledger.hasMessGroup);
+
+            // Filter by Active Tab
+            let tabFiltered = allTransactions;
+            if (txFilter === 'PURCHASE') tabFiltered = purchases;
+            else if (txFilter === 'PAYMENT') tabFiltered = payments;
+            else if (txFilter === 'MESS') tabFiltered = messTransactions;
+            else if (txFilter === 'PERSONAL') tabFiltered = personalTransactions;
+
+            // Filter by Search Query
+            const query = (txSearch || '').trim().toLowerCase();
+            const displayedTransactions = query
+              ? tabFiltered.filter(tx => {
+                  if (tx.reference && tx.reference.toLowerCase().includes(query)) return true;
+                  if (tx.invoiceNo && tx.invoiceNo.toLowerCase().includes(query)) return true;
+                  if (tx.id && String(tx.id).toLowerCase().includes(query)) return true;
+                  if (tx.categoryBadge && tx.categoryBadge.toLowerCase().includes(query)) return true;
+                  if (tx.messName && tx.messName.toLowerCase().includes(query)) return true;
+                  if (String(tx.amount || '').includes(query)) return true;
+                  if (Array.isArray(tx.items)) {
+                    for (const it of tx.items) {
+                      if (it.name && it.name.toLowerCase().includes(query)) return true;
+                      if (it.nameAr && it.nameAr.toLowerCase().includes(query)) return true;
+                      if (it.barcode && String(it.barcode).toLowerCase().includes(query)) return true;
+                    }
+                  }
+                  return false;
+                })
+              : tabFiltered;
 
             const visibleItems = displayedTransactions.slice(0, visibleTxCount);
             const hasMore = displayedTransactions.length > visibleTxCount;
 
             return (
               <div className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-left">
-                {/* Header & Filter Controls */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
+                {/* Header & Badges */}
+                <div className="flex items-center justify-between gap-2.5 mb-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wider font-sans">
                       {t.transactionsHistory || 'Transaction History'}
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
                       {allTransactions.length}
                     </span>
                   </div>
+                  {query && (
+                    <span className="text-[10px] font-mono text-emerald-400">
+                      {displayedTransactions.length} found
+                    </span>
+                  )}
+                </div>
 
-                  {/* Filter Pills */}
-                  <div className="flex items-center gap-1 text-[11px] font-semibold bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0 self-start sm:self-auto">
+                {/* Instant Search Bar */}
+                <div className="relative mb-3">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={txSearch}
+                    onChange={(e) => {
+                      setTxSearch(e.target.value);
+                      setVisibleTxCount(10);
+                    }}
+                    placeholder={t.searchTxPlaceholder || 'Search transactions, items, or invoice #...'}
+                    className="w-full pl-8.5 pr-8 py-2 bg-slate-900 border border-slate-800 focus:border-emerald-500/60 rounded-xl text-xs text-white placeholder-slate-500 outline-none font-mono transition"
+                  />
+                  {txSearch && (
                     <button
                       type="button"
-                      onClick={() => setTxFilter('ALL')}
-                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
-                        txFilter === 'ALL'
-                          ? 'bg-slate-700 text-white shadow-xs'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => setTxSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded-md cursor-pointer transition"
                     >
-                      {t.filterAll || 'All'} ({allTransactions.length})
+                      <X className="w-3.5 h-3.5" />
                     </button>
+                  )}
+                </div>
+
+                {/* Horizontally Scrollable Category Filter Pills */}
+                <div className="flex items-center gap-1 text-[11px] font-semibold bg-slate-900 p-1 rounded-xl border border-slate-800 overflow-x-auto no-scrollbar mb-3">
+                  <button
+                    type="button"
+                    onClick={() => { setTxFilter('ALL'); setVisibleTxCount(10); }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                      txFilter === 'ALL'
+                        ? 'bg-slate-700 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {t.filterAll || 'All'} ({allTransactions.length})
+                  </button>
+                  {hasMessTransactions && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { setTxFilter('PERSONAL'); setVisibleTxCount(10); }}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                          txFilter === 'PERSONAL'
+                            ? 'bg-slate-700 text-white shadow-xs'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {t.filterPersonal || 'Personal Tab'} ({personalTransactions.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setTxFilter('MESS'); setVisibleTxCount(10); }}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                          txFilter === 'MESS'
+                            ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 shadow-xs'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Users className="w-3 h-3" />
+                        <span>{t.filterMess || 'Mess Splits'} ({messTransactions.length})</span>
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setTxFilter('PURCHASE'); setVisibleTxCount(10); }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                      txFilter === 'PURCHASE'
+                        ? 'bg-rose-950/80 text-rose-300 border border-rose-800/60 shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {t.filterPurchases || 'Purchases'} ({purchases.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setTxFilter('PAYMENT'); setVisibleTxCount(10); }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                      txFilter === 'PAYMENT'
+                        ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {t.filterPayments || 'Payments'} ({payments.length})
+                  </button>
+                </div>
+
+                {/* Filter & Counter Bar */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono mb-2 px-0.5">
+                  <span>
+                    {t.showingCount || 'Showing'} <strong className="text-emerald-400">{visibleItems.length}</strong> {t.of || 'of'} <strong className="text-white">{displayedTransactions.length}</strong>
+                  </span>
+                  {query && (
                     <button
                       type="button"
-                      onClick={() => setTxFilter('PURCHASE')}
-                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
-                        txFilter === 'PURCHASE'
-                          ? 'bg-rose-950/80 text-rose-300 border border-rose-800/60 shadow-xs'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => setTxSearch('')}
+                      className="text-emerald-400 hover:underline text-[10px] font-sans cursor-pointer"
                     >
-                      {t.filterPurchases || 'Purchases'} ({purchases.length})
+                      {t.clearSearch || 'Clear search'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setTxFilter('PAYMENT')}
-                      className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
-                        txFilter === 'PAYMENT'
-                          ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 shadow-xs'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {t.filterPayments || 'Payments'} ({payments.length})
-                    </button>
-                  </div>
+                  )}
                 </div>
 
                 {/* List of Interactive Itemized Transactions */}
-                <div className="space-y-2.5">
-                  {visibleItems.map((tx, idx) => (
-                    <TransactionItemCard
-                      key={tx.id || idx}
-                      tx={tx}
-                      lang={lang}
-                      currency={t.currency || 'BHD'}
-                      onViewReceipt={(inv) => setSelectedReceipt(inv)}
-                    />
-                  ))}
-                </div>
+                {visibleItems.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {visibleItems.map((tx, idx) => (
+                      <TransactionItemCard
+                        key={tx.id || idx}
+                        tx={tx}
+                        lang={lang}
+                        currency={t.currency || 'BHD'}
+                        onViewReceipt={(inv) => setSelectedReceipt(inv)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-8 text-center space-y-2.5">
+                    <p className="text-xs text-slate-400">
+                      {t.noTxFound || 'No transactions matching your search'} {query && `"${query}"`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => { setTxSearch(''); setTxFilter('ALL'); }}
+                      className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-emerald-400 rounded-xl text-xs font-semibold cursor-pointer transition"
+                    >
+                      {t.clearSearch || 'Reset Filters'}
+                    </button>
+                  </div>
+                )}
 
                 {/* Show More / Show Less Pagination Button */}
                 {displayedTransactions.length > 10 && (
@@ -1537,7 +1708,7 @@ export default function CustomerTab() {
                       <button
                         type="button"
                         onClick={() => setVisibleTxCount(prev => prev + 15)}
-                        className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-700/80 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-emerald-400 border border-slate-700/80 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 cursor-pointer"
                       >
                         <span>{t.showMore || 'Show More'} ({displayedTransactions.length - visibleTxCount} remaining)</span>
                         <span>↓</span>
@@ -1546,7 +1717,7 @@ export default function CustomerTab() {
                       <button
                         type="button"
                         onClick={() => setVisibleTxCount(10)}
-                        className="py-1.5 px-4 bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                        className="py-1.5 px-4 bg-slate-900 hover:bg-slate-850 text-slate-400 border border-slate-800 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                       >
                         <span>{t.showLess || 'Show Less'}</span>
                         <span>↑</span>

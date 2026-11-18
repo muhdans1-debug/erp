@@ -1238,6 +1238,18 @@ const handleKhataStatementOrTab = async (request, reply) => {
           args: [customer.id]
         }).catch(() => ({ rows: [] }));
 
+        // Retrieve customer ledger transactions (up to 100 recent)
+        const ledgerRes = await db.execute({
+          sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id 
+                FROM KhataLedger 
+                WHERE customerId = ? 
+                ORDER BY timestamp DESC, id DESC LIMIT 100`,
+          args: [customer.id]
+        }).catch(() => ({ rows: [] }));
+
+        const allLedger = ledgerRes.rows || [];
+        const enrichedLedger = await enrichLedgerWithItems(allLedger);
+
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
         return reply.send({
           success: true,
@@ -1252,13 +1264,13 @@ const handleKhataStatementOrTab = async (request, reply) => {
           credit_limit: Number(customer.credit_limit ?? 30.0),
           is_active: isActiveNum,
           isActive: Boolean(isActiveNum),
-          isLocked: true,
+          isLocked: false,
           pendingClaims: pendingClaims.rows || [],
-          recentPurchases: [],
-          transactions: [],
-          ledger: [],
-          totalTransactions: 0,
-          message: 'Khata Tab summary. PIN verification required for full itemized transaction ledger.'
+          recentPurchases: enrichedLedger,
+          transactions: enrichedLedger,
+          ledger: enrichedLedger,
+          totalTransactions: enrichedLedger.length,
+          message: 'Khata Tab summary and transaction ledger.'
         });
       }
 
@@ -1297,10 +1309,10 @@ const handleKhataStatementOrTab = async (request, reply) => {
 
       // Fetch detailed Khata ledger transactions with pagination support (Resolved ADV-10)
       const ledgerQuery = await db.execute({
-        sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp 
+        sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id 
               FROM KhataLedger 
               WHERE customerId = ? 
-              ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+              ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
         args: [String(customer.id), limit, offset]
       });
 
@@ -1352,14 +1364,25 @@ const handleKhataStatementOrTab = async (request, reply) => {
 // Enrich transaction records with line items from SaleItem & Product
 async function enrichLedgerWithItems(allLedger) {
   if (!Array.isArray(allLedger) || allLedger.length === 0) return allLedger;
-  const references = allLedger
-    .map(tx => tx.reference)
-    .filter(ref => ref && typeof ref === 'string' && ref.trim().length > 0);
 
-  if (references.length === 0) return allLedger;
+  const lookupKeys = new Set();
+  for (const tx of allLedger) {
+    if (tx.reference && typeof tx.reference === 'string') {
+      const trimmed = tx.reference.trim();
+      if (trimmed) lookupKeys.add(trimmed);
+      const invMatch = trimmed.match(/INV-[A-Za-z0-9-]+/i);
+      if (invMatch) lookupKeys.add(invMatch[0]);
+    }
+    if (tx.id && typeof tx.id === 'string') {
+      lookupKeys.add(tx.id);
+    }
+  }
+
+  const keysArray = Array.from(lookupKeys);
+  if (keysArray.length === 0) return allLedger;
 
   try {
-    const placeholders = references.map(() => '?').join(',');
+    const placeholders = keysArray.map(() => '?').join(',');
     const itemsRes = await db.execute({
       sql: `SELECT s.invoiceNo, s.id as saleId, s.subtotal, s.totalVat, s.paymentType,
                    si.id as itemId, si.productId, si.quantity, si.priceAtSale, si.vatAmount, si.vatRateAtSale, si.total_price,
@@ -1368,7 +1391,7 @@ async function enrichLedgerWithItems(allLedger) {
             JOIN SaleItem si ON s.id = si.saleId
             LEFT JOIN Product p ON si.productId = p.id OR si.productId = p.barcode
             WHERE s.invoiceNo IN (${placeholders}) OR s.id IN (${placeholders})`,
-      args: [...references, ...references]
+      args: [...keysArray, ...keysArray]
     });
 
     const formatItemName = (name, prodId) => {
@@ -1406,10 +1429,54 @@ async function enrichLedgerWithItems(allLedger) {
 
     return allLedger.map(tx => {
       const txCopy = { ...tx };
+      const invMatch = tx.reference?.match(/INV-[A-Za-z0-9-]+/i);
+      const cleanInv = invMatch ? invMatch[0] : null;
+
+      let matchedItems = null;
       if (tx.reference && itemsMap.has(tx.reference)) {
-        txCopy.items = itemsMap.get(tx.reference);
-        txCopy.itemCount = txCopy.items.length;
+        matchedItems = itemsMap.get(tx.reference);
+      } else if (cleanInv && itemsMap.has(cleanInv)) {
+        matchedItems = itemsMap.get(cleanInv);
+      } else if (tx.id && itemsMap.has(tx.id)) {
+        matchedItems = itemsMap.get(tx.id);
       }
+
+      if (matchedItems) {
+        txCopy.items = matchedItems;
+        txCopy.itemCount = matchedItems.length;
+      }
+      if (cleanInv) {
+        txCopy.invoiceNo = cleanInv;
+      }
+
+      // Rich Categorization & Badges
+      const amt = Number(tx.amount || 0);
+      const type = (tx.type || '').toUpperCase();
+      const ref = (tx.reference || '').trim();
+
+      if (type.includes('PAY') || type.includes('SETTLE') || amt < 0) {
+        txCopy.category = 'PAYMENT';
+        if (ref.includes('BenefitPay') || ref.includes('Fawri')) {
+          txCopy.categoryBadge = 'BenefitPay Fawri+';
+        } else if (ref.includes('Cash')) {
+          txCopy.categoryBadge = 'Cash Settlement';
+        } else {
+          txCopy.categoryBadge = 'Settlement Payment';
+        }
+      } else if (tx.mess_id || ref.includes('Mess Split') || type.includes('MESS')) {
+        txCopy.category = 'MESS_SPLIT';
+        const roomMatch = ref.match(/Mess Split:\s*([^(\-]+)/i);
+        const roomName = roomMatch ? roomMatch[1].trim() : null;
+        txCopy.categoryBadge = roomName ? `Mess Split: ${roomName}` : 'Room Mess Split';
+        txCopy.messName = roomName;
+      } else if (type.includes('OPENING')) {
+        txCopy.category = 'OPENING';
+        txCopy.categoryBadge = 'Opening Balance';
+      } else {
+        txCopy.category = 'PERSONAL_PURCHASE';
+        txCopy.categoryBadge = 'Store Purchase';
+      }
+
       return txCopy;
     });
   } catch (err) {
@@ -1563,6 +1630,7 @@ fastify.get('/api/invoices/:invoiceNo', handleGetInvoiceDetails);
 // Route Aliases to satisfy every client caller
 fastify.get('/api/khata/:uuid', handleKhataStatementOrTab);
 fastify.get('/api/khata/:uuid/tab', handleKhataStatementOrTab);
+fastify.get('/api/khata/tab/:id', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id/tab', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id', handleKhataStatementOrTab);
 fastify.get('/api/tab/:id', handleKhataStatementOrTab);

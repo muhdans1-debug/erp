@@ -13,7 +13,10 @@ import {
   Tag, 
   FileText,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Users,
+  CreditCard,
+  BookOpen
 } from 'lucide-react';
 
 export default function TransactionItemCard({
@@ -31,6 +34,21 @@ export default function TransactionItemCard({
                      (tx.type || '').toUpperCase().includes('PAY') || 
                      amt < 0;
   const isOpeningBalance = (tx.type || '').toUpperCase().includes('OPENING');
+  const isMessSplit = Boolean(
+    tx.mess_id || 
+    tx.category === 'MESS_SPLIT' || 
+    (tx.reference && tx.reference.toLowerCase().includes('mess split'))
+  );
+
+  let messRoomName = tx.messName || null;
+  let shopperName = null;
+  if (tx.reference) {
+    const roomMatch = tx.reference.match(/Mess Split:\s*([^(\-]+)/i);
+    if (roomMatch) messRoomName = roomMatch[1].trim();
+    const shopperMatch = tx.reference.match(/Shopper:\s*([^)]+)/i);
+    if (shopperMatch) shopperName = shopperMatch[1].trim();
+  }
+
   const formattedAmt = Math.abs(amt).toFixed(3);
 
   // Format Date and Time
@@ -56,7 +74,7 @@ export default function TransactionItemCard({
     ? Number(tx.running_balance).toFixed(3)
     : null;
 
-  const invoiceNo = tx.reference || tx.invoiceNo || tx.id || '';
+  const invoiceNo = tx.invoiceNo || tx.reference || tx.id || '';
 
   // Handle Accordion Toggle & On-Demand Invoice Item Fetching
   const handleToggle = async () => {
@@ -102,7 +120,7 @@ export default function TransactionItemCard({
     ).join('\n');
 
     const msg = 
-      `🧾 *ASKAR SUPERMARKET RECEIPT*\n` +
+      `*ASKAR SUPERMARKET RECEIPT*\n` +
       `Invoice #: ${invoiceNo}\n` +
       `Date: ${dateText} ${timeText}\n` +
       `Amount: BHD ${formattedAmt}\n` +
@@ -116,6 +134,18 @@ export default function TransactionItemCard({
   const currentItems = invoiceDetails?.items || tx.items || [];
   const itemCount = currentItems.length || (tx.itemCount || (isCreditTx ? 0 : 1));
 
+  // Determine Primary Title
+  const getDisplayTitle = () => {
+    if (isMessSplit) return `Mess Split • ${messRoomName || 'Room Share'}`;
+    if (isCreditTx) {
+      if (tx.reference?.includes('BenefitPay') || tx.reference?.includes('Fawri')) return 'BenefitPay Fawri+';
+      if (tx.reference?.includes('Cash')) return 'Cash Settle';
+      return 'Payment Received';
+    }
+    if (isOpeningBalance) return 'Opening Balance (Khata)';
+    return 'Grocery Purchase';
+  };
+
   return (
     <div className="bg-slate-900/90 hover:bg-slate-900 rounded-2xl border border-slate-800 text-xs font-mono transition-all overflow-hidden shadow-xs">
       {/* Clickable Header Row */}
@@ -125,29 +155,75 @@ export default function TransactionItemCard({
       >
         {/* Left: Icon, Title & Date */}
         <div className="flex items-start gap-2.5 min-w-0 flex-1">
-          <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-sm mt-0.5 ${
+          <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
             isCreditTx 
               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
               : isOpeningBalance
               ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+              : isMessSplit
+              ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
               : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
           }`}>
-            {isCreditTx ? '💳' : isOpeningBalance ? '📖' : '🛒'}
+            {isCreditTx ? (
+              <ArrowDownLeft className="w-4 h-4 text-emerald-400" />
+            ) : isOpeningBalance ? (
+              <BookOpen className="w-4 h-4 text-amber-400" />
+            ) : isMessSplit ? (
+              <Users className="w-4 h-4 text-indigo-400" />
+            ) : (
+              <ShoppingBag className="w-4 h-4 text-rose-400" />
+            )}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <p className="text-slate-200 font-sans font-bold text-xs truncate">
-                {tx.reference ? tx.reference : isOpeningBalance ? 'Opening Balance (Previous Book)' : isCreditTx ? 'BenefitPay Payment' : 'Grocery Purchase'}
+                {getDisplayTitle()}
               </p>
+              {isMessSplit ? (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                  <Users className="w-2.5 h-2.5" /> {messRoomName || 'Room Mess'}
+                </span>
+              ) : isCreditTx ? (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  {tx.categoryBadge || 'Payment'}
+                </span>
+              ) : isOpeningBalance ? (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  Opening
+                </span>
+              ) : (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
+                  Personal Tab
+                </span>
+              )}
               {!isCreditTx && !isOpeningBalance && (
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/60">
                   {itemCount} {itemCount === 1 ? 'item' : 'items'}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1 font-mono flex-wrap">
-              <span>📅 {dateText}</span>
-              {timeText && <span>• ⏰ {timeText}</span>}
+            <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1 font-mono flex-wrap">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-slate-500 shrink-0" />
+                <span>{dateText}</span>
+              </span>
+              {timeText && (
+                <span className="flex items-center gap-1">
+                  <span className="text-slate-600">•</span>
+                  <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                  <span>{timeText}</span>
+                </span>
+              )}
+              {shopperName && (
+                <span className="text-indigo-300/80 font-sans">
+                  • Shopper: {shopperName}
+                </span>
+              )}
+              {invoiceNo && !isMessSplit && !isCreditTx && (
+                <span className="text-slate-500 font-mono">
+                  • #{invoiceNo}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -176,6 +252,23 @@ export default function TransactionItemCard({
           {/* Purchase Detailed Breakdown */}
           {!isCreditTx && !isOpeningBalance && (
             <div className="space-y-2.5 pt-2">
+              {/* Mess Room Split Notice */}
+              {isMessSplit && (
+                <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/40 flex items-center justify-between text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div>
+                      <p className="text-indigo-200 font-sans font-bold text-xs">Shared Room Mess: {messRoomName || 'Group'}</p>
+                      {shopperName && <p className="text-[10px] text-indigo-300/70 font-sans">Purchased by: {shopperName}</p>}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-slate-400 text-[10px] block">Your Share</span>
+                    <span className="text-indigo-300 font-bold font-mono text-xs">{currency} {formattedAmt}</span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider pb-1 border-b border-slate-800">
                 <span className="flex items-center gap-1">
                   <Receipt className="w-3.5 h-3.5 text-emerald-400" />

@@ -375,6 +375,63 @@ fastify.get('/api/health', async (_req, _res) => {
   return { status: 'ok', service: 'Askar Khata Unified API', timestamp: new Date().toISOString() };
 });
 
+// PWA Stale Cache Self-Healing / Zero-Trap Reset Endpoint (Bypasses Service Worker /api/ block)
+const handleAppReset = async (request, reply) => {
+  const customerId = request.query?.c || '';
+  const redirectTarget = customerId ? `/tab/${encodeURIComponent(customerId)}?t=${Date.now()}` : `/?t=${Date.now()}`;
+  reply.header('Content-Type', 'text/html; charset=utf-8');
+  reply.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0');
+  reply.header('Pragma', 'no-cache');
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Layali Supermarket • Updating App</title>
+  <style>
+    body { background: #020617; color: white; font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+    .card { background: #0f172a; border: 1px solid #1e293b; padding: 32px 24px; border-radius: 24px; max-width: 320px; width: 88%; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    .spinner { width: 44px; height: 44px; border: 3px solid rgba(16, 185, 129, 0.2); border-top-color: #10b981; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 20px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { margin: 0 0 8px; color: #10b981; font-size: 1.15rem; font-weight: 700; }
+    p { margin: 0; color: #94a3b8; font-size: 0.85rem; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h2>Updating Application</h2>
+    <p>Clearing stale caches and activating latest Khata version...</p>
+  </div>
+  <script>
+    (async function() {
+      try {
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(function(k) { return caches.delete(k); }));
+        }
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(function(r) { return r.unregister(); }));
+        }
+        sessionStorage.clear();
+      } catch (e) {
+        console.error(e);
+      }
+      setTimeout(function() {
+        window.location.replace('${redirectTarget}');
+      }, 500);
+    })();
+  </script>
+</body>
+</html>`;
+};
+
+fastify.get('/api/reset', handleAppReset);
+fastify.get('/api/clean', handleAppReset);
+fastify.get('/api/clear', handleAppReset);
+fastify.get('/api/purge', handleAppReset);
+
 // --- Product Catalog & Inventory Endpoints ---
 const mapProductRow = (p) => ({
   id: String(p.id),

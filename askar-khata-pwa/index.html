@@ -36,17 +36,17 @@
           var target = e.target;
           if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
             var src = target.href || target.src || '';
-            // Only trigger cache recovery if a critical chunk specifically 404s/fails and hasn't reloaded yet
-            if ((src.indexOf('/assets/index-') !== -1 || src.indexOf('/assets/vendor-') !== -1) && !sessionStorage.getItem('pwa_cache_heal_reloaded')) {
+            // Trigger cache recovery if any chunk or asset 404s/fails
+            if (src.indexOf('/assets/') !== -1 && !sessionStorage.getItem('pwa_cache_heal_reloaded')) {
               sessionStorage.setItem('pwa_cache_heal_reloaded', '1');
               if ('caches' in window) {
                 caches.keys().then(function(keys) {
                   return Promise.all(keys.map(function(k) { return caches.delete(k); }));
                 }).then(function() {
-                  window.location.reload(true);
+                  window.location.replace(window.location.pathname + '?t=' + Date.now());
                 });
               } else {
-                window.location.reload(true);
+                window.location.replace(window.location.pathname + '?t=' + Date.now());
               }
             }
           }

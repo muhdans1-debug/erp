@@ -1,6 +1,7 @@
 {
   "version": 2,
   "framework": "vite",
+  "regions": ["bom1"],
   "builds": [
     {
       "src": "api/server.js",
@@ -67,7 +68,7 @@
       "destination": "/api/server.js"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/|sw\\.js|manifest\\.json|favicon\\.svg|pwa-.*\\.png|robots\\.txt).*)",
       "destination": "/index.html"
     }
   ]

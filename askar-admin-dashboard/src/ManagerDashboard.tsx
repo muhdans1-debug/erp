@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { getAdminPin } from './utils/auth';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
 import { fetchSalesReport, fetchFinancialMetrics } from './services/dataService';
@@ -7,9 +7,13 @@ import {
   LayoutDashboard, Users, TrendingUp, Package, ArrowLeft, Receipt, X, Clock,
   CheckCircle, ShoppingCart, RefreshCw, AlertCircle, Check, Truck, PackageCheck,
   Printer, Search, FileText, Activity, MessageCircle, ShieldAlert, ArrowUpDown,
-  Layers, Eye, Scale, Send, CreditCard, UserPlus, Trash2
+  Layers, Eye, Scale, Send, CreditCard, UserPlus, Trash2, Sliders, XCircle, RotateCcw,
+  Flame, Laptop, Smartphone
 } from 'lucide-react';
 // --- LAZY-LOADED PAGES (never downloaded until the manager navigates to them) ---
+const SystemHealthPanel = lazy(() => import('./components/SystemHealthPanel'));
+const StoreAnalyticsHub = lazy(() => import('./components/StoreAnalyticsHub'));
+const ResilienceChaosHarbor = lazy(() => import('./components/ResilienceChaosHarbor'));
 const BarcodeGenerator = lazy(() => import('./BarcodeGenerator'));
 const StockManagement = lazy(() => import('./StockManagement'));
 const FinancialDashboard = lazy(() => import('./FinancialDashboard'));
@@ -23,6 +27,7 @@ const ScaleLabelStudio = lazy(() => import('./ScaleLabelStudio'));
 const EmployeeShiftReconciliation = lazy(() => import('./EmployeeShiftReconciliation'));
 const NfcManager = lazy(() => import('./NfcManager'));
 const BenefitPaySettingsPanel = lazy(() => import('./BenefitPaySettingsPanel'));
+const HealthAnalyticsView = lazy(() => import('./components/HealthAnalyticsView'));
 // ---
 import { TableSkeleton, KpiCardSkeleton } from './Skeleton';
 import { useLaptopBridge } from './useLaptopBridge';
@@ -35,10 +40,13 @@ interface ManagerDashboardProps {
 export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: ManagerDashboardProps) {
   const { remoteDrawerKick, remoteClearCart, remoteLockRegister } = useLaptopBridge();
   const apiBase = propApiBase || getApiBaseUrl();
-  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'pim' | 'produce' | 'price_change' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts' | 'benefitpay'>(() => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'master' | 'store_analytics' | 'resilience' | 'pim' | 'produce' | 'price_change' | 'pnl' | 'khata' | 'nfc' | 'orders' | 'stock' | 'barcodes' | 'spy' | 'vat' | 'whatsapp_po' | 'scale_labels' | 'shifts' | 'benefitpay' | 'health' | 'health_analytics'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab') || params.get('view');
+      if (tabParam === 'health_analytics' || tabParam === 'downtime' || tabParam === 'forensics' || tabParam === 'health-analytics' || tabParam === 'hourly' || tabParam === 'sla' || tabParam === 'incident' || tabParam === 'incidents') return 'health_analytics';
+      if (tabParam === 'analytics' || tabParam === 'store_analytics' || tabParam === 'intelligence') return 'store_analytics';
+      if (tabParam === 'resilience' || tabParam === 'chaos' || tabParam === 'flight' || tabParam === 'harbor') return 'resilience';
       if (tabParam === 'price_change' || tabParam === 'price-change' || tabParam === '60s' || tabParam === 'flash-pricing') return 'price_change';
       if (tabParam === 'master' || tabParam === 'ledger' || tabParam === 'command') return 'master';
       if (tabParam === 'pim' || tabParam === 'products' || tabParam === 'catalog') return 'pim';
@@ -55,6 +63,7 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
       if (tabParam === 'scale_labels' || tabParam === 'scale') return 'scale_labels';
       if (tabParam === 'shifts' || tabParam === 'employees' || tabParam === 'reconciliation') return 'shifts';
       if (tabParam === 'benefitpay' || tabParam === 'benefit' || tabParam === 'fawri') return 'benefitpay';
+      if (tabParam === 'health' || tabParam === 'status' || tabParam === 'automation' || tabParam === 'sentinel') return 'health';
     }
     return 'overview';
   });
@@ -166,40 +175,128 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
       }}
       className="flex h-screen w-screen bg-slate-50 text-slate-900 overflow-hidden"
     >
-      {/* Pinned Fixed Sidebar Navigation (288px) */}
+      {/* Pinned Fixed Sidebar Navigation (288px) with Full Scrolling */}
       <div
-        className="fixed left-0 top-0 h-screen w-[288px] bg-slate-900 text-white flex flex-col shadow-xl z-30"
+        className="fixed left-0 top-0 h-screen w-[288px] bg-slate-900 text-white flex flex-col shadow-2xl z-30 overflow-hidden select-none border-r border-slate-800"
       >
-        <div style={{ padding: '24px 20px', borderBottom: '1px solid #1e293b' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#10b981', margin: 0 }}>
-            Askar Supermarket
-          </h2>
-          <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-            Back-Office Manager
-          </p>
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid #1e293b', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#10b981', margin: 0, letterSpacing: '-0.02em' }}>
+              Askar Supermarket
+            </h2>
+            <p style={{ fontSize: '11px', color: '#94a3b8', margin: '2px 0 0 0', fontWeight: 600 }}>
+              Back-Office Control Center
+            </p>
+          </div>
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" title="System Online" />
         </div>
 
-        <nav style={{ flex: 1, padding: '20px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <nav
+          className="custom-sidebar-scroll flex-1 select-none"
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            minHeight: 0,
+            padding: '10px 10px 30px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+            scrollbarWidth: 'thin',
+            scrollbarColor: '#334155 #0f172a',
+          }}
+        >
+          <div className="px-2 pt-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Overview & Operations
+          </div>
+
           <button
             onClick={() => setActiveTab('overview')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'overview' ? '#059669' : 'transparent',
               color: activeTab === 'overview' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <LayoutDashboard size={19} />
+            <LayoutDashboard size={18} />
             <span>Overview & Analytics</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('store_analytics')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'store_analytics' ? '#4f46e5' : 'transparent',
+              color: activeTab === 'store_analytics' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <TrendingUp size={18} />
+              <span>Retail Intelligence</span>
+            </div>
+            <span style={{
+              fontSize: '10px',
+              fontWeight: 800,
+              padding: '2px 6px',
+              borderRadius: '9999px',
+              backgroundColor: activeTab === 'store_analytics' ? '#ffffff' : '#312e81',
+              color: activeTab === 'store_analytics' ? '#4f46e5' : '#a5b4fc',
+            }}>
+              VIP
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('resilience')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'resilience' ? '#d97706' : 'transparent',
+              color: activeTab === 'resilience' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Flame size={18} />
+              <span>Chaos & Resilience</span>
+            </div>
+            <span style={{
+              fontSize: '10px',
+              fontWeight: 800,
+              padding: '2px 6px',
+              borderRadius: '9999px',
+              backgroundColor: activeTab === 'resilience' ? '#ffffff' : '#78350f',
+              color: activeTab === 'resilience' ? '#d97706' : '#fde68a',
+            }}>
+              PRO
+            </span>
           </button>
 
           <button
@@ -208,21 +305,47 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'master' ? '#059669' : 'transparent',
               color: activeTab === 'master' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Activity size={19} />
+            <Activity size={18} />
             <span>Command Center (Master)</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('spy')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'spy' ? '#059669' : 'transparent',
+              color: activeTab === 'spy' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <Eye size={18} />
+            <span>Register Spy (Till)</span>
+          </button>
+
+          <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Catalog & Pricing
+          </div>
 
           <button
             onClick={() => setActiveTab('pim')}
@@ -230,19 +353,19 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'pim' ? '#059669' : 'transparent',
               color: activeTab === 'pim' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Layers size={19} />
+            <Layers size={18} />
             <span>Product Catalog (PIM)</span>
           </button>
 
@@ -252,19 +375,19 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 700,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'price_change' ? '#f59e0b' : 'transparent',
               color: activeTab === 'price_change' ? '#0f172a' : '#cbd5e1',
             }}
           >
-            <span style={{ fontSize: '18px' }}>⚡</span>
+            <span style={{ fontSize: '16px' }}>⚡</span>
             <span>60-Sec Price Change</span>
           </button>
 
@@ -274,98 +397,69 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'produce' ? '#059669' : 'transparent',
               color: activeTab === 'produce' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <span style={{ fontSize: '18px' }}>🥦</span>
+            <span style={{ fontSize: '16px' }}>🥦</span>
             <span>Daily Produce & Veggies</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('pnl')}
+            onClick={() => setActiveTab('barcodes')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'pnl' ? '#059669' : 'transparent',
-              color: activeTab === 'pnl' ? '#ffffff' : '#cbd5e1',
+              backgroundColor: activeTab === 'barcodes' ? '#059669' : 'transparent',
+              color: activeTab === 'barcodes' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <TrendingUp size={19} />
-            <span>Profit & Loss (P&L)</span>
+            <Printer size={18} />
+            <span>Barcode Labels</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('khata')}
+            onClick={() => setActiveTab('scale_labels')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'khata' ? '#059669' : 'transparent',
-              color: activeTab === 'khata' ? '#ffffff' : '#cbd5e1',
+              backgroundColor: activeTab === 'scale_labels' ? '#059669' : 'transparent',
+              color: activeTab === 'scale_labels' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Users size={19} />
-            <span>Khata Ledgers</span>
+            <Scale size={18} />
+            <span>Scale & Produce Labels</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('nfc')}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: 'none',
-              fontWeight: 600,
-              fontSize: '14px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'nfc' ? '#059669' : 'transparent',
-              color: activeTab === 'nfc' ? '#ffffff' : '#cbd5e1',
-            }}
-          >
-            <CreditCard size={19} />
-            <span>NFC Card Manager</span>
-            <span style={{
-              marginLeft: 'auto',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              padding: '2px 8px',
-              borderRadius: '9999px',
-              backgroundColor: activeTab === 'nfc' ? '#ffffff' : '#064e3b',
-              color: activeTab === 'nfc' ? '#065f46' : '#6ee7b7'
-            }}>
-              Relay
-            </span>
-          </button>
+          <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Orders & Inventory
+          </div>
 
           <button
             onClick={() => setActiveTab('orders')}
@@ -374,19 +468,19 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'orders' ? '#059669' : 'transparent',
               color: activeTab === 'orders' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <ShoppingCart size={19} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <ShoppingCart size={18} />
               <span>Purchase Orders</span>
             </div>
             {pendingDraftsCount > 0 && (
@@ -394,9 +488,9 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
                 style={{
                   backgroundColor: '#f59e0b',
                   color: '#ffffff',
-                  fontSize: '11px',
+                  fontSize: '10px',
                   fontWeight: 'bold',
-                  padding: '2px 8px',
+                  padding: '2px 7px',
                   borderRadius: '9999px',
                 }}
               >
@@ -412,19 +506,19 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'stock' ? '#059669' : 'transparent',
               color: activeTab === 'stock' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Truck size={19} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Truck size={18} />
               <span>Stock & Logistics</span>
             </div>
             {pendingDraftsCount > 0 && (
@@ -432,9 +526,9 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
                 style={{
                   backgroundColor: '#f59e0b',
                   color: '#ffffff',
-                  fontSize: '11px',
+                  fontSize: '10px',
                   fontWeight: 'bold',
-                  padding: '2px 8px',
+                  padding: '2px 7px',
                   borderRadius: '9999px',
                 }}
               >
@@ -444,169 +538,182 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
           </button>
 
           <button
-            onClick={() => setActiveTab('barcodes')}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: 'none',
-              fontWeight: 600,
-              fontSize: '14px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'barcodes' ? '#059669' : 'transparent',
-              color: activeTab === 'barcodes' ? '#ffffff' : '#cbd5e1',
-            }}
-          >
-            <Printer size={19} />
-            <span>Barcode Labels</span>
-          </button>
-
-          {/* Additional Features: Register Spy */}
-          <button
-            onClick={() => setActiveTab('spy')}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: 'none',
-              fontWeight: 600,
-              fontSize: '14px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'spy' ? '#059669' : 'transparent',
-              color: activeTab === 'spy' ? '#ffffff' : '#cbd5e1',
-            }}
-          >
-            <Eye size={19} />
-            <span>Register Spy (Till)</span>
-          </button>
-
-          {/* Additional Features: Bahrain NBR 10% VAT Return */}
-          <button
-            onClick={() => setActiveTab('vat')}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: 'none',
-              fontWeight: 600,
-              fontSize: '14px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'vat' ? '#059669' : 'transparent',
-              color: activeTab === 'vat' ? '#ffffff' : '#cbd5e1',
-            }}
-          >
-            <Receipt size={19} />
-            <span>Bahrain NBR VAT Return</span>
-          </button>
-
-          {/* Additional Features: WhatsApp Distributor POs */}
-          <button
             onClick={() => setActiveTab('whatsapp_po')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'whatsapp_po' ? '#059669' : 'transparent',
               color: activeTab === 'whatsapp_po' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Send size={19} />
+            <Send size={18} />
             <span>WhatsApp Distributor POs</span>
           </button>
 
-          {/* Additional Features: Scale & Produce Labels */}
+          <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Khata & Customers
+          </div>
+
           <button
-            onClick={() => setActiveTab('scale_labels')}
+            onClick={() => setActiveTab('khata')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
-              backgroundColor: activeTab === 'scale_labels' ? '#059669' : 'transparent',
-              color: activeTab === 'scale_labels' ? '#ffffff' : '#cbd5e1',
+              backgroundColor: activeTab === 'khata' ? '#059669' : 'transparent',
+              color: activeTab === 'khata' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Scale size={19} />
-            <span>Scale & Produce Labels</span>
+            <Users size={18} />
+            <span>Khata Ledgers</span>
           </button>
 
-          {/* Core Loss Prevention: Shifts & Cashier Blind Reconciliation */}
+          <button
+            onClick={() => setActiveTab('nfc')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'nfc' ? '#059669' : 'transparent',
+              color: activeTab === 'nfc' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <CreditCard size={18} />
+            <span>NFC Card Manager</span>
+            <span style={{
+              marginLeft: 'auto',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              padding: '2px 7px',
+              borderRadius: '9999px',
+              backgroundColor: activeTab === 'nfc' ? '#ffffff' : '#064e3b',
+              color: activeTab === 'nfc' ? '#065f46' : '#6ee7b7'
+            }}>
+              Relay
+            </span>
+          </button>
+
+          <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Finance & Audits
+          </div>
+
+          <button
+            onClick={() => setActiveTab('pnl')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'pnl' ? '#059669' : 'transparent',
+              color: activeTab === 'pnl' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <TrendingUp size={18} />
+            <span>Profit & Loss (P&L)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('vat')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'vat' ? '#059669' : 'transparent',
+              color: activeTab === 'vat' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <Receipt size={18} />
+            <span>Bahrain NBR VAT Return</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('shifts')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'shifts' ? '#059669' : 'transparent',
               color: activeTab === 'shifts' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <Clock size={19} />
+            <Clock size={18} />
             <span>Shift & Cashier Audits</span>
           </button>
 
-          {/* BenefitPay Owner Account Settings */}
           <button
             onClick={() => setActiveTab('benefitpay')}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
-              gap: '12px',
-              padding: '12px 16px',
-              borderRadius: '10px',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
               border: 'none',
               fontWeight: 600,
-              fontSize: '14px',
+              fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               backgroundColor: activeTab === 'benefitpay' ? '#dc2626' : 'transparent',
               color: activeTab === 'benefitpay' ? '#ffffff' : '#cbd5e1',
             }}
           >
-            <CreditCard size={19} />
+            <CreditCard size={18} />
             <span>BenefitPay Account</span>
             <span
               style={{
                 marginLeft: 'auto',
                 fontSize: '10px',
                 fontWeight: 'bold',
-                padding: '2px 8px',
+                padding: '2px 7px',
                 borderRadius: '9999px',
                 backgroundColor: activeTab === 'benefitpay' ? '#ffffff' : '#450a0a',
                 color: activeTab === 'benefitpay' ? '#dc2626' : '#fca5a5',
@@ -615,11 +722,87 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
               Fawri+ ⚡
             </span>
           </button>
+
+          <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            System Diagnostics
+          </div>
+
+          <button
+            onClick={() => setActiveTab('health')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'health' ? '#0284c7' : 'transparent',
+              color: activeTab === 'health' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <Activity size={18} />
+            <span>System Health & Sentinel</span>
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                padding: '2px 7px',
+                borderRadius: '9999px',
+                backgroundColor: activeTab === 'health' ? '#ffffff' : '#0c4a6e',
+                color: activeTab === 'health' ? '#0284c7' : '#38bdf8',
+              }}
+            >
+              LIVE
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('health_analytics')}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 700,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'health_analytics' ? '#4f46e5' : 'transparent',
+              color: activeTab === 'health_analytics' ? '#ffffff' : '#cbd5e1',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <TrendingUp size={18} />
+              <span>Downtime & Health Graphs</span>
+            </div>
+            <span
+              style={{
+                fontSize: '10px',
+                fontWeight: 'bold',
+                padding: '2px 7px',
+                borderRadius: '9999px',
+                backgroundColor: activeTab === 'health_analytics' ? '#ffffff' : '#312e81',
+                color: activeTab === 'health_analytics' ? '#4f46e5' : '#a5b4fc',
+              }}
+            >
+              24H LIVE
+            </span>
+          </button>
         </nav>
 
         {/* Back to POS Navigation */}
         {onBackToPos && (
-          <div style={{ padding: '16px', borderTop: '1px solid #1e293b' }}>
+          <div style={{ padding: '12px 14px', borderTop: '1px solid #1e293b', flexShrink: 0, backgroundColor: '#090d16' }}>
             <button
               onClick={onBackToPos}
               style={{
@@ -628,17 +811,17 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                padding: '12px 16px',
-                borderRadius: '10px',
+                padding: '10px 14px',
+                borderRadius: '8px',
                 backgroundColor: '#1e293b',
                 color: '#e2e8f0',
                 border: '1px solid #334155',
                 fontWeight: 'bold',
-                fontSize: '13px',
+                fontSize: '12px',
                 cursor: 'pointer',
               }}
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={15} />
               <span>Back to Register</span>
             </button>
           </div>
@@ -718,6 +901,10 @@ export default function ManagerDashboard({ apiBase: propApiBase, onBackToPos }: 
             {activeTab === 'scale_labels' && <ScaleLabelStudio />}
             {activeTab === 'shifts' && <EmployeeShiftReconciliation apiBase={apiBase} />}
             {activeTab === 'benefitpay' && <BenefitPaySettingsPanel apiBase={apiBase} />}
+            {activeTab === 'store_analytics' && <StoreAnalyticsHub apiBase={apiBase} />}
+            {activeTab === 'resilience' && <ResilienceChaosHarbor apiBase={apiBase} />}
+            {activeTab === 'health' && <SystemHealthPanel apiBase={apiBase} />}
+            {activeTab === 'health_analytics' && <HealthAnalyticsView apiBase={apiBase} />}
           </Suspense>
         </div>
       </main>
@@ -744,12 +931,15 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
 
   const [sales, setSales] = useState<any[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
+  const [fleetTerminals, setFleetTerminals] = useState<any[]>([]);
+  const [desktopPosDetected, setDesktopPosDetected] = useState(false);
+  const [sunmiDetected, setSunmiDetected] = useState(false);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(860);
   const [loading, setLoading] = useState(true);
 
-  const fetchSales = async () => {
+  const fetchSales = useCallback(async () => {
     setLoadingSales(true);
     try {
       const salesList = await fetchSalesReport(apiBase);
@@ -759,11 +949,62 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
     } finally {
       setLoadingSales(false);
     }
-  };
+  }, [apiBase]);
+
+  const fetchFleetStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/health/deep`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const terms = data?.components?.webSocket?.terminals || [];
+        setFleetTerminals(terms);
+        const hasDesktop = terms.some((t: any) => t.terminalId === 'T3' || t.ip === '127.0.0.1' || String(t.name || '').toLowerCase().includes('register'));
+        const hasSunmi = terms.some((t: any) => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1' || String(t.ip || '').startsWith('192.168.'));
+        setDesktopPosDetected(hasDesktop);
+        setSunmiDetected(hasSunmi);
+      }
+    } catch (e) {
+      console.warn('Fleet status fetch notice:', e);
+    }
+  }, [apiBase]);
+
+  const loadFinancials = useCallback(async () => {
+    try {
+      const data = await fetchFinancialMetrics(apiBase, period);
+      if (data) {
+        if (data.metrics) {
+          setMetrics(data.metrics);
+        } else if (data.financials) {
+          const rev = Number(data.financials.grossRevenue || 0);
+          const cogs = Number(data.financials.cogs || (rev * 0.78));
+          const profit = Number(data.financials.netProfit || (rev - cogs));
+          setMetrics({
+            revenue: rev.toFixed(3),
+            cogs: cogs.toFixed(3),
+            netProfit: profit.toFixed(3),
+            profitMargin: rev > 0 ? `${((profit / rev) * 100).toFixed(1)}%` : '0%'
+          });
+        }
+        if (Array.isArray(data.chartData) && data.chartData.length > 0) {
+          setChartData(data.chartData);
+        }
+      }
+    } catch (err) {
+      console.warn('Financials report notice:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, period]);
 
   useEffect(() => {
     fetchSales();
-    const interval = setInterval(fetchSales, 30000);
+    fetchFleetStatus();
+    const interval = setInterval(() => {
+      fetchSales();
+      fetchFleetStatus();
+    }, 20000);
 
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
     let ws: WebSocket | null = null;
@@ -772,8 +1013,20 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
       ws.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
-          if (d.type === 'SALE_COMPLETED' || d.type === 'SHIFT_CLOSED') {
+          const refreshEvents = [
+            'SALE_COMPLETED',
+            'PAYMENT_RECEIVED',
+            'KHATA_SETTLED',
+            'KHATA_PAYMENT',
+            'REFUND_COMPLETED',
+            'SHIFT_CLOSED',
+            'TERMINAL_HEARTBEAT',
+            'SYNC_COMPLETED'
+          ];
+          if (refreshEvents.includes(d.type)) {
             fetchSales();
+            loadFinancials();
+            fetchFleetStatus();
           }
         } catch { }
       };
@@ -783,7 +1036,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
       clearInterval(interval);
       ws?.close();
     };
-  }, [apiBase]);
+  }, [apiBase, fetchSales, fetchFleetStatus, loadFinancials]);
 
   useEffect(() => {
     const measure = () => {
@@ -801,39 +1054,11 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
   }, []);
 
   useEffect(() => {
-    const loadFinancials = async () => {
-      try {
-        const data = await fetchFinancialMetrics(apiBase, period);
-        if (data) {
-          if (data.metrics) {
-            setMetrics(data.metrics);
-          } else if (data.financials) {
-            const rev = Number(data.financials.grossRevenue || 0);
-            const cogs = Number(data.financials.cogs || (rev * 0.78));
-            const profit = Number(data.financials.netProfit || (rev - cogs));
-            setMetrics({
-              revenue: rev.toFixed(3),
-              cogs: cogs.toFixed(3),
-              netProfit: profit.toFixed(3),
-              profitMargin: rev > 0 ? `${((profit / rev) * 100).toFixed(1)}%` : '0%'
-            });
-          }
-          if (Array.isArray(data.chartData) && data.chartData.length > 0) {
-            setChartData(data.chartData);
-          }
-        }
-      } catch (err) {
-        console.warn('Financials report notice:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     setLoading(true);
     loadFinancials();
     const interval = setInterval(loadFinancials, 30000);
     return () => clearInterval(interval);
-  }, [period, apiBase]);
+  }, [loadFinancials]);
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
@@ -883,6 +1108,95 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Hardware Fleet & Active POS Terminal Bar */}
+      <div className="mb-6 bg-slate-900 text-white rounded-2xl p-4 shadow-sm border border-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-slate-800 text-emerald-400 border border-slate-700">
+              <Activity size={20} className="animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-black tracking-wide uppercase text-white">
+                  Active POS Fleet Detection
+                </h4>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  REAL-TIME SYNC
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Automatically discovering local desktop register & handheld Sunmi counter via live WebSocket
+              </p>
+            </div>
+          </div>
+
+          {/* Connected Terminals Badges */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* T3 Desktop POS Badge */}
+            <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-bold transition ${
+              desktopPosDetected || fleetTerminals.some(t => t.terminalId === 'T3')
+                ? 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400'
+            }`}>
+              <Laptop size={16} className={desktopPosDetected || fleetTerminals.some(t => t.terminalId === 'T3') ? 'text-amber-400' : 'text-slate-500'} />
+              <div>
+                <div className="flex items-center gap-1.5 leading-none">
+                  <span>T3 Desktop POS</span>
+                  <span className={`w-2 h-2 rounded-full ${
+                    desktopPosDetected || fleetTerminals.some(t => t.terminalId === 'T3')
+                      ? 'bg-amber-400 animate-ping'
+                      : 'bg-slate-600'
+                  }`}></span>
+                </div>
+                <span className="text-[10px] opacity-75 font-mono">127.0.0.1 • Counter Checkout</span>
+              </div>
+              <span className={`ml-1 text-[10px] px-2 py-0.5 rounded font-black ${
+                desktopPosDetected || fleetTerminals.some(t => t.terminalId === 'T3')
+                  ? 'bg-amber-500/30 text-amber-300'
+                  : 'bg-slate-700 text-slate-400'
+              }`}>
+                {desktopPosDetected || fleetTerminals.some(t => t.terminalId === 'T3') ? 'ONLINE' : 'DETECTING'}
+              </span>
+            </div>
+
+            {/* T1 Sunmi Terminal Badge */}
+            <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-bold transition ${
+              sunmiDetected || fleetTerminals.some(t => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1')
+                ? 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400'
+            }`}>
+              <Smartphone size={16} className={sunmiDetected || fleetTerminals.some(t => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1') ? 'text-indigo-400' : 'text-slate-500'} />
+              <div>
+                <div className="flex items-center gap-1.5 leading-none">
+                  <span>T1 Sunmi V2 Pro</span>
+                  <span className={`w-2 h-2 rounded-full ${
+                    sunmiDetected || fleetTerminals.some(t => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1')
+                      ? 'bg-indigo-400 animate-ping'
+                      : 'bg-slate-600'
+                  }`}></span>
+                </div>
+                <span className="text-[10px] opacity-75 font-mono">192.168.8.12 • Express Lane</span>
+              </div>
+              <span className={`ml-1 text-[10px] px-2 py-0.5 rounded font-black ${
+                sunmiDetected || fleetTerminals.some(t => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1')
+                  ? 'bg-indigo-500/30 text-indigo-300'
+                  : 'bg-slate-700 text-slate-400'
+              }`}>
+                {sunmiDetected || fleetTerminals.some(t => t.terminalId === 'REG-01-COUNTER' || t.terminalId === 'T1') ? 'ONLINE' : 'STANDBY'}
+              </span>
+            </div>
+
+            <button
+              onClick={() => { fetchFleetStatus(); fetchSales(); loadFinancials(); }}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer"
+              title="Refresh Fleet Status"
+            >
+              <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -967,15 +1281,21 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
               <h3 className="font-bold text-slate-900 text-base">Recent Register Sales</h3>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                DUAL LANE LIVE
+                MULTI-LANE LIVE
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Live transactions synchronized from Dual Terminals (T1 Sunmi Express Counter & T2 F100 Mobile Khata) via Cloudflare Edge API
+              Live transactions synchronized across Desktop POS (T3), Sunmi Express Counter (T1) & Mobile Khata (T2)
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+              <Laptop size={12} className="text-amber-700" />
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+              T3 Desktop POS
+            </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+              <Smartphone size={12} className="text-indigo-600" />
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
               T1 Express (Sunmi)
             </span>
@@ -984,7 +1304,7 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
               T2 Khata (F100)
             </span>
             <button
-              onClick={fetchSales}
+              onClick={() => { fetchSales(); loadFinancials(); fetchFleetStatus(); }}
               disabled={loadingSales}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
             >
@@ -1017,45 +1337,67 @@ function FinancialOverview({ apiBase }: { apiBase: string }) {
                   <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">No sales recorded yet.</td>
                 </tr>
               ) : (
-                sales.slice(0, 25).map((sale) => (
-                  <tr key={sale.id || sale.invoice_number || sale.invoiceNo} className="hover:bg-slate-50/80 transition">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                      #{sale.invoice_number || sale.invoiceNo || sale.id}
-                    </td>
-                    <td className="py-3 px-4">
-                      {sale.terminalId === 'T2' || String(sale.invoiceNo || sale.invoice_number || '').includes('T2') ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-50 text-cyan-800 border border-cyan-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-600 animate-pulse"></span>
-                          T2 KHATA (F100)
+                sales.slice(0, 30).map((sale) => {
+                  const invStr = String(sale.invoice_number || sale.invoiceNo || sale.id || '').toUpperCase();
+                  const termId = String(sale.terminalId || '').toUpperCase();
+                  const isDesktop = termId === 'T3' || termId === 'DESKTOP' || termId === 'LOCAL' || invStr.includes('INV-T3') || invStr.startsWith('INV-82');
+                  const isT2 = termId === 'T2' || invStr.includes('T2') || invStr.includes('INV-OFF');
+
+                  return (
+                    <tr key={sale.id || sale.invoice_number || sale.invoiceNo} className="hover:bg-slate-50/80 transition">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                        #{sale.invoice_number || sale.invoiceNo || sale.id}
+                      </td>
+                      <td className="py-3 px-4">
+                        {isDesktop ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 shadow-xs">
+                            <Laptop size={12} className="text-amber-700" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                            T3 DESKTOP POS
+                          </span>
+                        ) : isT2 ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-50 text-cyan-800 border border-cyan-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-600 animate-pulse"></span>
+                            T2 KHATA (F100)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                            <Smartphone size={12} className="text-indigo-600" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                            T1 EXPRESS (Sunmi)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-700">
+                        {sale.customerName || sale.customer_name || 'Walk-in Cash Customer'}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          (sale.payment_type || sale.paymentType) === 'MESS_KHATA'
+                            ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                            : (sale.payment_type || sale.paymentType) === 'CREDIT'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : (sale.payment_type || sale.paymentType) === 'CARD'
+                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        }`}>
+                          {sale.payment_type || sale.paymentType || 'CASH'}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
-                          T1 EXPRESS (Sunmi)
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
+                        BD {Number(sale.total || sale.grandTotal || sale.totalAmount || 0).toFixed(3)}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                          {sale.status || 'COMPLETED'}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-medium text-slate-700">
-                      {sale.customerName || sale.customer_name || 'Walk-in Cash Customer'}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800">
-                        {sale.payment_type || sale.paymentType || 'CASH'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
-                      BD {Number(sale.total || sale.grandTotal || sale.totalAmount || 0).toFixed(3)}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
-                        {sale.status || 'COMPLETED'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right text-xs text-slate-500 font-mono">
-                      {sale.created_at || sale.createdAt ? new Date(sale.created_at || sale.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now'}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="py-3 px-4 text-right text-xs text-slate-500 font-mono">
+                        {sale.created_at || sale.createdAt ? new Date(sale.created_at || sale.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now'}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1258,6 +1600,252 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
   const [deleteManagerPin, setDeleteManagerPin] = useState('');
   const [deletePinError, setDeletePinError] = useState<string | null>(null);
   const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
+
+  // View Itemized Bill / Invoice Modal State
+  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
+  const [loadingInvoice, setLoadingInvoice] = useState(false);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+
+  const openInvoiceModal = async (invoiceRef: string, saleId?: string) => {
+    setLoadingInvoice(true);
+    setInvoiceError(null);
+    setSelectedInvoice(null);
+    const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+    const candidates = [
+      targetBase,
+      'http://192.168.8.7:3000',
+      'http://localhost:3000',
+      DEFAULT_EDGE_API_URL
+    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+    let foundData: any = null;
+    const cleanNo = (invoiceRef || '').trim();
+    const queryId = saleId || cleanNo;
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}/api/sales/invoice/${encodeURIComponent(queryId)}`, {
+          headers: {
+            'x-manager-pin': getAdminPin(),
+            'x-pos-client': 'admin-dashboard'
+          },
+          signal: AbortSignal.timeout(5000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && (data.sale || data.invoice)) {
+            foundData = data.sale || data.invoice;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (foundData) {
+      setSelectedInvoice(foundData);
+    } else {
+      setInvoiceError(`Could not find invoice details for "${invoiceRef || saleId}".`);
+    }
+    setLoadingInvoice(false);
+  };
+
+  // Void Receipt / Sale / Ledger Entry Modal State
+  const [voidConfirmation, setVoidConfirmation] = useState<{
+    txId: string;
+    saleId?: string;
+    invoiceNo?: string;
+    amount: number;
+    customerName: string;
+    type: string;
+  } | null>(null);
+  const [voidPin, setVoidPin] = useState('');
+  const [voidReason, setVoidReason] = useState('Customer Mistake / Wrong Items');
+  const [voidCustomReason, setVoidCustomReason] = useState('');
+  const [isVoiding, setIsVoiding] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
+
+  const handleRequestVoid = (tx: any, customerName: string) => {
+    setVoidConfirmation({
+      txId: tx.id,
+      saleId: tx.sale_id || tx.saleId || (tx.id && String(tx.id).startsWith('sale_') ? tx.id : undefined),
+      invoiceNo: tx.invoiceNo || tx.invoice_no || (tx.reference && tx.reference.startsWith('INV-') ? tx.reference : undefined),
+      amount: Math.abs(Number(tx.amount ?? tx.total ?? 0)),
+      customerName: customerName || statementCustomer?.name || 'Customer',
+      type: tx.type || 'CHARGE'
+    });
+    setVoidPin('');
+    setVoidReason('Customer Mistake / Wrong Items');
+    setVoidCustomReason('');
+    setVoidError(null);
+  };
+
+  const executeVoid = async () => {
+    if (!voidConfirmation) return;
+    const pin = voidPin.trim();
+    if (!pin) {
+      setVoidError('Manager PIN is required');
+      return;
+    }
+
+    setIsVoiding(true);
+    setVoidError(null);
+
+    const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+    const finalReason = voidReason === 'Other / Custom' ? (voidCustomReason.trim() || 'Voided by Manager') : voidReason;
+
+    try {
+      let res: Response;
+      if (voidConfirmation.invoiceNo || voidConfirmation.saleId) {
+        const idToVoid = voidConfirmation.invoiceNo || voidConfirmation.saleId;
+        res = await fetch(`${targetBase}/api/sales/invoice/${encodeURIComponent(idToVoid!)}/void`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': pin,
+            'x-pos-client': 'admin-dashboard'
+          },
+          body: JSON.stringify({
+            reason: finalReason,
+            managerPin: pin
+          })
+        });
+      } else {
+        res = await fetch(`${targetBase}/api/khata/ledger/${encodeURIComponent(voidConfirmation.txId)}/void`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': pin,
+            'x-pos-client': 'admin-dashboard'
+          },
+          body: JSON.stringify({
+            reason: finalReason,
+            managerPin: pin
+          })
+        });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setWriteOffToast({
+          type: 'success',
+          message: `✅ Successfully voided receipt/transaction for ${voidConfirmation.customerName}! BD ${voidConfirmation.amount.toFixed(3)} reversed.`
+        });
+        setTimeout(() => setWriteOffToast(null), 5000);
+        setVoidConfirmation(null);
+        setSelectedInvoice(null);
+        if (statementCustomer) {
+          viewStatement(statementCustomer, statementTab === 'MESS');
+        }
+        loadCustomers();
+      } else {
+        setVoidError(data.error || 'Failed to void transaction. Check Manager PIN.');
+      }
+    } catch (e: any) {
+      setVoidError(`Network error: ${e.message}`);
+    } finally {
+      setIsVoiding(false);
+    }
+  };
+
+  // Khata Balance Control / Adjustment Modal State
+  const [adjustBalanceCustomer, setAdjustBalanceCustomer] = useState<any | null>(null);
+  const [adjustMode, setAdjustMode] = useState<'SET_BALANCE' | 'DELTA'>('SET_BALANCE');
+  const [targetBalanceInput, setTargetBalanceInput] = useState('');
+  const [adjustDeltaInput, setAdjustDeltaInput] = useState('');
+  const [adjustReason, setAdjustReason] = useState('Reconciliation with Paper Notebook');
+  const [adjustCustomReason, setAdjustCustomReason] = useState('');
+  const [adjustPin, setAdjustPin] = useState('');
+  const [isAdjustingBalance, setIsAdjustingBalance] = useState(false);
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+
+  const openAdjustBalanceModal = (cust: any) => {
+    setAdjustBalanceCustomer(cust);
+    const curr = Number(cust.currentBalance ?? cust.balance ?? 0);
+    setTargetBalanceInput(curr.toFixed(3));
+    setAdjustDeltaInput('0.000');
+    setAdjustMode('SET_BALANCE');
+    setAdjustReason('Reconciliation with Paper Notebook');
+    setAdjustCustomReason('');
+    setAdjustPin('');
+    setAdjustError(null);
+  };
+
+  const executeAdjustBalance = async () => {
+    if (!adjustBalanceCustomer) return;
+    const pin = adjustPin.trim();
+    if (!pin) {
+      setAdjustError('Manager PIN is required');
+      return;
+    }
+
+    const currentBal = Number(adjustBalanceCustomer.currentBalance ?? adjustBalanceCustomer.balance ?? 0);
+    let targetBal: number;
+    let deltaBal: number;
+
+    if (adjustMode === 'SET_BALANCE') {
+      const parsedTarget = parseFloat(targetBalanceInput);
+      if (isNaN(parsedTarget)) {
+        setAdjustError('Please enter a valid target balance');
+        return;
+      }
+      targetBal = parsedTarget;
+      deltaBal = targetBal - currentBal;
+    } else {
+      const parsedDelta = parseFloat(adjustDeltaInput);
+      if (isNaN(parsedDelta) || parsedDelta === 0) {
+        setAdjustError('Please enter a non-zero adjustment delta (+ or -)');
+        return;
+      }
+      deltaBal = parsedDelta;
+      targetBal = currentBal + deltaBal;
+    }
+
+    const finalReason = adjustReason === 'Other / Custom' ? (adjustCustomReason.trim() || 'Manager Balance Adjustment') : adjustReason;
+
+    setIsAdjustingBalance(true);
+    setAdjustError(null);
+
+    try {
+      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
+      const res = await fetch(`${targetBase}/api/customers/${encodeURIComponent(adjustBalanceCustomer.id)}/adjust-balance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-manager-pin': pin,
+          'x-pos-client': 'admin-dashboard'
+        },
+        body: JSON.stringify({
+          mode: adjustMode,
+          newBalance: targetBal,
+          targetBalance: targetBal,
+          delta: deltaBal,
+          reason: finalReason,
+          note: adjustCustomReason.trim() || undefined,
+          managerPin: pin
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setWriteOffToast({
+          type: 'success',
+          message: `✅ Khata balance for "${adjustBalanceCustomer.name}" updated to BD ${Number(data.newBalance ?? targetBal).toFixed(3)}!`
+        });
+        setTimeout(() => setWriteOffToast(null), 5000);
+        setAdjustBalanceCustomer(null);
+        if (statementCustomer && statementCustomer.id === adjustBalanceCustomer.id) {
+          viewStatement({ ...statementCustomer, currentBalance: data.newBalance ?? targetBal }, statementTab === 'MESS');
+        }
+        loadCustomers();
+      } else {
+        setAdjustError(data.error || 'Failed to adjust balance. Check Manager PIN.');
+      }
+    } catch (e: any) {
+      setAdjustError(`Network error: ${e.message}`);
+    } finally {
+      setIsAdjustingBalance(false);
+    }
+  };
 
   const handleExecuteSettle = async () => {
     if (!settleCustomer) return;
@@ -2067,9 +2655,21 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
                           {/* View Statement Button */}
                           <button
                             onClick={() => viewStatement(customer)}
-                            className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer active:scale-95 shadow-2xs"
+                            className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                            title="View full statement, bills, and void mistakes"
                           >
-                            Statement
+                            <Receipt size={13} />
+                            <span>Statement</span>
+                          </button>
+
+                          {/* Change / Adjust Balance Button */}
+                          <button
+                            onClick={() => openAdjustBalanceModal(customer)}
+                            className="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                            title="Directly change or adjust Khata balance with Manager PIN"
+                          >
+                            <Sliders size={13} />
+                            <span>Adjust</span>
                           </button>
 
                           {/* Mess Split Button */}
@@ -2605,10 +3205,10 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
             onClick={(e) => e.stopPropagation()}
             style={{
               backgroundColor: '#ffffff',
-              borderRadius: '16px',
-              maxWidth: '680px',
-              width: '100%',
-              maxHeight: '80vh',
+              borderRadius: '20px',
+              maxWidth: '1200px',
+              width: '96vw',
+              maxHeight: '90vh',
               display: 'flex',
               flexDirection: 'column',
               boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)',
@@ -2618,7 +3218,7 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
             {/* Modal Header */}
             <div
               style={{
-                padding: '16px 20px',
+                padding: '16px 24px',
                 borderBottom: '1px solid #e2e8f0',
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -2629,13 +3229,16 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
               }}
             >
               <div>
-                <div className="flex items-center gap-2">
-                  <Receipt size={20} color="#059669" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Receipt size={22} className="text-emerald-600" />
                   <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#0f172a', margin: 0 }}>
                     {statementTab === 'MESS' && (statementMessGroup || statementCustomer.messName || statementCustomer.mess_name)
                       ? `Mess Statement: ${statementMessGroup?.group_name || statementCustomer.messName || statementCustomer.mess_name || 'Mess Group'}`
                       : `Khata Statement: ${statementCustomer.name}`}
                   </h3>
+                  <span className="text-[11px] bg-rose-100 text-rose-800 border border-rose-300 px-2 py-0.5 rounded-full font-black">
+                    🛡️ Void & Bill Actions Active (PIN: 9999)
+                  </span>
                   {(statementMessGroup || statementCustomer.messName || statementCustomer.mess_name || statementCustomer.mess_id) && (
                     <span className="text-[11px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
                       👥 {statementMessGroup?.group_name || statementCustomer.messName || statementCustomer.mess_name || 'Mess Camp'}
@@ -2689,6 +3292,14 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => openAdjustBalanceModal(statementCustomer)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
+                  title="Directly adjust or correct Khata balance with Manager PIN"
+                >
+                  <Sliders size={14} /> ⚙️ Adjust Balance
+                </button>
                 <button
                   type="button"
                   onClick={() => print58mmRemoteSunmi(statementCustomer, filteredStatement, statementTab === 'MESS', statementMessGroup)}
@@ -3117,45 +3728,92 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
                 </div>
               </div>
 
+              {/* Manager Void & Bill Guide Notice */}
+              <div className="bg-gradient-to-r from-blue-50 via-slate-50 to-rose-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs shadow-2xs flex-wrap">
+                <div className="flex items-center gap-2.5 text-slate-800">
+                  <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center shrink-0 font-black text-sm shadow-xs">
+                    ✕
+                  </div>
+                  <div>
+                    <div className="font-black text-slate-900 flex items-center gap-2">
+                      <span>Customer Statement & Mistakes Correction</span>
+                      <span className="text-[10px] bg-rose-600 text-white px-1.5 py-0.5 rounded font-mono font-bold">PIN: 9999</span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-0.5">
+                      Click the blue <span className="bg-blue-600 text-white font-black px-1.5 py-0.5 rounded text-[10px]">📄 Bill</span> button to inspect line items. Click the red <span className="bg-rose-600 text-white font-black px-1.5 py-0.5 rounded text-[10px]">❌ Void</span> button on any row to reverse the charge, restore customer balance, and restock inventory.
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => openAdjustBalanceModal(statementCustomer)}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs flex items-center gap-1"
+                    title="Directly set or change total Khata balance with Manager PIN"
+                  >
+                    <Sliders size={13} />
+                    <span>⚙️ Adjust Balance</span>
+                  </button>
+                  <span className="text-[11px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded-lg">
+                    {filteredStatement.length} Records
+                  </span>
+                </div>
+              </div>
+
               {loadingStatement ? (
                 <div style={{ padding: '40px 0', textAlign: 'center', color: '#64748b' }}>
                   Loading transactions...
                 </div>
               ) : (
-                /* Admin Data Table */
-                <div className="bg-white rounded-xl shadow-xs overflow-hidden border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200">
-                    <thead className="bg-slate-100">
+                /* Admin Data Table with Horizontal Scroll Protection & Wide Columns */
+                <div className="bg-white rounded-xl shadow-xs overflow-x-auto border border-slate-200 w-full">
+                  <table className="min-w-full divide-y divide-slate-200 text-xs">
+                    <thead className="bg-slate-100 font-bold text-slate-700 uppercase tracking-wider text-[11px]">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Ref / Invoice</th>
+                        <th className="px-4 py-3 text-left min-w-[150px]">Date / Time</th>
+                        <th className="px-4 py-3 text-left min-w-[180px]">Ref / Invoice</th>
                         {statementTab === 'MESS' && (
-                          <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Shopper</th>
+                          <th className="px-4 py-3 text-left min-w-[130px]">Shopper</th>
                         )}
-                        <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Charge/Credit</th>
-                        <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Running Balance</th>
+                        <th className="px-4 py-3 text-right min-w-[120px]">Charge (+) / Paid (-)</th>
+                        <th className="px-4 py-3 text-right min-w-[130px]">Running Balance</th>
+                        <th className="px-4 py-3 text-center min-w-[200px] bg-rose-50/70 text-rose-900 font-black border-l border-rose-200">
+                          ⚡ Actions (Bill & Void)
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-200">
                       {filteredStatement.map((tx: any) => {
                         const isPayment = tx.type === 'PAYMENT';
                         const isWriteOff = tx.type === 'WRITE_OFF';
+                        const isAdjustment = tx.type === 'ADJUSTMENT';
                         const dateStr = tx.created_at || tx.timestamp || tx.createdAt;
-                        const refText = tx.reference || (tx.type === 'CHARGE' ? (tx.invoiceNo || `INV-${String(tx.id).slice(0, 6)}`) : (isWriteOff ? 'Bad Debt Write-Off' : 'Cash Payment'));
+                        const refText = tx.reference || (tx.type === 'CHARGE' ? (tx.invoiceNo || `INV-${String(tx.id).slice(0, 6)}`) : (isWriteOff ? 'Bad Debt Write-Off' : isAdjustment ? 'Balance Adjustment' : 'Cash Payment'));
                         const amtVal = Number(tx.amount ?? tx.total ?? 0);
                         const balVal = Number(tx.running_balance ?? tx.runningBalance ?? 0);
                         const shopperText = tx.shopperName || tx.memberName;
+                        const isVoided = tx.status === 'VOIDED' || tx.is_voided || tx.isVoided;
 
                         return (
-                          <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
+                          <tr key={tx.id} className={`hover:bg-slate-50 transition-colors ${isVoided ? 'bg-rose-50/50 line-through opacity-70' : ''}`}>
                             <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-mono">
                               {dateStr ? new Date(dateStr).toLocaleString('en-GB') : '-'}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-xs font-medium text-slate-900">
-                              <span>{refText}</span>
+                              <span className="font-mono font-bold">{refText}</span>
                               {isWriteOff && (
                                 <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">
                                   WRITE-OFF
+                                </span>
+                              )}
+                              {isAdjustment && (
+                                <span className="ml-2 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
+                                  ADJUSTMENT
+                                </span>
+                              )}
+                              {isVoided && (
+                                <span className="ml-2 text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-black border border-rose-300">
+                                  VOIDED
                                 </span>
                               )}
                             </td>
@@ -3170,11 +3828,44 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
                                 )}
                               </td>
                             )}
-                            <td className={`px-4 py-3 whitespace-nowrap text-xs font-bold text-right font-mono ${isPayment || isWriteOff ? 'text-green-600' : 'text-red-600'}`}>
-                              {isPayment || isWriteOff ? '-' : '+'}{amtVal.toFixed(3)}
+                            <td className={`px-4 py-3 whitespace-nowrap text-xs font-black text-right font-mono ${isPayment || isWriteOff || (isAdjustment && amtVal < 0) ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {isPayment || isWriteOff || (isAdjustment && amtVal < 0) ? '-' : '+'}{Math.abs(amtVal).toFixed(3)}
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-900 font-bold text-right font-mono">
+                            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-900 font-black text-right font-mono">
                               {balVal.toFixed(3)}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-center bg-rose-50/30 border-l border-slate-200">
+                              <div className="flex items-center justify-center gap-2">
+                                {(tx.type === 'CHARGE' || tx.invoiceNo || tx.sale_id || (tx.reference && (tx.reference.startsWith('INV-') || tx.reference.startsWith('POS-')))) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openInvoiceModal(tx.invoiceNo || tx.reference, tx.sale_id || tx.id)}
+                                    className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                                    title="View itemized bill items, tax, and details"
+                                  >
+                                    <FileText size={13} />
+                                    <span>Bill</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-400 text-xs">-</span>
+                                )}
+
+                                {isVoided ? (
+                                  <span className="px-2.5 py-1 bg-rose-100 text-rose-800 border border-rose-300 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                                    VOIDED
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestVoid(tx, statementCustomer?.name || 'Customer')}
+                                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-xs hover:shadow-md"
+                                    title="Void this receipt/transaction and reverse balance with PIN 9999"
+                                  >
+                                    <RotateCcw size={13} />
+                                    <span>Void</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3189,6 +3880,467 @@ function KhataLedger({ apiBase = getApiBaseUrl() }: { apiBase?: string }) {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Itemized Bill / Invoice Viewer Modal */}
+      {(selectedInvoice || loadingInvoice || invoiceError) && (
+        <div
+          onClick={() => { setSelectedInvoice(null); setInvoiceError(null); }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-6 space-y-4 border border-blue-200 max-h-[90vh] flex flex-col"
+          >
+            {loadingInvoice ? (
+              <div className="py-12 text-center text-slate-500 font-bold flex flex-col items-center gap-3">
+                <RefreshCw size={28} className="animate-spin text-blue-600" />
+                <span>Loading itemized invoice details...</span>
+              </div>
+            ) : invoiceError ? (
+              <div className="py-8 text-center space-y-3">
+                <AlertCircle size={36} className="text-rose-500 mx-auto" />
+                <div className="font-bold text-slate-800 text-sm">{invoiceError}</div>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedInvoice(null); setInvoiceError(null); }}
+                  className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold text-xs cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            ) : selectedInvoice ? (
+              <>
+                {/* Header */}
+                <div className="flex justify-between items-start border-b pb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <FileText size={20} className="text-blue-600" />
+                      <h3 className="text-lg font-black text-slate-900">
+                        {selectedInvoice.invoice_no || selectedInvoice.invoiceNo || 'Tax Invoice'}
+                      </h3>
+                      {(selectedInvoice.status === 'VOIDED' || selectedInvoice.is_voided) && (
+                        <span className="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-black border border-rose-200">
+                          VOIDED
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5 font-medium">
+                      Date: {new Date(selectedInvoice.created_at || selectedInvoice.timestamp || Date.now()).toLocaleString('en-GB')}
+                    </div>
+                    {selectedInvoice.terminal_id && (
+                      <div className="text-[11px] text-slate-400 font-mono">
+                        Terminal: {selectedInvoice.terminal_id} {selectedInvoice.cashier_name ? `• Cashier: ${selectedInvoice.cashier_name}` : ''}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedInvoice(null)}
+                    className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* Items Table */}
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider px-1">
+                    Purchased Items ({Array.isArray(selectedInvoice.items) ? selectedInvoice.items.length : 0})
+                  </div>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                    <table className="min-w-full divide-y divide-slate-200 text-xs">
+                      <thead className="bg-slate-50 text-slate-600 font-bold">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Item</th>
+                          <th className="px-2 py-2 text-center">Qty</th>
+                          <th className="px-2 py-2 text-right">Price</th>
+                          <th className="px-3 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {Array.isArray(selectedInvoice.items) && selectedInvoice.items.map((item: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 text-slate-900 font-medium">
+                              <div>{item.name || item.product_name || 'Product'}</div>
+                              {item.barcode && <div className="text-[10px] text-slate-400 font-mono">{item.barcode}</div>}
+                            </td>
+                            <td className="px-2 py-2 text-center font-mono text-slate-700 font-bold">
+                              {Number(item.quantity ?? item.qty ?? 1).toFixed(Number(item.quantity) % 1 === 0 ? 0 : 3)}
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              {(Number(item.unit_price ?? item.price ?? 0)).toFixed(3)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">
+                              {(Number(item.total ?? (Number(item.unit_price || item.price || 0) * Number(item.quantity || item.qty || 1)))).toFixed(3)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Totals Summary */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs font-semibold">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Subtotal (Excl. VAT):</span>
+                      <span className="font-mono">BD {(Number(selectedInvoice.subtotal ?? (Number(selectedInvoice.total || 0) / 1.1))).toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>10% Bahrain VAT:</span>
+                      <span className="font-mono">BD {(Number(selectedInvoice.tax ?? selectedInvoice.vat ?? (Number(selectedInvoice.total || 0) - (Number(selectedInvoice.total || 0) / 1.1)))).toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-base font-black text-slate-900 pt-1.5 border-t border-slate-200">
+                      <span>Invoice Total:</span>
+                      <span className="font-mono text-emerald-600">BD {Number(selectedInvoice.total ?? 0).toFixed(3)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="pt-2 border-t flex items-center justify-between gap-2">
+                  {selectedInvoice.status !== 'VOIDED' && !selectedInvoice.is_voided && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleRequestVoid(
+                          {
+                            id: selectedInvoice.id,
+                            sale_id: selectedInvoice.id,
+                            invoiceNo: selectedInvoice.invoice_no || selectedInvoice.invoiceNo,
+                            amount: Number(selectedInvoice.total || 0),
+                            type: 'CHARGE'
+                          },
+                          statementCustomer?.name || selectedInvoice.customer_name || 'Customer'
+                        );
+                      }}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-xs active:scale-95 hover:shadow-md"
+                      title="Void this invoice/receipt and reverse customer balance with Manager PIN 9999"
+                    >
+                      <RotateCcw size={14} />
+                      <span>❌ Void Bill & Reverse Debt</span>
+                    </button>
+                  )}
+                  <div className="flex items-center gap-2 ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Printer size={14} />
+                      <span>Print</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedInvoice(null)}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Void Receipt Confirmation Modal */}
+      {voidConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-rose-300">
+            <div className="flex items-start justify-between border-b pb-3">
+              <div className="flex items-center gap-2 text-rose-600">
+                <ShieldAlert size={24} />
+                <h3 className="text-lg font-black text-slate-900">
+                  Void Receipt / Reversal
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoidConfirmation(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2">
+              <div className="text-xs font-bold text-rose-900">
+                ⚠️ Reversing Transaction for: <span className="font-black text-rose-950 underline">{voidConfirmation.customerName}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-rose-800">
+                <span>Reference / Invoice:</span>
+                <span className="font-mono font-bold">{voidConfirmation.invoiceNo || voidConfirmation.txId}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm font-black text-rose-900 pt-1 border-t border-rose-200">
+                <span>Amount to Reverse:</span>
+                <span className="font-mono text-base">BD {voidConfirmation.amount.toFixed(3)}</span>
+              </div>
+              <p className="text-[11px] text-rose-700 leading-tight pt-1">
+                Voiding will mark this bill as VOIDED, reverse the customer's Khata debt immediately, restock inventory items, and broadcast sync across all POS registers.
+              </p>
+            </div>
+
+            {voidError && (
+              <div className="p-3 bg-red-100 border border-red-300 rounded-xl text-xs font-bold text-red-800">
+                {voidError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Reason for Void / Mistake
+                </label>
+                <select
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  className="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:border-rose-500 cursor-pointer"
+                >
+                  <option value="Customer Mistake / Wrong Items">Customer Mistake / Wrong Items</option>
+                  <option value="Cashier Error / Wrong Total">Cashier Error / Wrong Total</option>
+                  <option value="Duplicate Bill / Double Entry">Duplicate Bill / Double Entry</option>
+                  <option value="Customer Returned Items">Customer Returned Items</option>
+                  <option value="Other / Custom">Other / Custom</option>
+                </select>
+                {voidReason === 'Other / Custom' && (
+                  <input
+                    type="text"
+                    value={voidCustomReason}
+                    onChange={(e) => setVoidCustomReason(e.target.value)}
+                    placeholder="Enter custom reason..."
+                    className="w-full text-xs p-2.5 mt-2 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:border-rose-500"
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Manager Authorization PIN
+                </label>
+                <input
+                  type="password"
+                  value={voidPin}
+                  onChange={(e) => setVoidPin(e.target.value)}
+                  placeholder="Enter Manager PIN (9999)"
+                  className="w-full text-xl font-mono font-bold p-2.5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-rose-500 text-center tracking-widest"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 border-t flex gap-2">
+              <button
+                type="button"
+                onClick={() => setVoidConfirmation(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeVoid}
+                disabled={isVoiding || !voidPin.trim()}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50 shadow-xs flex items-center justify-center gap-1.5"
+              >
+                {isVoiding ? 'Voiding...' : 'Confirm Void & Reverse'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Khata Balance Control / Adjustment Modal */}
+      {adjustBalanceCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-amber-300">
+            <div className="flex items-start justify-between border-b pb-3">
+              <div className="flex items-center gap-2 text-amber-600">
+                <Sliders size={22} />
+                <h3 className="text-lg font-black text-slate-900">
+                  Khata Balance Control
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdjustBalanceCustomer(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <div className="font-black text-slate-900 text-base">{adjustBalanceCustomer.name}</div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">{adjustBalanceCustomer.phone || 'No phone'} • CPR: {adjustBalanceCustomer.cpr || 'N/A'}</div>
+              <div className="mt-2.5 pt-2 border-t border-slate-200 flex justify-between items-center">
+                <span className="text-xs text-slate-500 font-bold uppercase">Current Ledger Balance:</span>
+                <span className="text-lg font-black font-mono text-slate-900">
+                  BD {Number(adjustBalanceCustomer.currentBalance ?? adjustBalanceCustomer.balance ?? 0).toFixed(3)}
+                </span>
+              </div>
+            </div>
+
+            {adjustError && (
+              <div className="p-3 bg-red-100 border border-red-300 rounded-xl text-xs font-bold text-red-800">
+                {adjustError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {/* Mode Toggle */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Adjustment Mode
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAdjustMode('SET_BALANCE')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      adjustMode === 'SET_BALANCE'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>Set Exact Balance</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdjustMode('DELTA')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      adjustMode === 'DELTA'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>Add / Subtract (+/-)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount Input */}
+              {adjustMode === 'SET_BALANCE' ? (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    New Target Balance (BD)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={targetBalanceInput}
+                    onChange={(e) => setTargetBalanceInput(e.target.value)}
+                    placeholder="0.000"
+                    className="w-full text-2xl font-black font-mono p-3 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-amber-500 transition-all text-center"
+                  />
+                  {/* Delta helper */}
+                  {(() => {
+                    const currentBal = Number(adjustBalanceCustomer.currentBalance ?? adjustBalanceCustomer.balance ?? 0);
+                    const targetBal = parseFloat(targetBalanceInput);
+                    if (!isNaN(targetBal)) {
+                      const diff = targetBal - currentBal;
+                      return (
+                        <div className="text-[11px] font-bold text-slate-500 mt-1.5 text-center">
+                          Adjustment Delta: <span className={diff >= 0 ? 'text-amber-700' : 'text-emerald-700'}>{diff >= 0 ? `+BD ${diff.toFixed(3)}` : `-BD ${Math.abs(diff).toFixed(3)}`}</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Adjustment Delta (BD) <span className="font-normal text-slate-500">(Use + to increase debt, - to reduce)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={adjustDeltaInput}
+                    onChange={(e) => setAdjustDeltaInput(e.target.value)}
+                    placeholder="+1.000 or -2.500"
+                    className="w-full text-2xl font-black font-mono p-3 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-amber-500 transition-all text-center"
+                  />
+                  {/* Result helper */}
+                  {(() => {
+                    const currentBal = Number(adjustBalanceCustomer.currentBalance ?? adjustBalanceCustomer.balance ?? 0);
+                    const delta = parseFloat(adjustDeltaInput);
+                    if (!isNaN(delta)) {
+                      const result = currentBal + delta;
+                      return (
+                        <div className="text-[11px] font-bold text-slate-500 mt-1.5 text-center">
+                          Resulting Balance: <span className="text-slate-900 font-mono font-black">BD {result.toFixed(3)}</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              )}
+
+              {/* Reason Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Reason for Adjustment
+                </label>
+                <select
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
+                  className="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="Reconciliation with Paper Notebook">Reconciliation with Paper Notebook</option>
+                  <option value="Manager Correction of Billing Mistake">Manager Correction of Billing Mistake</option>
+                  <option value="Special Settlement / Discount">Special Settlement / Discount</option>
+                  <option value="Opening Balance Adjustment">Opening Balance Adjustment</option>
+                  <option value="Other / Custom">Other / Custom</option>
+                </select>
+                {adjustReason === 'Other / Custom' && (
+                  <input
+                    type="text"
+                    value={adjustCustomReason}
+                    onChange={(e) => setAdjustCustomReason(e.target.value)}
+                    placeholder="Enter reason note..."
+                    className="w-full text-xs p-2.5 mt-2 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:border-amber-500"
+                  />
+                )}
+              </div>
+
+              {/* Manager PIN */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Manager Authorization PIN
+                </label>
+                <input
+                  type="password"
+                  value={adjustPin}
+                  onChange={(e) => setAdjustPin(e.target.value)}
+                  placeholder="Enter Manager PIN (9999)"
+                  className="w-full text-xl font-mono font-bold p-2.5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-amber-500 text-center tracking-widest"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 border-t flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAdjustBalanceCustomer(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeAdjustBalance}
+                disabled={isAdjustingBalance || !adjustPin.trim()}
+                className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50 shadow-xs flex items-center justify-center gap-1.5"
+              >
+                {isAdjustingBalance ? 'Saving...' : 'Save Balance'}
+              </button>
             </div>
           </div>
         </div>

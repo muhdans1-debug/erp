@@ -26,14 +26,13 @@ import {
 const DRAWER_TEXTS = {
   en: {
     title: 'Navigation & Tools',
-    storeName: 'ASKAR SUPERMARKET',
+    storeName: 'LAYALI SUPERMARKET',
     storeSubtitle: 'Central Branch • Kingdom of Bahrain',
     myAccount: 'My Khata Account',
     accountActive: 'Active & Verified',
     accountFrozen: 'Locked / Frozen',
     freezeKhata: 'Freeze Khata (Lost Card)',
     unfreezeKhata: 'Unlock Khata',
-    homeLookup: 'Khata Search & QR Scanner',
     liveTab: 'Live Balance & Quick Pay',
     fullStatement: 'Itemized Statement (PIN)',
     payBenefit: 'Settle via BenefitPay',
@@ -56,14 +55,13 @@ const DRAWER_TEXTS = {
   },
   ar: {
     title: 'القائمة والأدوات',
-    storeName: 'أسواق أسكر المركزية',
+    storeName: 'أسواق ليالي المركزية',
     storeSubtitle: 'الفرع الرئيسي • مملكة البحرين',
     myAccount: 'حساب الخاتة الخاص بي',
     accountActive: 'نشط ومعتمد',
     accountFrozen: 'مقفل / مجمد',
     freezeKhata: 'تجميد الحساب (فقدان البطاقة)',
     unfreezeKhata: 'إلغاء التجميد وفتح الحساب',
-    homeLookup: 'البحث عن الحساب ومسح الرمز',
     liveTab: 'كشف الحساب المباشر والسداد',
     fullStatement: 'كشف الحساب التفصيلي (رقم سري)',
     payBenefit: 'السداد عبر بنفت بي',
@@ -86,14 +84,13 @@ const DRAWER_TEXTS = {
   },
   ml: {
     title: 'മെനു & വിവരങ്ങൾ',
-    storeName: 'അസ്കർ സൂപ്പർമാർക്കറ്റ്',
+    storeName: 'ലയാലി സൂപ്പർമാർക്കറ്റ്',
     storeSubtitle: 'മെയിൻ ബ്രാഞ്ച് • ബഹ്‌റൈൻ',
     myAccount: 'എന്റെ ഖാത്ത അക്കൗണ്ട്',
     accountActive: 'ആക്റ്റീവ് അക്കൗണ്ട്',
     accountFrozen: 'ലോക്ക് ചെയ്ത അക്കൗണ്ട്',
     freezeKhata: 'കാർഡ് നഷ്ടപ്പെട്ടാൽ ലോക്ക് ചെയ്യുക',
     unfreezeKhata: 'ലോക്ക് മാറ്റുക',
-    homeLookup: 'സെർച്ചും QR സ്കാനറും',
     liveTab: 'ലൈവ് ബാലൻസും പേയ്‌മെന്റും',
     fullStatement: 'മുഴുവൻ ബിൽ വിവരങ്ങൾ (PIN)',
     payBenefit: 'ബെനിഫിറ്റ് പേ വഴി നൽകുക',
@@ -123,7 +120,6 @@ const DRAWER_TEXTS = {
     accountFrozen: 'লক করা হিসাব',
     freezeKhata: 'খাতা লক করুন (কার্ড হারালে)',
     unfreezeKhata: 'খাতা আনলক করুন',
-    homeLookup: 'খাতা খুঁজুন ও QR স্ক্যানার',
     liveTab: 'লাইভ ব্যালেন্স ও পেমেন্ট',
     fullStatement: 'সম্পূর্ণ হিসাব (PIN সুরক্ষিত)',
     payBenefit: 'বেনিফিট পে পেমেন্ট',
@@ -153,7 +149,6 @@ const DRAWER_TEXTS = {
     accountFrozen: 'लॉक किया गया खाता',
     freezeKhata: 'खाता फ्रीज करें (कार्ड खोने पर)',
     unfreezeKhata: 'खाता अनलॉक करें',
-    homeLookup: 'खाता खोज और QR स्कैनर',
     liveTab: 'लाइव बैलेंस और भुगतान',
     fullStatement: 'विस्तृत स्टेटमेंट (PIN)',
     payBenefit: 'बेनिफिट पे से भुगतान',
@@ -308,20 +303,6 @@ export default function HamburgerDrawer({
 
           {/* Navigation Links */}
           <div className="space-y-1">
-            <Link
-              to="/"
-              onClick={onClose}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800 text-slate-200 hover:text-white transition group"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-emerald-400">
-                  <Search className="w-3.5 h-3.5" />
-                </div>
-                <span className="font-semibold text-xs">{t.homeLookup}</span>
-              </div>
-              <ChevronRight className={`w-3.5 h-3.5 text-slate-500 group-hover:text-white ${isRtl ? 'rotate-180' : ''}`} />
-            </Link>
-
             {customerId && (
               <>
                 <Link
@@ -488,7 +469,7 @@ export default function HamburgerDrawer({
                 <span>{t.callStore}</span>
               </a>
               <a
-                href="https://wa.me/97339999999?text=Hello%20Askar%20Supermarket%2C%20I%20have%20an%20inquiry%20regarding%20my%20Khata."
+                href="https://wa.me/97339999999?text=Hello%20Layali%20Supermarket%2C%20I%20have%20an%20inquiry%20regarding%20my%20Khata."
                 target="_blank"
                 rel="noopener noreferrer"
                 className="min-h-[42px] py-2 px-2.5 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-xl text-[11px] font-semibold text-emerald-300 flex items-center justify-center gap-1.5 transition"

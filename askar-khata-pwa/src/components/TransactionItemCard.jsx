@@ -23,9 +23,10 @@ export default function TransactionItemCard({
   tx,
   lang = 'en',
   currency = 'BHD',
+  highlighted = false,
   onViewReceipt
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(Boolean(highlighted));
   const [loadingItems, setLoadingItems] = useState(false);
   const [invoiceDetails, setInvoiceDetails] = useState(null);
 
@@ -35,6 +36,7 @@ export default function TransactionItemCard({
                      amt < 0;
   const isOpeningBalance = (tx.type || '').toUpperCase().includes('OPENING');
   const isMessSplit = Boolean(
+    tx.subledger_type === 'MESS_SHARE' ||
     tx.mess_id || 
     tx.category === 'MESS_SPLIT' || 
     (tx.reference && tx.reference.toLowerCase().includes('mess split'))
@@ -120,13 +122,13 @@ export default function TransactionItemCard({
     ).join('\n');
 
     const msg = 
-      `*ASKAR SUPERMARKET RECEIPT*\n` +
+      `*LAYALI SUPERMARKET RECEIPT*\n` +
       `Invoice #: ${invoiceNo}\n` +
       `Date: ${dateText} ${timeText}\n` +
       `Amount: BHD ${formattedAmt}\n` +
       `--------------------------------\n` +
       (itemsText ? `Items:\n${itemsText}\n--------------------------------\n` : '') +
-      `Verified by Askar Khata Portal`;
+      `Verified by Layali Khata Portal`;
 
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -147,7 +149,11 @@ export default function TransactionItemCard({
   };
 
   return (
-    <div className="bg-slate-900/90 hover:bg-slate-900 rounded-2xl border border-slate-800 text-xs font-mono transition-all overflow-hidden shadow-xs">
+    <div className={`rounded-2xl border text-xs font-mono transition-all overflow-hidden shadow-xs ${
+      highlighted 
+        ? 'bg-slate-900 border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20' 
+        : 'bg-slate-900/90 hover:bg-slate-900 border-slate-800'
+    }`}>
       {/* Clickable Header Row */}
       <div 
         onClick={handleToggle}
@@ -179,6 +185,11 @@ export default function TransactionItemCard({
               <p className="text-slate-200 font-sans font-bold text-xs truncate">
                 {getDisplayTitle()}
               </p>
+              {highlighted && (
+                <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 flex items-center gap-1 animate-pulse">
+                  <ShieldCheck className="w-2.5 h-2.5" /> Receipt Verified
+                </span>
+              )}
               {isMessSplit ? (
                 <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
                   <Users className="w-2.5 h-2.5" /> {messRoomName || 'Room Mess'}
@@ -436,7 +447,7 @@ export default function TransactionItemCard({
               <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 space-y-1">
                 <p className="font-bold font-sans">Migrated Manual Ledger Balance</p>
                 <p className="text-[11px] text-amber-200/90 leading-relaxed font-mono">
-                  Initial balance imported from physical ledger notebook into Askar digital Khata system.
+                  Initial balance imported from physical ledger notebook into Layali digital Khata system.
                 </p>
                 <p className="font-mono text-[10px] text-amber-400 pt-1">
                   Reference: #{tx.reference || tx.id}

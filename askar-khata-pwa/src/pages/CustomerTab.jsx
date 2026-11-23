@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
+import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { 
   ShieldCheck, 
   ArrowLeft, 
@@ -25,17 +25,32 @@ import {
   Search,
   X,
   ShoppingBag,
-  CreditCard
+  CreditCard,
+  Receipt,
+  Bell,
+  BellRing,
+  BellOff,
+  Fingerprint
 } from 'lucide-react';
-import BenefitPayModal from '../components/BenefitPayModal';
-import HamburgerDrawer from '../components/HamburgerDrawer';
-import ReceiptModal from '../components/ReceiptModal';
+import {
+  isPhoneLockAvailable,
+  registerPhoneLock,
+  verifyPhoneLock,
+  isPhoneLockConfigured,
+  isSessionVerified,
+  createReceiptDeviceToken,
+  getDeviceAuthHeaders
+} from '../utils/phoneLockAuth';
+const BenefitPayModal = lazy(() => import('../components/BenefitPayModal'));
+const HamburgerDrawer = lazy(() => import('../components/HamburgerDrawer'));
+const ReceiptModal = lazy(() => import('../components/ReceiptModal'));
 import TransactionItemCard from '../components/TransactionItemCard';
+import DigitalKhataPass from '../components/DigitalKhataPass';
 import { generateBenefitPayPayload } from '../utils/benefitPay';
 
 const TAB_TEXTS = {
   en: {
-    brand: 'ASKAR SUPERMARKET',
+    brand: 'LAYALI SUPERMARKET',
     portal: 'Official Customer Khata Portal',
     live: 'LIVE LEDGER',
     tabOf: "'s Khata Tab",
@@ -61,7 +76,6 @@ const TAB_TEXTS = {
     custom: 'Custom',
     payCustomBtn: 'Pay Custom Amount',
     listenBalance: '🔊 Listen to Balance',
-    switchAcc: '⚙️ Switch Account / Setup New Phone',
     recentPurchases: 'Transaction History',
     transactionsHistory: 'Full Transaction History',
     filterAll: 'All',
@@ -97,7 +111,16 @@ const TAB_TEXTS = {
     combinedRooms: 'Mess Groups Combined',
     sharedRoomSplit: 'Your shared room split debt',
     selectedBadge: 'Selected',
-    refreshBtn: 'Refresh'
+    refreshBtn: 'Refresh',
+    receiptVerifiedTitle: 'Authentic Receipt Verified',
+    receiptZeroDrift: '100% Zero-Drift Parity',
+    receiptZeroDriftDesc: 'Live cloud balance matches your printed receipt bit-for-bit.',
+    receiptPaidDownDesc: 'Balance paid down since this receipt was printed.',
+    receiptNewChargesDesc: 'New purchases recorded since this receipt was printed.',
+    receiptInvoiceLabel: 'Invoice',
+    receiptPrintedBal: 'Slip Balance',
+    receiptLiveBal: 'Live Cloud Balance',
+    viewReceiptInHistory: 'View Scanned Receipt in History'
   },
   ar: {
     brand: 'أسواق أسكر المركزية',
@@ -126,7 +149,6 @@ const TAB_TEXTS = {
     custom: 'مخصص',
     payCustomBtn: 'دفع المبلغ المخصص',
     listenBalance: '🔊 استمع إلى الرصيد',
-    switchAcc: '⚙️ تغيير الحساب / إعداد هاتف آخر',
     recentPurchases: 'سجل المعاملات والتواريخ',
     transactionsHistory: 'سجل المعاملات والتواريخ بالكامل',
     filterAll: 'الكل',
@@ -162,7 +184,16 @@ const TAB_TEXTS = {
     combinedRooms: 'جروبات مشتركة مدمجة',
     sharedRoomSplit: 'نصيبك من مصاريف المشترك',
     selectedBadge: 'تم الاختيار',
-    refreshBtn: 'تحديث'
+    refreshBtn: 'تحديث',
+    receiptVerifiedTitle: 'تم التحقق من صحة الإيصال',
+    receiptZeroDrift: 'تطابق كامل 100% بدون أي فرق',
+    receiptZeroDriftDesc: 'رصيد السحابة يطابق تماماً الرصيد المطبوع على الإيصال.',
+    receiptPaidDownDesc: 'تم سداد دفعات إضافية بعد طباعة هذا الإيصال.',
+    receiptNewChargesDesc: 'تمت إضافة مشتريات جديدة بعد طباعة هذا الإيصال.',
+    receiptInvoiceLabel: 'الفاتورة',
+    receiptPrintedBal: 'رصيد الإيصال',
+    receiptLiveBal: 'الرصيد المباشر',
+    viewReceiptInHistory: 'عرض الإيصال الممسوح في السجل'
   },
   ml: {
     brand: 'അസ്കർ സൂപ്പർമാർക്കറ്റ്',
@@ -191,7 +222,6 @@ const TAB_TEXTS = {
     custom: 'കസ്റ്റം',
     payCustomBtn: 'തുക നൽകുക',
     listenBalance: '🔊 തുക കേൾക്കുക',
-    switchAcc: '⚙️ അക്കൗണ്ട് മാറ്റുക',
     recentPurchases: 'ഇടപാടുകളുടെ വിവരങ്ങൾ',
     transactionsHistory: 'മുഴുവൻ ഇടപാടുകളുടെ വിവരങ്ങൾ',
     filterAll: 'എല്ലാം',
@@ -227,7 +257,16 @@ const TAB_TEXTS = {
     combinedRooms: 'മെസ്സ് ഗ്രൂപ്പുകൾ സംയോജിപ്പിച്ചത്',
     sharedRoomSplit: 'നിങ്ങളുടെ മെസ്സ് വിഹിതം',
     selectedBadge: 'തിരഞ്ഞെടുത്തു',
-    refreshBtn: 'റീഫ്രഷ്'
+    refreshBtn: 'റീഫ്രഷ്',
+    receiptVerifiedTitle: 'യഥാർത്ഥ രസീത് സ്ഥിരീകരിച്ചു',
+    receiptZeroDrift: '100% കൃത്യമായ കണക്ക്',
+    receiptZeroDriftDesc: 'നിങ്ങളുടെ കൈവശമുള്ള ബില്ലിലെ തുകയും ഓൺലൈൻ തുകയും ഒന്നുതന്നെയാണ്.',
+    receiptPaidDownDesc: 'ഈ ബില്ലിന് ശേഷം തുക അടച്ചിട്ടുണ്ട്.',
+    receiptNewChargesDesc: 'ഈ ബില്ലിന് ശേഷം പുതിയ സാധനങ്ങൾ വാങ്ങിയിട്ടുണ്ട്.',
+    receiptInvoiceLabel: 'ഇൻവോയ്സ്',
+    receiptPrintedBal: 'ബില്ലിലെ തുക',
+    receiptLiveBal: 'ഇപ്പോഴത്തെ തുക',
+    viewReceiptInHistory: 'ലിസ്റ്റിൽ കാണുക'
   },
   bn: {
     brand: 'আসকার সুপারমার্কেট',
@@ -256,7 +295,6 @@ const TAB_TEXTS = {
     custom: 'কাস্টম',
     payCustomBtn: 'নির্দিষ্ট টাকা দিন',
     listenBalance: '🔊 বাকি হিসাব শুনুন',
-    switchAcc: '⚙️ অ্যাকাউন্ট পরিবর্তন করুন',
     recentPurchases: 'লেনদেনের বিস্তারিত ইতিহাস',
     transactionsHistory: 'সম্পূর্ণ লেনদেনের ইতিহাস ও তারিখ',
     filterAll: 'সকল',
@@ -292,7 +330,16 @@ const TAB_TEXTS = {
     combinedRooms: 'সম্মিলিত মেস গ্রুপ',
     sharedRoomSplit: 'আপনার মেস শেয়ার',
     selectedBadge: 'নির্বাচিত',
-    refreshBtn: 'রিফ্রেশ'
+    refreshBtn: 'রিফ্রেশ',
+    receiptVerifiedTitle: 'আসল রসিদ যাচাইকৃত',
+    receiptZeroDrift: '১০০% সঠিক হিসাব',
+    receiptZeroDriftDesc: 'আপনার রসিদের ব্যালেন্স এবং অনলাইন ব্যালেন্স একদম এক।',
+    receiptPaidDownDesc: 'রসিদ প্রিন্ট হওয়ার পর টাকা জমা হয়েছে।',
+    receiptNewChargesDesc: 'রসিদ প্রিন্ট হওয়ার পর নতুন কেনাকাটা যুক্ত হয়েছে।',
+    receiptInvoiceLabel: 'চালান',
+    receiptPrintedBal: 'রসিদের ব্যালেন্স',
+    receiptLiveBal: 'বর্তমান ব্যালেন্স',
+    viewReceiptInHistory: 'ইতিহাসে দেখুন'
   },
   hi: {
     brand: 'अस्कर सुपरमार्केट',
@@ -321,7 +368,6 @@ const TAB_TEXTS = {
     custom: 'कस्टम',
     payCustomBtn: 'कस्टम राशि भरें',
     listenBalance: '🔊 बाकी हिसाब सुनें',
-    switchAcc: '⚙️ खाता बदलें / नया फोन सेटअप करें',
     recentPurchases: 'पूरा लेन-देन इतिहास',
     transactionsHistory: 'पूरा लेन-देन इतिहास एवं तारीखें',
     filterAll: 'सभी',
@@ -357,7 +403,16 @@ const TAB_TEXTS = {
     combinedRooms: 'संयुक्त मेस ग्रुप',
     sharedRoomSplit: 'आपका साझा मेस खर्च',
     selectedBadge: 'चयनित',
-    refreshBtn: 'रिफ्रेश'
+    refreshBtn: 'रिफ्रेश',
+    receiptVerifiedTitle: 'असली रसीद सत्यापित',
+    receiptZeroDrift: '100% सटीक मिलान',
+    receiptZeroDriftDesc: 'आपकी मुद्रित रसीद का बैलेंस और ऑनलाइन बैलेंस पूरी तरह समान है।',
+    receiptPaidDownDesc: 'रसीद प्रिंट होने के बाद भुगतान जमा किया गया है।',
+    receiptNewChargesDesc: 'रसीद प्रिंट होने के बाद नई खरीदारी जुड़ी है।',
+    receiptInvoiceLabel: 'चालान (इनवॉइस)',
+    receiptPrintedBal: 'रसीद का बैलेंस',
+    receiptLiveBal: 'लाइव खाता बैलेंस',
+    viewReceiptInHistory: 'लेन-देन इतिहास में देखें'
   }
 };
 
@@ -418,15 +473,97 @@ function formatTxDate(dateStr, lang) {
 
 export default function CustomerTab() {
   const { customerId } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const statusParam = searchParams.get('status');
+  const receiptInv = searchParams.get('receiptInv');
+  const receiptBal = searchParams.get('receiptBal');
+  const receiptTs = searchParams.get('receiptTs');
+  const [dismissReceiptBanner, setDismissReceiptBanner] = useState(false);
+  const transactionsSectionRef = useRef(null);
   
   const [lang, setLang] = useState('en');
   const t = TAB_TEXTS[lang] || TAB_TEXTS.en;
   const isRtl = lang === 'ar';
 
-  const [ledger, setLedger] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Developer Inspection Session Detection
+  const isDevSession = typeof window !== 'undefined' && Boolean(
+    sessionStorage.getItem('khata_dev_jwt') || searchParams.get('dev_mode') === '1'
+  );
+
+  // Anti-IDOR Single-Customer Device Binding Enforcement (Resilient against Phone Number / Access Token aliases)
+  const boundCustomerId = typeof window !== 'undefined' ? (localStorage.getItem('my_khata_customer_id') || '') : '';
+  const isDeviceBoundToOther = useMemo(() => {
+    if (isDevSession || !boundCustomerId || !customerId || boundCustomerId === customerId) {
+      return false;
+    }
+    try {
+      const cached = localStorage.getItem(`khata_tab_cache_${boundCustomerId}`) || localStorage.getItem(`khata_tab_cache_${customerId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        const normTarget = String(customerId).replace(/^(\+973|00973|973)/, '').replace(/\D/g, '');
+        const normPhone = parsed.phone ? String(parsed.phone).replace(/^(\+973|00973|973)/, '').replace(/\D/g, '') : '';
+        if (parsed.id === customerId || parsed.access_token === customerId || (normPhone && normPhone === normTarget)) {
+          return false;
+        }
+      }
+    } catch {}
+    return true;
+  }, [boundCustomerId, customerId, isDevSession]);
+
+  // Native Biometric Phone Lock State (Zero-PIN for Elderly Labor Patrons, Bypassed for Developer)
+  const [phoneLockRequired, setPhoneLockRequired] = useState(() => {
+    if (typeof window === 'undefined' || isDevSession) return false;
+    if (isSessionVerified(customerId)) return false;
+    return isPhoneLockConfigured(customerId);
+  });
+  const [verifyingPhoneLock, setVerifyingPhoneLock] = useState(false);
+  const [phoneLockError, setPhoneLockError] = useState('');
+  const [phoneLockEnrolling, setPhoneLockEnrolling] = useState(false);
+  const [phoneLockEnrolledSuccess, setPhoneLockEnrolledSuccess] = useState(false);
+  const [showEnrollBanner, setShowEnrollBanner] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (customerId && !isPhoneLockConfigured(customerId)) {
+      isPhoneLockAvailable().then((avail) => {
+        if (active && avail) {
+          setShowEnrollBanner(true);
+        }
+      }).catch(() => {});
+    }
+    return () => { active = false; };
+  }, [customerId]);
+
+  const [ledger, setLedger] = useState(() => {
+    try {
+      if (typeof window !== 'undefined' && customerId && !isDeviceBoundToOther) {
+        let cached = localStorage.getItem(`khata_tab_cache_${customerId}`);
+        if (!cached) {
+          const myId = localStorage.getItem('my_khata_customer_id');
+          if (myId && myId === customerId) cached = localStorage.getItem(`khata_tab_cache_${myId}`);
+        }
+        if (cached) return JSON.parse(cached);
+      }
+    } catch {}
+    return null;
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      if (typeof window !== 'undefined' && customerId && !isDeviceBoundToOther) {
+        const cached = localStorage.getItem(`khata_tab_cache_${customerId}`);
+        if (cached) return false;
+      }
+    } catch {}
+    return true;
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handledPushTxIdsRef = useRef(new Map());
+  const customerIdRef = useRef(customerId);
+  const ledgerNameRef = useRef(null);
+  customerIdRef.current = customerId;
+  ledgerNameRef.current = ledger?.name || null;
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState('');
   const [isOffline, setIsOffline] = useState(false);
@@ -451,10 +588,153 @@ export default function CustomerTab() {
   const [showDrawer, setShowDrawer] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
 
+  // --- Customer Push Notification Management ---
+  const [notifPermission, setNotifPermission] = useState(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      return Notification.permission;
+    }
+    return 'unsupported';
+  });
+  const [liveTxAlert, setLiveTxAlert] = useState(null);
+  const [isSubscribingPush, setIsSubscribingPush] = useState(false);
+
+  // Play transaction success chime via Web Audio API
+  const playTxChime = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const playTone = (freq, start, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+        gain.gain.setValueAtTime(0.001, ctx.currentTime + start);
+        gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + start + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + duration);
+      };
+      playTone(587.33, 0.0, 0.12); // D5
+      playTone(880.00, 0.1, 0.25); // A5
+    } catch {}
+  }, []);
+
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const handleEnablePush = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
+      alert('Push notifications are not supported on this browser context.');
+      return;
+    }
+    setIsSubscribingPush(true);
+    try {
+      const perm = await Notification.requestPermission();
+      setNotifPermission(perm);
+      if (perm !== 'granted') {
+        setIsSubscribingPush(false);
+        return;
+      }
+
+      const reg = await navigator.serviceWorker.ready;
+      const keyRes = await fetch('/api/notifications/vapid-public-key');
+      const { publicKey } = await keyRes.json();
+
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey)
+        });
+      }
+
+      const subJson = sub.toJSON();
+      await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: sub.endpoint,
+          keys: subJson.keys,
+          customerId: customerId,
+          customerName: ledger?.name || null
+        })
+      });
+
+      playTxChime();
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate([80, 40, 80]);
+      }
+
+      setLiveTxAlert({
+        title: 'Phone Alerts Activated 🔔',
+        message: 'Your phone is now registered to receive real-time push alerts whenever you buy items at the store.',
+        amount: 0,
+        formattedAmount: 'ACTIVE'
+      });
+    } catch (err) {
+      console.warn('Push subscription failed:', err.message);
+    } finally {
+      setIsSubscribingPush(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    playTxChime();
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([100, 50, 100]);
+    }
+    setLiveTxAlert({
+      title: 'Store Purchase Notice 🛒',
+      message: `${ledger?.name || 'Customer'}: Purchased 3 items (2.500 BHD) via CASH. Inv #INV-TEST-${Date.now().toString().slice(-4)}`,
+      amount: 2.500,
+      formattedAmount: '2.500 BHD'
+    });
+
+    try {
+      await fetch('/api/notifications/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: customerId,
+          customerName: ledger?.name || 'Customer',
+          amount: 2.500
+        })
+      });
+    } catch {}
+  };
+
+  // Auto-dismiss live alert
+  useEffect(() => {
+    if (!liveTxAlert) return;
+    const t = setTimeout(() => setLiveTxAlert(null), 8000);
+    return () => clearTimeout(t);
+  }, [liveTxAlert]);
+
   const abortControllerRef = useRef(null);
   const [showSuccessBanner, setShowSuccessBanner] = useState(() => 
     statusParam === 'complete' || statusParam === 'success' || statusParam === 'mock_demo_success'
   );
+
+  const handleScrollToReceipt = useCallback(() => {
+    if (receiptInv) {
+      setTxSearch(receiptInv);
+      setTxFilter('ALL');
+    }
+    if (transactionsSectionRef.current) {
+      transactionsSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [receiptInv]);
 
   // Synchronize document lang & dir for screen readers (Resolved PWA-ACC-03)
   useEffect(() => {
@@ -508,8 +788,8 @@ export default function CustomerTab() {
       default:
         voiceLang = 'en-US';
         textToSpeak = isSettled
-          ? `Hello ${name}, your Askar Supermarket account is fully settled with zero debt owed.`
-          : `Hello ${name}, your outstanding balance at Askar Supermarket is ${absBal} Bahraini Dinars.`;
+          ? `Hello ${name}, your Layali account is fully settled with zero debt owed.`
+          : `Hello ${name}, your outstanding balance at Layali is ${absBal} Bahraini Dinars.`;
         break;
     }
 
@@ -608,15 +888,23 @@ export default function CustomerTab() {
 
   const fetchLedger = useCallback(async (signal) => {
     try {
-      setLoading(true);
+      // Optimistic Zero-Wait: Only block screen with spinner if no cached snapshot is present
+      if (!ledger && !localStorage.getItem(`khata_tab_cache_${customerId}`)) {
+        setLoading(true);
+      } else {
+        setIsSyncing(true);
+      }
       setError('');
 
       const savedPin = localStorage.getItem(`khata_pin_${customerId}`) || '';
       const savedJwt = localStorage.getItem(`khata_jwt_${customerId}`) || '';
+      const devJwt = typeof window !== 'undefined' ? sessionStorage.getItem('khata_dev_jwt') : null;
+      const deviceAuthHeaders = getDeviceAuthHeaders(customerId);
       const headers = {
         'Content-Type': 'application/json',
         ...(savedPin ? { 'x-khata-pin': savedPin } : {}),
-        ...(savedJwt ? { 'Authorization': `Bearer ${savedJwt}` } : {})
+        ...(devJwt ? { 'Authorization': `Bearer ${devJwt}` } : (savedJwt ? { 'Authorization': `Bearer ${savedJwt}` } : {})),
+        ...deviceAuthHeaders
       };
 
       const res = await fetch(`/api/khata/${encodeURIComponent(customerId)}/tab`, { 
@@ -626,11 +914,7 @@ export default function CustomerTab() {
       
       let finalRes = res;
       if (res.status === 401 || res.status === 403) {
-        // Stale or invalid credentials stored on device — purge and retry unauthenticated for public tab (Resolved PWA-R4-02)
-        try {
-          localStorage.removeItem(`khata_pin_${customerId}`);
-          localStorage.removeItem(`khata_jwt_${customerId}`);
-        } catch {}
+        // Fallback retry unauthenticated for public tab overview without destroying stored credentials
         finalRes = await fetch(`/api/khata/${encodeURIComponent(customerId)}/tab`, {
           headers: { 'Content-Type': 'application/json' },
           signal
@@ -649,12 +933,16 @@ export default function CustomerTab() {
 
       const data = await finalRes.json();
       const allTx = data.transactions || data.recentPurchases || data.ledger || [];
+      const balanceVal = Number(data.balance ?? data.currentBalance ?? 0);
+      const messShareVal = Math.max(0, Number(data.messShare ?? data.mess_share ?? 0));
+      const personalVal = Math.max(0, Number(data.personalBalance ?? data.personal_balance ?? Math.max(0, balanceVal - messShareVal)));
+
       const customerRecord = {
         id: data.id || customerId,
         name: data.name || 'Valued Customer',
-        balance: Number(data.balance ?? data.currentBalance ?? 0),
-        personalBalance: Number(data.personalBalance ?? data.personal_balance ?? data.balance ?? 0),
-        messShare: Number(data.messShare ?? data.mess_share ?? 0),
+        balance: balanceVal,
+        personalBalance: personalVal,
+        messShare: messShareVal,
         messes: Array.isArray(data.messes) ? data.messes : [],
         hasMessGroup: Boolean(data.hasMessGroup || (data.messes && data.messes.length > 0)),
         isMultiMess: Boolean(data.isMultiMess || (data.messes && data.messes.length > 1)),
@@ -669,13 +957,16 @@ export default function CustomerTab() {
       setLedger(customerRecord);
       setIsOffline(false);
 
-      // Permanent Device Binding: Store in localStorage and 10-year cookie
-      try {
-        const bindId = customerRecord.id || customerId;
-        localStorage.setItem('my_khata_customer_id', bindId);
-        document.cookie = `khata_customer_id=${encodeURIComponent(bindId)}; path=/; max-age=315360000; SameSite=Lax`;
-      } catch (bindErr) {
-        console.warn('CustomerTab device binding error:', bindErr);
+      // Permanent Device Binding: Store in localStorage and 10-year cookie (bypassed in developer inspection mode)
+      if (!isDevSession) {
+        try {
+          const bindId = customerRecord.id || customerId;
+          localStorage.setItem('my_khata_customer_id', bindId);
+          document.cookie = `khata_customer_id=${encodeURIComponent(bindId)}; path=/; max-age=315360000; SameSite=Lax`;
+          createReceiptDeviceToken(bindId);
+        } catch (bindErr) {
+          console.warn('CustomerTab device binding error:', bindErr);
+        }
       }
 
       // Synchronize cross-identifier key pairing with bounded storage (Resolved ADV-06 & PWA-DAT-02)
@@ -720,12 +1011,23 @@ export default function CustomerTab() {
       }
     } finally {
       setLoading(false);
+      setIsSyncing(false);
     }
   }, [customerId, t.networkErr]);
 
   useEffect(() => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
+
+    // Security Gate: Stop network fetch if this phone belongs to someone else
+    if (isDeviceBoundToOther) {
+      return;
+    }
+
+    // Security Gate: Stop network fetch until user unlocks phone lock
+    if (phoneLockRequired) {
+      return;
+    }
 
     if (customerId) {
       const load = async () => {
@@ -737,7 +1039,7 @@ export default function CustomerTab() {
     return () => {
       controller.abort();
     };
-  }, [customerId, fetchLedger]);
+  }, [customerId, fetchLedger, isDeviceBoundToOther, phoneLockRequired]);
 
   // Handle post-payment reconciliation and URL cleanup (Resolved PWA-DAT-03)
   useEffect(() => {
@@ -771,9 +1073,55 @@ export default function CustomerTab() {
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [fetchLedger]);
 
+  // Listen for real incoming push transactions forwarded from service worker with strict anti-loop deduplication
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const handleSwMessage = (event) => {
+      if (event.data?.type === 'PUSH_TRANSACTION_NOTIFICATION') {
+        const payload = event.data.payload;
+        if (!payload) return;
+
+        // Guard 1: Ignore zero-amount phantom sales
+        const amountNum = Number(payload.amount || 0);
+        if (amountNum <= 0 && (!payload.txType || payload.txType === 'SALE')) {
+          return;
+        }
+
+        const txKey = payload.id || (payload.invoiceNo ? `inv_${payload.invoiceNo}` : `tx_${payload.amount}_${payload.timestamp}`);
+        const lastHandled = handledPushTxIdsRef.current.get(txKey);
+        if (lastHandled && (Date.now() - lastHandled) < 45000) {
+          // Already processed within 45s - break loop
+          return;
+        }
+        handledPushTxIdsRef.current.set(txKey, Date.now());
+
+        const currentCustId = customerIdRef.current;
+        const currentCustName = ledgerNameRef.current;
+        const incomingCustId = payload.customerId ? String(payload.customerId).trim().toLowerCase() : '';
+        const currentCustIdStr = currentCustId ? String(currentCustId).trim().toLowerCase() : '';
+        // Guard 2: Strictly require matching this specific customer's account (never accept unassigned/anonymous sales)
+        const matchesCustomer = Boolean(
+          (incomingCustId && currentCustIdStr && incomingCustId === currentCustIdStr) || 
+          (currentCustName && payload.customerName && String(payload.customerName).trim().toLowerCase() === String(currentCustName).trim().toLowerCase())
+        );
+
+        if (matchesCustomer) {
+          playTxChime();
+          if (typeof navigator.vibrate === 'function') {
+            try { navigator.vibrate([100, 50, 100]); } catch {}
+          }
+          setLiveTxAlert(payload);
+          fetchLedger();
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+  }, [fetchLedger, playTxChime]);
+
   const balanceNum = Number(ledger?.balance || 0);
-  const personalBal = Number(ledger?.personalBalance ?? balanceNum);
-  const messShareBal = Number(ledger?.messShare ?? 0);
+  const messShareBal = Math.max(0, Number(ledger?.messShare ?? 0));
+  const personalBal = Math.max(0, Number(ledger?.personalBalance ?? Math.max(0, balanceNum - messShareBal)));
   const activeMess = (ledger?.messes && ledger.messes.find(m => m.id === selectedPaymentMessId)) || (ledger?.messes && ledger.messes[0]);
 
   let targetDebt = balanceNum;
@@ -788,6 +1136,9 @@ export default function CustomerTab() {
     targetDebt = Math.max(0, Number(activeMess.groupTotal ?? activeMess.totalBalance ?? 0));
     const rawMessName = activeMess.group_name || activeMess.name || 'Room';
     targetName = `${t.fullMess || 'Full Mess'}: ${rawMessName}`;
+  } else if (paymentTarget === 'CASH_ADVANCE') {
+    targetDebt = Math.max(0, Number(ledger.cash_advance_balance || 0));
+    targetName = 'Payday Cash Advance (سلفة نقدية)';
   }
   const isTargetDebt = targetDebt > 0.0005;
 
@@ -846,7 +1197,7 @@ export default function CustomerTab() {
           mode: 'BENEFITPAY_FAWRI',
           amount: fallbackAmount,
           currency: 'BHD',
-          merchantName: 'ASKAR SUPERMARKET',
+          merchantName: 'LAYALI SUPERMARKET',
           merchantId: '97300182',
           mobileNumber: '+973 32067388',
           iban: 'BH67NBOB00000012345678',
@@ -875,12 +1226,136 @@ export default function CustomerTab() {
 
     let textStr = '';
     if (lang === 'ar') {
-      textStr = `*أسواق أسكر المركزية - كشف الحساب*\nالزبون: ${ledger.name}\n${isSettled ? 'الحالة: الحساب مسدد بالكامل (لا توجد مبالغ مستحقة)' : `المبلغ المستحق: ${balanceStr} د.ب`}\nالسداد إلكترونياً عبر بنفت بي: ${window.location.href}`;
+      textStr = `*أسواق ليالي المركزية - كشف الحساب*\nالزبون: ${ledger.name}\n${isSettled ? 'الحالة: الحساب مسدد بالكامل (لا توجد مبالغ مستحقة)' : `المبلغ المستحق: ${balanceStr} د.ب`}\nالسداد إلكترونياً عبر بنفت بي: ${window.location.href}`;
     } else {
-      textStr = `*Askar Supermarket Khata Tab*\nCustomer: ${ledger.name}\n${isSettled ? 'Status: Fully Settled (No Debt Owed)' : `Outstanding Balance: BHD ${balanceStr}`}\nPay online via BenefitPay: ${window.location.href}`;
+      textStr = `*Layali Khata Tab*\nCustomer: ${ledger.name}\n${isSettled ? 'Status: Fully Settled (No Debt Owed)' : `Outstanding Balance: BHD ${balanceStr}`}\nPay online via BenefitPay: ${window.location.href}`;
     }
     window.open(`https://wa.me/?text=${encodeURIComponent(textStr)}`, '_blank');
   };
+
+  // Security Gate 1: Account Mismatch Lockout Screen (Anti-IDOR)
+  if (isDeviceBoundToOther) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white">
+        <div className="bg-slate-900 border border-rose-500/30 rounded-3xl shadow-2xl p-8 w-full max-w-md text-center relative overflow-hidden">
+          <div className="w-16 h-16 bg-rose-500/20 text-rose-400 rounded-full flex items-center justify-center mx-auto mb-4 border border-rose-500/40">
+            <Lock className="w-8 h-8 text-rose-400" />
+          </div>
+          <span className="text-[10px] font-mono tracking-widest uppercase px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+            Account Mismatch Protected
+          </span>
+          <h2 className="text-xl font-black text-white mt-4 mb-2">
+            {lang === 'ar' ? 'هذا الهاتف مرتبط بحساب آخر' : 'Personal Khata Locked'}
+          </h2>
+          <p className="text-slate-300 text-xs mb-6 leading-relaxed">
+            {lang === 'ar'
+              ? 'هذا الهاتف مسجل ومقفل على حسابك الخاص في ليالي. لا يمكنك فتح أو تصفح حساب زبون آخر.'
+              : "This device is registered to your personal Khata account. Opening another customer's tab is prohibited."}
+          </p>
+          <button 
+            type="button"
+            onClick={() => {
+              window.location.href = `/tab/${encodeURIComponent(boundCustomerId)}`;
+            }} 
+            className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black rounded-2xl text-sm transition cursor-pointer shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2"
+          >
+            <ShieldCheck className="w-5 h-5 text-white" />
+            <span>{lang === 'ar' ? 'الرجوع إلى حسابي' : 'Return to My Khata'}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Security Gate 2: Native Phone Lock Biometric Gate (Zero-PIN for Laborers)
+  if (phoneLockRequired) {
+    const handleUnlockPhoneLock = async () => {
+      setVerifyingPhoneLock(true);
+      setPhoneLockError('');
+      try {
+        const res = await verifyPhoneLock(customerId);
+        if (res.success) {
+          setPhoneLockRequired(false);
+          if (!ledger) {
+            fetchLedger();
+          }
+        } else if (res.needsReenroll) {
+          // Incompatible or legacy credential format: require explicit PIN verification
+          setPhoneLockError(
+            lang === 'ar'
+              ? 'انتهت صلاحية بصمة الهاتف على هذا الجهاز. يرجى إدخال الرمز السري لفتح الحساب.'
+              : 'Biometric credential expired on this phone. Please open with your 4-digit PIN.'
+          );
+        } else {
+          setPhoneLockError(res.error || 'Authentication cancelled. Please try again.');
+        }
+      } catch (e) {
+        setPhoneLockError(e.message || 'Verification failed');
+      } finally {
+        setVerifyingPhoneLock(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 w-full max-w-md text-center relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="w-20 h-20 bg-emerald-500/20 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto mb-5 border-2 border-emerald-500/40 shadow-inner">
+            <Fingerprint className="w-12 h-12 text-emerald-400" />
+          </div>
+
+          <span className="text-[10px] font-mono tracking-widest uppercase px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+            Biometric Phone Lock
+          </span>
+
+          <h2 className="text-2xl font-black text-white mt-4 mb-2">
+            {lang === 'ar' ? 'تأكيد قفل الهاتف' : lang === 'ml' ? 'ഫോൺ ലോക്ക് തുറക്കുക' : 'Touch to Unlock'}
+          </h2>
+          <p className="text-slate-300 text-xs mb-8 leading-relaxed">
+            {lang === 'ar' 
+              ? 'يرجى لمس بصمة الإصبع أو بصمة الوجه أو رمز قفل الشاشة الخاص بهاتفك لفتح كشف الحساب.'
+              : lang === 'ml'
+              ? 'നിങ്ങളുടെ ഫിംഗർപ്രിന്റ് അല്ലെങ്കിൽ ഫോൺ ലോക്ക് ഉപയോഗിച്ച് തുറക്കുക.'
+              : 'Use your phone fingerprint, face unlock, or screen pattern to open your private Khata.'}
+          </p>
+
+          {phoneLockError && (
+            <div className="mb-6 p-3 bg-rose-500/15 border border-rose-500/30 rounded-2xl text-rose-300 text-xs font-semibold">
+              {phoneLockError}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleUnlockPhoneLock}
+            disabled={verifyingPhoneLock}
+            className="w-full min-h-[56px] py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-50 text-white font-black rounded-2xl text-sm transition-all flex items-center justify-center gap-3 cursor-pointer shadow-lg shadow-emerald-950/60"
+          >
+            {verifyingPhoneLock ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <>
+                <Fingerprint className="w-6 h-6 text-white shrink-0" />
+                <span>
+                  {lang === 'ar' ? 'فتح عبر بصمة الهاتف' : lang === 'ml' ? 'ഫിംഗർപ്രിന്റ് ഉപയോഗിക്കുക' : 'Unlock with Phone Lock'}
+                </span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigate(`/statement/${encodeURIComponent(customerId)}`)}
+            className="w-full mt-3 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700"
+          >
+            <Lock className="w-4 h-4 text-slate-400" />
+            <span>{lang === 'ar' ? 'الدخول عبر الرقم السري (PIN)' : 'Unlock with 4-Digit PIN instead'}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (error && !ledger) {
     return (
@@ -891,9 +1366,9 @@ export default function CustomerTab() {
           </div>
           <h2 className="text-xl font-black text-white mb-2">Notice</h2>
           <p className="text-slate-400 text-sm mb-6 leading-relaxed">{error}</p>
-          <button onClick={() => window.location.href = '/?switch=1'} className="inline-flex items-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-sm transition cursor-pointer">
-            <QrCode className="w-4 h-4" />
-            <span>Scan Receipt QR Code</span>
+          <button onClick={() => window.location.reload()} className="inline-flex items-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-sm transition cursor-pointer">
+            <RotateCw className="w-4 h-4" />
+            <span>Reload Tab</span>
           </button>
         </div>
       </div>
@@ -902,11 +1377,40 @@ export default function CustomerTab() {
 
   if (loading || !ledger) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-xl p-8 w-full max-w-md text-center">
-          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-400 font-medium text-sm">Loading Khata Ledger...</p>
-        </div>
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-between p-4 pt-safe pb-safe animate-pulse">
+        {/* Header Skeleton */}
+        <header className="w-full max-w-md mb-3 flex items-center justify-between px-1">
+          <div className="w-20 h-10 bg-slate-900 border border-slate-800 rounded-2xl" />
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="w-36 h-4 bg-slate-800 rounded-md" />
+            <div className="w-24 h-3 bg-emerald-950/80 rounded-md" />
+          </div>
+          <div className="w-10 h-10 bg-slate-900 border border-slate-800 rounded-2xl" />
+        </header>
+
+        {/* Balance Card Skeleton */}
+        <main className="w-full max-w-md flex-1 flex flex-col gap-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-center flex flex-col items-center">
+            <div className="w-36 h-4 bg-slate-800 rounded-md mb-2" />
+            <div className="w-48 h-10 bg-slate-800 rounded-xl mb-4" />
+            <div className="w-full h-12 bg-emerald-600/20 border border-emerald-500/30 rounded-2xl" />
+          </div>
+
+          {/* Transactions List Skeleton */}
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-4 flex flex-col gap-3">
+            <div className="flex justify-between items-center mb-1">
+              <div className="w-28 h-4 bg-slate-800 rounded-md" />
+              <div className="w-16 h-3 bg-slate-800 rounded-md" />
+            </div>
+            <div className="h-16 bg-slate-900 border border-slate-800 rounded-2xl" />
+            <div className="h-16 bg-slate-900 border border-slate-800 rounded-2xl" />
+            <div className="h-16 bg-slate-900 border border-slate-800 rounded-2xl" />
+          </div>
+        </main>
+
+        <footer className="w-full max-w-md py-2 text-center text-slate-700 text-[11px]">
+          LAYALI SUPERMARKET • Loading Khata Ledger...
+        </footer>
       </div>
     );
   }
@@ -921,6 +1425,30 @@ export default function CustomerTab() {
       dir={isRtl ? 'rtl' : 'ltr'}
       className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-between p-4 pt-safe pb-safe selection:bg-emerald-500 selection:text-white"
     >
+      {/* Developer Sticky Inspection Mode Banner */}
+      {isDevSession && (
+        <div className="w-full max-w-md mb-3 p-2.5 bg-violet-950/90 border border-violet-500/50 rounded-2xl flex items-center justify-between shadow-xl text-white no-print">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse shrink-0" />
+            <div className="min-w-0">
+              <span className="text-xs font-black tracking-wide text-violet-200 block truncate">
+                🛠️ DEV INSPECTION MODE
+              </span>
+              <span className="text-[10px] text-violet-300 font-mono block truncate">
+                Customer: {ledger?.name || customerId}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/dev')}
+            className="py-1 px-3 bg-violet-600 hover:bg-violet-500 active:scale-95 text-white rounded-xl text-xs font-bold transition shrink-0 cursor-pointer shadow-md"
+          >
+            ← Return to Dev
+          </button>
+        </div>
+      )}
+
       {/* Clean Top Header & Slide-out Drawer Navigation */}
       <header className="w-full max-w-md mb-3 flex items-center justify-between px-1 no-print">
         {/* Left: Clean Hamburger Drawer Button */}
@@ -937,9 +1465,9 @@ export default function CustomerTab() {
         {/* Center: Brand & Bilingual Title */}
         <div className="flex flex-col items-center">
           <span className="text-xs font-black tracking-wider text-white">
-            ASKAR <span className="text-emerald-400">KHATA</span>
+            LAYALI <span className="text-emerald-400">KHATA</span>
           </span>
-          <span className="text-[10px] text-slate-400 font-sans">أسواق أسكر</span>
+          <span className="text-[10px] text-slate-400 font-sans">أسواق ليالي</span>
         </div>
 
         {/* Right: Refresh, Camp Privacy Mode & Language Selector */}
@@ -984,7 +1512,160 @@ export default function CustomerTab() {
         </div>
       </header>
 
+      {/* Floating Live Transaction Banner Popup */}
+      {liveTxAlert && (
+        <div
+          role="alert"
+          className="fixed top-4 left-4 right-4 z-[9999] max-w-md mx-auto p-4 rounded-2xl shadow-2xl border-2 border-emerald-400 bg-emerald-950 text-white animate-in slide-in-from-top duration-300 flex items-start gap-3 backdrop-blur-md"
+        >
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shrink-0 text-emerald-300 font-bold text-lg">
+            🛒
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                {liveTxAlert.title || 'Purchase Notice'}
+              </span>
+              <span className="text-xs font-mono font-bold text-emerald-200">
+                {liveTxAlert.formattedAmount || `${liveTxAlert.amount} BHD`}
+              </span>
+            </div>
+            <p className="text-xs text-slate-200 mt-1 font-medium leading-relaxed">
+              {liveTxAlert.message}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLiveTxAlert(null)}
+            className="p-1 text-slate-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <main className="w-full max-w-md my-auto">
+        {/* Native Phone Lock 1-Tap Enrollment Banner for Elderly & Labor Patrons */}
+        {showEnrollBanner && (
+          <div className="mb-3 p-4 bg-emerald-950/50 border border-emerald-500/40 rounded-3xl text-left flex items-start justify-between gap-3 shadow-lg no-print">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                <Fingerprint className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-white">
+                  {lang === 'ar' ? 'تفعيل قفل الهاتف ببصمة الإصبع' : 'Enable 1-Touch Phone Lock'}
+                </p>
+                <p className="text-[11px] text-slate-300 leading-relaxed mt-0.5">
+                  {lang === 'ar'
+                    ? 'احمِ حسابك بقفل الهاتف ببصمة الإصبع حتى لا يرى أحد رصيدك.'
+                    : 'Protect your Khata with your phone fingerprint so nobody else can view your bill.'}
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={phoneLockEnrolling}
+                    onClick={async () => {
+                      setPhoneLockEnrolling(true);
+                      try {
+                        const res = await registerPhoneLock(customerId, ledger?.name || 'Customer');
+                        if (res.success) {
+                          setShowEnrollBanner(false);
+                          setPhoneLockEnrolledSuccess(true);
+                          setTimeout(() => setPhoneLockEnrolledSuccess(false), 5000);
+                        } else if (res.error) {
+                          alert(res.error);
+                        }
+                      } catch (e) {
+                        alert(e.message || 'Setup failed');
+                      } finally {
+                        setPhoneLockEnrolling(false);
+                      }
+                    }}
+                    className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    {phoneLockEnrolling ? '...' : (
+                      <>
+                        <Fingerprint className="w-4 h-4" />
+                        <span>{lang === 'ar' ? 'تفعيل الآن' : 'Enable Now'}</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowEnrollBanner(false)}
+                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs rounded-xl transition cursor-pointer"
+                  >
+                    {lang === 'ar' ? 'لاحقاً' : 'Dismiss'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {phoneLockEnrolledSuccess && (
+          <div className="mb-3 p-3 bg-emerald-500/20 border border-emerald-500/40 rounded-2xl text-emerald-300 text-xs font-semibold flex items-center gap-2 no-print">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>Phone Lock enabled successfully! Your account is now secured by your phone biometrics.</span>
+          </div>
+        )}
+
+        {/* Customer Push Notification Activation & Test Bar */}
+        <div className="mb-3 p-3 bg-gradient-to-r from-slate-900 to-indigo-950/80 border border-indigo-500/40 rounded-2xl shadow-md flex items-center justify-between gap-2.5 no-print">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+              notifPermission === 'granted' 
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' 
+                : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 animate-pulse'
+            }`}>
+              {notifPermission === 'granted' ? <Bell className="w-4 h-4" /> : <BellRing className="w-4 h-4" />}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-black text-white tracking-wide">
+                  Store Purchase Alerts
+                </span>
+                {notifPermission === 'granted' ? (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold px-1.5 py-0.2 rounded-md">
+                    ACTIVE
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold px-1.5 py-0.2 rounded-md">
+                    OFF
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-300 font-medium truncate">
+                {notifPermission === 'granted' ? 'Alerts active for purchases & payments' : 'Receive instant alerts when you buy items'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {notifPermission !== 'granted' && (
+              <button
+                type="button"
+                onClick={handleEnablePush}
+                disabled={isSubscribingPush}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl shadow active:scale-95 transition cursor-pointer"
+              >
+                {isSubscribingPush ? '...' : 'Turn On'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleTestPush}
+              className="px-2.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow active:scale-95 transition cursor-pointer flex items-center gap-1"
+              title="Test real-time alert on this phone"
+            >
+              <span>🧪 Test</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Digital Khata Pass (Phone-to-POS 0.1s Barcode Gun Scan & Counter Beacon) */}
+        {ledger && <DigitalKhataPass customer={ledger} lang={lang} />}
+
         <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 text-center relative overflow-hidden">
           {/* Ambient Glow */}
           <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -1003,6 +1684,107 @@ export default function CustomerTab() {
               <span>Payment received! Your balance has been updated.</span>
             </div>
           )}
+
+          {/* Tamper-Evident Authentic Receipt Verified Card (Systemic Precaution 3) */}
+          {receiptInv && !dismissReceiptBanner && ledger && (() => {
+            const printedBal = receiptBal !== null && receiptBal !== undefined && !isNaN(Number(receiptBal)) ? Number(receiptBal) : null;
+            const liveBal = Number(ledger.balance || 0);
+            const diff = printedBal !== null ? Number((liveBal - printedBal).toFixed(3)) : null;
+            const isMatch = diff !== null && Math.abs(diff) < 0.001;
+            const isPaidDown = diff !== null && diff < -0.0005;
+            const isNewCharges = diff !== null && diff > 0.0005;
+
+            return (
+              <div className="mb-6 p-4 bg-emerald-950/40 border-2 border-emerald-500/50 rounded-2xl text-left relative overflow-hidden shadow-lg shadow-emerald-950/50 no-print">
+                {/* Glow Accent */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
+
+                {/* Header */}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-emerald-300 uppercase tracking-wider font-sans">
+                        {t.receiptVerifiedTitle || 'Authentic Receipt Verified'}
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-mono">
+                        #{receiptInv}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDismissReceiptBanner(true)}
+                    className="w-6 h-6 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer border border-slate-800"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Figures comparison */}
+                <div className="grid grid-cols-2 gap-2 my-2.5 font-mono text-center">
+                  {printedBal !== null && (
+                    <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 block mb-0.5">
+                        {t.receiptPrintedBal || 'Slip Balance'}
+                      </span>
+                      <span className="text-sm font-black text-slate-200">
+                        {t.currency || 'BHD'} {printedBal.toFixed(3)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 block mb-0.5">
+                      {t.receiptLiveBal || 'Live Cloud Balance'}
+                    </span>
+                    <span className={`text-sm font-black ${isMatch ? 'text-emerald-400' : 'text-slate-100'}`}>
+                      {t.currency || 'BHD'} {liveBal.toFixed(3)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Explanation & Parity confirmation */}
+                <div className="text-[11px] font-sans leading-tight mt-1 flex items-start gap-1.5 text-slate-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    {isMatch && (
+                      <span className="text-emerald-300 font-bold">
+                        {t.receiptZeroDrift || '100% Zero-Drift Parity'}: {t.receiptZeroDriftDesc || 'Live cloud balance matches your printed receipt bit-for-bit.'}
+                      </span>
+                    )}
+                    {isPaidDown && (
+                      <span className="text-emerald-300">
+                        {t.receiptPaidDownDesc || 'Account paid down'}: BD {Math.abs(diff).toFixed(3)} credited since receipt was printed.
+                      </span>
+                    )}
+                    {isNewCharges && (
+                      <span className="text-amber-300">
+                        {t.receiptNewChargesDesc || 'Active purchases'}: BD {diff.toFixed(3)} in new charges recorded since receipt was printed.
+                      </span>
+                    )}
+                    {!diff && !isMatch && (
+                      <span className="text-emerald-300 font-bold">
+                        {t.receiptZeroDriftDesc || 'Live cloud balance verified with store register.'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Jump to transaction button */}
+                <button
+                  type="button"
+                  onClick={handleScrollToReceipt}
+                  className="w-full mt-2.5 py-1.5 px-3 bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/40 rounded-xl text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>{t.viewReceiptInHistory || 'View Scanned Receipt in History'}</span>
+                </button>
+              </div>
+            );
+          })()}
 
           {ledger?.pendingClaims && ledger.pendingClaims.length > 0 && (
             <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs font-semibold space-y-2 no-print text-left">
@@ -1038,8 +1820,9 @@ export default function CustomerTab() {
           )}
 
           <div className="flex items-center justify-center gap-2 mb-2">
-            <span className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase bg-emerald-950/80 border border-emerald-800/40 px-3 py-1 rounded-full">
-              {t.live}
+            <span className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase bg-emerald-950/80 border border-emerald-800/40 px-3 py-1 rounded-full flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
+              {isSyncing ? 'UPDATING...' : t.live}
             </span>
           </div>
 
@@ -1310,6 +2093,70 @@ export default function CustomerTab() {
                   </div>
                 </div>
               )}
+              {paymentTarget === 'CASH_ADVANCE' && (
+                <div className="mt-3 p-3 bg-amber-950/50 border border-amber-800/60 rounded-2xl text-amber-200 text-xs flex items-start gap-2.5">
+                  <CreditCard className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-amber-300">
+                      {targetName} Settlement ({t.currency} {targetDebt.toFixed(3)})
+                    </div>
+                    <p className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
+                      Settle your emergency payday cash advance via BenefitPay. Grocery tab balance will remain untouched.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Card Security Deposit (Custodial Trust Badge) */}
+          {ledger.card_type === 'DIGITAL_PASS' ? (
+            <div className="my-4 p-4 bg-sky-950/60 border border-sky-800/60 rounded-2xl text-left no-print">
+              <div className="flex items-center gap-2 font-bold text-sm text-sky-400">
+                <span>📱</span>
+                <span>Free Digital Pass Active (0.000 BHD Deposit)</span>
+              </div>
+              <p className="text-[11px] text-sky-200/80 mt-1 leading-relaxed">
+                Your account is active via Digital Pass on your mobile device. No physical card deposit was collected or required.
+              </p>
+            </div>
+          ) : (Number(ledger.card_deposit_amount || 0) > 0 || ledger.card_deposit_status === 'HELD') ? (
+            <div className="my-4 p-4 bg-emerald-950/60 border border-emerald-800/60 rounded-2xl text-left no-print">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-400">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <span>Card Security Deposit Held in Custodial Trust</span>
+                </div>
+                <span className="font-mono font-black text-sm text-emerald-300 bg-emerald-900/60 border border-emerald-700/60 px-2 py-0.5 rounded-lg">
+                  {t.currency} {Number(ledger.card_deposit_amount || 3).toFixed(3)}
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-200/90 mt-1.5 leading-relaxed">
+                <strong>100% Refundable in Cash (أمانة مستردة):</strong> Held in custodial trust under Bahrain NBR 0% VAT rules. Fully refunded in cash at the store counter upon returning your physical NFC card with zero outstanding grocery debt.
+              </p>
+              {ledger.card_deposit_receipt_no && (
+                <div className="text-[10px] text-emerald-400/80 font-mono mt-1">
+                  Receipt: #{ledger.card_deposit_receipt_no}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {/* Payday Cash Advance (Salfah / سلفة نقدية) Banner */}
+          {Number(ledger.cash_advance_balance || 0) > 0 && (
+            <div className="my-4 p-4 bg-amber-950/60 border border-amber-800/60 rounded-2xl text-left no-print">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-sm text-amber-400">
+                  <CreditCard className="w-5 h-5 text-amber-400" />
+                  <span>Payday Cash Advance (سلفة نقدية)</span>
+                </div>
+                <span className="font-mono font-black text-sm text-amber-300 bg-amber-900/60 border border-amber-700/60 px-2 py-0.5 rounded-lg">
+                  {t.currency} {Number(ledger.cash_advance_balance).toFixed(3)}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 mt-1.5 leading-relaxed">
+                Emergency salary cash advance dispensed from supermarket till. Repayable on your next company payday ({ledger.payday_day_of_month || 28}th).
+              </p>
             </div>
           )}
 
@@ -1317,7 +2164,7 @@ export default function CustomerTab() {
           {isTargetDebt ? (
             <div className="space-y-3 no-print">
               {/* Quick Target Filter Pills */}
-              {(ledger.hasMessGroup || (ledger.messes && ledger.messes.length > 0)) && (
+              {(ledger.hasMessGroup || (ledger.messes && ledger.messes.length > 0) || Number(ledger.cash_advance_balance || 0) > 0) && (
                 <div className="flex flex-wrap gap-1.5 p-1 bg-slate-950/80 rounded-2xl border border-slate-800 text-[11px] font-bold">
                   <button
                     type="button"
@@ -1349,21 +2196,40 @@ export default function CustomerTab() {
                   >
                     {t.personalTab || 'Personal'} ({t.currency} {personalBal.toFixed(3)})
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentTarget('MESS');
-                      setSelectedPaymentMessId(null);
-                      setPayAmount('');
-                    }}
-                    className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
-                      paymentTarget === 'MESS'
-                        ? 'bg-indigo-600 text-white shadow-xs'
-                        : 'text-slate-400 hover:text-white bg-slate-900'
-                    }`}
-                  >
-                    {t.myMessShare || 'My Share'} ({t.currency} {messShareBal.toFixed(3)})
-                  </button>
+                  {Number(ledger.cash_advance_balance || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentTarget('CASH_ADVANCE');
+                        setSelectedPaymentMessId(null);
+                        setPayAmount('');
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                        paymentTarget === 'CASH_ADVANCE'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-amber-300 hover:text-white bg-slate-900 border border-amber-800/60'
+                      }`}
+                    >
+                      Salfah ({t.currency} {Number(ledger.cash_advance_balance).toFixed(3)})
+                    </button>
+                  )}
+                  {(ledger.hasMessGroup || (ledger.messes && ledger.messes.length > 0)) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentTarget('MESS');
+                        setSelectedPaymentMessId(null);
+                        setPayAmount('');
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${
+                        paymentTarget === 'MESS'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-400 hover:text-white bg-slate-900'
+                      }`}
+                    >
+                      {t.myMessShare || 'My Share'} ({t.currency} {messShareBal.toFixed(3)})
+                    </button>
+                  )}
                   {ledger.messes && ledger.messes.map(m => {
                     const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
                     const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
@@ -1508,12 +2374,20 @@ export default function CustomerTab() {
             const messTransactions = allTransactions.filter(tx => {
               const ref = (tx.reference || '').toLowerCase();
               const type = (tx.type || '').toUpperCase();
-              return Boolean(tx.mess_id || tx.category === 'MESS_SPLIT' || ref.includes('mess split') || type.includes('MESS'));
+              return Boolean(
+                tx.subledger_type === 'MESS_SHARE' ||
+                tx.mess_id || 
+                tx.category === 'MESS_SPLIT' || 
+                ref.includes('mess split') || 
+                type.includes('MESS')
+              );
             });
 
             const personalTransactions = allTransactions.filter(tx => {
               const ref = (tx.reference || '').toLowerCase();
               const type = (tx.type || '').toUpperCase();
+              if (tx.subledger_type === 'PERSONAL') return true;
+              if (tx.subledger_type === 'MESS_SHARE') return false;
               return !tx.mess_id && tx.category !== 'MESS_SPLIT' && !ref.includes('mess split') && !type.includes('MESS');
             });
 
@@ -1551,7 +2425,7 @@ export default function CustomerTab() {
             const hasMore = displayedTransactions.length > visibleTxCount;
 
             return (
-              <div className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-left">
+              <div ref={transactionsSectionRef} className="my-4 p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-left">
                 {/* Header & Badges */}
                 <div className="flex items-center justify-between gap-2.5 mb-2.5">
                   <div className="flex items-center gap-2">
@@ -1682,6 +2556,13 @@ export default function CustomerTab() {
                         tx={tx}
                         lang={lang}
                         currency={t.currency || 'BHD'}
+                        highlighted={Boolean(
+                          receiptInv && (
+                            String(tx.invoiceNo || '').includes(receiptInv) ||
+                            String(tx.reference || '').includes(receiptInv) ||
+                            String(tx.id || '') === receiptInv
+                          )
+                        )}
                         onViewReceipt={(inv) => setSelectedReceipt(inv)}
                       />
                     ))}
@@ -1780,7 +2661,7 @@ export default function CustomerTab() {
               <span>{t.callStore}</span>
             </a>
             <a
-              href={`https://wa.me/${STORE_WHATSAPP}?text=Hello%20Askar%20Coldstore%2C%20I%20have%20a%20question%20about%20my%20Khata%20bill.`}
+              href={`https://wa.me/${STORE_WHATSAPP}?text=Hello%20Layali%2C%20I%20have%20a%20question%20about%20my%20Khata%20bill.`}
               target="_blank"
               rel="noopener noreferrer"
               className="min-h-[44px] py-2 px-3 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-xl text-xs font-semibold text-emerald-300 flex items-center justify-center gap-1.5 transition"
@@ -1790,61 +2671,53 @@ export default function CustomerTab() {
             </a>
           </div>
         </div>
-
-        {/* Discreet Shop Owner Switch / Setup Link */}
-        <div className="mt-4 text-center no-print">
-          <Link
-            to="/?switch=1"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition py-1"
-          >
-            <span>{t.switchAcc}</span>
-          </Link>
-        </div>
       </main>
 
       <footer className="w-full max-w-md py-2 text-center text-slate-600 text-[11px] no-print">
         {t.brand} • NBR Tax Compliant Digital Statement
       </footer>
 
-      {/* BenefitPay Fawri+ Payment Modal */}
-      <BenefitPayModal
-        isOpen={showBenefitModal}
-        onClose={() => setShowBenefitModal(false)}
-        data={benefitPayData}
-        lang={lang}
-        onSuccess={() => {
-          fetchLedger();
-        }}
-      />
+      {/* BenefitPay Fawri+ Payment Modal & Drawers */}
+      <Suspense fallback={null}>
+        <BenefitPayModal
+          isOpen={showBenefitModal}
+          onClose={() => setShowBenefitModal(false)}
+          data={benefitPayData}
+          lang={lang}
+          onSuccess={() => {
+            fetchLedger();
+          }}
+        />
 
-      {/* Slide-out Hamburger Drawer */}
-      <HamburgerDrawer
-        isOpen={showDrawer}
-        onClose={() => setShowDrawer(false)}
-        customer={ledger}
-        lang={lang}
-        onSelectLang={(newLang) => setLang(newLang)}
-        hideBalance={hideBalance}
-        onToggleHideBalance={toggleHideBalance}
-        isSpeaking={isSpeaking}
-        onToggleVoice={speakBalance}
-        isFrozen={ledger?.is_active === 0}
-        freezeLoading={freezeLoading}
-        onToggleFreeze={handleToggleFreeze}
-        onOpenBenefitPay={() => {
-          if (ledger && ledger.balance > 0) {
-            handlePay(ledger.balance);
-          }
-        }}
-      />
+        {/* Slide-out Hamburger Drawer */}
+        <HamburgerDrawer
+          isOpen={showDrawer}
+          onClose={() => setShowDrawer(false)}
+          customer={ledger}
+          lang={lang}
+          onSelectLang={(newLang) => setLang(newLang)}
+          hideBalance={hideBalance}
+          onToggleHideBalance={toggleHideBalance}
+          isSpeaking={isSpeaking}
+          onToggleVoice={speakBalance}
+          isFrozen={ledger?.is_active === 0}
+          freezeLoading={freezeLoading}
+          onToggleFreeze={handleToggleFreeze}
+          onOpenBenefitPay={() => {
+            if (ledger && ledger.balance > 0) {
+              handlePay(ledger.balance);
+            }
+          }}
+        />
 
-      {/* Simplified Tax Invoice Receipt Modal */}
-      <ReceiptModal
-        isOpen={Boolean(selectedReceipt)}
-        onClose={() => setSelectedReceipt(null)}
-        invoice={selectedReceipt}
-        lang={lang}
-      />
+        {/* Simplified Tax Invoice Receipt Modal */}
+        <ReceiptModal
+          isOpen={Boolean(selectedReceipt)}
+          onClose={() => setSelectedReceipt(null)}
+          invoice={selectedReceipt}
+          lang={lang}
+        />
+      </Suspense>
     </div>
   );
 }

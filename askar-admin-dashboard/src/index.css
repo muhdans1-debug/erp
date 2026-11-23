@@ -12,3 +12,24 @@ body {
   color: #0f172a;
   min-height: 100vh;
 }
+
+/* Sidebar Smooth Scrollbar Utility */
+.custom-sidebar-scroll {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0f172a;
+}
+.custom-sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}

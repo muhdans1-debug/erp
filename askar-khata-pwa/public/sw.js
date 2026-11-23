@@ -1,5 +1,5 @@
-// Askar Khata PWA Offline Service Worker (Hardened v7 - Zero-Drift Real-time Balance & Itemized Reconciled Ledger)
-const CACHE_NAME = 'askar-khata-v7';
+// Askar Khata PWA Offline Service Worker (Hardened v22 - WebAuthn allowCredentials Fix)
+const CACHE_NAME = 'askar-khata-v22';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -54,20 +54,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first strategy with cache fallback & cache update for HTML navigation (Resolved PWA-R4-07)
+  // Stale-While-Revalidate with Instant Cache Return for HTML Navigation (Zero-Wait App Launch)
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const copy = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
-          }
-          return networkResponse;
-        })
-        .catch(() => {
-          return caches.match('/index.html').then((r) => r || caches.match('/'));
-        })
+      caches.match('/index.html').then((cachedResponse) => {
+        const networkFetch = fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const copy = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedResponse);
+
+        // Instant launch from cache (< 50ms), fallback to network on first visit
+        return cachedResponse || networkFetch;
+      })
     );
     return;
   }
@@ -80,6 +83,13 @@ self.addEventListener('fetch', (event) => {
       }
       return fetch(event.request)
         .then((networkResponse) => {
+          const contentType = networkResponse.headers?.get('content-type') || '';
+          const isAsset = url.pathname.startsWith('/assets/');
+          // Stale asset defense: never cache HTML masquerading as CSS or JS
+          if (isAsset && contentType.includes('text/html')) {
+            return new Response('Asset Not Found', { status: 404, statusText: 'Not Found' });
+          }
+
           // Cache successful responses or opaque CDN responses (status 0 or 200)
           if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
             const responseToCache = networkResponse.clone();
@@ -93,6 +103,100 @@ self.addEventListener('fetch', (event) => {
           // Graceful offline fallback for uncached assets
           return new Response('', { status: 408, statusText: 'Offline Resource Unavailable' });
         });
+    })
+  );
+});
+
+// --- PWA Background Push Notification Handler with Strict Anti-Loop De-duplication ---
+const recentPushEvents = new Map();
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    try {
+      data = { title: 'Layali Supermarket Notice', message: event.data ? event.data.text() : 'New transaction recorded' };
+    } catch (_) {}
+  }
+
+  // Guard: Never display 0.000 BHD phantom sales
+  const amt = Number(data.amount || 0);
+  if (amt <= 0 && (!data.txType || data.txType === 'SALE')) {
+    console.log('[SW] Ignoring zero-amount transaction push');
+    return;
+  }
+
+  const notifTag = data.id || (data.invoiceNo ? `askar-inv-${data.invoiceNo}` : `askar-tx-${data.amount || '0'}`);
+  const lastSeen = recentPushEvents.get(notifTag);
+  if (lastSeen && (Date.now() - lastSeen) < 60000) {
+    console.log('[SW] Duplicate push event suppressed for tag:', notifTag);
+    return;
+  }
+  recentPushEvents.set(notifTag, Date.now());
+  if (recentPushEvents.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of recentPushEvents.entries()) {
+      if (now - v > 120000) recentPushEvents.delete(k);
+    }
+  }
+
+  const title = data.title || 'Layali Supermarket • Purchase Notice';
+  const body = data.message || (data.amount ? `Total: ${data.amount} BHD` : 'New transaction recorded');
+  const options = {
+    body: body,
+    icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png',
+    vibrate: [150, 75, 150],
+    data: data,
+    tag: notifTag,
+    renotify: true,
+    requireInteraction: false
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options).then(() => {
+      return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'PUSH_TRANSACTION_NOTIFICATION',
+            payload: {
+              ...data,
+              id: notifTag,
+              title,
+              message: body
+            }
+          });
+        });
+      });
+    })
+  );
+});
+
+// Handle clicking on notification -> focus or open customer tab
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const data = event.notification.data || {};
+  const targetUrl = data.url 
+    ? data.url 
+    : (data.customerId && data.customerId !== 'ALL')
+      ? `/tab/${data.customerId}`
+      : '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          if ('navigate' in client && targetUrl) {
+            client.navigate(targetUrl);
+          }
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
     })
   );
 });

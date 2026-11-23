@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Askar Supermarket — Customer Khata",
-  "short_name": "Askar Khata",
-  "description": "Official digital grocery credit ledger and BenefitPay settlement portal for Askar Supermarket patrons.",
+  "name": "Layali — Customer Khata",
+  "short_name": "Layali",
+  "description": "Official digital grocery credit ledger and BenefitPay settlement portal for Layali patrons.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -45,7 +45,7 @@
     {
       "name": "Scan Receipt QR",
       "short_name": "Scan QR",
-      "description": "Scan Askar Supermarket receipt QR code to view live bill",
+      "description": "Scan Layali receipt QR code to view live bill",
       "url": "/?action=scan",
       "icons": [
         {

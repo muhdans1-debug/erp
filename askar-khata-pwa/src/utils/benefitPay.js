@@ -126,8 +126,8 @@ export const generateBenefitPayPayload = (amount, invoiceNo, customConfig, forma
   emv += formatEMVCoTag('58', 'BH');
 
   // 8. Tag 59: Merchant Name (Clean ASCII max 25 chars for EMVCo TLV safety)
-  const rawName = (config.merchantName || 'ASKAR SUPERMARKET').trim();
-  const safeName = rawName.replace(/[^\x20-\x7E]/g, '').trim() || 'ASKAR SUPERMARKET';
+  const rawName = (config.merchantName || 'LAYALI SUPERMARKET').trim();
+  const safeName = rawName.replace(/[^\x20-\x7E]/g, '').trim() || 'LAYALI SUPERMARKET';
   emv += formatEMVCoTag('59', safeName.slice(0, 25));
 
   // 9. Tag 60: Merchant City (Max 15 chars)

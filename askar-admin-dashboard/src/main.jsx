@@ -48,9 +48,16 @@ if (typeof window !== 'undefined' && window.fetch) {
   };
 }
 
+const getBasename = () => {
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+    return '/admin';
+  }
+  return '/';
+};
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
+    <BrowserRouter basename={getBasename()}>
       <App />
     </BrowserRouter>
   </StrictMode>,

@@ -1,6 +1,7 @@
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { X, Printer, Share2, Store, CheckCircle2, ShieldCheck, Calendar, Clock, User, Hash } from 'lucide-react';
+import { generateNbrTlvBase64 } from '../utils/nbrQr';
 
 export default function ReceiptModal({ isOpen, onClose, invoice, lang = 'en' }) {
   if (!isOpen || !invoice) return null;
@@ -35,15 +36,13 @@ export default function ReceiptModal({ isOpen, onClose, invoice, lang = 'en' }) 
     formattedDate = dateStr;
   }
 
-  // Generate compliant QR payload for simplified tax invoices
-  const qrPayload = JSON.stringify({
-    seller: 'Askar Supermarket W.L.L.',
-    cr: '12345-1',
-    vat: '200000000000002',
-    invoice: invoiceNo,
-    total: total.toFixed(3),
-    vat: vat.toFixed(3),
-    time: dateStr
+  // Generate compliant Bahrain NBR Article 53 TLV Base64 payload for simplified tax invoices
+  const qrPayload = generateNbrTlvBase64({
+    sellerName: 'Layali Supermarket W.L.L.',
+    vatNumber: '200000000000002',
+    timestamp: dateStr,
+    total,
+    vatAmount: vat
   });
 
   const handlePrint = () => {
@@ -56,7 +55,7 @@ export default function ReceiptModal({ isOpen, onClose, invoice, lang = 'en' }) 
     ).join('\n');
 
     const message = 
-      `🧾 *ASKAR SUPERMARKET - TAX RECEIPT*\n` +
+      `🧾 *LAYALI SUPERMARKET - TAX RECEIPT*\n` +
       `فاتورة ضريبية مبسطة\n` +
       `--------------------------------\n` +
       `*Invoice #:* ${invoiceNo}\n` +
@@ -119,8 +118,8 @@ export default function ReceiptModal({ isOpen, onClose, invoice, lang = 'en' }) 
         <div id="printable-tax-receipt" className="p-5 sm:p-6 text-slate-200 text-xs font-sans space-y-4 max-h-[75vh] overflow-y-auto">
           {/* Supermarket Header */}
           <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-700">
-            <h2 className="text-base font-black text-white tracking-wider">ASKAR SUPERMARKET</h2>
-            <h3 className="text-sm font-bold text-emerald-400 font-sans">أسواق أسكر المركزية</h3>
+            <h2 className="text-base font-black text-white tracking-wider">LAYALI SUPERMARKET</h2>
+            <h3 className="text-sm font-bold text-emerald-400 font-sans">أسواق ليالي المركزية</h3>
             <p className="text-[10px] text-slate-400">Block 951, Askar, Kingdom of Bahrain</p>
             <p className="text-[10px] text-slate-400 font-mono">Tel: +973 17700000 • CR: 12345-1</p>
             <div className="inline-block mt-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[10px] font-mono font-bold text-emerald-400">
@@ -224,7 +223,7 @@ export default function ReceiptModal({ isOpen, onClose, invoice, lang = 'en' }) 
               Simplified Tax Invoice • National Bureau for Revenue (NBR) Compliant
             </p>
             <p className="text-[9px] text-slate-500 font-mono">
-              Thank you for choosing Askar Supermarket!
+              Thank you for choosing Layali Supermarket!
             </p>
           </div>
         </div>

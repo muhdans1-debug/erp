@@ -4,18 +4,34 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
+import * as webpush from 'web-push';
 import { generateBenefitPayPayload, DEFAULT_BENEFIT_CONFIG } from '../src/utils/benefitPay.js';
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BI8Eq38iCOIJsM7DUXQBzugeTNmPX3AXJ0zLZiMeuwgXHhNsAo3Vry76qm5pA7y6O5nRQxo_-Cd2cPQeRGnd9OI';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '0IKrFhGoR9n5UK9gcJl1pdYWYOt6nzLwgsvyukORF1c';
+
+if (webpush) {
+  try {
+    webpush.setVapidDetails(
+      'mailto:support@askar-supermarket.com',
+      VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY
+    );
+  } catch (err) {
+    console.warn('VAPID initialization notice:', err.message);
+  }
+}
 
 // 1. Native .env loader for Node 20+ standalone execution
 try {
   process.loadEnvFile?.();
-} catch {}
+} catch { }
 try {
   process.loadEnvFile?.('pos-mvp/.env');
-} catch {}
+} catch { }
 try {
   process.loadEnvFile?.('askar-khata-pwa/.env');
-} catch {}
+} catch { }
 
 const fastify = Fastify({ logger: true });
 
@@ -40,7 +56,7 @@ fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, bo
 // 3. CORS Support strictly restricted to trusted production domains and local/private subnets (Resolved PWA-SEC-01)
 fastify.addHook('onRequest', async (request, reply) => {
   const origin = request.headers.origin || '';
-  const isAllowed = !origin || 
+  const isAllowed = !origin ||
     origin === 'https://askar-khata-pwa.vercel.app' ||
     origin.endsWith('.askar-khata-pwa.vercel.app') ||
     /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
@@ -69,8 +85,8 @@ if (!JWT_SECRET) {
 
 // Fallback to serverless-writable directory if local
 const fallbackDbPath = process.env.VERCEL ? 'file:/tmp/local_replica.db' : 'file:pos-mvp/local.db';
-const dbTargetUrl = process.env.VERCEL 
-  ? tursoUrl 
+const dbTargetUrl = process.env.VERCEL
+  ? tursoUrl
   : (fs.existsSync('pos-mvp/local.db') ? 'file:pos-mvp/local.db' : tursoUrl);
 
 const rawClient = createClient({
@@ -81,8 +97,172 @@ const rawClient = createClient({
 const db = {
   async execute(query) {
     return await rawClient.execute(query);
+  },
+  async batch(queries, mode = 'write') {
+    if (typeof rawClient.batch === 'function') {
+      return await rawClient.batch(queries, mode);
+    }
+    const results = [];
+    for (const q of queries) {
+      results.push(await rawClient.execute(q));
+    }
+    return results;
   }
 };
+
+// --- Push Notification Endpoints (Vercel & POS Interop) ---
+fastify.get('/api/notifications/vapid-public-key', async () => {
+  return { publicKey: VAPID_PUBLIC_KEY };
+});
+
+fastify.post('/api/notifications/subscribe', async (request, reply) => {
+  try {
+    const { endpoint, keys, customerId, customerName } = request.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return reply.status(400).send({ error: 'Invalid subscription payload' });
+    }
+
+    const subId = `sub_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    await db.execute({
+      sql: `INSERT INTO PushSubscription (id, customerId, customerName, endpoint, p256dh, auth, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(endpoint) DO UPDATE SET
+              customerId = excluded.customerId,
+              customerName = excluded.customerName,
+              p256dh = excluded.p256dh,
+              auth = excluded.auth,
+              updatedAt = datetime('now')`,
+      args: [subId, customerId || null, customerName || null, endpoint, keys.p256dh, keys.auth]
+    });
+
+    return { success: true, message: 'Push subscription stored successfully' };
+  } catch (err) {
+    return reply.status(500).send({ error: 'Failed to save subscription', details: err?.message });
+  }
+});
+
+// Deduplication cache to prevent continuous push loops across retries/background workers
+const recentlyDispatchedPushes = new Map();
+
+async function dispatchNotificationInternal(tx) {
+  if (!webpush) {
+    return { success: false, error: 'Push service not loaded' };
+  }
+
+  try {
+    webpush.setVapidDetails(
+      'mailto:pos@layali-supermarket.com',
+      process.env.VAPID_PUBLIC_KEY || VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY || VAPID_PRIVATE_KEY
+    );
+  } catch (_) {}
+
+  // Guard 1: Ignore zero-amount phantom sales
+  const txAmount = Number(tx.amount || 0);
+  if (txAmount <= 0 && (!tx.txType || tx.txType === 'SALE')) {
+    console.log('[Push Hub] Ignoring 0.000 BHD transaction push notice');
+    return { success: true, ignored: true, message: 'Zero-amount sales do not trigger customer push notifications' };
+  }
+
+  const dedupKey = tx.id || (tx.invoiceNo ? `sale_${tx.invoiceNo}` : null);
+  if (dedupKey) {
+    const lastDispatched = recentlyDispatchedPushes.get(dedupKey);
+    if (lastDispatched && (Date.now() - lastDispatched) < 90000) {
+      console.log(`[Push Hub] Deduplicating repeated dispatch request for ${dedupKey}`);
+      return { success: true, duplicated: true, message: 'Deduplicated: already sent within 90s' };
+    }
+    recentlyDispatchedPushes.set(dedupKey, Date.now());
+    if (recentlyDispatchedPushes.size > 2000) {
+      const now = Date.now();
+      for (const [k, v] of recentlyDispatchedPushes.entries()) {
+        if (now - v > 300000) recentlyDispatchedPushes.delete(k);
+      }
+    }
+  }
+
+  // Guard 2: Strict Customer Targeting: Never broadcast unassigned/anonymous walk-in sales to customer devices
+  const targetCustId = (tx.customerId && String(tx.customerId).trim() !== 'null' && String(tx.customerId).trim() !== 'undefined') ? String(tx.customerId).trim() : null;
+  let sql = '';
+  const args = [];
+  if (!targetCustId) {
+    // Only deliver to store owner / manager devices that explicitly track ALL store sales
+    sql = "SELECT endpoint, p256dh, auth, customerId FROM PushSubscription WHERE customerId = 'ALL'";
+  } else {
+    // Deliver strictly to the specific customer whose tab/debt was charged
+    sql = "SELECT endpoint, p256dh, auth, customerId FROM PushSubscription WHERE customerId = ? OR customerId = 'ALL'";
+    args.push(targetCustId);
+  }
+
+  const subs = await db.execute({ sql, args });
+  const notifId = tx.id || (tx.invoiceNo ? `sale_${tx.invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_')}` : `tx_${Date.now()}`);
+  const pushPayload = JSON.stringify({
+    id: notifId,
+    title: tx.title || 'Layali Supermarket • Purchase Notice',
+    message: tx.message || `Purchased items for ${Number(tx.amount || 0).toFixed(3)} BHD`,
+    amount: tx.amount || 0,
+    formattedAmount: `${Number(tx.amount || 0).toFixed(3)} BHD`,
+    invoiceNo: tx.invoiceNo || '',
+    customerId: tx.customerId || null,
+    customerName: tx.customerName || null,
+    txType: tx.txType || 'SALE',
+    timestamp: tx.timestamp || new Date().toISOString()
+  });
+
+  let sent = 0;
+  const staleEndpoints = [];
+  const dispatchErrors = [];
+
+  for (const row of (subs.rows || [])) {
+    const subConfig = {
+      endpoint: row.endpoint,
+      keys: {
+        p256dh: row.p256dh,
+        auth: row.auth
+      }
+    };
+    try {
+      await webpush.sendNotification(subConfig, pushPayload);
+      sent++;
+    } catch (e) {
+      dispatchErrors.push({ endpoint: String(row.endpoint || '').slice(0, 40), status: e.statusCode, error: e.message });
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        staleEndpoints.push(row.endpoint);
+      }
+    }
+  }
+
+  for (const stale of staleEndpoints) {
+    await db.execute({ sql: 'DELETE FROM PushSubscription WHERE endpoint = ?', args: [stale] }).catch(() => {});
+  }
+
+  return { success: true, dispatched: sent, totalTargeted: subs.rows?.length || 0, errors: dispatchErrors.length > 0 ? dispatchErrors : undefined };
+}
+
+fastify.post('/api/notifications/dispatch', async (request, reply) => {
+  try {
+    const result = await dispatchNotificationInternal(request.body || {});
+    return result;
+  } catch (err) {
+    return reply.status(500).send({ error: 'Dispatch failed', details: err?.message });
+  }
+});
+
+fastify.post('/api/notifications/test', async (request, reply) => {
+  try {
+    const { customerId, customerName, amount, message } = request.body || {};
+    const result = await dispatchNotificationInternal({
+      customerId: customerId || null,
+      customerName: customerName || 'Customer',
+      title: 'Layali Supermarket • Test Notification 🔔',
+      message: message || `Test alert: purchase simulation of ${amount || '2.500'} BHD`,
+      amount: amount || 2.500,
+      txType: 'SALE'
+    });
+    return result;
+  } catch (err) {
+    return reply.status(500).send({ error: 'Test dispatch failed', details: err?.message });
+  }
+});
 
 // --- In-Memory Bounded Rate Limiter with Sliding Window (Resolved ADV-01 & PWA-SEC-03) ---
 const pinAttemptMap = new Map(); // targetId -> { count: number, lockedUntil: number, lastAttemptAt: number }
@@ -169,8 +349,8 @@ async function verifyAndMigratePin(customerId, rawPin, storedPin) {
     }
   } else {
     // Legacy plaintext comparison with 4-digit zero-padding support (Resolved PWA-R4-10)
-    isValid = (cleanEntered === cleanStored) || 
-              (cleanEntered.padStart(4, '0') === cleanStored.padStart(4, '0'));
+    isValid = (cleanEntered === cleanStored) ||
+      (cleanEntered.padStart(4, '0') === cleanStored.padStart(4, '0'));
     if (isValid) {
       // Seamlessly upgrade legacy plaintext to bcrypt across all 3 schema columns (Prisma, POS, PWA)
       try {
@@ -266,6 +446,9 @@ fastify.get('/api/products/barcode/:barcode', async (req, reply) => {
 });
 
 fastify.post('/api/products', async (req, reply) => {
+  if (!verifyPosOrManagerAuth(req)) {
+    return reply.status(401).send({ error: 'Unauthorized: POS machine token or Manager authentication required' });
+  }
   try {
     const p = req.body || {};
     const id = (p.id || crypto.randomUUID()).trim();
@@ -321,6 +504,9 @@ fastify.post('/api/products', async (req, reply) => {
 });
 
 fastify.post('/api/products/bulk-upsert', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ error: 'Unauthorized: POS machine token or Manager authentication required' });
+  }
   try {
     const { products } = request.body || {};
     if (!Array.isArray(products) || products.length === 0) {
@@ -382,6 +568,9 @@ fastify.post('/api/products/bulk-upsert', async (request, reply) => {
 });
 
 fastify.post('/api/sync/pim-push', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ error: 'Unauthorized: POS machine token or Manager authentication required' });
+  }
   try {
     const { batch } = request.body || {};
     if (!Array.isArray(batch) || batch.length === 0) {
@@ -653,7 +842,7 @@ async function loadFleetRegistryFromDb() {
         }
       }
     }
-  } catch {}
+  } catch { }
 }
 
 async function saveFleetRegistryToDb() {
@@ -670,7 +859,7 @@ async function saveFleetRegistryToDb() {
               updatedAt = CURRENT_TIMESTAMP`,
       args: [JSON.stringify(obj)]
     });
-  } catch {}
+  } catch { }
 }
 
 // Live Register Cart Snapshot & Ingest (Multi-Register Fleet Spy)
@@ -691,8 +880,8 @@ fastify.get('/api/register/cart/live', async (req, reply) => {
 
   const requestedId = normalizeTerminalId(req.query?.terminalId || req.query?.terminal);
   const targetReg = registers.find(r => r.terminalId === requestedId) ||
-                    registers.find(r => r.isOnline && r.items && r.items.length > 0) ||
-                    registers[0];
+    registers.find(r => r.isOnline && r.items && r.items.length > 0) ||
+    registers[0];
 
   return {
     success: true,
@@ -820,8 +1009,11 @@ fastify.get('/api/register/command', async (req, reply) => {
   return { success: true, terminalId, commands };
 });
 
-// Cash Drawer Kick Endpoint
+// Cash Drawer Kick Endpoint (Strictly Authenticated)
 const handleDrawerKick = async (req, reply) => {
+  if (!verifyPosOrManagerAuth(req)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager authentication required' });
+  }
   const body = req.body || {};
   const rawTerminal = body.terminalId || body.targetTerminal || req.query?.terminalId || 'T1';
   const terminalId = normalizeTerminalId(rawTerminal);
@@ -849,9 +1041,7 @@ const handleDrawerKick = async (req, reply) => {
 };
 
 fastify.post('/api/hardware/drawer-kick', handleDrawerKick);
-fastify.get('/api/hardware/drawer-kick', handleDrawerKick);
 fastify.post('/api/drawer-kick', handleDrawerKick);
-fastify.get('/api/drawer-kick', handleDrawerKick);
 
 // ROUTE: Customer Lookup by Phone Number, Name, CPR, or ID (Hardened & Sanitized)
 fastify.post('/api/customers/lookup', async (request, reply) => {
@@ -880,7 +1070,7 @@ fastify.post('/api/customers/lookup', async (request, reply) => {
       try {
         const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
         isManagerJwt = decoded?.role === 'MANAGER' || decoded?.role === 'SUPER_ADMIN';
-      } catch {}
+      } catch { }
     }
     let isMachineAuth = false;
     if (machineToken && configuredToken && typeof machineToken === 'string') {
@@ -1114,10 +1304,17 @@ async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
       sql: `SELECT DISTINCT mg.id, mg.group_name 
             FROM MessGroup mg
             JOIN MessMember mm ON mm.mess_id = mg.id
-            WHERE mm.customer_id = ?
+            WHERE mm.customer_id = ? AND (mm.is_active = 1 OR mm.is_active IS NULL)
             UNION
-            SELECT id, group_name FROM MessGroup WHERE id = ?`,
-      args: [customerId, customerMessId || '']
+            SELECT id, group_name FROM MessGroup WHERE id = ?
+            UNION
+            SELECT DISTINCT mg.id, mg.group_name
+            FROM MessGroup mg
+            JOIN KhataLedger kl ON kl.mess_id = mg.id
+            WHERE kl.customerId = ? AND (kl.subledger_type = 'MESS_SHARE' OR kl.subledger_type IS NULL)
+            GROUP BY mg.id, mg.group_name
+            HAVING ROUND(COALESCE(SUM(kl.amount), 0), 3) > 0.0005`,
+      args: [customerId, customerMessId || '', customerId]
     });
 
     if (messQuery.rows && messQuery.rows.length > 0) {
@@ -1132,22 +1329,43 @@ async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
             args: [m.id]
           });
           if (gTot.rows && gTot.rows.length > 0) {
-            gTotal = Number(gTot.rows[0].total || 0);
+            gTotal = Math.max(0, Number(gTot.rows[0].total || 0));
             mCount = Number(gTot.rows[0].count || 1);
           }
-        } catch {}
+        } catch { }
 
         let mShare = 0;
         try {
           const sQuery = await db.execute({
             sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as share 
-                  FROM KhataLedger WHERE mess_id = ? AND customerId = ?`,
+                  FROM KhataLedger 
+                  WHERE mess_id = ? AND customerId = ? 
+                    AND (subledger_type = 'MESS_SHARE' OR mess_id IS NOT NULL)`,
             args: [m.id, customerId]
           });
           if (sQuery.rows && sQuery.rows.length > 0) {
-            mShare = Number(sQuery.rows[0].share || 0);
+            mShare = Math.max(0, Number(sQuery.rows[0].share || 0));
           }
-        } catch {}
+        } catch { }
+
+        let membersList = [];
+        try {
+          const memRes = await db.execute({
+            sql: `SELECT DISTINCT c.id, c.name, c.phone, c.batchNo
+                  FROM Customer c
+                  JOIN MessMember mm ON c.id = mm.customer_id
+                  WHERE mm.mess_id = ? AND mm.is_active = 1
+                  UNION
+                  SELECT c.id, c.name, c.phone, c.batchNo
+                  FROM Customer c
+                  WHERE c.mess_id = ?`,
+            args: [m.id, m.id]
+          });
+          if (memRes.rows && memRes.rows.length > 0) {
+            membersList = memRes.rows;
+            mCount = Math.max(mCount, membersList.length);
+          }
+        } catch { }
 
         totalMessShare += mShare;
 
@@ -1159,7 +1377,8 @@ async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
           totalBalance: Number(gTotal.toFixed(3)),
           memberCount: mCount,
           memberShare: Number(mShare.toFixed(3)),
-          myShare: Number(mShare.toFixed(3))
+          myShare: Number(mShare.toFixed(3)),
+          members: membersList
         });
       }
     }
@@ -1167,10 +1386,58 @@ async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
     fastify.log.warn('Error fetching customer messes in PWA api:', err.message);
   }
 
-  totalMessShare = Number(totalMessShare.toFixed(3));
-  let personalBalance = Number((Number(rawBalance || 0) - totalMessShare).toFixed(3));
+  try {
+    const mQuery = await db.execute({
+      sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as messSum
+            FROM KhataLedger
+            WHERE customerId = ? AND (subledger_type = 'MESS_SHARE' OR (mess_id IS NOT NULL AND mess_id != ''))`,
+      args: [customerId]
+    });
+    if (mQuery.rows && mQuery.rows.length > 0 && mQuery.rows[0].messSum !== null) {
+      totalMessShare = Math.max(0, Number(mQuery.rows[0].messSum || 0));
+    }
+  } catch { }
+
+  // If there are mess debts from previous/archived mess rooms, expose them transparently
+  const activeSharesSum = customerMesses.reduce((acc, m) => acc + (m.memberShare || 0), 0);
+  const remainingMessDebt = Number((totalMessShare - activeSharesSum).toFixed(3));
+  if (remainingMessDebt > 0.0005) {
+    let archivedName = 'Previous Mess Debt';
+    try {
+      const prevRef = await db.execute({
+        sql: `SELECT reference FROM KhataLedger 
+              WHERE customerId = ? AND (subledger_type = 'MESS_SHARE' OR (mess_id IS NOT NULL AND mess_id != ''))
+                AND (mess_id NOT IN (SELECT id FROM MessGroup) OR mess_id IS NULL)
+                AND reference LIKE 'Mess Split:%'
+              ORDER BY timestamp DESC LIMIT 1`,
+        args: [customerId]
+      });
+      if (prevRef.rows && prevRef.rows.length > 0) {
+        const match = (prevRef.rows[0].reference || '').match(/Mess Split:\s*([^(\-]+)/i);
+        if (match && match[1]) {
+          archivedName = `${match[1].trim()} (Previous Room)`;
+        }
+      }
+    } catch { }
+
+    customerMesses.push({
+      id: 'archived_messes',
+      name: archivedName,
+      group_name: archivedName,
+      groupTotal: remainingMessDebt,
+      totalBalance: remainingMessDebt,
+      memberCount: 1,
+      memberShare: remainingMessDebt,
+      myShare: remainingMessDebt,
+      isArchived: true
+    });
+  }
+
+  totalMessShare = Math.max(0, Number(totalMessShare.toFixed(3)));
+  const rawBalNum = Number(rawBalance || 0);
+  let personalBalance = Math.max(0, Number((rawBalNum - totalMessShare).toFixed(3)));
   if (customerMesses.length === 0) {
-    personalBalance = Number(Number(rawBalance || 0).toFixed(3));
+    personalBalance = Number(rawBalNum.toFixed(3));
   }
 
   return {
@@ -1184,7 +1451,7 @@ async function getCustomerMessDetails(customerId, customerMessId, rawBalance) {
 
 // Unified Khata Customer Statement & Public Tab Endpoint (Protected with Rate Limiter & JWT Verification)
 const handleKhataStatementOrTab = async (request, reply) => {
-  const targetId = request.params.uuid || request.params.id;
+  const targetId = request.params.uuid || request.params.id || request.params.uid;
   const providedPin = normalizeArabicNumerals(String(request.headers['x-khata-pin'] || '')).trim();
   const authHeader = String(request.headers['authorization'] || '').trim();
 
@@ -1192,35 +1459,64 @@ const handleKhataStatementOrTab = async (request, reply) => {
     return reply.status(400).send({ error: 'Customer identifier is required' });
   }
 
-  const cleanTargetId = normalizeArabicNumerals(String(targetId)).trim();
+  let cleanTargetId = normalizeArabicNumerals(String(targetId)).trim();
+  if (cleanTargetId.includes('/tab/')) {
+    cleanTargetId = cleanTargetId.split('/tab/')[1].split('?')[0].split('/')[0].trim();
+  } else if (cleanTargetId.toUpperCase().startsWith('KHATA:')) {
+    cleanTargetId = cleanTargetId.slice(6).trim();
+  } else if (cleanTargetId.toUpperCase().startsWith('CUST-')) {
+    cleanTargetId = cleanTargetId.slice(5).trim();
+  }
+  cleanTargetId = cleanTargetId.replace(/^#+|#+$/g, '');
+
   const sanitizedTargetPhone = cleanTargetId
     .replace(/[\s\-()]/g, '')
     .replace(/^(\+973|00973|973)/, '')
     .replace(/^0+/, '');
 
   try {
+    // 0. Check NfcCard table if cleanTargetId is an NFC card UID
+    let cardCustomerId = null;
+    try {
+      const cardCheck = await db.execute({
+        sql: `SELECT customer_id FROM NfcCard WHERE UPPER(tag_id) = ? OR REPLACE(UPPER(tag_id), ':', '') = ? LIMIT 1`,
+        args: [cleanTargetId.toUpperCase(), cleanTargetId.toUpperCase().replace(/[:\-]/g, '')]
+      });
+      if (cardCheck.rows && cardCheck.rows.length > 0 && cardCheck.rows[0].customer_id) {
+        cardCustomerId = cardCheck.rows[0].customer_id;
+      }
+    } catch { }
+
     // 1. Look up customer in unified Customer table supporting all ID/NFC columns
     const authCheck = await db.execute({
       sql: `SELECT id, name, COALESCE(balance, 0.0) AS balance, COALESCE(credit_limit, 30.0) AS credit_limit, 
                    phone, access_token, cardUid, cpr, mess_id, is_active, isActive,
                    COALESCE(NULLIF(khataPin, ''), NULLIF(khata_pin, ''), NULLIF(pin, '')) as pin
             FROM Customer 
-            WHERE access_token = ? OR id = ? OR phone = ? OR phone = ? OR cardUid = ? OR nfcCardId = ? OR nfc_card_id = ? OR cpr = ? 
+            WHERE id = ? OR LOWER(id) = LOWER(?) OR id = ? OR access_token = ? OR phone = ? OR phone = ? 
+               OR cardUid = ? OR UPPER(cardUid) = UPPER(?) OR nfcCardId = ? OR nfc_card_id = ? OR cpr = ? 
             LIMIT 1`,
-      args: [cleanTargetId, cleanTargetId, cleanTargetId, sanitizedTargetPhone, cleanTargetId, cleanTargetId, cleanTargetId, cleanTargetId]
+      args: [
+        cleanTargetId, cleanTargetId, cardCustomerId || cleanTargetId, cleanTargetId,
+        cleanTargetId, sanitizedTargetPhone, cleanTargetId, cleanTargetId,
+        cleanTargetId, cleanTargetId, cleanTargetId
+      ]
     });
 
     if (authCheck.rows && authCheck.rows.length > 0) {
       const customer = authCheck.rows[0];
-      const messDetails = await getCustomerMessDetails(customer.id, customer.mess_id, customer.balance);
 
-      // Check for valid 90-Day JWT Device Pairing Token
+      // Developer JWT & Session Bypass
+      let isDeveloperSession = false;
       let isJwtAuthenticated = false;
       if (authHeader.startsWith('Bearer ')) {
         try {
           const rawJwt = authHeader.slice(7).trim();
           const decoded = jwt.verify(rawJwt, JWT_SECRET);
-          if (decoded && (decoded.id === customer.id || decoded.accessToken === customer.access_token)) {
+          if (decoded && (decoded.role === 'DEVELOPER' || decoded.role === 'SUPER_ADMIN')) {
+            isDeveloperSession = true;
+            isJwtAuthenticated = true;
+          } else if (decoded && (decoded.id === customer.id || decoded.accessToken === customer.access_token)) {
             isJwtAuthenticated = true;
           }
         } catch {
@@ -1228,45 +1524,39 @@ const handleKhataStatementOrTab = async (request, reply) => {
         }
       }
 
-      // Safe Public Tab View (No valid JWT and no PIN provided)
-      if (!isJwtAuthenticated && !providedPin) {
-        const pendingClaims = await db.execute({
-          sql: `SELECT id, amount, reference, channel, status, createdAt 
-                FROM KhataSettlementClaim 
-                WHERE customerId = ? AND status = 'PENDING' 
-                ORDER BY createdAt DESC LIMIT 5`,
-          args: [customer.id]
-        }).catch(() => ({ rows: [] }));
+      // Anti-IDOR Device Binding Token Validation:
+      // (Bypassed if verified Developer JWT session is active)
+      if (!isDeveloperSession) {
+        const deviceToken = request.headers['x-khata-device-token'];
+        if (deviceToken && typeof deviceToken === 'string' && deviceToken.startsWith('dev_token_')) {
+          try {
+            const raw = Buffer.from(deviceToken.slice(10), 'base64').toString('utf8');
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.cid && parsed.cid !== customer.id && parsed.cid !== customer.access_token) {
+              return reply.status(403).send({
+                success: false,
+                error: 'Device Mismatch: Phone is locked to another Khata account.'
+              });
+            }
+          } catch {}
+        }
+      }
 
-        // Retrieve customer ledger transactions (up to 100 recent)
-        const ledgerRes = await db.execute({
-          sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id 
-                FROM KhataLedger 
-                WHERE customerId = ? 
-                ORDER BY timestamp DESC, id DESC LIMIT 100`,
-          args: [customer.id]
-        }).catch(() => ({ rows: [] }));
+      // Safe Public Tab View vs Private Statement View (Resolved FLAW-01)
+      const isTabRoute = request.url.includes('/tab') || request.url.endsWith('/tab');
 
-        const allLedger = ledgerRes.rows || [];
-        const enrichedLedger = await enrichLedgerWithItems(allLedger);
-
-        // Dynamically reconcile running balance anchored to true customer.balance
-        let runningTracker = Number(customer.balance ?? 0);
-        const reconciledLedger = enrichedLedger.map((tx) => {
-          const currentRunning = runningTracker;
-          const amt = Number(tx.amount || 0);
-          runningTracker = Number((runningTracker - amt).toFixed(3));
-          return {
-            ...tx,
-            running_balance: Number(currentRunning.toFixed(3))
-          };
-        });
-
+      // 1. Unauthenticated Public Tab View (Returns strictly balance summary, ZERO ledger records)
+      if (isTabRoute && !isJwtAuthenticated && !providedPin) {
+        const messDetails = await getCustomerMessDetails(customer.id, customer.mess_id, customer.balance);
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
+        const maskedPhone = customer.phone ? `${String(customer.phone).slice(0, 3)}****${String(customer.phone).slice(-2)}` : null;
+
         return reply.send({
           success: true,
           id: customer.id,
           name: customer.name,
+          cardUid: null, // Protected: Never leak NFC card UID to unauthenticated tab
+          phone: maskedPhone,
           balance: Number(customer.balance ?? 0),
           personalBalance: messDetails.personalBalance,
           messShare: messDetails.totalMessShare,
@@ -1276,17 +1566,41 @@ const handleKhataStatementOrTab = async (request, reply) => {
           credit_limit: Number(customer.credit_limit ?? 30.0),
           is_active: isActiveNum,
           isActive: Boolean(isActiveNum),
-          isLocked: false,
-          pendingClaims: pendingClaims.rows || [],
-          recentPurchases: reconciledLedger,
-          transactions: reconciledLedger,
-          ledger: reconciledLedger,
-          totalTransactions: reconciledLedger.length,
-          message: 'Khata Tab summary and transaction ledger.'
+          isLocked: true, // Itemized statement is locked behind PIN/JWT
+          pendingClaims: [],
+          recentPurchases: [],
+          transactions: [],
+          ledger: [],
+          totalTransactions: 0,
+          message: 'Khata Tab public summary. Full itemized transaction ledger requires PIN or biometric verification.'
         });
       }
 
-      // If not authenticated via JWT, verify entered PIN with rate limiter
+      // 2. Unauthenticated Statement View without PIN (Return locked stub prompting for PIN)
+      if (!isJwtAuthenticated && !providedPin) {
+        const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
+        const maskedPhone = customer.phone ? `${String(customer.phone).slice(0, 3)}****${String(customer.phone).slice(-2)}` : null;
+
+        return reply.send({
+          success: true,
+          id: customer.id,
+          name: customer.name,
+          cardUid: null,
+          phone: maskedPhone,
+          balance: Number(customer.balance ?? 0),
+          is_active: isActiveNum,
+          isActive: Boolean(isActiveNum),
+          isLocked: true, // Enforce locked state so client triggers PIN keypad
+          pendingClaims: [],
+          recentPurchases: [],
+          transactions: [],
+          ledger: [],
+          totalTransactions: 0,
+          message: 'Authentication required. Enter your 4-digit PIN to unlock itemized statement.'
+        });
+      }
+
+      // 3. If caller supplied a PIN, strictly verify with rate limiter
       if (!isJwtAuthenticated) {
         const rateCheck = checkRateLimit(customer.id);
         if (!rateCheck.allowed) {
@@ -1319,25 +1633,25 @@ const handleKhataStatementOrTab = async (request, reply) => {
       const limit = Math.min(Number(request.query?.limit || 50), 100);
       const offset = Math.max(Number(request.query?.offset || 0), 0);
 
-      // Fetch detailed Khata ledger transactions with pagination support (Resolved ADV-10)
-      const ledgerQuery = await db.execute({
-        sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id 
-              FROM KhataLedger 
-              WHERE customerId = ? 
-              ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
-        args: [String(customer.id), limit, offset]
-      });
-
-      // Mask sensitive Bahrain National ID (CPR)
-      const maskedCpr = customer.cpr ? `******${String(customer.cpr).slice(-3)}` : null;
-
-      const pendingClaims = await db.execute({
-        sql: `SELECT id, amount, reference, channel, status, createdAt 
-              FROM KhataSettlementClaim 
-              WHERE customerId = ? AND status = 'PENDING' 
-              ORDER BY createdAt DESC LIMIT 5`,
-        args: [customer.id]
-      }).catch(() => ({ rows: [] }));
+      // Fetch detailed Khata ledger transactions and mess breakdown in parallel
+      const [messDetails, ledgerQuery, pendingClaims] = await Promise.all([
+        getCustomerMessDetails(customer.id, customer.mess_id, customer.balance),
+        db.execute({
+          sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id,
+                       COALESCE(subledger_type, CASE WHEN mess_id IS NOT NULL AND mess_id != '' THEN 'MESS_SHARE' ELSE 'PERSONAL' END) as subledger_type 
+                FROM KhataLedger 
+                WHERE customerId = ? 
+                ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+          args: [String(customer.id), limit, offset]
+        }),
+        db.execute({
+          sql: `SELECT id, amount, reference, channel, status, createdAt 
+                FROM KhataSettlementClaim 
+                WHERE customerId = ? AND status = 'PENDING' 
+                ORDER BY createdAt DESC LIMIT 5`,
+          args: [customer.id]
+        }).catch(() => ({ rows: [] }))
+      ]);
 
       const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
       const statementLedger = ledgerQuery.rows || [];
@@ -1355,6 +1669,8 @@ const handleKhataStatementOrTab = async (request, reply) => {
         };
       });
 
+      const maskedCpr = customer.cpr ? (String(customer.cpr).length > 4 ? `*****${String(customer.cpr).slice(-4)}` : '****') : null;
+
       return reply.send({
         success: true,
         id: customer.id,
@@ -1368,6 +1684,8 @@ const handleKhataStatementOrTab = async (request, reply) => {
         credit_limit: Number(customer.credit_limit ?? 30.0),
         is_active: isActiveNum,
         isActive: Boolean(isActiveNum),
+        isLocked: false, // Explicitly authenticated and unlocked
+        cardUid: customer.cardUid || customer.nfcCardId || null,
         phone: customer.phone,
         cpr: maskedCpr,
         token,
@@ -1658,6 +1976,8 @@ fastify.get('/api/khata/:uuid/tab', handleKhataStatementOrTab);
 fastify.get('/api/khata/tab/:id', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id/tab', handleKhataStatementOrTab);
 fastify.get('/api/customers/:id', handleKhataStatementOrTab);
+fastify.get('/api/customers/by-card/:uid', handleKhataStatementOrTab);
+fastify.get('/api/customers/nfc/:uid', handleKhataStatementOrTab);
 fastify.get('/api/tab/:id', handleKhataStatementOrTab);
 
 // Sovereign Customer Self-Freeze / Kill-Switch Endpoint
@@ -1684,28 +2004,33 @@ const handleKhataFreezeCloud = async (request, reply) => {
     const shouldFreeze = freeze !== undefined ? Boolean(freeze) : isCurrentlyActive;
     const newActiveState = shouldFreeze ? 0 : 1;
 
-    // Strict authentication verification when unfreezing an account that has a PIN set
-    if (!shouldFreeze && customer.pin) {
-      const authHeader = String(request.headers['authorization'] || '').trim();
-      let isJwtValid = false;
-      if (authHeader.startsWith('Bearer ')) {
-        try {
-          const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
-          if (decoded && (decoded.id === customer.id || decoded.accessToken === customer.access_token)) {
-            isJwtValid = true;
-          }
-        } catch {}
-      }
+    // Strict authentication verification for BOTH freeze and unfreeze actions (Resolved FLAW-05)
+    const isManager = verifyPosOrManagerAuth(request);
+    let isCustomerAuthorized = false;
 
-      if (!isJwtValid) {
-        if (!pin) {
-          return reply.code(401).send({ success: false, error: 'Customer PIN or authorization token required to unfreeze account' });
+    const authHeader = String(request.headers['authorization'] || '').trim();
+    if (authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
+        if (decoded && (decoded.id === customer.id || decoded.accessToken === customer.access_token || decoded.role === 'DEVELOPER' || decoded.role === 'SUPER_ADMIN')) {
+          isCustomerAuthorized = true;
         }
-        const isValid = await verifyAndMigratePin(customer.id, String(pin).trim(), customer.pin);
-        if (!isValid) {
-          return reply.code(403).send({ success: false, error: 'Invalid PIN to unfreeze account' });
-        }
+      } catch { }
+    }
+
+    if (!isCustomerAuthorized && !isManager && pin) {
+      const cleanPin = normalizeArabicNumerals(String(pin)).trim();
+      if (customer.pin) {
+        const isValid = await verifyAndMigratePin(customer.id, cleanPin, customer.pin);
+        if (isValid) isCustomerAuthorized = true;
       }
+    }
+
+    if (!isCustomerAuthorized && !isManager) {
+      return reply.code(401).send({
+        success: false,
+        error: 'Unauthorized: Customer PIN, verified session token, or Manager authorization required to modify account lock state.'
+      });
     }
 
     await db.execute({
@@ -1719,7 +2044,7 @@ const handleKhataFreezeCloud = async (request, reply) => {
       name: customer.name,
       is_active: newActiveState,
       isActive: Boolean(newActiveState),
-      message: newActiveState === 0 
+      message: newActiveState === 0
         ? 'Khata successfully locked. Store credit purchases are disabled.'
         : 'Khata unlocked. Store credit purchases are active.'
     });
@@ -1779,7 +2104,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
       if (messCheck.rows && messCheck.rows.length > 0) {
         maxAllowableDebt = Math.max(maxAllowableDebt, Number(messCheck.rows[0].total || 0));
       }
-    } catch {}
+    } catch { }
   }
 
   if (maxAllowableDebt <= 0 && currentBalance <= 0) {
@@ -1827,7 +2152,7 @@ fastify.post('/api/checkout/init', async (request, reply) => {
   }
 
   try {
-    const cleanCustomerPhone = liveCustomer.phone 
+    const cleanCustomerPhone = liveCustomer.phone
       ? String(liveCustomer.phone).replace(/[\s\-()]/g, '').replace(/^(\+973|00973|973)/, '')
       : '';
 
@@ -1869,11 +2194,11 @@ fastify.post('/api/checkout/init', async (request, reply) => {
     const chargeData = await tapResponse.json();
 
     if (chargeData.transaction && chargeData.transaction.url) {
-      return reply.send({ 
-        success: true, 
+      return reply.send({
+        success: true,
         mode: 'GATEWAY_REDIRECT',
         checkoutUrl: chargeData.transaction.url,
-        chargeId: chargeData.id 
+        chargeId: chargeData.id
       });
     } else {
       fastify.log.warn({ chargeData }, 'Tap charge initiation failed; gracefully presenting BenefitPay Fawri+ modal');
@@ -1962,7 +2287,7 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
         if (decoded && (decoded.id === liveCustomer.id || decoded.accessToken === liveCustomer.access_token)) {
           isAuthorized = true;
         }
-      } catch {}
+      } catch { }
     }
 
     const pinHeader = normalizeArabicNumerals(String(request.headers['x-khata-pin'] || ''));
@@ -1993,7 +2318,7 @@ fastify.post('/api/checkout/confirm', async (request, reply) => {
         if (messCheck.rows && messCheck.rows.length > 0) {
           maxAllowableDebt = Math.max(maxAllowableDebt, Number(messCheck.rows[0].total || 0));
         }
-      } catch {}
+      } catch { }
     }
 
     if (maxAllowableDebt <= 0 && prevBalance <= 0) {
@@ -2077,11 +2402,19 @@ fastify.get('/api/khata/:uuid/claims', async (request, reply) => {
   }
 });
 
-// --- Centralized POS & Back-Office Auth Verification ---
+// --- Centralized POS & Back-Office Auth Verification (Resolved FLAW-03) ---
 function verifyPosOrManagerAuth(request) {
+  const pin = String(request.headers['x-manager-pin'] || request.body?.pin || request.body?.managerPin || '').trim();
+  const configuredPin = (process.env.MANAGER_PIN || '').trim();
+
+  // Validate against configured environment variable only (no hardcoded fallback)
+  if (configuredPin && pin && pin === configuredPin) {
+    return true;
+  }
+
   const machineToken = request.headers['x-manager-token'] || request.headers['x-pos-token'];
   const configuredToken = process.env.POS_MACHINE_TOKEN || process.env.INTERNAL_SYNC_SECRET || process.env.DEV_SECRET;
-  
+
   if (machineToken && configuredToken && typeof machineToken === 'string') {
     const bufA = Buffer.from(machineToken);
     const bufB = Buffer.from(configuredToken);
@@ -2095,7 +2428,7 @@ function verifyPosOrManagerAuth(request) {
     try {
       const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
       if (decoded?.role === 'MANAGER' || decoded?.role === 'SUPER_ADMIN') return true;
-    } catch {}
+    } catch { }
   }
   return false;
 }
@@ -2328,17 +2661,17 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
           sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, tenantId, syncStatus, timestamp, created_at)
                 VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, 'ONLINE', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
           args: [ledgerId, canonicalCustomerId, -amount, `BenefitPay Online Settlement (Ref: ${chargeId})`, newBalance, tenantId]
-        }).catch((e) => { 
+        }).catch((e) => {
           fastify.log.warn('Failed to insert KhataLedger payment record:', e);
         });
 
-        return reply.send({ 
-          success: true, 
-          message: 'Khata debt cleared', 
-          clearedAmount: amount, 
-          customerId: canonicalCustomerId, 
-          chargeId, 
-          running_balance: newBalance 
+        return reply.send({
+          success: true,
+          message: 'Khata debt cleared',
+          clearedAmount: amount,
+          customerId: canonicalCustomerId,
+          chargeId,
+          running_balance: newBalance
         });
       }
     }
@@ -2352,13 +2685,13 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
 
 // --- CLOUD RESILIENT SYNC ENDPOINTS: Direct Turso LibSQL Execution ---
 
-// 1. Direct Khata Customer Debt Settlement & Repayment
+// 1. Direct Khata Customer Debt Settlement & Repayment (Debt-Capped Waterfall & Mess Invariant Enforced)
 const handleCustomerSettleCloud = async (request, reply) => {
   if (!verifyPosOrManagerAuth(request)) {
     return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager JWT required' });
   }
   const { id } = request.params || {};
-  const { customerId, amount, amountPaid, paymentMethod, reference } = request.body || {};
+  const { customerId, amount, amountPaid, paymentMethod, reference, target, paymentTarget, messId, mess_id, payingCustomerId } = request.body || {};
   const targetId = id || customerId;
   const settleAmount = Number(amount ?? amountPaid ?? 0);
 
@@ -2370,6 +2703,133 @@ const handleCustomerSettleCloud = async (request, reply) => {
   }
 
   try {
+    const isExplicitPersonal = target === 'PERSONAL' || paymentTarget === 'PERSONAL';
+    const isExplicitMess = target === 'MESS' || paymentTarget === 'MESS';
+    let isMessGroupPayment = target === 'MESS_GROUP' || paymentTarget === 'MESS_GROUP';
+    let targetMessId = isExplicitPersonal ? null : (messId || mess_id || null);
+
+    const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
+    const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
+    const nowIso = new Date().toISOString();
+
+    // Check if targetId is directly a MessGroup ID
+    let targetMessGroup = null;
+    try {
+      const mgCheck = await db.execute({
+        sql: `SELECT id, group_name FROM MessGroup WHERE (id = ? OR group_name = ?) AND id NOT IN (SELECT id FROM DisbandedMessGroup) LIMIT 1`,
+        args: [targetId, targetId]
+      });
+      if (mgCheck.rows && mgCheck.rows.length > 0) {
+        isMessGroupPayment = true;
+        targetMessGroup = mgCheck.rows[0];
+        targetMessId = targetMessGroup.id;
+      }
+    } catch { }
+
+    // CASE A: Full Mess Room Settlement by one person / direct group clearance
+    if (isMessGroupPayment && (targetMessId || targetMessGroup)) {
+      if (!targetMessGroup && targetMessId) {
+        try {
+          const mgRes = await db.execute({
+            sql: `SELECT id, group_name FROM MessGroup WHERE (id = ? OR group_name = ?) AND id NOT IN (SELECT id FROM DisbandedMessGroup) LIMIT 1`,
+            args: [targetMessId, targetMessId]
+          });
+          targetMessGroup = mgRes.rows?.[0] || null;
+        } catch { }
+      }
+
+      if (targetMessGroup) {
+        const mRes = await db.execute({
+          sql: `SELECT customerId, ROUND(COALESCE(SUM(amount), 0), 3) AS bal
+                FROM KhataLedger
+                WHERE mess_id = ?
+                GROUP BY customerId
+                HAVING bal > 0`,
+          args: [targetMessGroup.id]
+        });
+        const memberDebts = (mRes.rows || []).map((r) => ({
+          id: r.customerId,
+          debt: Math.max(0, Number(r.bal || 0))
+        }));
+        const totalPositiveDebt = Number(memberDebts.reduce((sum, m) => sum + m.debt, 0).toFixed(3));
+        const credits = new Map();
+
+        if (totalPositiveDebt > 0) {
+          if (settleAmount >= totalPositiveDebt) {
+            for (const md of memberDebts) {
+              if (md.debt > 0) credits.set(md.id, md.debt);
+            }
+          } else {
+            let allocatedTotal = 0;
+            for (const md of memberDebts) {
+              if (md.debt > 0) {
+                const cVal = Math.min(md.debt, parseFloat(((settleAmount * md.debt) / totalPositiveDebt).toFixed(3)));
+                credits.set(md.id, cVal);
+                allocatedTotal = Number((allocatedTotal + cVal).toFixed(3));
+              }
+            }
+            let remainder = Number((settleAmount - allocatedTotal).toFixed(3));
+            if (remainder > 0) {
+              const sorted = [...memberDebts].filter(md => (credits.get(md.id) || 0) < md.debt).sort((a, b) => b.debt - a.debt);
+              if (sorted.length > 0) {
+                credits.set(sorted[0].id, Number(((credits.get(sorted[0].id) || 0) + remainder).toFixed(3)));
+              }
+            }
+          }
+        }
+
+        const batch = [];
+        for (const [mId, cAmt] of credits.entries()) {
+          if (cAmt <= 0) continue;
+          const txId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+          batch.push({
+            sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                  VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+            args: [txId, mId, -cAmt, `Mess Settlement: ${targetMessGroup.group_name} (${payRef})`, nowIso, nowIso, targetMessGroup.id]
+          });
+          batch.push({
+            sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+            args: [mId, mId]
+          });
+        }
+
+        // Overpayment beyond communal room debt: credit excess to paying customer's personal tab
+        const payerId = payingCustomerId || (targetId !== targetMessGroup.id ? targetId : null);
+        if (settleAmount > totalPositiveDebt && payerId) {
+          const excess = Number((settleAmount - totalPositiveDebt).toFixed(3));
+          if (excess > 0) {
+            const advId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+            batch.push({
+              sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                    VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, NULL, 'PERSONAL')`,
+              args: [advId, payerId, -excess, `Advance Payment from Mess Settlement: ${targetMessGroup.group_name} (${payRef})`, nowIso, nowIso]
+            });
+            batch.push({
+              sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+              args: [payerId, payerId]
+            });
+          }
+        }
+
+        if (batch.length > 0) {
+          await db.batch(batch, 'write');
+        }
+
+        return reply.send({
+          success: true,
+          message: `Mess debt settled: BD ${settleAmount.toFixed(3)} allocated to clear communal room debt`,
+          isMess: true,
+          messGroupId: targetMessGroup.id,
+          amountPaid: settleAmount,
+          settledAmount: settleAmount,
+          paymentMethod: paymentMethod || 'CASH',
+          receiptNo,
+          timestamp: nowIso
+        });
+      }
+    }
+
+    // CASE B: Customer Individual Settlement with Waterfall Allocation
     const custRes = await db.execute({
       sql: 'SELECT id, name, phone, balance, credit_limit as creditLimit FROM Customer WHERE id = ? LIMIT 1',
       args: [targetId]
@@ -2379,31 +2839,154 @@ const handleCustomerSettleCloud = async (request, reply) => {
     }
     const customer = custRes.rows[0];
 
-    const payRef = reference || (paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay Payment' : 'Cash Payment');
-    const receiptNo = `KH-${Date.now().toString().slice(-6)}`;
-    const nowIso = new Date().toISOString();
-    const ledgerId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    let pDebt = 0;
+    try {
+      const pDebtRes = await db.execute({
+        sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) AS bal FROM KhataLedger WHERE customerId = ? AND (subledger_type = 'PERSONAL' OR (subledger_type IS NULL AND (mess_id IS NULL OR mess_id = '')))`,
+        args: [targetId]
+      });
+      pDebt = Math.max(0, Number(pDebtRes.rows?.[0]?.bal || 0));
+    } catch { }
 
-    // Insert into KhataLedger (negative amount for balance deduction)
-    await db.execute({
-      sql: `INSERT INTO KhataLedger (
-        id, tenantId, customerId, amount, type, reference, running_balance,
-        syncStatus, timestamp, created_at
-      ) VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?)`,
-      args: [ledgerId, targetId, -settleAmount, payRef, nowIso, nowIso]
+    let activeMesses = [];
+    try {
+      const mDebtRes = await db.execute({
+        sql: `SELECT mess_id, ROUND(COALESCE(SUM(amount), 0), 3) AS bal 
+              FROM KhataLedger 
+              WHERE customerId = ? AND mess_id IS NOT NULL AND mess_id != '' AND (subledger_type = 'MESS_SHARE' OR subledger_type IS NULL)
+              GROUP BY mess_id 
+              HAVING bal > 0 
+              ORDER BY bal DESC`,
+        args: [targetId]
+      });
+      activeMesses = (mDebtRes.rows || []).map((r) => ({
+        mess_id: r.mess_id,
+        bal: Math.max(0, Number(r.bal || 0))
+      }));
+    } catch { }
+
+    if (!targetMessId && !isExplicitPersonal && !isExplicitMess) {
+      if (pDebt <= 0 && activeMesses.length === 1) {
+        targetMessId = activeMesses[0].mess_id;
+      }
+    }
+
+    const batch = [];
+
+    if (isExplicitPersonal) {
+      // 1. Pure personal settlement
+      const txId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      batch.push({
+        sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+              VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, NULL, 'PERSONAL')`,
+        args: [txId, targetId, -settleAmount, payRef, nowIso, nowIso]
+      });
+    } else if (isExplicitMess || (targetMessId && targetMessId !== 'ALL_MESSES')) {
+      // 2. Mess Share Settlement (Single Mess Room or Multi-Mess Division)
+      // INVARIANT: Under NO circumstances should any portion of a mess share payment touch or reduce the Personal Tab!
+      let remainingToAllocate = settleAmount;
+
+      // If a specific target mess is requested, settle that room first
+      if (targetMessId && targetMessId !== 'ALL_MESSES') {
+        const targetMessObj = activeMesses.find(m => m.mess_id === targetMessId);
+        const targetMessDebt = targetMessObj ? targetMessObj.bal : 0;
+        const payToTargetMess = parseFloat(Math.min(targetMessDebt, remainingToAllocate).toFixed(3));
+
+        if (payToTargetMess > 0) {
+          const txId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+          batch.push({
+            sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                  VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+            args: [txId, targetId, -payToTargetMess, `${payRef} (Mess Share)`, nowIso, nowIso, targetMessId]
+          });
+          remainingToAllocate = parseFloat((remainingToAllocate - payToTargetMess).toFixed(3));
+        }
+      }
+
+      // Multi-Mess Allocation: If payment remains (or general Mess Share was clicked), divide remaining across all active mess debts
+      if (remainingToAllocate > 0 && activeMesses.length > 0) {
+        for (const m of activeMesses) {
+          if (m.mess_id === targetMessId || remainingToAllocate <= 0) continue;
+          const payToThisMess = parseFloat(Math.min(m.bal, remainingToAllocate).toFixed(3));
+          if (payToThisMess > 0) {
+            const txIdMess = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+            batch.push({
+              sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                    VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+              args: [txIdMess, targetId, -payToThisMess, `${payRef} (Mess Balance)`, nowIso, nowIso, m.mess_id]
+            });
+            remainingToAllocate = parseFloat((remainingToAllocate - payToThisMess).toFixed(3));
+          }
+        }
+      }
+
+      // If customer overpaid beyond all their mess debts:
+      // Allocate the remaining excess strictly as advance credit for the Mess Room, NEVER to the Personal Tab!
+      if (remainingToAllocate > 0) {
+        const excessMessId = targetMessId && targetMessId !== 'ALL_MESSES'
+          ? targetMessId
+          : (activeMesses[0]?.mess_id || customer.mess_id || null);
+        const txIdAdv = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+        batch.push({
+          sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+          args: [txIdAdv, targetId, -remainingToAllocate, `${payRef} (Mess Advance Credit)`, nowIso, nowIso, excessMessId]
+        });
+      }
+    } else {
+      // 3. Account waterfall settlement
+      const pAmt = parseFloat(Math.min(pDebt, settleAmount).toFixed(3));
+      let remainingToAllocate = parseFloat((settleAmount - pAmt).toFixed(3));
+
+      if (pAmt > 0) {
+        const txId = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+        batch.push({
+          sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, NULL, 'PERSONAL')`,
+          args: [txId, targetId, -pAmt, payRef, nowIso, nowIso]
+        });
+      }
+
+      // Allocate remaining payment sequentially across all active mess debts
+      if (remainingToAllocate > 0 && activeMesses.length > 0) {
+        for (const m of activeMesses) {
+          if (remainingToAllocate <= 0) break;
+          const payToThisMess = parseFloat(Math.min(m.bal, remainingToAllocate).toFixed(3));
+          if (payToThisMess > 0) {
+            const txIdMess = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+            batch.push({
+              sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                    VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+              args: [txIdMess, targetId, -payToThisMess, `${payRef} (Mess Balance)`, nowIso, nowIso, m.mess_id]
+            });
+            remainingToAllocate = Number((remainingToAllocate - payToThisMess).toFixed(3));
+          }
+        }
+      }
+
+      // If payment exceeds both personal and all mess debts, credit remainder to personal tab as advance credit
+      if (remainingToAllocate > 0) {
+        const txIdAdv = `tx_settle_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+        batch.push({
+          sql: `INSERT INTO KhataLedger (id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type)
+                VALUES (?, 'tenant_askar_01', ?, ?, 'PAYMENT', ?, 0, 'SYNCED', ?, ?, NULL, 'PERSONAL')`,
+          args: [txIdAdv, targetId, -remainingToAllocate, `${payRef} (Advance Credit)`, nowIso, nowIso]
+        });
+      }
+    }
+
+    batch.push({
+      sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+      args: [targetId, targetId]
     });
 
-    // Reconcile running sum and update Customer.balance
+    await db.batch(batch, 'write');
+
     const sumRes = await db.execute({
       sql: 'SELECT COALESCE(SUM(amount), 0) AS balance FROM KhataLedger WHERE customerId = ?',
       args: [targetId]
     });
     const newBalance = Number(Number(sumRes.rows[0]?.balance || 0).toFixed(3));
-
-    await db.execute({
-      sql: 'UPDATE Customer SET balance = ? WHERE id = ?',
-      args: [newBalance, targetId]
-    });
 
     return reply.send({
       success: true,
@@ -2429,6 +3012,184 @@ fastify.post('/api/khata/:id/pay', handleCustomerSettleCloud);
 fastify.post('/khata/:id/pay', handleCustomerSettleCloud);
 fastify.post('/api/khata/pay', handleCustomerSettleCloud);
 fastify.post('/khata/pay', handleCustomerSettleCloud);
+
+// 1-Tap Customer Beacon: Notifies POS that customer is present at counter (Cellular 4G/5G & Wi-Fi)
+fastify.post('/api/khata/present-at-counter', async (request, reply) => {
+  const { customerId, terminalId, pin } = request.body || {};
+  if (!customerId) {
+    return reply.status(400).send({ success: false, error: 'customerId is required' });
+  }
+  const cleanId = String(customerId).trim();
+  const cRes = await db.execute({
+    sql: `SELECT id, name, balance, phone, credit_limit, mess_id,
+                 COALESCE(NULLIF(khataPin, ''), NULLIF(khata_pin, ''), NULLIF(pin, '')) as pin
+          FROM Customer WHERE id = ? OR access_token = ? OR phone = ? LIMIT 1`,
+    args: [cleanId, cleanId, cleanId]
+  });
+  if (!cRes.rows || cRes.rows.length === 0) {
+    return reply.status(404).send({ success: false, error: 'Customer not found' });
+  }
+  const row = cRes.rows[0];
+
+  // Verify caller identity (JWT, PIN, or POS auth)
+  let isAuthorized = verifyPosOrManagerAuth(request);
+  const authHeader = String(request.headers['authorization'] || '').trim();
+  if (!isAuthorized && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.slice(7).trim(), JWT_SECRET);
+      if (decoded && (decoded.id === row.id || decoded.accessToken === row.access_token)) {
+        isAuthorized = true;
+      }
+    } catch {}
+  }
+  const pinHeader = request.headers['x-khata-pin'] || pin;
+  if (!isAuthorized && pinHeader && row.pin) {
+    const isValid = await verifyAndMigratePin(row.id, String(pinHeader).trim(), row.pin);
+    if (isValid) isAuthorized = true;
+  }
+  if (!isAuthorized) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: Valid customer session or PIN required' });
+  }
+
+  // Query full Mess Group memberships, balances, and member lists for Dual-Wallet split billing
+  let messDetails = { customerMesses: [], totalMessShare: 0, personalBalance: Number(row.balance || 0), hasMessGroup: false, isMultiMess: false };
+  try {
+    messDetails = await getCustomerMessDetails(row.id, row.mess_id, row.balance);
+  } catch (err) {
+    fastify.log.warn('Failed to resolve mess details for counter beacon:', err.message);
+  }
+
+  const primaryMess = (messDetails.customerMesses && messDetails.customerMesses.length > 0)
+    ? messDetails.customerMesses[0]
+    : null;
+
+  const customer = {
+    id: row.id,
+    name: row.name,
+    phone: row.phone || null,
+    balance: Number(row.balance || 0),
+    currentBalance: Number(row.balance || 0),
+    personalBalance: Number((messDetails.personalBalance !== undefined ? messDetails.personalBalance : row.balance) || 0),
+    messShare: Number(messDetails.totalMessShare || 0),
+    creditLimit: Number(row.credit_limit || 0),
+    mess_id: primaryMess ? primaryMess.id : (row.mess_id || null),
+    group_name: primaryMess ? (primaryMess.group_name || primaryMess.name) : null,
+    messName: primaryMess ? (primaryMess.group_name || primaryMess.name) : null,
+    hasMessGroup: Boolean(messDetails.hasMessGroup),
+    isDual: Boolean(messDetails.hasMessGroup),
+    isMultiMess: Boolean(messDetails.isMultiMess),
+    messes: messDetails.customerMesses || [],
+    messGroup: primaryMess,
+    members: primaryMess?.members || [],
+    memberCount: primaryMess?.memberCount || 1,
+    isMess: false,
+    card_type: messDetails.customerMesses && messDetails.customerMesses.length > 1
+      ? 'MULTI_MESS'
+      : (messDetails.hasMessGroup ? 'DUAL' : 'PERSONAL'),
+    shopper: {
+      id: row.id,
+      name: row.name
+    }
+  };
+
+  const now = Date.now();
+
+  // 1. Persist to Turso central database so Sunmi POS & Laptops anywhere pick it up
+  try {
+    await db.execute({
+      sql: `CREATE TABLE IF NOT EXISTS CounterBeaconRelay (
+              id TEXT PRIMARY KEY,
+              customer_id TEXT,
+              terminal_id TEXT,
+              customer_json TEXT,
+              timestamp INTEGER,
+              acknowledged_at INTEGER DEFAULT 0
+            )`,
+      args: []
+    });
+  } catch {}
+
+  try {
+    await db.execute({
+      sql: `INSERT INTO CounterBeaconRelay (id, customer_id, terminal_id, customer_json, timestamp, acknowledged_at)
+            VALUES ('active_beacon', ?, ?, ?, ?, 0)
+            ON CONFLICT(id) DO UPDATE SET
+              customer_id = excluded.customer_id,
+              terminal_id = excluded.terminal_id,
+              customer_json = excluded.customer_json,
+              timestamp = excluded.timestamp,
+              acknowledged_at = 0`,
+      args: [customer.id, terminalId || 'T1', JSON.stringify(customer), now]
+    });
+  } catch {}
+
+  // 2. Relay to Sovereign Cloudflare Edge Gateway over HTTPS
+  try {
+    fetch('https://askar-edge-api.layali-askar-pos.workers.dev/api/khata/present-at-counter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId: customer.id, terminalId: terminalId || 'T1' })
+    }).catch(() => {});
+  } catch {}
+
+  return {
+    success: true,
+    message: `${customer.name} announced at counter`,
+    customer,
+    terminalId: terminalId || 'T1',
+    timestamp: now
+  };
+});
+
+// GET: Latest counter beacon for POS polling (Restricted to POS Terminal / Manager)
+fastify.get('/api/khata/present-at-counter/latest', async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: POS machine token or Manager auth required' });
+  }
+  const now = Date.now();
+  try {
+    const res = await db.execute({
+      sql: `SELECT customer_id, terminal_id, customer_json, timestamp, acknowledged_at 
+            FROM CounterBeaconRelay 
+            WHERE id = 'active_beacon' LIMIT 1`,
+      args: []
+    });
+    if (res.rows && res.rows.length > 0) {
+      const row = res.rows[0];
+      const ts = Number(row.timestamp || 0);
+      const ack = Number(row.acknowledged_at || 0);
+      if (ack === 0 && (now - ts <= 45000)) {
+        let cust = null;
+        if (row.customer_json) {
+          try { cust = JSON.parse(row.customer_json); } catch {}
+        }
+        return {
+          success: true,
+          beacon: {
+            customer: cust,
+            terminalId: row.terminal_id || 'T1',
+            timestamp: ts
+          }
+        };
+      }
+    }
+    return { success: true, beacon: null };
+  } catch (err) {
+    return { success: false, beacon: null, error: err?.message };
+  }
+});
+
+// POST: Acknowledge beacon once linked or displayed on POS
+fastify.post('/api/khata/present-at-counter/ack', async (request, reply) => {
+  const now = Date.now();
+  try {
+    await db.execute({
+      sql: `UPDATE CounterBeaconRelay SET acknowledged_at = ? WHERE id = 'active_beacon'`,
+      args: [now]
+    });
+  } catch {}
+  return { success: true, acknowledged: true, timestamp: now };
+});
 
 // 2. Direct Append-Only Khata Charge Endpoint
 const handleKhataChargeCloud = async (request, reply) => {
@@ -2577,7 +3338,7 @@ const handleSyncSalesCloud = async (request, reply) => {
           await db.execute({
             sql: 'UPDATE Product SET stockQuantity = MAX(0, stockQuantity - ?) WHERE id = ? OR barcode = ?',
             args: [qty, prodId, prodId]
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
       processedCount++;
@@ -2596,6 +3357,39 @@ const handleSyncSalesCloud = async (request, reply) => {
       });
     }
 
+    // Trigger instant Web Push notification to customer phones
+    if (webpush) {
+      for (const sale of sales) {
+        if (sale?.customerId) {
+          try {
+            const tot = Number(sale.total || sale.totalAmount || 0);
+            const inv = sale.invoiceNo || `INV-${sale.id}`;
+            const subRows = await db.execute({
+              sql: 'SELECT endpoint, p256dh, auth FROM PushSubscription WHERE customerId = ? OR customerId = ? OR customerId IS NULL',
+              args: [sale.customerId, 'ALL']
+            });
+            const pPayload = JSON.stringify({
+              id: `sale_${sale.id || Date.now()}`,
+              title: 'Layali Supermarket • Purchase Notice',
+              message: `Purchased items for ${tot.toFixed(3)} BHD. Inv #${inv}`,
+              amount: tot,
+              formattedAmount: `${tot.toFixed(3)} BHD`,
+              invoiceNo: inv,
+              customerId: sale.customerId,
+              txType: 'SALE',
+              timestamp: new Date().toISOString()
+            });
+            for (const sub of (subRows.rows || [])) {
+              webpush.sendNotification({
+                endpoint: sub.endpoint,
+                keys: { p256dh: sub.p256dh, auth: sub.auth }
+              }, pPayload).catch(() => {});
+            }
+          } catch {}
+        }
+      }
+    }
+
     return { success: true, processed: processedCount };
   } catch (err) {
     fastify.log.error(err, 'Cloud sales sync error');
@@ -2605,6 +3399,410 @@ const handleSyncSalesCloud = async (request, reply) => {
 
 fastify.post('/api/sync/sales', handleSyncSalesCloud);
 fastify.post('/api/sales/sync', handleSyncSalesCloud);
+
+// 3. Void Sale / Invoice & Restock (Direct Cloud Turso Execution)
+const handleVoidSaleCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: Manager authentication required' });
+  }
+  const { id } = request.params;
+  const cleanId = String(id || '').trim();
+  const { reason = 'Manager Voided Invoice' } = request.body || {};
+
+  try {
+    const saleRes = await db.execute({
+      sql: `SELECT * FROM Sale WHERE UPPER(invoiceNo) = UPPER(?) OR id = ? OR CAST(invoiceSeq AS TEXT) = ? LIMIT 1`,
+      args: [cleanId, cleanId, cleanId]
+    });
+
+    if (!saleRes.rows || saleRes.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: `Sale or Invoice #${cleanId} not found` });
+    }
+
+    const sale = saleRes.rows[0];
+    if (sale.status === 'VOIDED') {
+      return reply.send({ success: true, alreadyVoided: true, message: `Invoice #${sale.invoiceNo} is already VOIDED.` });
+    }
+
+    const saleTotal = Number(sale.total || sale.totalAmount || 0);
+
+    // Mark Sale as VOIDED
+    await db.execute({
+      sql: `UPDATE Sale SET status = 'VOIDED', syncStatus = 'SYNCED', notes = ? WHERE id = ?`,
+      args: [`[VOIDED] ${reason}`, sale.id]
+    });
+
+    // Reverse customer balance & add ledger entry
+    if (sale.customerId && saleTotal > 0) {
+      const reversalId = `tx_void_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      await db.execute({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, timestamp, created_at, tenantId, syncStatus, subledger_type)
+              VALUES (?, ?, ?, 'VOID_REVERSAL', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'SYNCED', 'PERSONAL')`,
+        args: [reversalId, sale.customerId, -saleTotal, `VOID-${sale.invoiceNo}`, sale.tenantId || 'tenant_askar_01']
+      });
+
+      await db.execute({
+        sql: `UPDATE Customer SET balance = MAX(0, balance - ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+        args: [saleTotal, sale.customerId]
+      });
+    }
+
+    // Restock items
+    const itemsRes = await db.execute({
+      sql: `SELECT productId, quantity FROM SaleItem WHERE saleId = ?`,
+      args: [sale.id]
+    });
+    for (const item of (itemsRes.rows || [])) {
+      const pId = String(item.productId || '');
+      const qty = Number(item.quantity || 0);
+      if (pId && qty > 0) {
+        await db.execute({
+          sql: `UPDATE Product SET stockQuantity = stockQuantity + ? WHERE id = ? OR barcode = ?`,
+          args: [qty, pId, pId]
+        }).catch(() => {});
+      }
+    }
+
+    return reply.send({
+      success: true,
+      message: `Invoice #${sale.invoiceNo} successfully voided and reversed.`,
+      invoiceNo: sale.invoiceNo,
+      reversedTotal: saleTotal
+    });
+  } catch (err) {
+    fastify.log.error('Cloud void sale error:', err);
+    return reply.status(500).send({ success: false, error: 'Failed to void sale', details: err?.message });
+  }
+};
+
+// 4. Adjust Customer Balance (Direct Cloud Turso Execution)
+const handleAdjustCustomerBalanceCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: Manager authentication required' });
+  }
+  const { id } = request.params;
+  const cleanId = String(id || '').trim();
+  const body = request.body || {};
+  const reason = String(body.reason || 'Manager Balance Adjustment').trim();
+  const note = String(body.note || body.notes || reason).trim();
+  const mode = body.mode || (body.newBalance !== undefined ? 'SET_BALANCE' : 'DELTA');
+
+  try {
+    const custRes = await db.execute({
+      sql: `SELECT id, name, balance, tenantId FROM Customer WHERE id = ? LIMIT 1`,
+      args: [cleanId]
+    });
+
+    if (!custRes.rows || custRes.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: `Customer #${cleanId} not found` });
+    }
+
+    const customer = custRes.rows[0];
+    const currentBal = Number(customer.balance || 0);
+
+    let targetBal;
+    let deltaBal;
+
+    if (mode === 'SET_BALANCE' || body.newBalance !== undefined || body.targetBalance !== undefined) {
+      const parsed = parseFloat(body.newBalance !== undefined ? body.newBalance : body.targetBalance);
+      if (isNaN(parsed)) return reply.status(400).send({ success: false, error: 'Invalid target balance' });
+      targetBal = Number(parsed.toFixed(3));
+      deltaBal = Number((targetBal - currentBal).toFixed(3));
+    } else {
+      const parsedDelta = parseFloat(body.delta);
+      if (isNaN(parsedDelta) || parsedDelta === 0) return reply.status(400).send({ success: false, error: 'Invalid delta' });
+      deltaBal = Number(parsedDelta.toFixed(3));
+      targetBal = Number((currentBal + deltaBal).toFixed(3));
+    }
+
+    const adjId = `tx_adj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, timestamp, created_at, tenantId, syncStatus, subledger_type, notes)
+            VALUES (?, ?, ?, 'BALANCE_ADJUSTMENT', 'ADJ-MANUAL', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'SYNCED', 'PERSONAL', ?)`,
+      args: [adjId, customer.id, deltaBal, targetBal, customer.tenantId || 'tenant_askar_01', note]
+    });
+
+    await db.execute({
+      sql: `UPDATE Customer SET balance = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+      args: [targetBal, customer.id]
+    });
+
+    return reply.send({
+      success: true,
+      message: `Balance for ${customer.name} adjusted from ${currentBal.toFixed(3)} to ${targetBal.toFixed(3)} BHD.`,
+      customerId: customer.id,
+      customerName: customer.name,
+      oldBalance: currentBal,
+      newBalance: targetBal,
+      balance: targetBal,
+      delta: deltaBal,
+      ledgerId: adjId
+    });
+  } catch (err) {
+    fastify.log.error('Cloud adjust balance error:', err);
+    return reply.status(500).send({ success: false, error: 'Failed to adjust balance', details: err?.message });
+  }
+};
+
+// 5. Void Khata Ledger Entry (Direct Cloud Turso Execution)
+const handleVoidLedgerEntryCloud = async (request, reply) => {
+  if (!verifyPosOrManagerAuth(request)) {
+    return reply.status(401).send({ success: false, error: 'Unauthorized: Manager authentication required' });
+  }
+  const { id } = request.params;
+  const cleanId = String(id || '').trim();
+  const { reason = 'Manager Voided Ledger Entry' } = request.body || {};
+
+  try {
+    const entryRes = await db.execute({
+      sql: `SELECT * FROM KhataLedger WHERE id = ? LIMIT 1`,
+      args: [cleanId]
+    });
+
+    if (!entryRes.rows || entryRes.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: `Ledger entry #${cleanId} not found` });
+    }
+
+    const entry = entryRes.rows[0];
+    if (entry.type === 'VOIDED' || entry.type === 'VOID_REVERSAL') {
+      return reply.send({ success: true, alreadyVoided: true, message: `Ledger entry #${entry.id} is already voided.` });
+    }
+
+    const rawAmt = Number(entry.amount || 0);
+    const reversalDelta = Number((-rawAmt).toFixed(3));
+    const customerId = String(entry.customerId || '');
+
+    await db.execute({
+      sql: `UPDATE KhataLedger SET type = 'VOIDED', reference = 'VOIDED-' || reference, syncStatus = 'SYNCED' WHERE id = ?`,
+      args: [entry.id]
+    });
+
+    const revId = `tx_rev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.execute({
+      sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, timestamp, created_at, tenantId, syncStatus, subledger_type, notes)
+            VALUES (?, ?, ?, 'VOID_REVERSAL', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'SYNCED', ?, ?)`,
+      args: [
+        revId,
+        customerId,
+        reversalDelta,
+        `REV-${entry.id.slice(-8)}`,
+        entry.tenantId || 'tenant_askar_01',
+        entry.subledger_type || 'PERSONAL',
+        `Reversal for voided ledger entry ${entry.id}: ${reason}`
+      ]
+    });
+
+    if (customerId) {
+      await db.execute({
+        sql: `UPDATE Customer SET balance = MAX(0, balance + ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+        args: [reversalDelta, customerId]
+      });
+    }
+
+    return reply.send({
+      success: true,
+      message: `Ledger entry #${entry.id} voided successfully. Balance adjusted by ${reversalDelta.toFixed(3)} BHD.`,
+      ledgerId: entry.id,
+      reversalId: revId,
+      customerId,
+      reversalDelta
+    });
+  } catch (err) {
+    fastify.log.error('Cloud void ledger error:', err);
+    return reply.status(500).send({ success: false, error: 'Failed to void ledger entry', details: err?.message });
+  }
+};
+
+fastify.post('/api/sales/invoice/:id/void', handleVoidSaleCloud);
+fastify.post('/api/sales/:id/void', handleVoidSaleCloud);
+fastify.post('/api/customers/:id/adjust-balance', handleAdjustCustomerBalanceCloud);
+fastify.post('/api/khata/customers/:id/adjust-balance', handleAdjustCustomerBalanceCloud);
+fastify.post('/api/khata/ledger/:id/void', handleVoidLedgerEntryCloud);
+fastify.post('/api/ledger/:id/void', handleVoidLedgerEntryCloud);
+
+// --- Exclusive Stealth Developer Portal Endpoints (Resolved FLAW-04) ---
+const DEV_MASTER_PASSWORD = (process.env.DEV_MASTER_PASSWORD || '').trim() || null;
+
+// Verify developer JWT helper
+function verifyDeveloperAuth(request, reply) {
+  const authHeader = String(request.headers['authorization'] || '');
+  if (!authHeader.startsWith('Bearer ')) {
+    reply.status(401).send({ success: false, error: 'Unauthorized: Developer token required' });
+    return null;
+  }
+  try {
+    const rawJwt = authHeader.slice(7).trim();
+    const decoded = jwt.verify(rawJwt, JWT_SECRET);
+    if (!decoded || (decoded.role !== 'DEVELOPER' && decoded.role !== 'SUPER_ADMIN')) {
+      reply.status(403).send({ success: false, error: 'Forbidden: Developer role required' });
+      return null;
+    }
+    return decoded;
+  } catch (e) {
+    reply.status(401).send({ success: false, error: 'Unauthorized: Invalid developer token', details: e.message });
+    return null;
+  }
+}
+
+// 1. Developer Auth Endpoint (Master Password 'Anasanas1!' or Enrolled Biometric Token)
+fastify.post('/api/dev/auth', async (request, reply) => {
+  const ip = request.ip || request.headers['x-forwarded-for'] || 'dev_client';
+  const rateCheck = checkRateLimit(`dev_${ip}`);
+  if (!rateCheck.allowed) {
+    return reply.status(429).send({
+      success: false,
+      error: `Too many failed developer login attempts. Locked out for ${rateCheck.remainingMins} minute(s).`
+    });
+  }
+
+  const { password, biometricToken } = request.body || {};
+
+  // Biometric Token verification (for enrolled phone biometrics)
+  if (biometricToken && typeof biometricToken === 'string') {
+    try {
+      const decodedBio = jwt.verify(biometricToken, JWT_SECRET);
+      if (decodedBio && (decodedBio.role === 'DEVELOPER' || decodedBio.sub === 'lead_developer')) {
+        clearFailedAttempts(`dev_${ip}`);
+        const token = jwt.sign(
+          { role: 'DEVELOPER', devId: 'lead_developer', authType: 'BIOMETRIC' },
+          JWT_SECRET,
+          { expiresIn: '24h' }
+        );
+        return reply.send({ success: true, token, role: 'DEVELOPER', authType: 'BIOMETRIC' });
+      }
+    } catch {}
+  }
+
+  const cleanEntered = String(password || '').trim();
+  if (!cleanEntered) {
+    return reply.status(400).send({ success: false, error: 'Password required' });
+  }
+
+  const isMatch = Boolean(DEV_MASTER_PASSWORD && cleanEntered === DEV_MASTER_PASSWORD);
+  if (!isMatch) {
+    recordFailedAttempt(`dev_${ip}`);
+    return reply.status(401).send({ success: false, error: 'Invalid developer credentials. Access denied.' });
+  }
+
+  clearFailedAttempts(`dev_${ip}`);
+  const token = jwt.sign(
+    { role: 'DEVELOPER', devId: 'lead_developer', authType: 'PASSWORD' },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+
+  return reply.send({
+    success: true,
+    token,
+    role: 'DEVELOPER',
+    authType: 'PASSWORD'
+  });
+});
+
+// 2. Fetch All Customer Accounts & Store KPIs (Requires Developer Token)
+fastify.get('/api/dev/customers', async (request, reply) => {
+  const dev = verifyDeveloperAuth(request, reply);
+  if (!dev) return;
+
+  try {
+    const [custRes, messesRes] = await Promise.all([
+      db.execute({
+        sql: `SELECT id, name, phone, cpr, cardUid, nfcCardId,
+                     COALESCE(balance, 0.0) as balance,
+                     COALESCE(credit_limit, 30.0) as credit_limit,
+                     COALESCE(is_active, 1) as is_active,
+                     COALESCE(isActive, 1) as isActive,
+                     mess_id, createdAt, updatedAt
+              FROM Customer 
+              ORDER BY balance DESC, name ASC`,
+        args: []
+      }),
+      db.execute({
+        sql: `SELECT mm.customer_id, mg.id as mess_id, mg.group_name 
+              FROM MessMember mm
+              JOIN MessGroup mg ON mm.mess_id = mg.id
+              WHERE mm.is_active = 1`,
+        args: []
+      }).catch(() => ({ rows: [] }))
+    ]);
+
+    const messMap = new Map();
+    for (const r of (messesRes.rows || [])) {
+      const cId = String(r.customer_id);
+      if (!messMap.has(cId)) messMap.set(cId, []);
+      messMap.get(cId).push({ id: r.mess_id, name: r.group_name });
+    }
+
+    let totalDebt = 0;
+    let totalCredit = 0;
+    let activeCount = 0;
+    let frozenCount = 0;
+
+    const customers = (custRes.rows || []).map((c) => {
+      const bal = Number(c.balance || 0);
+      const isActive = (c.is_active === 0 || c.isActive === 0) ? 0 : 1;
+      if (bal > 0.0005) totalDebt += bal;
+      if (bal < -0.0005) totalCredit += Math.abs(bal);
+      if (isActive) activeCount++;
+      else frozenCount++;
+
+      const maskedPhone = c.phone ? (String(c.phone).length > 4 ? `${String(c.phone).slice(0, 3)}****${String(c.phone).slice(-2)}` : '****') : '';
+      const maskedCpr = c.cpr ? (String(c.cpr).length > 4 ? `${String(c.cpr).slice(0, 3)}****${String(c.cpr).slice(-2)}` : '****') : '';
+      const maskedCard = c.cardUid || c.nfcCardId ? `${String(c.cardUid || c.nfcCardId).slice(0, 4)}****` : '';
+
+      return {
+        id: c.id,
+        name: c.name || 'Unknown',
+        phone: maskedPhone,
+        cpr: maskedCpr,
+        cardUid: maskedCard,
+        balance: Number(bal.toFixed(3)),
+        credit_limit: Number(c.credit_limit || 30.0),
+        is_active: isActive,
+        isActive: Boolean(isActive),
+        messes: messMap.get(c.id) || [],
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt
+      };
+    });
+
+    return reply.send({
+      success: true,
+      stats: {
+        totalCustomers: customers.length,
+        totalDebt: Number(totalDebt.toFixed(3)),
+        totalCredit: Number(totalCredit.toFixed(3)),
+        activeCount,
+        frozenCount
+      },
+      customers
+    });
+  } catch (err) {
+    fastify.log.error('Dev customers query error:', err);
+    return reply.status(500).send({ success: false, error: 'Database error', details: err.message });
+  }
+});
+
+// 3. Developer Instant Freeze / Unfreeze Toggle
+fastify.post('/api/dev/customer/:id/freeze', async (request, reply) => {
+  const dev = verifyDeveloperAuth(request, reply);
+  if (!dev) return;
+
+  const { id } = request.params;
+  const { freeze } = request.body || {};
+  const newActive = freeze ? 0 : 1;
+
+  try {
+    await db.execute({
+      sql: `UPDATE Customer SET is_active = ?, isActive = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+      args: [newActive, newActive, id]
+    });
+    return reply.send({ success: true, customerId: id, is_active: newActive, isActive: Boolean(newActive) });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
 
 
 // Vercel Serverless Function Handler (Protected against rewrite 404s)
@@ -2624,8 +3822,8 @@ export default async function handler(req, res) {
 
 // Standalone Node Server Runner (Resolved PWA-15 — Local Dev, Docker, Self-Hosting)
 const isMain = process.argv[1] && (
-  process.argv[1].endsWith('server.js') || 
-  process.argv[1].endsWith('api\\server.js') || 
+  process.argv[1].endsWith('server.js') ||
+  process.argv[1].endsWith('api\\server.js') ||
   process.argv[1].endsWith('api/server.js')
 );
 

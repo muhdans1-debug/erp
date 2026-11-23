@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   CreditCard, Users, User, Search, RefreshCw, CheckCircle, AlertCircle, 
   Trash2, Copy, Check, ArrowUpDown, Plus, X, Radio, 
-  ExternalLink, Banknote
+  ExternalLink, Banknote, BookOpen
 } from 'lucide-react';
 import { getApiBaseUrl } from './utils/apiConfig';
 import { getAdminPin } from './utils/auth';
@@ -132,6 +132,8 @@ export default function NfcManager({
   const [editGroupName, setEditGroupName] = useState('');
   const [editGroupTagId, setEditGroupTagId] = useState('');
   const [editGroupMembers, setEditGroupMembers] = useState<string[]>([]);
+  const [editGroupPreviousBalance, setEditGroupPreviousBalance] = useState('');
+  const [editGroupDescription, setEditGroupDescription] = useState('');
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   
   // Quick Create Customer on-the-fly
@@ -529,11 +531,15 @@ export default function NfcManager({
       setEditGroupName('');
       setEditGroupTagId('');
       setEditGroupMembers([]);
+      setEditGroupPreviousBalance('');
+      setEditGroupDescription('');
     } else {
       setSelectedMessGroupForEdit(group);
       setEditGroupName(group.group_name || '');
       setEditGroupTagId(group.assignedCard || '');
       setEditGroupMembers(Array.isArray(group.members) ? group.members.map((m: any) => m.id) : []);
+      setEditGroupPreviousBalance('');
+      setEditGroupDescription('');
     }
     setMemberSearchQuery('');
     setShowMessRosterModal(true);
@@ -546,27 +552,41 @@ export default function NfcManager({
       showNotification('error', 'Group name is required.');
       return;
     }
+    const isNew = selectedMessGroupForEdit.id === 'new';
+    const cleanPrevBalance = isNew && editGroupPreviousBalance ? parseFloat(editGroupPreviousBalance) : 0;
+    if (cleanPrevBalance > 0 && editGroupMembers.length === 0) {
+      showNotification('error', 'Please select at least one room member to allocate the previous book balance.');
+      return;
+    }
+
     setActionLoading(true);
     try {
-      const isNew = selectedMessGroupForEdit.id === 'new';
       const url = isNew 
         ? `${apiBase}/api/nfc/mess-groups`
         : `${apiBase}/api/nfc/mess-groups/${selectedMessGroupForEdit.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
+      const payload: any = {
+        group_name: editGroupName.trim(),
+        member_ids: editGroupMembers,
+        tag_id: editGroupTagId.trim() || null
+      };
+      if (isNew && cleanPrevBalance > 0) {
+        payload.previousBalance = cleanPrevBalance;
+        if (editGroupDescription.trim()) {
+          payload.description = editGroupDescription.trim();
+        }
+      }
+
       const res = await fetch(url, {
         method,
         headers: getHeaders(true),
-        body: JSON.stringify({
-          group_name: editGroupName.trim(),
-          member_ids: editGroupMembers,
-          tag_id: editGroupTagId.trim() || null
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data?.success) {
         showNotification('success', isNew 
-          ? `Mess Group "${editGroupName}" created with ${editGroupMembers.length} workers!`
+          ? `Mess Group "${editGroupName}" created with ${editGroupMembers.length} workers${cleanPrevBalance > 0 ? ` and BD ${cleanPrevBalance.toFixed(3)} opening debt balance` : ''}!`
           : `Mess Group "${data.messGroup?.group_name || editGroupName}" roster updated with ${editGroupMembers.length} members!`);
         setShowMessRosterModal(false);
         setSelectedMessGroupForEdit(null);
@@ -1974,6 +1994,71 @@ export default function NfcManager({
                   className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
+
+              {/* Previous Book Balance Migration (When Creating New Mess Group) */}
+              {selectedMessGroupForEdit.id === 'new' && (
+                <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <BookOpen size={16} className="text-amber-600" />
+                      <label className="block text-xs font-black uppercase tracking-wider text-amber-900">
+                        Previous Book Balance (Physical Ledger Debt)
+                      </label>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-200">
+                      Paper Book Migration
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-2.5 text-xs font-black text-amber-700 select-none">
+                        BD
+                      </span>
+                      <input
+                        type="number"
+                        step="0.005"
+                        min="0"
+                        placeholder="0.000 (e.g. 45.600)"
+                        value={editGroupPreviousBalance}
+                        onChange={(e) => setEditGroupPreviousBalance(e.target.value)}
+                        className="w-full pl-11 pr-4 py-2.5 bg-white border border-amber-300 rounded-xl text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-slate-400 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {parseFloat(editGroupPreviousBalance) > 0 && (
+                    <div className="space-y-2">
+                      {editGroupMembers.length > 0 ? (
+                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs flex items-center justify-between text-emerald-800 font-bold">
+                          <span>⚖️ Zero-Drift Split:</span>
+                          <span className="font-mono font-black text-emerald-900">
+                            BD {parseFloat(editGroupPreviousBalance).toFixed(3)} ÷ {editGroupMembers.length} = BD {(parseFloat(editGroupPreviousBalance) / editGroupMembers.length).toFixed(3)} / member
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-xl text-xs text-amber-900 font-bold flex items-center gap-1.5">
+                          <span>⚠️</span>
+                          <span>Please select at least 1 room member below to allocate this opening book balance.</span>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">
+                          Opening Balance Note / Reference (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Migration from paper book page 14"
+                          value={editGroupDescription}
+                          onChange={(e) => setEditGroupDescription(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Worker Members Selector */}
               <div>

@@ -22,7 +22,7 @@ const MODAL_TEXTS = {
     scanTab: 'Scan Fawri+ QR',
     mobileTab: 'Pay on Mobile',
     scanStep: 'Open BenefitPay app & tap "Scan QR" to pay',
-    scanSub: 'Amount is pre-filled directly to Askar Supermarket',
+    scanSub: 'Amount is pre-filled directly to Layali Supermarket',
     launchApp: 'Launch BenefitPay App',
     openAppOnPhone: 'Open BenefitPay App on this Phone',
     sendInstructions: 'Send via Fawri+ using our registered Merchant ID or Mobile:',
@@ -36,7 +36,7 @@ const MODAL_TEXTS = {
     pendingSub: 'Your payment reference has been sent to the supermarket cashier. Your balance will be deducted once verified against store bank records.',
     statusPending: 'Status: Awaiting Cashier Approval',
     closeBtn: 'Done',
-    crNote: 'Official Merchant CR: 200012345678901 • Askar Supermarket, Bahrain',
+    crNote: 'Official Merchant CR: 200012345678901 • Layali Supermarket, Bahrain',
     desktopNotice: 'BenefitPay is a mobile application. Please scan the QR code using your smartphone camera or BenefitPay app.'
   },
   ar: {
@@ -198,7 +198,7 @@ export default function BenefitPayModal({
   if (!isOpen || !data) return null;
 
   const amountStr = Number(data.amount || 0).toFixed(3);
-  const merchantName = data.merchantName || 'ASKAR SUPERMARKET';
+  const merchantName = data.merchantName || 'LAYALI SUPERMARKET';
   const merchantId = data.merchantId || '97300182';
   const mobileNumber = data.mobileNumber || '+973 32067388';
   const qrPayload = data.qrPayload || '';

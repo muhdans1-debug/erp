@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   ShieldCheck, 
   Lock, 
@@ -358,17 +358,26 @@ function safeSetBoundedCache(key, value, prefix = 'khata_stmt_cache_') {
 
 export function KhataStatement() {
   const { uuid } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const statusParam = searchParams.get('status');
   const tokenKey = `khata_token_${uuid}`;
   const pinKey = `khata_pin_${uuid}`;
   const jwtKey = `khata_jwt_${uuid}`;
 
+  // Developer Inspection Session Detection
+  const isDevSession = typeof window !== 'undefined' && Boolean(
+    sessionStorage.getItem('khata_dev_jwt') || searchParams.get('dev_mode') === '1'
+  );
+
   const [lang, setLang] = useState('en');
   const t = STATEMENT_TEXTS[lang] || STATEMENT_TEXTS.en;
   const isRtl = lang === 'ar';
 
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (typeof window !== 'undefined' && (sessionStorage.getItem('khata_dev_jwt') || searchParams.get('dev_mode') === '1')) {
+      return true;
+    }
     return Boolean(localStorage.getItem(jwtKey) || (localStorage.getItem(tokenKey) && localStorage.getItem(pinKey)));
   });
   const [pin, setPin] = useState('');
@@ -419,17 +428,24 @@ export function KhataStatement() {
 
   // Lock account and wipe sensitive memory state (Clearing both uuid and canonical account.id)
   const handleLockAccount = useCallback((isAutoLock = false) => {
-    try {
-      localStorage.removeItem(tokenKey);
-      localStorage.removeItem(pinKey);
-      localStorage.removeItem(jwtKey);
-      localStorage.removeItem(`khata_jwt_${uuid}`);
-      if (account?.id) {
-        localStorage.removeItem(`khata_token_${account.id}`);
-        localStorage.removeItem(`khata_pin_${account.id}`);
-        localStorage.removeItem(`khata_jwt_${account.id}`);
-      }
-    } catch {}
+    if (isDevSession) {
+      navigate('/dev');
+      return;
+    }
+    // Only wipe stored credentials on explicit manual logout; preserve pairing on auto-lock/sleep
+    if (!isAutoLock) {
+      try {
+        localStorage.removeItem(tokenKey);
+        localStorage.removeItem(pinKey);
+        localStorage.removeItem(jwtKey);
+        localStorage.removeItem(`khata_jwt_${uuid}`);
+        if (account?.id) {
+          localStorage.removeItem(`khata_token_${account.id}`);
+          localStorage.removeItem(`khata_pin_${account.id}`);
+          localStorage.removeItem(`khata_jwt_${account.id}`);
+        }
+      } catch {}
+    }
 
     setIsAuthenticated(false);
     setPin('');
@@ -440,11 +456,11 @@ export function KhataStatement() {
     if (isAutoLock) {
       setShowAutoLockNotice(true);
     }
-  }, [tokenKey, pinKey, jwtKey, uuid, account]);
+  }, [tokenKey, pinKey, jwtKey, uuid, account, isDevSession, navigate]);
 
-  // 15-Minute Inactivity Auto-Lock for Shared Phones in Labor Camps (ADV-05)
+  // 15-Minute Inactivity Auto-Lock for Shared Phones in Labor Camps (ADV-05, bypassed for dev session)
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isDevSession) return;
 
     let timeoutId;
     const resetTimer = () => {
@@ -474,13 +490,16 @@ export function KhataStatement() {
     setLoading(true);
     setError(false);
     try {
-      const savedJwt = localStorage.getItem(`khata_jwt_${customerId}`) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
+      const devJwt = typeof window !== 'undefined' ? (sessionStorage.getItem('khata_dev_jwt') || '') : '';
+      const savedJwt = devJwt || localStorage.getItem(`khata_jwt_${customerId}`) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
+      const savedPin = localStorage.getItem(`khata_pin_${customerId}`) || localStorage.getItem(`khata_pin_${uuid}`) || localStorage.getItem(pinKey) || '';
       const headers = {
         'Content-Type': 'application/json'
       };
 
-      if (userEnteredPin) {
-        headers['x-khata-pin'] = normalizeArabicNumerals(userEnteredPin);
+      const activePin = userEnteredPin || savedPin;
+      if (activePin) {
+        headers['x-khata-pin'] = normalizeArabicNumerals(String(activePin));
       }
       if (savedJwt) {
         headers['Authorization'] = `Bearer ${savedJwt}`;
@@ -493,14 +512,14 @@ export function KhataStatement() {
       });
 
       if (response.status === 401 || response.status === 403) {
-        try {
-          localStorage.removeItem(tokenKey);
-          localStorage.removeItem(pinKey);
-          localStorage.removeItem(jwtKey);
-          localStorage.removeItem(`khata_jwt_${customerId}`);
-        } catch {}
+        if (userEnteredPin) {
+          try {
+            localStorage.removeItem(pinKey);
+            localStorage.removeItem(`khata_pin_${customerId}`);
+          } catch {}
+          setPinError(t.incorrectPin);
+        }
         setIsAuthenticated(false);
-        setPinError(t.incorrectPin);
         setLoading(false);
         return false;
       }
@@ -520,13 +539,8 @@ export function KhataStatement() {
 
       const data = await response.json();
 
-      // If server returned public fallback due to expired JWT/missing PIN (Resolved PWA-R4-01)
+      // If server returned public fallback due to expired JWT/missing PIN (Preserve device pairing)
       if (data.isLocked) {
-        try {
-          localStorage.removeItem(tokenKey);
-          localStorage.removeItem(jwtKey);
-          localStorage.removeItem(`khata_jwt_${customerId}`);
-        } catch {}
         setIsAuthenticated(false);
         setAccount(data);
         setLedgerData([]);
@@ -633,7 +647,8 @@ export function KhataStatement() {
     setLoadingMore(true);
 
     try {
-      const savedJwt = (account?.id && localStorage.getItem(`khata_jwt_${account.id}`)) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
+      const devJwt = typeof window !== 'undefined' ? (sessionStorage.getItem('khata_dev_jwt') || '') : '';
+      const savedJwt = devJwt || (account?.id && localStorage.getItem(`khata_jwt_${account.id}`)) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
       const savedPin = localStorage.getItem(pinKey) || '';
       const headers = {
         'Content-Type': 'application/json',
@@ -777,7 +792,8 @@ export function KhataStatement() {
 
     setPaying(true);
     try {
-      const savedJwt = (account?.id && localStorage.getItem(`khata_jwt_${account.id}`)) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
+      const devJwt = typeof window !== 'undefined' ? (sessionStorage.getItem('khata_dev_jwt') || '') : '';
+      const savedJwt = devJwt || (account?.id && localStorage.getItem(`khata_jwt_${account.id}`)) || localStorage.getItem(`khata_jwt_${uuid}`) || '';
       const savedPin = localStorage.getItem(pinKey) || '';
       const headers = {
         'Content-Type': 'application/json',
@@ -1106,6 +1122,30 @@ export function KhataStatement() {
       dir={isRtl ? 'rtl' : 'ltr'}
       className="min-h-screen bg-slate-950 text-white flex flex-col items-center p-4 pt-safe pb-safe selection:bg-emerald-500 selection:text-white"
     >
+      {/* Developer Sticky Inspection Mode Banner */}
+      {isDevSession && (
+        <div className="w-full max-w-md mb-3 p-2.5 bg-violet-950/90 border border-violet-500/50 rounded-2xl flex items-center justify-between shadow-xl text-white no-print">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse shrink-0" />
+            <div className="min-w-0">
+              <span className="text-xs font-black tracking-wide text-violet-200 block truncate">
+                🛠️ DEV STATEMENT INSPECTION
+              </span>
+              <span className="text-[10px] text-violet-300 font-mono block truncate">
+                Account: {account?.name || uuid}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/dev')}
+            className="py-1 px-3 bg-violet-600 hover:bg-violet-500 active:scale-95 text-white rounded-xl text-xs font-bold transition shrink-0 cursor-pointer shadow-md"
+          >
+            ← Return to Dev
+          </button>
+        </div>
+      )}
+
       {/* Top Header & Actions Bar */}
       <header className="w-full max-w-md mb-3 flex items-center justify-between no-print">
         <div className="flex items-center gap-2">

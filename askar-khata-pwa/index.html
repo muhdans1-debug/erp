@@ -12,33 +12,74 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Askar Khata" />
-    <title>Askar Supermarket — Customer Khata</title>
+    <meta name="apple-mobile-web-app-title" content="Layali" />
+    <title>Layali — Customer Khata</title>
 
     <!-- OpenGraph & Social Metadata for WhatsApp Rich Previews -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Askar Supermarket" />
-    <meta property="og:title" content="Askar Supermarket — Customer Khata Portal" />
+    <meta property="og:site_name" content="Layali" />
+    <meta property="og:title" content="Layali — Customer Khata Portal" />
     <meta property="og:description" content="View your digital grocery tab, itemized receipts, and settle online securely via BenefitPay & Fawri+." />
     <meta property="og:image" content="https://askar-khata-pwa.vercel.app/pwa-512x512.png" />
     <meta property="og:url" content="https://askar-khata-pwa.vercel.app" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Askar Supermarket — Customer Khata Portal" />
+    <meta name="twitter:title" content="Layali — Customer Khata Portal" />
     <meta name="twitter:description" content="Official digital grocery ledger and BenefitPay settlement portal." />
     <meta name="twitter:image" content="https://askar-khata-pwa.vercel.app/pwa-512x512.png" />
+
+    <!-- Automatic PWA Stale Cache Self-Healing Guard (Recovers safely if critical chunk fails to load) -->
+    <script>
+      (function() {
+        window.addEventListener('error', function(e) {
+          var target = e.target;
+          if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
+            var src = target.href || target.src || '';
+            // Only trigger cache recovery if a critical chunk specifically 404s/fails and hasn't reloaded yet
+            if ((src.indexOf('/assets/index-') !== -1 || src.indexOf('/assets/vendor-') !== -1) && !sessionStorage.getItem('pwa_cache_heal_reloaded')) {
+              sessionStorage.setItem('pwa_cache_heal_reloaded', '1');
+              if ('caches' in window) {
+                caches.keys().then(function(keys) {
+                  return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+                }).then(function() {
+                  window.location.reload(true);
+                });
+              } else {
+                window.location.reload(true);
+              }
+            }
+          }
+        }, true);
+      })();
+    </script>
   </head>
   <body class="bg-slate-950 antialiased selection:bg-emerald-500 selection:text-white">
     <noscript>
       <div style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center; color: #ffffff; background: #022c22; min-height: 100vh;">
-        <h1 style="color: #34d198; font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">Askar Supermarket — Customer Khata</h1>
+        <h1 style="color: #34d198; font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">Layali — Customer Khata</h1>
         <p style="color: #cbd5e1; font-size: 0.9rem; max-width: 400px; margin: 0 auto; line-height: 1.5;">
           Please enable JavaScript in your browser settings to access your digital Khata statement and BenefitPay checkout.
         </p>
       </div>
     </noscript>
-    <div id="root"></div>
+    <div id="root">
+      <div id="pwa-instant-splash" style="min-height: 100vh; background-color: #020617; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; color: white;">
+        <div style="width: 64px; height: 64px; border-radius: 20px; background: linear-gradient(135deg, #059669, #10b981); display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4); margin-bottom: 16px;">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path>
+            <path d="M6 6h10"></path>
+            <path d="M6 10h10"></path>
+          </svg>
+        </div>
+        <div style="font-weight: 800; font-size: 1.125rem; letter-spacing: 0.05em; color: #f8fafc; margin-bottom: 4px;">LAYALI SUPERMARKET</div>
+        <div style="font-size: 0.75rem; color: #10b981; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;">Official Customer Khata</div>
+        <div style="margin-top: 24px; width: 32px; height: 32px; border: 3px solid rgba(16, 185, 129, 0.2); border-top-color: #10b981; border-radius: 50%; animation: pwa-spin 0.8s linear infinite;"></div>
+        <style>
+          @keyframes pwa-spin { to { transform: rotate(360deg); } }
+        </style>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

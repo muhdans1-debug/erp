@@ -28,11 +28,9 @@ const TRANSLATIONS = {
     privacyBadge: 'Strict Privacy Active',
     privacyNote: 'To protect your financial privacy, searching other customers is disabled. Access your Khata directly by scanning your receipt QR code.',
     scanReceiptBtn: 'Scan Receipt QR to Open My Khata',
-    passkeyPlaceholder: 'Enter Phone (e.g. 39991234), CPR, or UUID',
-    orScan: 'Or scan the receipt QR code to open your account directly',
-    openAccountBtn: 'Open My Khata',
+    orScan: 'Point camera at receipt QR code to open your account directly',
     scanModalTitle: 'Scan Receipt QR Code',
-    pointCameraHint: 'Point your camera at the private QR code printed on your Askar receipt.',
+    pointCameraHint: 'Point your camera at the private QR code printed on your Layali receipt.',
     orUploadPhoto: 'Upload receipt photo',
     closeBtn: 'Close Scanner',
     cameraPermissionErr: 'Unable to access camera. Please allow camera permissions or upload an image.',
@@ -43,7 +41,7 @@ const TRANSLATIONS = {
     notFound: 'No private account found matching this key. Please scan your receipt QR code or ask the cashier.',
     networkErr: 'No internet connection detected. Please check your mobile data or Wi-Fi.',
     offlineNotice: 'Offline Mode Active.',
-    installAppBtn: 'Install Askar Khata App (1-Click)',
+    installAppBtn: 'Install Layali Khata App (1-Click)',
     updateAvailable: 'New version available! Refresh to update.',
     refreshNow: 'Refresh',
     currency: 'BHD'
@@ -54,9 +52,7 @@ const TRANSLATIONS = {
     privacyBadge: 'حماية الخصوصية مفعلة',
     privacyNote: 'لحماية خصوصيتك المالية، تم إلغاء البحث عن حسابات الآخرين. يمكنك الدخول المباشر لحسابك بمسح رمز QR من إيصالك.',
     scanReceiptBtn: 'مسح رمز QR من الإيصال لفتح حسابي',
-    passkeyPlaceholder: 'أدخل رقم الهاتف (مثال: 39991234) أو الرقم الشخصي أو المعرف',
-    orScan: 'أو امسح رمز الاستجابة السريعة (QR) على الإيصال للدخول المباشر',
-    openAccountBtn: 'فتح حسابي',
+    orScan: 'وجّه الكاميرا نحو رمز QR على الإيصال للدخول المباشر',
     scanModalTitle: 'مسح رمز الاستجابة السريعة للإيصال',
     pointCameraHint: 'وجّه الكاميرا بثبات نحو رمز QR المطبوع أسفل إيصال الشراء.',
     orUploadPhoto: 'رفع صورة الإيصال',
@@ -80,9 +76,7 @@ const TRANSLATIONS = {
     privacyBadge: 'സ്വകാര്യത സുരക്ഷിതം',
     privacyNote: 'മറ്റുള്ളവരുടെ അക്കൗണ്ടുകൾ തിരയുന്നത് ഒഴിവാക്കിയിരിക്കുന്നു. ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്ത് സ്വന്തം അക്കൗണ്ട് നേരിട്ട് തുറക്കാം.',
     scanReceiptBtn: 'ബില്ലിലെ QR സ്കാൻ ചെയ്ത് തുറക്കുക',
-    passkeyPlaceholder: 'മൊബൈൽ നമ്പർ (ഉദാ: 39991234) അല്ലെങ്കിൽ ഐഡി നൽകുക',
-    orScan: 'അല്ലെങ്കിൽ ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക',
-    openAccountBtn: 'എന്റെ ഖാത്ത തുറക്കുക',
+    orScan: 'ബില്ലിലെ QR കോഡ് ക്യാമറയിൽ സ്കാൻ ചെയ്യുക',
     scanModalTitle: 'ബില്ലിലെ QR കോഡ് സ്കാൻ ചെയ്യുക',
     pointCameraHint: 'ബില്ലിന്റെ അടിയിലുള്ള QR കോഡിന് നേരെ ക്യാമറ പിടിക്കുക.',
     orUploadPhoto: 'ഫോട്ടോ അപ്‌ലോഡ് ചെയ്യുക',
@@ -106,9 +100,7 @@ const TRANSLATIONS = {
     privacyBadge: 'গোপনীয়তা সুরক্ষিত',
     privacyNote: 'অন্যের হিসাব খোঁজা বন্ধ রাখা হয়েছে। আপনার ব্যক্তিগত হিসাব দেখতে রশিদের QR কোড স্ক্যান করুন।',
     scanReceiptBtn: 'রশিদের QR স্ক্যান করে খাতা খুলুন',
-    passkeyPlaceholder: 'মোবাইল নম্বর (যেমন 39991234) বা আইডি লিখুন',
-    orScan: 'বা রসিদের QR কোড সরাসরি স্ক্যান করুন',
-    openAccountBtn: 'আমার খাতা খুলুন',
+    orScan: 'রসিদের QR কোড সরাসরি স্ক্যান করুন',
     scanModalTitle: 'রসিদের QR কোড স্ক্যান',
     pointCameraHint: 'রসিদের নিচের QR কোডের দিকে ক্যামেরা তাক করুন।',
     orUploadPhoto: 'রসিদের ছবি আপলোড করুন',
@@ -132,9 +124,7 @@ const TRANSLATIONS = {
     privacyBadge: 'गोपनीयता सुरक्षित',
     privacyNote: 'दूसरों के खाते खोजना बंद कर दिया गया है। अपना खाता देखने के लिए रसीद का QR कोड स्कैन करें।',
     scanReceiptBtn: 'रसीद का QR स्कैन करके खाता खोलें',
-    passkeyPlaceholder: 'मोबाइल नंबर (जैसे 39991234), CPR या आईडी दर्ज करें',
-    orScan: 'या सीधे खाता खोलने के लिए रसीद का QR कोड स्कैन करें',
-    openAccountBtn: 'मेरा खाता खोलें',
+    orScan: 'सीधे खाता खोलने के लिए रसीद का QR कोड स्कैन करें',
     scanModalTitle: 'रसीद का QR कोड स्कैन करें',
     pointCameraHint: 'रसीद के नीचे दिए गए QR कोड पर कैमरा सीधा रखें।',
     orUploadPhoto: 'रसीद की फोटो अपलोड करें',
@@ -166,26 +156,21 @@ function normalizeArabicNumerals(str) {
 export default function HomeLookup() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const isResetMode = searchParams.get('switch') === '1' || searchParams.get('reset') === '1';
 
   const [lang, setLang] = useState('en');
-  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
   const [isOffline, setIsOffline] = useState(() => !navigator.onLine);
 
-  // If in switch/reset mode, clear previously saved phone binding so shop owner can re-configure
+  // Auto-redirect if phone is already paired to a private customer account
   useEffect(() => {
-    if (isResetMode) {
-      try {
-        localStorage.removeItem('my_khata_customer_id');
-        document.cookie = 'khata_customer_id=; path=/; max-age=0; SameSite=Lax';
-      } catch (e) {
-        console.warn('Reset mode clear error:', e);
+    try {
+      const boundId = localStorage.getItem('my_khata_customer_id');
+      if (boundId) {
+        navigate(`/tab/${encodeURIComponent(boundId)}`, { replace: true });
       }
-    }
-  }, [isResetMode]);
+    } catch {}
+  }, [navigate]);
 
   // Permanent Device Binding: locks phone directly to customer tab
   const bindAndNavigate = useCallback((targetCustomerId, targetPath = null) => {
@@ -305,69 +290,8 @@ export default function HomeLookup() {
     };
   }, []);
 
-  // Deduplicated Recent Accounts across all cached tabs & statements (Resolved PWA-ACC-04)
-  const [recentAccounts] = useState(() => {
-    try {
-      const keys = Object.keys(localStorage).filter(k => 
-        k.startsWith('khata_name_') || k.startsWith('khata_tab_cache_') || k.startsWith('khata_pin_')
-      );
-      const seenIds = new Set();
-      const seenNames = new Set();
-      const accounts = [];
-
-      for (const k of keys) {
-        const id = k.replace(/^(khata_name_|khata_tab_cache_|khata_pin_)/, '');
-        if (!id || seenIds.has(id)) continue;
-        seenIds.add(id);
-
-        const name = localStorage.getItem(`khata_name_${id}`) || 'Saved Account';
-        if (!seenNames.has(name.toLowerCase())) {
-          seenNames.add(name.toLowerCase());
-          accounts.push({ id, name });
-        }
-      }
-      return accounts;
-    } catch {
-      return [];
-    }
-  });
-
   const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
   const isRtl = lang === 'ar';
-
-  const handleSearch = async (e) => {
-    e?.preventDefault();
-    const clean = normalizeArabicNumerals(query).trim();
-    if (!clean || clean.length < 2) return;
-
-    setLoading(true);
-    setError('');
-    setSearchResults([]);
-
-    try {
-      const res = await fetch('/api/customers/lookup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: clean })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.matches && data.matches.length > 0) {
-        // Direct match: bind phone to this private account and go directly to tab
-        bindAndNavigate(data.matches[0].id);
-      } else {
-        setError(t.notFound);
-      }
-    } catch {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        setError(t.networkErr);
-      } else {
-        setError('Cannot reach server. The central service may be temporarily unavailable or updating. Please try again shortly.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Robust QR Code payload parsing for all deep links (Resolved PWA-INT-01)
   const handleDetectedCode = useCallback((raw) => {
@@ -395,6 +319,11 @@ export default function HomeLookup() {
       }
     }
 
+    let cleanStr = str;
+    if (cleanStr.toUpperCase().startsWith('KHATA:')) cleanStr = cleanStr.slice(6).trim();
+    if (cleanStr.toUpperCase().startsWith('CUST-')) cleanStr = cleanStr.slice(5).trim();
+    cleanStr = cleanStr.replace(/^#+|#+$/g, '');
+
     let detectedId = '';
     const match = str.match(/\/(tab|statement|khata|customer|pay)\/([a-zA-Z0-9_\-%]+)/i);
     if (match) {
@@ -403,7 +332,7 @@ export default function HomeLookup() {
       const parts = targetRoute.split('?')[0].split('/');
       detectedId = parts[parts.length - 1];
     } else {
-      detectedId = normalizeArabicNumerals(str);
+      detectedId = normalizeArabicNumerals(cleanStr);
     }
 
     if (targetRoute) {
@@ -469,6 +398,36 @@ export default function HomeLookup() {
               // Frame scan skipped
             }
           }, 300);
+        } else {
+          // Dynamic lightweight fallback for Android WebViews & older Chrome
+          let jsQR = window.jsQR;
+          if (!jsQR) {
+            try {
+              const script = document.createElement('script');
+              script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+              script.async = true;
+              document.head.appendChild(script);
+              await new Promise((res) => { script.onload = res; script.onerror = res; });
+            } catch {}
+          }
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          detectorTimer = setInterval(() => {
+            if (!videoRef.current || videoRef.current.readyState < 2 || !ctx) return;
+            if (typeof window.jsQR === 'function') {
+              canvas.width = videoRef.current.videoWidth || 320;
+              canvas.height = videoRef.current.videoHeight || 240;
+              ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const code = window.jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: 'dontInvert'
+              });
+              if (code && code.data) {
+                clearInterval(detectorTimer);
+                handleDetectedCode(code.data);
+              }
+            }
+          }, 350);
         }
       } catch (err) {
         console.warn('Camera stream error:', err);
@@ -508,6 +467,40 @@ export default function HomeLookup() {
         console.warn('Barcode detect from image error:', err);
       }
     }
+
+    // jsQR Fallback for photo uploads
+    try {
+      let jsQR = window.jsQR;
+      if (!jsQR) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+        script.async = true;
+        document.head.appendChild(script);
+        await new Promise((res) => { script.onload = res; script.onerror = res; });
+        jsQR = window.jsQR;
+      }
+      if (typeof jsQR === 'function') {
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await new Promise((res) => { img.onload = res; });
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imgData.data, imgData.width, imgData.height);
+          if (code && code.data) {
+            handleDetectedCode(code.data);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('jsQR image decode error:', err);
+    }
+
     setCameraError('No QR code detected in the selected image. Please try again or type your phone number.');
   };
 
@@ -549,7 +542,7 @@ export default function HomeLookup() {
           </button>
 
           <div>
-            <span className="font-black text-sm tracking-tight text-white uppercase block leading-none">Askar Khata</span>
+            <span className="font-black text-sm tracking-tight text-white uppercase block leading-none">Layali Khata</span>
             <span className="text-[10px] text-slate-400 font-mono">Bahrain • NBR Tax</span>
           </div>
         </div>
@@ -614,19 +607,6 @@ export default function HomeLookup() {
             </p>
           </div>
 
-          {/* Shopkeeper Setup Mode Banner */}
-          {isResetMode && (
-            <div className="mb-4 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-2xl text-amber-300 text-xs font-semibold flex items-center gap-2.5 text-left">
-              <span className="text-xl shrink-0">⚙️</span>
-              <div>
-                <p className="font-bold text-amber-200">Device Link Mode</p>
-                <p className="text-[11px] text-amber-300/80 font-normal leading-relaxed">
-                  Scan the customer's receipt QR code to bind this phone directly to their private account.
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* Privacy Guarantee Pill */}
           <div className="mb-5 p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl text-left flex items-start gap-3">
             <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
@@ -648,51 +628,16 @@ export default function HomeLookup() {
               <Camera className="w-5 h-5 text-white shrink-0" />
               <span>{t.scanReceiptBtn}</span>
             </button>
-          </div>
-
-          {/* Subtle Divider */}
-          <div className="relative my-6 text-center no-print">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-800" />
-            </div>
-            <span className="relative px-3 bg-slate-900 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
-              Direct Passcode
-            </span>
-          </div>
-
-          {/* Direct Key Form (Exact Token / UUID Only — No Directory Search) */}
-          <form onSubmit={handleSearch} className="space-y-3 no-print">
-            <div className="relative">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  if (error) setError('');
-                }}
-                placeholder={t.passkeyPlaceholder}
-                className={`w-full py-3.5 bg-slate-950 border border-slate-800 rounded-2xl text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${
-                  isRtl ? 'pr-11 pl-4 text-right' : 'pl-11 pr-4 text-left'
-                }`}
-              />
-              <Lock className={`w-4 h-4 text-slate-500 absolute top-1/2 -translate-y-1/2 pointer-events-none ${isRtl ? 'right-4' : 'left-4'}`} />
-            </div>
 
             <button
-              type="submit"
-              disabled={loading || query.trim().length < 2}
-              className="w-full min-h-[46px] py-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] disabled:opacity-40 text-slate-200 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700/80"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full min-h-[46px] py-3 px-4 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-200 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700/80"
             >
-              {loading ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <>
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>{t.openAccountBtn}</span>
-                </>
-              )}
+              <Upload className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{t.orUploadPhoto}</span>
             </button>
-          </form>
+          </div>
 
           {/* PWA In-App 1-Click Install Banner */}
           {installPrompt && (
@@ -736,7 +681,7 @@ export default function HomeLookup() {
               <span>{t.callStore}</span>
             </a>
             <a
-              href={`https://wa.me/${STORE_WHATSAPP}?text=Hello%20Askar%20Coldstore%2C%20I%20need%20assistance%20with%20my%20Khata%20account.`}
+              href={`https://wa.me/${STORE_WHATSAPP}?text=Hello%20Layali%2C%20I%20need%20assistance%20with%20my%20Khata%20account.`}
               target="_blank"
               rel="noopener noreferrer"
               className="min-h-[44px] py-2 px-3 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-xl text-xs font-semibold text-emerald-300 flex items-center justify-center gap-1.5 transition"

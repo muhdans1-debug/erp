@@ -1,12 +1,10 @@
 import { Component, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { lazyWithRetry } from './utils/lazyWithRetry';
-
-const CustomerTab = lazyWithRetry(() => import('./pages/CustomerTab'), 'CustomerTab');
-const CustomerTabPreview = lazyWithRetry(() => import('./pages/CustomerTabPreview'), 'CustomerTabPreview');
-const HomeLookup = lazyWithRetry(() => import('./pages/HomeLookup'), 'HomeLookup');
-const KhataStatement = lazyWithRetry(() => import('./KhataStatement').then(m => ({ default: m.KhataStatement })), 'KhataStatement');
-const DevPortal = lazyWithRetry(() => import('./pages/DevPortal'), 'DevPortal');
+import CustomerTab from './pages/CustomerTab';
+import CustomerTabPreview from './pages/CustomerTabPreview';
+import HomeLookup from './pages/HomeLookup';
+import { KhataStatement } from './KhataStatement';
+import DevPortal from './pages/DevPortal';
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -18,17 +16,6 @@ class ErrorBoundary extends Component {
   }
   componentDidCatch(error, errorInfo) {
     console.error('PWA Application Crash Prevented:', error, errorInfo);
-    const msg = (error && (error.message || error.toString())) || '';
-    const isChunkError = 
-      msg.includes('Failed to fetch dynamically imported module') ||
-      msg.includes('Loading chunk') ||
-      msg.includes('Importing a module script failed') ||
-      msg.includes('error loading dynamically imported module');
-
-    if (isChunkError && !sessionStorage.getItem('khata_auto_healed')) {
-      sessionStorage.setItem('khata_auto_healed', 'true');
-      this.handleRefresh();
-    }
   }
 
   handleRefresh = async () => {
@@ -42,6 +29,7 @@ class ErrorBoundary extends Component {
         const regs = await navigator.serviceWorker.getRegistrations();
         await Promise.all(regs.map(r => r.unregister()));
       }
+      sessionStorage.clear();
     } catch (e) {
       console.warn('Cache purge error:', e);
     }
@@ -52,20 +40,26 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      const errMsg = String(this.state.error?.message || this.state.error || '');
       return (
         <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center font-sans">
           <div className="max-w-sm w-full p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl">
             <h2 className="text-lg font-bold text-emerald-400 mb-2">Layali Supermarket • Khata Tab</h2>
-            <p className="text-slate-400 text-xs mb-5">
-              {this.state.updating ? 'Applying latest update...' : 'A cache refresh is required to update to the latest version.'}
+            <p className="text-slate-400 text-xs mb-3">
+              Application reset is ready. Tap below to launch fresh.
             </p>
+            {errMsg && (
+              <div className="mb-4 text-[11px] text-rose-400/80 bg-rose-950/30 p-2 rounded-lg border border-rose-900/30 font-mono break-all text-left max-h-24 overflow-y-auto">
+                {errMsg}
+              </div>
+            )}
             <button
               type="button"
               disabled={this.state.updating}
               onClick={this.handleRefresh}
               className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-sm text-white shadow-lg transition disabled:opacity-50"
             >
-              {this.state.updating ? 'Updating Application...' : 'Refresh Application'}
+              {this.state.updating ? 'Launching...' : 'Reset & Launch Now'}
             </button>
           </div>
         </div>

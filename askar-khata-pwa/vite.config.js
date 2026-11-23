@@ -31,7 +31,7 @@ const pwaPrecachePlugin = () => ({
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pwaPrecachePlugin()],
+  plugins: [react(), tailwindcss()],
   server: {
     port: 5174,
     host: '0.0.0.0',

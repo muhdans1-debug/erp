@@ -29,28 +29,21 @@
     <meta name="twitter:description" content="Official digital grocery ledger and BenefitPay settlement portal." />
     <meta name="twitter:image" content="https://askar-khata-pwa.vercel.app/pwa-512x512.png" />
 
-    <!-- Automatic PWA Stale Cache Self-Healing Guard (Recovers safely if critical chunk fails to load) -->
+    <!-- Immediate Service Worker Kill-Switch & Cache Eviction -->
     <script>
       (function() {
-        window.addEventListener('error', function(e) {
-          var target = e.target;
-          if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
-            var src = target.href || target.src || '';
-            // Trigger cache recovery if any chunk or asset 404s/fails
-            if (src.indexOf('/assets/') !== -1 && !sessionStorage.getItem('pwa_cache_heal_reloaded')) {
-              sessionStorage.setItem('pwa_cache_heal_reloaded', '1');
-              if ('caches' in window) {
-                caches.keys().then(function(keys) {
-                  return Promise.all(keys.map(function(k) { return caches.delete(k); }));
-                }).then(function() {
-                  window.location.replace(window.location.pathname + '?t=' + Date.now());
-                });
-              } else {
-                window.location.replace(window.location.pathname + '?t=' + Date.now());
-              }
-            }
+        try {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              for (var i = 0; i < regs.length; i++) regs[i].unregister();
+            });
           }
-        }, true);
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              for (var i = 0; i < keys.length; i++) caches.delete(keys[i]);
+            });
+          }
+        } catch (e) {}
       })();
     </script>
   </head>

@@ -41,9 +41,10 @@ import {
   createReceiptDeviceToken,
   getDeviceAuthHeaders
 } from '../utils/phoneLockAuth';
-const BenefitPayModal = lazy(() => import('../components/BenefitPayModal'));
-const HamburgerDrawer = lazy(() => import('../components/HamburgerDrawer'));
-const ReceiptModal = lazy(() => import('../components/ReceiptModal'));
+import { lazyWithRetry } from '../utils/lazyWithRetry';
+const BenefitPayModal = lazyWithRetry(() => import('../components/BenefitPayModal'), 'BenefitPayModal');
+const HamburgerDrawer = lazyWithRetry(() => import('../components/HamburgerDrawer'), 'HamburgerDrawer');
+const ReceiptModal = lazyWithRetry(() => import('../components/ReceiptModal'), 'ReceiptModal');
 import TransactionItemCard from '../components/TransactionItemCard';
 import DigitalKhataPass from '../components/DigitalKhataPass';
 import { generateBenefitPayPayload } from '../utils/benefitPay';

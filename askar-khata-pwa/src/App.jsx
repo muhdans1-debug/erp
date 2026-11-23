@@ -1,45 +1,71 @@
-import { Component, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
+import { Component, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 
-const CustomerTab = lazy(() => import('./pages/CustomerTab'));
-const CustomerTabPreview = lazy(() => import('./pages/CustomerTabPreview'));
-const HomeLookup = lazy(() => import('./pages/HomeLookup'));
-const KhataStatement = lazy(() => import('./KhataStatement').then(m => ({ default: m.KhataStatement })));
-const DevPortal = lazy(() => import('./pages/DevPortal'));
+const CustomerTab = lazyWithRetry(() => import('./pages/CustomerTab'), 'CustomerTab');
+const CustomerTabPreview = lazyWithRetry(() => import('./pages/CustomerTabPreview'), 'CustomerTabPreview');
+const HomeLookup = lazyWithRetry(() => import('./pages/HomeLookup'), 'HomeLookup');
+const KhataStatement = lazyWithRetry(() => import('./KhataStatement').then(m => ({ default: m.KhataStatement })), 'KhataStatement');
+const DevPortal = lazyWithRetry(() => import('./pages/DevPortal'), 'DevPortal');
 
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, updating: false };
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
   componentDidCatch(error, errorInfo) {
     console.error('PWA Application Crash Prevented:', error, errorInfo);
+    const msg = (error && (error.message || error.toString())) || '';
+    const isChunkError = 
+      msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Loading chunk') ||
+      msg.includes('Importing a module script failed') ||
+      msg.includes('error loading dynamically imported module');
+
+    if (isChunkError && !sessionStorage.getItem('khata_auto_healed')) {
+      sessionStorage.setItem('khata_auto_healed', 'true');
+      this.handleRefresh();
+    }
   }
+
+  handleRefresh = async () => {
+    this.setState({ updating: true });
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch (e) {
+      console.warn('Cache purge error:', e);
+    }
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.set('t', Date.now().toString());
+    window.location.replace(cleanUrl.toString());
+  };
+
   render() {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center font-sans">
           <div className="max-w-sm w-full p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl">
             <h2 className="text-lg font-bold text-emerald-400 mb-2">Layali Supermarket • Khata Tab</h2>
-            <p className="text-slate-400 text-xs mb-5">A cache refresh is required to update to the latest version.</p>
+            <p className="text-slate-400 text-xs mb-5">
+              {this.state.updating ? 'Applying latest update...' : 'A cache refresh is required to update to the latest version.'}
+            </p>
             <button
               type="button"
-              onClick={() => {
-                try {
-                  if ('serviceWorker' in navigator) {
-                    navigator.serviceWorker.getRegistrations().then(regs => {
-                      regs.forEach(r => r.update());
-                    });
-                  }
-                } catch {}
-                window.location.reload();
-              }}
-              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-sm text-white shadow-lg transition"
+              disabled={this.state.updating}
+              onClick={this.handleRefresh}
+              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-sm text-white shadow-lg transition disabled:opacity-50"
             >
-              Refresh Application
+              {this.state.updating ? 'Updating Application...' : 'Refresh Application'}
             </button>
           </div>
         </div>

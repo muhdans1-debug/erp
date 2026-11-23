@@ -1,5 +1,5 @@
-// Askar Khata PWA Offline Service Worker (Hardened v22 - WebAuthn allowCredentials Fix)
-const CACHE_NAME = 'askar-khata-v22';
+// Askar Khata PWA Offline Service Worker (Hardened v23 - Network-First HTML Auto-Update)
+const CACHE_NAME = 'askar-khata-v23';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -54,23 +54,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-While-Revalidate with Instant Cache Return for HTML Navigation (Zero-Wait App Launch)
+  // Network-First strategy for HTML navigation (ensures latest chunk hashes are always loaded, offline fallback)
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then((cachedResponse) => {
-        const networkFetch = fetch(event.request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              const copy = networkResponse.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
-            }
-            return networkResponse;
-          })
-          .catch(() => cachedResponse);
-
-        // Instant launch from cache (< 50ms), fallback to network on first visit
-        return cachedResponse || networkFetch;
-      })
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match('/index.html').then((cachedResponse) => {
+            return cachedResponse || caches.match('/') || new Response('Offline', { status: 503, statusText: 'Offline' });
+          });
+        })
     );
     return;
   }

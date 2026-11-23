@@ -5,6 +5,32 @@ import './App.css';
 import App from './App.jsx';
 
 // Register PWA Service Worker for offline resilience (Resolved PWA-OFF-01 & PWA-OFF-04)
+if (typeof window !== 'undefined') {
+  // Global listener for stale dynamic import / chunk failures
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = (event.reason && (event.reason.message || event.reason.toString())) || '';
+    if (
+      msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('error loading dynamically imported module') ||
+      msg.includes('Loading chunk') ||
+      msg.includes('Importing a module script failed')
+    ) {
+      if (!sessionStorage.getItem('khata_unhandled_chunk_recovery')) {
+        sessionStorage.setItem('khata_unhandled_chunk_recovery', 'true');
+        if ('caches' in window) {
+          caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).catch(() => {});
+        }
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then((regs) => regs.map((r) => r.unregister())).catch(() => {});
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.set('t', Date.now().toString());
+        window.location.replace(url.toString());
+      }
+    }
+  });
+}
+
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator && (import.meta.env.PROD || window.location.hostname !== 'localhost')) {
   // Seamless auto-reload when a new service worker version activates and claims clients
   let refreshing = false;

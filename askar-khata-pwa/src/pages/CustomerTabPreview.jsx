@@ -483,8 +483,8 @@ export default function CustomerTabPreview() {
         <div
           dir={isRtl ? 'rtl' : 'ltr'}
           className={`w-full bg-[#05070B] text-white flex flex-col justify-between transition-all duration-300 relative ${isPhoneFrame
-              ? 'max-w-[390px] h-[844px] max-h-[92vh] rounded-[48px] border-[8px] border-slate-900 shadow-[0_25px_70px_rgba(0,0,0,0.9),0_0_0_1px_rgba(255,255,255,0.12)] overflow-hidden ring-1 ring-slate-800'
-              : 'max-w-md h-screen sm:min-h-screen'
+            ? 'max-w-[390px] h-[844px] max-h-[92vh] rounded-[48px] border-[8px] border-slate-900 shadow-[0_25px_70px_rgba(0,0,0,0.9),0_0_0_1px_rgba(255,255,255,0.12)] overflow-hidden ring-1 ring-slate-800'
+            : 'max-w-md h-screen sm:min-h-screen'
             }`}
         >
           {/* Simulated Apple Dynamic Island (in Phone Frame mode) */}
@@ -565,8 +565,8 @@ export default function CustomerTabPreview() {
                   contain: 'paint'
                 }}
                 className={`sticky top-2 z-20 overflow-hidden backdrop-blur-2xl border ${isCompact
-                    ? 'h-[132px] rounded-2xl bg-slate-900/95 border-white/20 shadow-[0_16px_36px_rgba(0,0,0,0.7)] p-3'
-                    : 'h-[56vh] max-h-[480px] min-h-[400px] rounded-[32px] bg-gradient-to-b from-slate-900/85 via-slate-900/65 to-slate-950/95 border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-5 flex flex-col justify-between'
+                  ? 'h-[132px] rounded-2xl bg-slate-900/95 border-white/20 shadow-[0_16px_36px_rgba(0,0,0,0.7)] p-3'
+                  : 'h-[56vh] max-h-[480px] min-h-[400px] rounded-[32px] bg-gradient-to-b from-slate-900/85 via-slate-900/65 to-slate-950/95 border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-5 flex flex-col justify-between'
                   } ${activeFocus === 'INVOICE'
                     ? 'ring-1 ring-indigo-500/50 border-indigo-500/40'
                     : activeFocus === 'MESS'
@@ -784,8 +784,8 @@ export default function CustomerTabPreview() {
                           type="button"
                           onClick={handleSpeakBalance}
                           className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer active:scale-95 ${isSpeaking
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
-                              : 'bg-white/10 hover:bg-white/15 text-emerald-300 border-white/15'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                            : 'bg-white/10 hover:bg-white/15 text-emerald-300 border-white/15'
                             } ${!isCompact ? 'flex-1 py-2.5' : ''}`}
                         >
                           {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-amber-400 animate-spin" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
@@ -879,15 +879,15 @@ export default function CustomerTabPreview() {
                         key={tx.id}
                         onClick={() => handlePromoteTx(tx)}
                         className={`p-3.5 transition-all cursor-pointer flex items-center justify-between gap-3 active:bg-white/10 ${isSelected
-                            ? 'bg-indigo-950/40 ring-1 ring-inset ring-indigo-500/50'
-                            : 'hover:bg-white/[0.03]'
+                          ? 'bg-indigo-950/40 ring-1 ring-inset ring-indigo-500/50'
+                          : 'hover:bg-white/[0.03]'
                           }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           {/* Apple Squircle Icon */}
                           <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 border ${isPurchase
-                              ? 'bg-rose-500/10 text-rose-400 border-rose-500/25'
-                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/25'
+                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
                             }`}>
                             {isPurchase ? <ShoppingBag className="w-4 h-4" /> : <CreditCard className="w-4 h-4" />}
                           </div>

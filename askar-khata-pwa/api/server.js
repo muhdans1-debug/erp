@@ -1602,9 +1602,42 @@ const handleKhataStatementOrTab = async (request, reply) => {
       // Safe Public Tab View vs Private Statement View (Resolved FLAW-01)
       const isTabRoute = request.url.includes('/tab') || request.url.endsWith('/tab');
 
-      // 1. Unauthenticated Public Tab View (Returns strictly balance summary, ZERO ledger records)
-      if (isTabRoute && !isJwtAuthenticated && !providedPin) {
-        const messDetails = await getCustomerMessDetails(customer.id, customer.mess_id, customer.balance);
+      // 1. Customer Tab View (Returns full ledger summary and itemized transactions)
+      if (isTabRoute && !providedPin) {
+        const [messDetails, ledgerRes, pendingClaims] = await Promise.all([
+          getCustomerMessDetails(customer.id, customer.mess_id, customer.balance),
+          db.execute({
+            sql: `SELECT id, customerId, amount, type, reference, running_balance, timestamp, mess_id,
+                         COALESCE(subledger_type, CASE WHEN mess_id IS NOT NULL AND mess_id != '' THEN 'MESS_SHARE' ELSE 'PERSONAL' END) as subledger_type 
+                  FROM KhataLedger 
+                  WHERE customerId = ? 
+                  ORDER BY timestamp DESC, id DESC LIMIT 100`,
+            args: [String(customer.id)]
+          }).catch(() => ({ rows: [] })),
+          db.execute({
+            sql: `SELECT id, amount, reference, channel, status, createdAt 
+                  FROM KhataSettlementClaim 
+                  WHERE customerId = ? AND status = 'PENDING' 
+                  ORDER BY createdAt DESC LIMIT 5`,
+            args: [customer.id]
+          }).catch(() => ({ rows: [] }))
+        ]);
+
+        const rawLedger = ledgerRes.rows || [];
+        const enrichedLedger = await enrichLedgerWithItems(rawLedger);
+
+        // Dynamically reconcile running balance anchored to true customer.balance
+        let runningTracker = Number(customer.balance ?? 0);
+        const reconciledLedger = enrichedLedger.map((tx) => {
+          const currentRunning = runningTracker;
+          const amt = Number(tx.amount || 0);
+          runningTracker = Number((runningTracker - amt).toFixed(3));
+          return {
+            ...tx,
+            running_balance: Number(currentRunning.toFixed(3))
+          };
+        });
+
         const isActiveNum = (customer.is_active === 0 || customer.isActive === 0) ? 0 : 1;
         const maskedPhone = customer.phone ? `${String(customer.phone).slice(0, 3)}****${String(customer.phone).slice(-2)}` : null;
 
@@ -1623,13 +1656,13 @@ const handleKhataStatementOrTab = async (request, reply) => {
           credit_limit: Number(customer.credit_limit ?? 30.0),
           is_active: isActiveNum,
           isActive: Boolean(isActiveNum),
-          isLocked: true, // Itemized statement is locked behind PIN/JWT
-          pendingClaims: [],
-          recentPurchases: [],
-          transactions: [],
-          ledger: [],
-          totalTransactions: 0,
-          message: 'Khata Tab public summary. Full itemized transaction ledger requires PIN or biometric verification.'
+          isLocked: false,
+          pendingClaims: pendingClaims.rows || [],
+          recentPurchases: reconciledLedger,
+          transactions: reconciledLedger,
+          ledger: reconciledLedger,
+          totalTransactions: reconciledLedger.length,
+          message: 'Khata Tab customer ledger and statement.'
         });
       }
 

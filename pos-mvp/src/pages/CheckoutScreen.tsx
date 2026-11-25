@@ -1,45 +1,53 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, TrendingUp, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu } from 'lucide-react';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, TrendingUp, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell, Activity } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
 import { openCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
-import { playThankYouVoice } from '../utils/sound';
+import { playThankYouVoice, playNfcChime } from '../utils/sound';
 import { parseScaleBarcode, findProductByPLU } from '../utils/scaleBarcodeParser';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
+import { initPushNotifications, requestNotificationPermission, getNotificationPermissionStatus, showTransactionNotification } from '../utils/pushNotification';
 // --- LAZY-LOADED BACK-OFFICE PAGES (never parsed on Sunmi in cashier mode) ---
 const StockManagement = lazy(() => import('./StockManagement'));
 const FinancialDashboard = lazy(() => import('./FinancialDashboard'));
 const MasterReport = lazy(() => import('./MasterReport'));
 const NfcManager = lazy(() => import('../components/NfcManager'));
-import KhataHubModal from '../components/KhataHubModal';
-import ZReportModal from '../components/ZReportModal';
-import BlindCloseShiftModal from '../components/BlindCloseShiftModal';
-import CashOutModal from '../components/CashOutModal';
-import AddProductModal from '../components/AddProductModal';
-import PosAddProductModal from '../components/PosAddProductModal';
-import RefundModal from '../components/RefundModal';
+
+// --- LAZY-LOADED BACK-OFFICE & ADMINISTRATIVE MODALS ---
+const KhataHubModal = lazy(() => import('../components/KhataHubModal'));
+const DepositAndSalfahWizard = lazy(() => import('../components/DepositAndSalfahWizard').then(m => ({ default: m.DepositAndSalfahWizard })));
+const ZReportModal = lazy(() => import('../components/ZReportModal'));
+const BlindCloseShiftModal = lazy(() => import('../components/BlindCloseShiftModal'));
+const CashOutModal = lazy(() => import('../components/CashOutModal'));
+const AddProductModal = lazy(() => import('../components/AddProductModal'));
+const PosAddProductModal = lazy(() => import('../components/PosAddProductModal'));
+const RefundModal = lazy(() => import('../components/RefundModal'));
+const QuickProductEditModal = lazy(() => import('../components/QuickProductEditModal').then(m => ({ default: m.QuickProductEditModal })));
+const AddQuickProductModal = lazy(() => import('../components/AddQuickProductModal').then(m => ({ default: m.AddQuickProductModal })));
+const EditQuickTabsModal = lazy(() => import('../components/EditQuickTabsModal'));
+const ReceivingDrawer = lazy(() => import('../components/ReceivingDrawer'));
+const OrderHistoryDrawer = lazy(() => import('../components/OrderHistoryDrawer'));
+const PreviousBillsModal = lazy(() => import('../components/PreviousBillsModal').then(m => ({ default: m.PreviousBillsModal })));
+const DeveloperDiagnosticsModal = lazy(() => import('../components/DeveloperDiagnosticsModal'));
+const CustomerEnrollmentModal = lazy(() => import('../components/CustomerEnrollmentModal'));
+const ProductBarcodeModal = lazy(() => import('../components/ProductBarcodeModal'));
+const ServerConfigModal = lazy(() => import('../components/ServerConfigModal'));
+const HardCreditLimitModal = lazy(() => import('../components/HardCreditLimitModal'));
+const BenefitPayConfigModal = lazy(() => import('../components/BenefitPayConfigModal'));
+const PrinterStyleConfigModal = lazy(() => import('../components/PrinterStyleConfigModal'));
+
+import { QuickCategory, DEFAULT_CATEGORIES } from '../types/quickCategories';
 import PaymentModal from '../components/PaymentModal';
-import { QuickProductEditModal } from '../components/QuickProductEditModal';
-import { AddQuickProductModal } from '../components/AddQuickProductModal';
-import { EditQuickTabsModal, QuickCategory, DEFAULT_CATEGORIES } from '../components/EditQuickTabsModal';
-import ReceivingDrawer from '../components/ReceivingDrawer';
-import OrderHistoryDrawer from '../components/OrderHistoryDrawer';
-import { PreviousBillsModal } from '../components/PreviousBillsModal';
 import { saveRecentSale, getLastSale } from '../services/recentSalesService';
 import PredictiveOmniPad, { DEFAULT_OMNI_ITEMS, OmniItem } from '../components/PredictiveOmniPad';
 import CartTable from '../components/CartTable';
+import LiveTypedBufferBar from '../components/LiveTypedBufferBar';
+import PosKeypadOverlay from '../components/PosKeypadOverlay';
 import F12SearchOverlay from '../components/F12SearchOverlay';
-import DeveloperDiagnosticsModal from '../components/DeveloperDiagnosticsModal';
-import CustomerEnrollmentModal from '../components/CustomerEnrollmentModal';
-import ProductBarcodeModal from '../components/ProductBarcodeModal';
-import ServerConfigModal from '../components/ServerConfigModal';
 import { getApiBaseUrl, getServerIp, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
-import HardCreditLimitModal from '../components/HardCreditLimitModal';
 import TapToEditDiscountModal from '../components/TapToEditDiscountModal';
-import BenefitPayConfigModal from '../components/BenefitPayConfigModal';
-import PrinterStyleConfigModal from '../components/PrinterStyleConfigModal';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { Product, Customer, CartTab } from '../types/pos';
 export type { Product, Customer, CartTab };
@@ -50,7 +58,8 @@ import { useCheckoutProcessor } from '../hooks/useCheckoutProcessor';
 import { QuickProductGrid } from '../components/QuickProductGrid';
 import { db } from '../db.ts';
 import { mapDbRowToProduct } from '../services/productMapper';
-import { reindexCatalog } from '../services/localDb';
+import { safeUUID } from '../utils/idUtils';
+import { reindexCatalog, lookupProductFast } from '../services/localDb';
 import { useDisasterRecovery } from '../hooks/useDisasterRecovery';
 import SyncTrafficLight from '../components/SyncTrafficLight';
 import { useOfflineSync } from '../hooks/useOfflineSync';
@@ -180,18 +189,79 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const clearActiveCart = () => {
     storeClearCart();
     setCustomer(null);
+    setIsReturnMode(false);
   };
   const [apiBase, setApiBase] = useState<string>(() => {
     return getApiBaseUrl();
   });
 
-  // Resolve working API base across candidates
+  // Native PWA Push Notification Permission State
+  const [, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [showNotifBanner, setShowNotifBanner] = useState(false);
+
+  useEffect(() => {
+    initPushNotifications().catch(() => { });
+    const perm = getNotificationPermissionStatus();
+    setNotifPermission(perm);
+    const dismissed = typeof localStorage !== 'undefined' && localStorage.getItem('dismiss_notif_banner') === 'true';
+    if (perm !== 'granted' && perm !== 'unsupported' && !dismissed) {
+      setShowNotifBanner(true);
+    }
+
+    const onTx = (e: any) => {
+      const payload = e?.detail;
+      if (payload) {
+        showTransactionNotification(payload).catch(() => { });
+      }
+    };
+    const onSystemAlert = (e: any) => {
+      const payload = e?.detail;
+      if (payload) {
+        const icon = payload.severity === 'CRITICAL' ? '🚨' : (payload.severity === 'RECOVERED' ? '🟢' : '⚠️');
+        showToast(`${icon} ${payload.title}: ${payload.message}`, payload.severity === 'CRITICAL' ? 'error' : (payload.severity === 'RECOVERED' ? 'success' : 'info'));
+      }
+    };
+    window.addEventListener('pwa-transaction-notification', onTx);
+    window.addEventListener('system-alert-event', onSystemAlert);
+    return () => {
+      window.removeEventListener('pwa-transaction-notification', onTx);
+      window.removeEventListener('system-alert-event', onSystemAlert);
+    };
+  }, []);
+
+  const handleEnablePushNotifications = async () => {
+    const res = await requestNotificationPermission();
+    setNotifPermission(res);
+    if (res === 'granted') {
+      setShowNotifBanner(false);
+      showToast('🔔 Transaction Push Notifications Enabled!', 'success');
+      showTransactionNotification({
+        txType: 'SALE',
+        title: 'POS Push Notifications Active 🔔',
+        message: 'This device will now receive real-time notifications for every transaction.',
+        amount: 0,
+        formattedAmount: 'Ready'
+      });
+    } else {
+      setShowNotifBanner(false);
+      showToast('⚠️ Notification permission was blocked or denied.', 'error');
+    }
+  };
+
+  const handleDismissNotifBanner = () => {
+    setShowNotifBanner(false);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('dismiss_notif_banner', 'true');
+    }
+  };
+
+  // Resolve working API base across candidates (Prioritizes Sovereign Cloud for laptop-free resilience)
   const resolveApiBase = useCallback(async (): Promise<string | null> => {
     const configuredTarget = getApiBaseUrl();
     const candidates = [
       configuredTarget,
-      CLOUD_GATEWAY_URL,
       DEFAULT_EDGE_API_URL,
+      CLOUD_GATEWAY_URL,
       LAN_SERVER_URL
     ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
 
@@ -236,6 +306,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   // Active Linked Customer for Checkout
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [customerAtCounter, setCustomerAtCounter] = useState<Customer | any | null>(null);
   const [showMultiMessPickerModal, setShowMultiMessPickerModal] = useState(false);
 
   // Customer Management & Enrollment State
@@ -253,8 +324,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const [unassignedBarcode, setUnassignedBarcode] = useState<string | null>(null);
   const [manualBarcodeAssignInput, setManualBarcodeAssignInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [bufferMode] = useState<'PLU' | 'QTY' | 'KHATA' | 'TENDER' | 'SEARCH'>('PLU');
   const [isReturnMode, setIsReturnMode] = useState(false);
   const [showKhataHub, setShowKhataHub] = useState(false);
+  const [showDepositSalfahWizard, setShowDepositSalfahWizard] = useState(false);
+  const showKhataHubRef = useRef(showKhataHub);
+  useEffect(() => {
+    showKhataHubRef.current = showKhataHub;
+  }, [showKhataHub]);
   const [showNfcManager, setShowNfcManager] = useState(false);
   const [showMessModal, setShowMessModal] = useState(false);
   const [showZReportModal, setShowZReportModal] = useState(false);
@@ -545,7 +622,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 barcode: p.barcode,
                 productId: p.id,
                 category: p.category || 'PRODUCE',
-                isPopular: ['10', '11', '12', '13', '14', '15', '18', '20', '22', '24', '26', '28', '32', '34', '35', '36', '38', '42', '45', '46', '77'].includes(plu)
+                isPopular: Boolean(plu)
               };
             });
 
@@ -708,6 +785,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     return activeQuickProducts.filter((p) => (p.category || 'ESSENTIALS') === selectedQuickCategory);
   }, [activeQuickProducts, selectedQuickCategory]);
 
+  // Single-pass memoized category product count tally (Zero-GC, O(1) header lookups)
+  const quickCategoryCounts = useMemo(() => {
+    const map: Record<string, number> = { ALL: activeQuickProducts.length };
+    for (let i = 0; i < activeQuickProducts.length; i++) {
+      const cat = (activeQuickProducts[i]?.category || 'ESSENTIALS').toUpperCase();
+      map[cat] = (map[cat] || 0) + 1;
+    }
+    return map;
+  }, [activeQuickProducts]);
+
   // Helper to persist quick products to state and localStorage immediately (Local-First Guarantee)
   const updateQuickProductsLocally = useCallback((newItems: any[]) => {
     setQuickProducts(newItems);
@@ -740,16 +827,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       newId: newProduct.id || newProduct.barcode,
       category: targetCategory
     };
+    const quickHeaders = {
+      'Content-Type': 'application/json',
+      'x-pos-client': 'store-pos',
+      'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
+    };
     fetch(`${apiBase}/api/quick-products/swap`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: quickHeaders,
       body: JSON.stringify(swapPayload)
-    }).catch(() => {});
+    }).catch(() => { });
     fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/swap`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: quickHeaders,
       body: JSON.stringify(swapPayload)
-    }).catch(() => {});
+    }).catch(() => { });
   }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally, apiBase]);
 
   // 2. Change category/color of a quick product
@@ -771,16 +863,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         category: newCategory,
         isQuickProduct: true
       };
+      const quickHeaders = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
+      };
       fetch(`${apiBase}/api/quick-products/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: quickHeaders,
         body: JSON.stringify(updatePayload)
-      }).catch(() => {});
+      }).catch(() => { });
       fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: quickHeaders,
         body: JSON.stringify(updatePayload)
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [activeQuickProducts, updateQuickProductsLocally, apiBase]);
 
@@ -792,16 +889,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
     // Persist remove to backend and edge cloud
     const removePayload = { id: product.id, barcode: product.barcode };
+    const quickHeaders = {
+      'Content-Type': 'application/json',
+      'x-pos-client': 'store-pos',
+      'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
+    };
     fetch(`${apiBase}/api/quick-products/remove`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: quickHeaders,
       body: JSON.stringify(removePayload)
-    }).catch(() => {});
+    }).catch(() => { });
     fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/remove`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: quickHeaders,
       body: JSON.stringify(removePayload)
-    }).catch(() => {});
+    }).catch(() => { });
   }, [activeQuickProducts, updateQuickProductsLocally, apiBase]);
 
   // 4. Add product to grid
@@ -824,16 +926,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         isQuickProduct: true,
         category: targetCategory
       };
+      const quickHeaders = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
+      };
       fetch(`${apiBase}/api/quick-products/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: quickHeaders,
         body: JSON.stringify(addPayload)
-      }).catch(() => {});
+      }).catch(() => { });
       fetch(`${DEFAULT_EDGE_API_URL}/api/quick-products/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: quickHeaders,
         body: JSON.stringify(addPayload)
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [activeQuickProducts, selectedQuickCategory, updateQuickProductsLocally, apiBase]);
 
@@ -887,6 +994,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
       setEditingQuickProduct(item);
     } else {
+      // Safety guard: quick items tapped from the counter grid are ALWAYS positive retail sales
+      if (isReturnMode) {
+        setIsReturnMode(false);
+      }
       handleItemSelection(item);
     }
   };
@@ -1248,11 +1359,23 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             });
             const mapped = activeList.map(mapDbRowToProduct);
 
-            setCatalog(mapped);
-            writeCatalogCache(mapped);
-            try {
-              localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(mapped));
-            } catch { }
+            // Merge local unsynced/optimistic products so background refresh never wipes them out
+            setCatalog((prev) => {
+              const serverIdSet = new Set(mapped.map(m => m.id));
+              const serverBarcodeSet = new Set(mapped.map(m => m.barcode).filter(Boolean));
+              const localUnsynced = prev.filter(p =>
+                !serverIdSet.has(p.id) &&
+                (!p.barcode || !serverBarcodeSet.has(p.barcode)) &&
+                !deletedIds.has(p.id) &&
+                (!p.barcode || !deletedBarcodes.has(p.barcode))
+              );
+              const merged = [...localUnsynced, ...mapped];
+              writeCatalogCache(merged);
+              try {
+                localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(merged));
+              } catch { }
+              return merged;
+            });
           }
         } catch { }
       }
@@ -1360,13 +1483,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     fetchQuickProducts();
     fetchQuickCategories();
 
-    // 3. Refresh every 30 seconds for live continuous multi-device catalog sync
+    // 3. Passive Background Sync (Every 10 minutes, non-blocking when idle)
+    // Avoids 30s CPU spikes on ARM Cortex-A53 during active cashier scanning
     const catInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       fetchCatalog();
       fetchProduceItems();
       fetchQuickProducts();
       fetchQuickCategories();
-    }, 30 * 1000);
+    }, 10 * 60 * 1000);
     return () => clearInterval(catInterval);
   }, [fetchProduceItems]);
 
@@ -1520,7 +1645,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         }
       }
 
-      if (data.type === 'KHATA_CUSTOMER_CREATED' || data.type === 'KHATA_CUSTOMER_DELETED' || data.type === 'KHATA_BALANCE_UPDATED') {
+      if (data.type === 'KHATA_CUSTOMER_CREATED' || data.type === 'KHATA_CUSTOMER_DELETED' || data.type === 'KHATA_BALANCE_UPDATED' || data.type === 'SALE_VOIDED' || data.type === 'KHATA_LEDGER_VOIDED') {
         loadCustomers();
       }
     };
@@ -1620,7 +1745,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
 
   // Bind a scanned UID to a customer
-  const handleBindCard = async (customerId: string, uidToBind: string) => {
+  const handleBindCard = async (customerId: string, uidToBind: string, depositAmount?: number) => {
     clearScan();
     try {
       const res = await fetch(`${apiBase}/api/customers/${customerId}/bind-card`, {
@@ -1629,7 +1754,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           'Content-Type': 'application/json',
           'x-pos-client': 'store-pos'
         },
-        body: JSON.stringify({ cardUid: uidToBind })
+        body: JSON.stringify({
+          cardUid: uidToBind,
+          depositAmount: depositAmount !== undefined ? depositAmount : 3.000,
+          card_deposit_amount: depositAmount !== undefined ? depositAmount : 3.000
+        })
       });
       const data = await res.json();
       if (data && data.success) {
@@ -1645,16 +1774,109 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Lookup customer by Card UID (Instant non-blocking response)
+  // Lookup customer by Card UID, Customer ID, or Digital Khata Pass QR Code (Instant non-blocking response)
   const fetchCustomerByCard = async (uid: string) => {
     clearScan();
-    try {
-      const res = await fetch(`${apiBase}/api/customers/by-card/${encodeURIComponent(uid)}`, {
-        headers: { 'x-pos-client': 'store-pos' }
+    let cleanTarget = uid.trim();
+    const rawTarget = uid.trim();
+    if (cleanTarget.toLowerCase().includes('/tab/')) {
+      const match = cleanTarget.match(/\/tab\/([^\/\?\#]+)/i);
+      cleanTarget = match ? match[1].trim() : cleanTarget.split(/\/tab\//i)[1].split(/[\/?#]/)[0].trim();
+    } else if (cleanTarget.toUpperCase().startsWith('KHATA:')) {
+      cleanTarget = cleanTarget.slice(6).trim();
+    } else if (cleanTarget.toUpperCase().startsWith('CUST-')) {
+      cleanTarget = cleanTarget.slice(5).trim();
+    } else if (cleanTarget.length === 13 && cleanTarget.startsWith('29')) {
+      cleanTarget = String(parseInt(cleanTarget.slice(2, 12), 10));
+    }
+    cleanTarget = cleanTarget.replace(/^#+|#+$/g, '');
+
+    // 0. Microsecond In-Memory Fast Path (0ms instant match against cached customersList)
+    if (customersList && customersList.length > 0) {
+      const targetLower = cleanTarget.toLowerCase();
+      const targetNoColon = targetLower.replace(/[:\-]/g, '');
+      const rawLower = rawTarget.toLowerCase();
+      const rawNoColon = rawLower.replace(/[:\-]/g, '');
+      const localMatch = customersList.find((c: any) => {
+        const cId = String(c.id || '').toLowerCase();
+        const cCardUid = String(c.cardUid || '').toLowerCase();
+        const cCardUidNoColon = cCardUid.replace(/[:\-]/g, '');
+        const cNfc = String(c.nfcCardId || '').toLowerCase();
+        const cNfcNoColon = cNfc.replace(/[:\-]/g, '');
+        return (
+          cId === targetLower ||
+          cId === rawLower ||
+          cId === `cust-${targetLower}` ||
+          `cust-${cId}` === targetLower ||
+          cCardUid === targetLower ||
+          cCardUid === rawLower ||
+          cCardUidNoColon === targetNoColon ||
+          cCardUidNoColon === rawNoColon ||
+          cNfc === targetLower ||
+          cNfc === rawLower ||
+          cNfcNoColon === targetNoColon ||
+          cNfcNoColon === rawNoColon ||
+          c.phone === cleanTarget ||
+          c.phone === rawTarget ||
+          c.cpr === cleanTarget ||
+          c.cpr === rawTarget
+        );
       });
-      if (res.ok) {
-        const custData = await res.json();
-        const activeCust = custData.customer || custData;
+      if (localMatch) {
+        try { playNfcChime(); } catch { }
+        setCustomer(localMatch);
+        const bal = Number(localMatch.personalBalance ?? localMatch.currentBalance ?? localMatch.balance ?? 0);
+        const rawLim = Number(localMatch.creditLimit ?? localMatch.credit_limit);
+        const lim = rawLim > 0 ? rawLim : 30.0;
+        if (bal > lim) {
+          showToast(`⚠️ Warning: ${localMatch.name} has exceeded Khata limit (Owed: BD ${bal.toFixed(3)} / Limit: BD ${lim.toFixed(3)})`, 'error');
+        } else if (localMatch.hasMessGroup && localMatch.isDual) {
+          showToast(`💳 ${localMatch.name} (Personal) & 👥 ${localMatch.group_name} linked!`, 'success');
+        } else {
+          showToast(`💳 Linked to ${localMatch.name} (Khata Balance: BD ${bal.toFixed(3)})`, 'success');
+        }
+        return;
+      }
+    }
+
+    try {
+      const primaryBase = getApiBaseUrl() || apiBase || DEFAULT_EDGE_API_URL;
+      const candidates = [
+        primaryBase,
+        primaryBase !== DEFAULT_EDGE_API_URL ? DEFAULT_EDGE_API_URL : ''
+      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+
+      let foundCust: any = null;
+      for (const base of candidates) {
+        try {
+          // Single high-speed lookup by card UID (Fast 1.8s timeout)
+          const res = await fetch(`${base}/api/customers/by-card/${encodeURIComponent(cleanTarget)}`, {
+            headers: { 'x-pos-client': 'store-pos' },
+            signal: AbortSignal.timeout(1800)
+          });
+          if (res.ok) {
+            const custData = await res.json();
+            const activeCust = custData.customer || custData.data || custData;
+            if (activeCust && (activeCust.id || activeCust.name)) {
+              foundCust = activeCust;
+              // Cache in local memory list for 0ms subsequent scans
+              setCustomersList((prev) => {
+                if (!prev) return [activeCust];
+                const exists = prev.some((c: any) => c.id === activeCust.id);
+                return exists ? prev.map((c: any) => c.id === activeCust.id ? activeCust : c) : [...prev, activeCust];
+              });
+              break;
+            }
+          } else if (res.status === 404) {
+            // Card explicitly not registered on server: stop querying redundant endpoints
+            break;
+          }
+        } catch { }
+      }
+
+      if (foundCust) {
+        const activeCust = foundCust;
+        try { playNfcChime(); } catch { }
         setCustomer(activeCust);
 
         const bal = Number(activeCust.personalBalance ?? activeCust.currentBalance ?? activeCust.balance ?? 0);
@@ -1671,7 +1893,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           showToast(`💳 Linked to ${activeCust.name} (Khata Balance: BD ${bal.toFixed(3)})`, 'success');
         }
       } else {
-        showToast(`⚠️ Card [${uid}] is not linked to any customer.`, 'info');
+        showToast(`⚠️ Card/Pass [${cleanTarget}] is not linked to any customer.`, 'info');
       }
     } catch (err) {
       console.error("Card lookup failed:", err);
@@ -1685,7 +1907,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setLastDetectedUid(cleanUid);
 
     // If Khata Hub is open, let Khata Hub handle the scan internally (enrollment or settlement)
-    if (showKhataHub) {
+    if (showKhataHubRef.current) {
       return;
     }
 
@@ -1716,6 +1938,26 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     handleNfcUnavailable
   );
 
+  // Zero-Touch Speed Workflow: Always receive hardware NFC card taps directly without touching any button
+  useEffect(() => {
+    const handleZeroTouchScan = (e: any) => {
+      if (e?.detail?.isRelayed || e?.detail?.fromRelay) return;
+      const rawId = e?.detail?.nfcId || e?.detail?.tag_id || e?.detail;
+      if (typeof rawId === 'string' && rawId.trim()) {
+        const cleanUid = rawId.replace(/[:\-]/g, '').toUpperCase();
+        console.log('⚡ [Zero-Touch Hardware NFC Scan]:', cleanUid);
+        handleKhataLookup(cleanUid);
+      }
+    };
+
+    window.addEventListener('sunmi-nfc-scan', handleZeroTouchScan);
+    window.addEventListener('sunmi-nfc-broadcast', handleZeroTouchScan);
+    return () => {
+      window.removeEventListener('sunmi-nfc-scan', handleZeroTouchScan);
+      window.removeEventListener('sunmi-nfc-broadcast', handleZeroTouchScan);
+    };
+  }, [handleKhataLookup]);
+
   const simulateScan = useCallback((mockUid?: string) => {
     const uid = mockUid || '04A1B2C3D4';
     handleKhataLookup(uid);
@@ -1724,7 +1966,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const addToCart = (product: Product, quantity = 1): boolean => {
     // Unlimited Stock Mode: Stock limits bypassed for Khata transactions
     setLastScannedProductId(product.id);
-    useCartStore.getState().addItem(product as any, quantity, isReturnMode);
+    useCartStore.getState().addItem(product as any, Math.abs(quantity), isReturnMode);
     return true;
   };
 
@@ -1832,6 +2074,33 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       return;
     }
 
+    // MODE 1.6: INSTANT CUSTOMER DIGITAL KHATA PASS / PHONE QR / CARD SCAN
+    let possibleCustomerId = cleanCode;
+    let isCustomerPass = false;
+
+    if (cleanCode.includes('/tab/')) {
+      possibleCustomerId = cleanCode.split('/tab/')[1].split('?')[0].split('/')[0];
+      isCustomerPass = true;
+    } else if (cleanCode.toUpperCase().startsWith('KHATA:')) {
+      possibleCustomerId = cleanCode.slice(6).trim();
+      isCustomerPass = true;
+    } else if (cleanCode.toUpperCase().startsWith('CUST-')) {
+      isCustomerPass = true;
+    } else if (customersList && customersList.some((c: any) =>
+      c.id === cleanCode ||
+      (c.cardUid && c.cardUid.toLowerCase() === cleanCode.toLowerCase()) ||
+      (c.nfcCardId && c.nfcCardId.toLowerCase() === cleanCode.toLowerCase()) ||
+      c.phone === cleanCode ||
+      c.cpr === cleanCode
+    )) {
+      isCustomerPass = true;
+    }
+
+    if (isCustomerPass) {
+      fetchCustomerByCard(possibleCustomerId);
+      return;
+    }
+
     // MODE 2: CHECKOUT RING-UP MODE
     // 2A: Check for Scale/Deli Variable Measure Barcode (Prefixes 20, 21, 22)
     const scaleParsed = parseScaleBarcode(cleanCode, 3);
@@ -1887,13 +2156,44 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     }
 
-    // 2B: Standard Fixed-Price Barcode Lookup
-    const product = catalog.find(
-      (p) =>
-        (p.barcode && p.barcode.toLowerCase() === cleanCode.toLowerCase()) ||
-        p.id.toLowerCase() === cleanCode.toLowerCase() ||
-        p.name.toLowerCase() === cleanCode.toLowerCase()
-    );
+    // 2B: Standard Barcode or PLU Short Code Lookup
+    // Microsecond O(1) in-memory fast-path lookup (< 0.005ms)
+    let product: any = lookupProductFast(cleanCode);
+    if (!product) {
+      product = catalog.find(
+        (p) =>
+          (p.barcode && p.barcode.toLowerCase() === cleanCode.toLowerCase()) ||
+          p.id.toLowerCase() === cleanCode.toLowerCase() ||
+          (p.plu_code && String(p.plu_code).trim().toLowerCase() === cleanCode.toLowerCase()) ||
+          ((p as any).pluCode && String((p as any).pluCode).trim().toLowerCase() === cleanCode.toLowerCase()) ||
+          p.name.toLowerCase() === cleanCode.toLowerCase()
+      );
+    }
+
+    // Also match against produceItems by PLU / short code
+    if (!product && produceItems && produceItems.length > 0) {
+      const matchProduce = produceItems.find(
+        (pi) => pi.code && pi.code.trim().toLowerCase() === cleanCode.toLowerCase()
+      );
+      if (matchProduce) {
+        product = catalog.find((p) => p.id === matchProduce.productId) || {
+          id: matchProduce.productId || `prod_${matchProduce.code}`,
+          name: matchProduce.name,
+          name_ar: matchProduce.nameAr,
+          price: matchProduce.pricePerKg,
+          sellingPrice: matchProduce.pricePerKg,
+          unitCost: matchProduce.pricePerKg * 0.7,
+          purchasePrice: matchProduce.pricePerKg * 0.7,
+          barcode: matchProduce.barcode || matchProduce.code,
+          plu_code: matchProduce.code,
+          category: matchProduce.category || 'PRODUCE',
+          stockQuantity: 9999,
+          vatRate: 0,
+          isScaleItem: true,
+          is_weighed_item: 1
+        } as any;
+      }
+    }
 
     if (product) {
       setLastScannedProductId(product.id);
@@ -1903,9 +2203,40 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         showToast(`🏷️ Scanned: ${product.name} (BD ${(product.price ?? (product as any).sellingPrice).toFixed(3)})`, 'success');
       }
     } else {
-      setUnassignedBarcode(cleanCode);
-      showToast(`⚠️ Unassigned Barcode: [${cleanCode}]. Quick Add triggered.`, 'info');
-      setShowPosAddModal(true);
+      // Instant Retail Merchandise Classifier (< 0.1ms):
+      // Pure numeric barcodes (6 to 18 digits) are standard retail merchandise, NEVER customer cards.
+      const isPureRetailBarcode = /^\d{6,18}$/.test(cleanCode);
+      if (isPureRetailBarcode) {
+        setUnassignedBarcode(cleanCode);
+        showToast(`⚠️ Unassigned Barcode: [${cleanCode}]. Quick Add triggered.`, 'info');
+        setShowPosAddModal(true);
+        return;
+      }
+
+      // Fast single-shot customer card check (200ms timeout) only for non-numeric barcodes
+      fetch(`${apiBase}/api/customers/by-card/${encodeURIComponent(cleanCode)}`, {
+        headers: { 'x-pos-client': 'store-pos' },
+        signal: AbortSignal.timeout(200)
+      })
+        .then(async (res) => {
+          if (res.ok) {
+            const custData = await res.json();
+            const activeCust = custData.customer || custData;
+            if (activeCust && (activeCust.id || activeCust.name)) {
+              setCustomer(activeCust);
+              showToast(`💳 Linked ${activeCust.name} to active cart!`, 'success');
+              return;
+            }
+          }
+          setUnassignedBarcode(cleanCode);
+          showToast(`⚠️ Unassigned Barcode: [${cleanCode}]. Quick Add triggered.`, 'info');
+          setShowPosAddModal(true);
+        })
+        .catch(() => {
+          setUnassignedBarcode(cleanCode);
+          showToast(`⚠️ Unassigned Barcode: [${cleanCode}]. Quick Add triggered.`, 'info');
+          setShowPosAddModal(true);
+        });
     }
   };
 
@@ -1920,21 +2251,68 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       }
     };
 
+    const handleCustomerBarcodeScan = (e: any) => {
+      const { customerId, rawCode } = e?.detail || {};
+      const target = customerId || rawCode;
+      if (target) {
+        console.log("💳 [Dedicated Customer Barcode Intercepted]:", target);
+        fetchCustomerByCard(target);
+      }
+    };
+
     const handleScanMiss = async (e: any) => {
       const code = e?.detail?.scannedCode;
       if (!code) return;
 
-      // 1. Check if the scanned code is a Customer / Khata / Mess NFC Card UID or Barcode
+      // When Khata Hub or other modal is open, NEVER hijack cashier context with Quick Add Product
+      if (showKhataHubRef.current) {
+        console.log("Khata Hub is active; skipping barcode scan miss for Quick Add");
+        return;
+      }
+
+      let cleanCode = code.trim();
+      if (cleanCode.toLowerCase().includes('/tab/')) {
+        const match = cleanCode.match(/\/tab\/([^\/\?\#]+)/i);
+        cleanCode = match ? match[1].trim() : cleanCode.split(/\/tab\//i)[1].split(/[\/?#]/)[0].trim();
+      } else if (cleanCode.toUpperCase().startsWith('KHATA:')) {
+        cleanCode = cleanCode.slice(6).trim();
+      } else if (cleanCode.toUpperCase().startsWith('CUST-')) {
+        cleanCode = cleanCode.slice(5).trim();
+      }
+      cleanCode = cleanCode.replace(/^#+|#+$/g, '');
+
+      // Instant Retail Merchandise Classifier (< 0.1ms):
+      // Standard retail product barcodes (EAN-13, EAN-8, UPC, pure numeric 6 to 18 digits)
+      // are 100% merchandise items, NEVER customer cards.
+      const isPureRetailBarcode = /^\d{6,18}$/.test(cleanCode);
+      if (isPureRetailBarcode) {
+        setUnassignedBarcode(code);
+        showToast(`⚠️ Unassigned Barcode: [${code}]. Quick Add triggered.`, 'info');
+        setShowPosAddModal(true);
+        return;
+      }
+
+      // Never treat hex NFC Card UIDs (e.g. 04A1B2C3D4 or 04:A1:B2:C3) as grocery barcodes for Quick Add
+      const isLikelyNfc = /^([0-9A-Fa-f]{2}[:-]){3,7}[0-9A-Fa-f]{2}$/.test(cleanCode) ||
+        (/^[0-9A-Fa-f]{8,16}$/.test(cleanCode) && /[A-Fa-f]/.test(cleanCode));
+      if (isLikelyNfc) {
+        console.log("💳 Unassigned NFC Card detected - skipping Quick Add Product modal:", cleanCode);
+        showToast(`💳 Unassigned Card [${cleanCode}]. Register customer in Khata Hub (F3).`, 'info');
+        return;
+      }
+
+      // Fast single-shot customer check only for non-numeric barcodes (200ms timeout)
       try {
-        const res = await fetch(`${apiBase}/api/customers/by-card/${encodeURIComponent(code)}`, {
-          headers: { 'x-pos-client': 'store-pos' }
+        const res = await fetch(`${apiBase}/api/customers/by-card/${encodeURIComponent(cleanCode)}`, {
+          headers: { 'x-pos-client': 'store-pos' },
+          signal: AbortSignal.timeout(200)
         });
         if (res.ok) {
           const custData = await res.json();
-          const activeCust = custData.customer || custData;
+          const activeCust = custData.customer || custData.data || custData;
           if (activeCust && (activeCust.id || activeCust.name)) {
-            console.log("💳 [USB Reader / Scanner Intercepted Customer]:", code, activeCust.name);
-            fetchCustomerByCard(code);
+            console.log("💳 [USB Reader / Scanner Intercepted Customer]:", cleanCode, activeCust.name);
+            fetchCustomerByCard(cleanCode);
             return;
           }
         }
@@ -1942,7 +2320,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         console.warn("Card check on scan miss error:", err);
       }
 
-      // 2. Real product scan miss -> open Quick Add
+      // 2. Real product scan miss -> open Quick Add instantly
       setUnassignedBarcode(code);
       showToast(`⚠️ Unassigned Barcode: [${code}]. Quick Add triggered.`, 'info');
       setShowPosAddModal(true);
@@ -1998,12 +2376,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
     window.addEventListener('barcode-scan-success', handleScanSuccess);
     window.addEventListener('barcode-scan-miss', handleScanMiss);
+    window.addEventListener('customer-barcode-scanned', handleCustomerBarcodeScan);
     window.addEventListener('receipt-barcode-scanned', handleReceiptScan);
     window.addEventListener('hardware-barcode-scan', handleRawHardwareScan);
 
     return () => {
       window.removeEventListener('barcode-scan-success', handleScanSuccess);
       window.removeEventListener('barcode-scan-miss', handleScanMiss);
+      window.removeEventListener('customer-barcode-scanned', handleCustomerBarcodeScan);
       window.removeEventListener('receipt-barcode-scanned', handleReceiptScan);
       window.removeEventListener('hardware-barcode-scan', handleRawHardwareScan);
     };
@@ -2019,6 +2399,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   const total = cartTotals.finalTotal;
   const totalSavings = cartTotals.totalSavings;
 
+  // Real-Time Health & Storage Metrics for Cashier Status Bar
+  const [liveHealthMetrics, setLiveHealthMetrics] = useState<{
+    p50Ms: number;
+    walClean: boolean;
+    cloudSynced: boolean;
+    queued: number;
+    lastUpdated: number;
+  }>({
+    p50Ms: 0.4,
+    walClean: true,
+    cloudSynced: true,
+    queued: 0,
+    lastUpdated: Date.now()
+  });
+
   // Unified Master Host resolution via Sovereign Cloudflare Edge
   const masterIp = getServerIp();
 
@@ -2031,6 +2426,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setIsCloudModeActive,
     activeApiBase
   } = useNetworkSync(masterIp, useCallback((data: any) => {
+    if (data.type === 'HEALTH_TELEMETRY_TICK' || data.type === 'HEALTH_ROLLUP_FLUSH') {
+      const b = data.bucket || {};
+      setLiveHealthMetrics((prev) => ({
+        p50Ms: Number(b.p50Ms || prev.p50Ms || 0.4),
+        walClean: (Number(b.walKb) || 0) < 30720,
+        cloudSynced: (Number(b.errors) === 0),
+        queued: Number(offlinePendingCount || syncInfo?.pendingCount || 0),
+        lastUpdated: Date.now()
+      }));
+    }
     if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
       const delta = Number(data.delta) || 0;
       const directBalance = data.balance !== undefined ? Number(data.balance) : null;
@@ -2061,7 +2466,20 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         })
       );
     }
-  }, []));
+
+    if (data.type === 'CUSTOMER_AT_COUNTER' && data.customer) {
+      const arrivedCustomer = data.customer;
+      setCustomerAtCounter(arrivedCustomer);
+      showToast(`🟢 ${arrivedCustomer.name} is at Counter 1! [Press F4 to Link]`, 'success');
+      try {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(`${arrivedCustomer.name} at counter`);
+          window.speechSynthesis.speak(u);
+        }
+      } catch { }
+    }
+  }, [showToast]));
 
   // Dynamically synchronize active API base when cloud mode toggles
   useEffect(() => {
@@ -2081,7 +2499,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       try {
         if (cart.length === 0) {
           await CustomerDisplay.updateDisplay({
-            text: "Welcome to\nAskar Supermarket"
+            text: "Welcome to\nLayali Supermarket"
           });
         } else {
           // Show the last scanned item and running total (newest item is on top at cart[0])
@@ -2187,7 +2605,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       // 2. Build the sale payload with per-item frozen VAT rates and extracted VAT amounts
       const salePayload = {
-        id: crypto.randomUUID(),
+        id: safeUUID(),
         tenantId: 'tenant_askar_01',
         terminalId: configuredTerminalId,
         storeId: 'store_askar_01',
@@ -2202,7 +2620,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         paymentType: paymentMethod,
         cashTendered: paymentMethod === 'CASH' ? activeTendered : undefined,
         changeDue: paymentMethod === 'CASH' ? changeDue : undefined,
-        customerId,
+        customerId: customer?.id || customerId || null,
+        customerName: customer?.name || customerName || null,
         shiftId: shiftId || localStorage.getItem('active_shift_id') || null,
         employeeId: localStorage.getItem('active_employee_id') || 'emp_cashier_1',
         items: cart.map((item) => {
@@ -2215,7 +2634,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           const lineTax = rate === 10 ? Number((lineTotal - (lineTotal / 1.10)).toFixed(3)) : 0;
           const prodName = item.name || (item as any).productName || 'Item';
           return {
-            id: item.id || `si_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            id: item.id || safeUUID(),
             productId: item.productId || item.id,
             name: prodName,
             productName: prodName,
@@ -2593,34 +3012,69 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Dedicated Cashier Touch Numpad Handler
-  const handleNumpadInput = (val: string) => {
-    if (val === 'C') {
-      setSearchQuery('');
-    } else if (val === 'BACK') {
-      setSearchQuery((prev) => prev.slice(0, -1));
-    } else if (val === 'QTY') {
-      const parsed = parseInt(searchQuery, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        setLastItemQty(parsed);
-        setSearchQuery('');
-      } else {
-        showToast("⚠️ Type quantity number first, then press QTY", "info");
+  // Computed live product match for upper buffer bar (zero blind typing)
+  const matchedBufferPreview = useMemo(() => {
+    const clean = searchQuery.trim();
+    if (!clean || clean.length < 1) return null;
+    if (produceItems && produceItems.length > 0) {
+      const matchProduce = produceItems.find(
+        (pi) => pi.code && pi.code.trim().toLowerCase() === clean.toLowerCase()
+      );
+      if (matchProduce) {
+        return `${matchProduce.icon || '🍅'} ${matchProduce.name} (${matchProduce.pricePerKg.toFixed(3)} BD/KG)`;
       }
-    } else if (val === '+') {
-      adjustLastItemQty(1);
-    } else if (val === '-') {
-      adjustLastItemQty(-1);
-    } else {
-      setSearchQuery((prev) => prev + val);
     }
-  };
+    if (catalog && catalog.length > 0) {
+      const cat = catalog.find(
+        (c) =>
+          (c.plu_code && String(c.plu_code).trim().toLowerCase() === clean.toLowerCase()) ||
+          ((c as any).pluCode && String((c as any).pluCode).trim().toLowerCase() === clean.toLowerCase()) ||
+          (c.barcode && c.barcode.toLowerCase() === clean.toLowerCase())
+      );
+      if (cat) {
+        return `📦 ${cat.name} (${(cat.price ?? (cat as any).sellingPrice ?? 0).toFixed(3)} BD)`;
+      }
+    }
+    return null;
+  }, [searchQuery, produceItems, catalog]);
+
+  const handleBufferDigit = useCallback((d: string) => {
+    setSearchQuery((prev) => prev + d);
+  }, []);
+
+  const handleBufferBackspace = useCallback(() => {
+    setSearchQuery((prev) => prev.slice(0, -1));
+  }, []);
+
+  const handleBufferClear = useCallback(() => {
+    setSearchQuery('');
+  }, []);
+
+  const handleBufferConfirm = useCallback(() => {
+    const clean = searchQuery.trim();
+    if (!clean) return;
+    handleBarcodeScan(clean);
+    setSearchQuery('');
+  }, [searchQuery, handleBarcodeScan]);
+
+  const handleBufferSetQty = useCallback(() => {
+    const parsed = parseInt(searchQuery, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      setLastItemQty(parsed);
+      setSearchQuery('');
+    } else {
+      showToast("⚠️ Type quantity number first, then press SET QTY", "info");
+    }
+  }, [searchQuery, setLastItemQty, showToast]);
 
   // Global Keyboard Shortcuts Listener (Decoupled with ref to achieve 0ms render latency)
   const shortcutStateRef = useRef({
     viewMode,
     cart,
     customer,
+    setCustomer,
+    customerAtCounter,
+    setCustomerAtCounter,
     priceOverrideItem,
     showF12SearchModal,
     showKhataHub,
@@ -2650,6 +3104,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     setShowHamburgerMenu,
     showMultiMessPickerModal,
     setShowMultiMessPickerModal,
+    showNumpad,
+    setShowNumpad,
+    searchQuery,
+    setSearchQuery,
+    handleBarcodeScan,
   });
 
   useEffect(() => {
@@ -2657,6 +3116,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       viewMode,
       cart,
       customer,
+      setCustomer,
+      customerAtCounter,
+      setCustomerAtCounter,
       priceOverrideItem,
       showF12SearchModal,
       showOmniPadModal,
@@ -2686,6 +3148,11 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       setRightPaneMode,
       showMultiMessPickerModal,
       setShowMultiMessPickerModal,
+      showNumpad,
+      setShowNumpad,
+      searchQuery,
+      setSearchQuery,
+      handleBarcodeScan,
     };
   });
 
@@ -2710,8 +3177,13 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         return;
       }
 
-      // Escape: Close F12 Search Modal, Omni-Pad, Previous Bills, Hamburger Menu, or Multi-Mess Picker if open
+      // Escape: Close F12 Search Modal, Omni-Pad, Keypad Overlay, Previous Bills, Hamburger Menu, or Multi-Mess Picker if open
       if (e.key === 'Escape') {
+        if (s.showNumpad) {
+          e.preventDefault();
+          s.setShowNumpad(false);
+          return;
+        }
         if (s.showMultiMessPickerModal) {
           e.preventDefault();
           s.setShowMultiMessPickerModal(false);
@@ -2832,6 +3304,18 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         return;
       }
 
+      // 4a2. F4: Link Customer at Counter Beacon to Active Cart
+      if (e.key === 'F4' || e.code === 'F4') {
+        if (s.customerAtCounter) {
+          e.preventDefault();
+          const arrived = s.customerAtCounter;
+          s.setCustomer(arrived);
+          s.setCustomerAtCounter(null);
+          s.showToast(`💳 Linked ${arrived.name} to active cart!`, 'success');
+          return;
+        }
+      }
+
       // 4b. F9: Open Previous Bills & Reprints Modal
       if (e.key === 'F9' || e.code === 'F9') {
         e.preventDefault();
@@ -2851,7 +3335,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       const isInputActive =
         activeEl &&
         (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) ||
-          activeEl.getAttribute('contenteditable') === 'true');
+          activeEl?.getAttribute?.('contenteditable') === 'true');
 
       if (!isInputActive) {
         if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
@@ -2864,6 +3348,29 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           e.preventDefault();
           s.adjustLastItemQty(-1);
           return;
+        }
+
+        // Direct numeric keyboard entry into live buffer when not typing in an input or modal
+        if (!isAnyModalOpen) {
+          if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            s.setSearchQuery((prev: string) => prev + e.key);
+            return;
+          }
+          if (e.key === '.' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            s.setSearchQuery((prev: string) => (prev.includes('.') ? prev : prev + '.'));
+            return;
+          }
+          if (e.key === 'Backspace' && s.searchQuery && s.searchQuery.length > 0) {
+            e.preventDefault();
+            s.setSearchQuery((prev: string) => prev.slice(0, -1));
+            return;
+          }
+          if (e.key === 'Enter' && s.searchQuery && s.searchQuery.trim().length > 0) {
+            e.preventDefault();
+            s.handleBarcodeScan(s.searchQuery.trim());
+            s.setSearchQuery('');
+            return;
+          }
         }
       }
     };
@@ -3202,6 +3709,44 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       )}
 
       {/* TOP FULL-WIDTH HEADER */}
+      {showNotifBanner && (
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white px-4 py-2.5 flex items-center justify-between border-b border-blue-500/30 z-40 shadow-md animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-300 shrink-0">
+              <Bell size={16} className="animate-bounce" />
+            </div>
+            <div>
+              <p className="text-xs font-black tracking-tight flex items-center gap-2">
+                <span>Enable Transaction Push Alerts</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/30 text-blue-200 font-mono font-bold">
+                  PWA
+                </span>
+              </p>
+              <p className="text-[11px] text-blue-200/80">
+                Receive instant sound & notification banners on this device for all store sales, payments, and refunds.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleEnablePushNotifications}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+            >
+              <Bell size={13} />
+              <span>Enable Alerts</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDismissNotifBanner}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition cursor-pointer"
+              title="Dismiss"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+      )}
       <header className="h-14 bg-white border-b border-slate-200/90 flex items-center justify-between px-3 md:px-4 shrink-0 z-20 shadow-xs select-none">
         {/* Left: Brand & Status Capsule */}
         <div className="flex items-center gap-2.5">
@@ -3221,7 +3766,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               className="font-black text-xl tracking-tight text-slate-800 cursor-pointer select-none whitespace-nowrap"
               title="Double-click to toggle Dev Tools (or Ctrl+Shift+D)"
             >
-              Askar POS
+              Layali
             </h1>
 
             {/* Interactive Fleet Terminal Switcher */}
@@ -3361,6 +3906,28 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <RefreshCw size={13} />
             </button>
           </div>
+
+          {/* CASHIER MINI-HEALTH BAR (HIGH-CONTRAST NON-INTRUSIVE ASSURANCE) */}
+          <div
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono font-bold tracking-tight border transition-colors select-none ${!isServerOnline
+                ? 'bg-rose-50 text-rose-700 border-rose-300 animate-pulse'
+                : (offlinePendingCount > 0 || (syncInfo?.pendingCount || 0) > 0)
+                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                  : 'bg-emerald-50/90 text-emerald-900 border-emerald-300/80 shadow-xs'
+              }`}
+            title="Real-Time Store Health & Hardware Telemetry (Sub-millisecond Edge Parity)"
+          >
+            <span className={`w-2 h-2 rounded-full ${!isServerOnline ? 'bg-rose-500 animate-ping' : ((offlinePendingCount > 0 || (syncInfo?.pendingCount || 0) > 0) ? 'bg-amber-500' : 'bg-emerald-500')}`} />
+            <span>Edge: {liveHealthMetrics.p50Ms}ms</span>
+            <span className="text-slate-300 dark:text-slate-600">•</span>
+            <span>WAL: {liveHealthMetrics.walClean ? 'Clean' : 'Flush'}</span>
+            <span className="text-slate-300 dark:text-slate-600">•</span>
+            <span>Cloud: {isServerOnline ? 'Synced' : 'Offline'}</span>
+            <span className="text-slate-300 dark:text-slate-600">•</span>
+            <span className={(offlinePendingCount > 0 || (syncInfo?.pendingCount || 0) > 0) ? 'text-amber-700 font-black' : ''}>
+              {(offlinePendingCount || syncInfo?.pendingCount || 0)} Queued
+            </span>
+          </div>
         </div>
 
         {/* Right: Quick Actions & Navigation */}
@@ -3393,6 +3960,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <CreditCard size={14} className="text-indigo-600" />
             <span>Khata</span>
             <kbd className="bg-indigo-200/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-indigo-900 leading-none">F3</kbd>
+          </button>
+
+          {/* DEPOSIT & SALFAH QUICK WIZARD */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowDepositSalfahWizard(true);
+              loadCustomers();
+            }}
+            className="h-9 flex items-center gap-1.5 px-3 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-900 font-bold rounded-xl text-xs border border-amber-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Deposit & Salfah Touch Wizard (أمانة وسلفة)"
+          >
+            <Banknote size={14} className="text-amber-700" />
+            <span>Deposit / Salfah</span>
+            <span className="text-[10px] bg-amber-200 text-amber-900 font-black px-1 py-0.2 rounded font-sans">⚡</span>
           </button>
 
           {/* NFC CARDS / MANAGER */}
@@ -3454,7 +4036,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 </div>
                 <div>
                   <h2 className="font-black text-base tracking-tight text-white flex items-center gap-2">
-                    Askar POS Tools
+                    Layali Tools
                     <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                       LIVE
                     </span>
@@ -3489,11 +4071,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       handleSwitchTerminal('T1');
                       setShowHamburgerMenu(false);
                     }}
-                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                      currentTerminal === 'T1'
-                        ? 'bg-blue-950/60 text-blue-300 border-blue-700 ring-1 ring-blue-500'
-                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
-                    }`}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${currentTerminal === 'T1'
+                      ? 'bg-blue-950/60 text-blue-300 border-blue-700 ring-1 ring-blue-500'
+                      : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                      }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <Monitor size={14} className="text-blue-400 shrink-0" />
@@ -3508,11 +4089,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       handleSwitchTerminal('T2');
                       setShowHamburgerMenu(false);
                     }}
-                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                      currentTerminal === 'T2'
-                        ? 'bg-amber-950/60 text-amber-300 border-amber-700 ring-1 ring-amber-500'
-                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
-                    }`}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${currentTerminal === 'T2'
+                      ? 'bg-amber-950/60 text-amber-300 border-amber-700 ring-1 ring-amber-500'
+                      : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                      }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <Smartphone size={14} className="text-amber-400 shrink-0" />
@@ -3527,11 +4107,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       handleSwitchTerminal('T3');
                       setShowHamburgerMenu(false);
                     }}
-                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                      currentTerminal === 'T3'
-                        ? 'bg-purple-950/60 text-purple-300 border-purple-700 ring-1 ring-purple-500'
-                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
-                    }`}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${currentTerminal === 'T3'
+                      ? 'bg-purple-950/60 text-purple-300 border-purple-700 ring-1 ring-purple-500'
+                      : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                      }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <Laptop size={14} className="text-purple-400 shrink-0" />
@@ -3546,11 +4125,10 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       handleSwitchTerminal('T4');
                       setShowHamburgerMenu(false);
                     }}
-                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                      currentTerminal === 'T4'
-                        ? 'bg-teal-950/60 text-teal-300 border-teal-700 ring-1 ring-teal-500'
-                        : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
-                    }`}
+                    className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition cursor-pointer ${currentTerminal === 'T4'
+                      ? 'bg-teal-950/60 text-teal-300 border-teal-700 ring-1 ring-teal-500'
+                      : 'bg-slate-800/80 text-slate-300 border-slate-700/80 hover:bg-slate-800'
+                      }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <Laptop size={14} className="text-teal-400 shrink-0" />
@@ -3591,17 +4169,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     onClick={() => {
                       toggleAutoPrint();
                     }}
-                    className={`flex flex-col gap-1 p-3 border rounded-xl transition cursor-pointer text-left ${
-                      isAutoPrintEnabled
-                        ? 'bg-emerald-950/40 hover:bg-emerald-900/60 border-emerald-800/60 text-emerald-200'
-                        : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 text-slate-300'
-                    }`}
+                    className={`flex flex-col gap-1 p-3 border rounded-xl transition cursor-pointer text-left ${isAutoPrintEnabled
+                      ? 'bg-emerald-950/40 hover:bg-emerald-900/60 border-emerald-800/60 text-emerald-200'
+                      : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 text-slate-300'
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <Printer size={18} className={isAutoPrintEnabled ? 'text-emerald-400' : 'text-slate-400'} />
-                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
-                        isAutoPrintEnabled ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-400'
-                      }`}>
+                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${isAutoPrintEnabled ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-400'
+                        }`}>
                         {isAutoPrintEnabled ? 'ON' : 'OFF'}
                       </span>
                     </div>
@@ -3725,7 +4301,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     type="button"
                     onClick={() => {
                       setShowHamburgerMenu(false);
-                      setIsReturnMode((prev) => !prev);
+                      setIsReturnMode(false);
                       setShowRefundModal(true);
                     }}
                     className="p-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/70 rounded-xl transition cursor-pointer text-left flex items-center gap-2"
@@ -3809,6 +4385,40 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   >
                     <FileText size={16} className="text-indigo-400 shrink-0" />
                     <span className="text-xs font-bold">All Orders</span>
+                  </button>
+
+                  {/* DOWNTIME & HEALTH ANALYTICS GRAPHS */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setShowHamburgerMenu(false);
+                      const inputPin = window.prompt('🔒 Enter Manager PIN to view System Health & Downtime Analytics:');
+                      if (!inputPin) return;
+                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
+                      if (!auth.authorized) {
+                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
+                        return;
+                      }
+                      const adminUrl = typeof window !== 'undefined'
+                        ? `${window.location.origin}/admin/?tab=health_analytics&pin=${encodeURIComponent(inputPin.trim())}`
+                        : '/admin/?tab=health_analytics';
+                      window.open(adminUrl, '_blank');
+                    }}
+                    className="col-span-2 p-2.5 bg-blue-950/40 hover:bg-blue-900/60 border border-blue-800/50 rounded-xl transition cursor-pointer text-left flex items-center justify-between text-blue-200"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Activity size={16} className="text-blue-400 shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-2">
+                          <span>Store Downtime & Reliability Graphs</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            LIVE
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400">P50/P95/P99 latency, outage forensics & MTTR</div>
+                      </div>
+                    </div>
+                    <span className="text-xs text-blue-400 font-mono">↗</span>
                   </button>
                 </div>
               </div>
@@ -4070,6 +4680,33 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             </div>
           </div>
 
+          {/* Active Return Mode Warning Banner with 1-Tap Reset */}
+          {isReturnMode && (
+            <div className="bg-rose-600 text-white px-3 py-1.5 flex items-center justify-between text-xs font-bold shrink-0 animate-pulse">
+              <span>⚠️ RETURN MODE ACTIVE (Items ring up as returns)</span>
+              <button
+                type="button"
+                onClick={() => setIsReturnMode(false)}
+                className="bg-white text-rose-700 px-2.5 py-0.5 rounded text-[10px] uppercase font-black cursor-pointer hover:bg-rose-50 active:scale-95 transition-all shadow-xs"
+              >
+                Exit Return Mode
+              </button>
+            </div>
+          )}
+
+          {/* ANCHORED LIVE TYPED BUFFER BAR (Upper Zone - Zero Blind Typing) */}
+          <LiveTypedBufferBar
+            typedValue={searchQuery}
+            onClear={handleBufferClear}
+            onBackspace={handleBufferBackspace}
+            onConfirm={handleBufferConfirm}
+            onToggleKeypad={() => setShowNumpad((prev) => !prev)}
+            isKeypadOpen={showNumpad}
+            mode={bufferMode}
+            matchedPreview={matchedBufferPreview}
+            onSetQty={handleBufferSetQty}
+          />
+
           {/* Active Cart Line Items List (Decoupled Zustand Atomic Component) */}
           <CartTable
             onAdjustQty={adjustItemQtyByIndex}
@@ -4123,57 +4760,25 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               </button>
             </div>
 
-            {/* Numpad Toggle Bar & Grid */}
+            {/* Keypad Overlay Toggle Bar */}
             <div className="border-b border-slate-200 bg-slate-100">
               <button
                 type="button"
                 onClick={() => setShowNumpad(!showNumpad)}
                 className="w-full px-3 py-1.5 flex items-center justify-between text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer select-none"
-                title="Toggle on-screen numpad"
+                title="Toggle on-screen keypad overlay [F8 for Omni-Pad]"
               >
                 <span className="flex items-center gap-1.5">
-                  <span>⌨️ On-Screen Numpad</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-black">
-                    {showNumpad ? 'Hide ▲' : 'Show ▼'}
+                  <span>⌨️ On-Screen Keypad</span>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-black ${showNumpad ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                    {showNumpad ? 'Active ▲' : 'Open ▼'}
                   </span>
                 </span>
                 <span className="text-[11px] text-slate-500 font-mono">
-                  {cart.length > 0 ? `${cart.length} in cart` : 'Ready'}
+                  {searchQuery ? `Buffer: ${searchQuery}` : (cart.length > 0 ? `${cart.length} in cart` : 'Ready')}
                 </span>
               </button>
-
-              {showNumpad && (
-                <div className="p-2 grid grid-cols-4 gap-1.5 border-t border-slate-200 bg-slate-100 animate-in slide-in-from-top-1 duration-150">
-                  {[
-                    { label: '7', val: '7' },
-                    { label: '8', val: '8' },
-                    { label: '9', val: '9' },
-                    { label: 'QTY', val: 'QTY', style: 'bg-blue-600 hover:bg-blue-700 text-white' },
-                    { label: '4', val: '4' },
-                    { label: '5', val: '5' },
-                    { label: '6', val: '6' },
-                    { label: '+', val: '+', style: 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold' },
-                    { label: '1', val: '1' },
-                    { label: '2', val: '2' },
-                    { label: '3', val: '3' },
-                    { label: '-', val: '-', style: 'bg-amber-600 hover:bg-amber-700 text-white font-extrabold' },
-                    { label: 'C', val: 'C', style: 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-black' },
-                    { label: '0', val: '0' },
-                    { label: '.', val: '.' },
-                    { label: '⌫', val: 'BACK', style: 'bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold' },
-                  ].map((btn, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => handleNumpadInput(btn.val)}
-                      className={`h-9 rounded-md shadow-xs font-bold text-sm active:scale-95 transition-all flex items-center justify-center cursor-pointer ${btn.style || 'bg-white text-slate-700 hover:bg-slate-50'
-                        }`}
-                    >
-                      {btn.label}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Financial Breakdown */}
@@ -4307,8 +4912,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       <span className="text-[10px] opacity-90 font-normal">Personal [1]</span>
                       <span className="truncate w-full text-center">👤 {customer.name}</span>
                     </button>
-                    {((customer.messes && customer.messes.length > 0) 
-                      ? customer.messes 
+                    {((customer.messes && customer.messes.length > 0)
+                      ? customer.messes
                       : [customer.messGroup || { id: customer.mess_id, group_name: customer.group_name, members: customer.members, memberCount: customer.memberCount }]
                     ).map((mg: any, idx: number) => (
                       <button
@@ -4369,7 +4974,9 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 >
                   <span>
                     {isNfcReaderScanning
-                      ? `📡 Tap Khata Card Now... (${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')})`
+                      ? (Boolean((window as any).Capacitor?.isNativePlatform?.())
+                        ? '📡 Tap Khata Card Anytime...'
+                        : `📡 Tap Khata Card Now... (${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')})`)
                       : '💳 Pay with Khata (NFC)'}
                   </span>
                 </button>
@@ -4391,9 +4998,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <div className="flex items-center gap-1 overflow-x-auto max-w-[650px] scrollbar-hide py-0.5">
                 {quickCategories.map((cat) => {
                   const catId = (cat?.id || (typeof cat === 'string' ? cat : '') || 'ALL').toUpperCase();
-                  const count = catId === 'ALL'
-                    ? activeQuickProducts.length
-                    : activeQuickProducts.filter((p) => (p?.category || 'ESSENTIALS').toUpperCase() === catId).length;
+                  const count = quickCategoryCounts[catId] || 0;
                   return (
                     <button
                       key={cat?.id || catId}
@@ -4488,7 +5093,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <PredictiveOmniPad
                 customItems={omniItemsList}
                 initialItem={selectedWeighedItem ? {
-                  code: selectedWeighedItem.barcode || selectedWeighedItem.id,
+                  code: String(selectedWeighedItem.plu_code || (selectedWeighedItem as any).pluCode || selectedWeighedItem.barcode || selectedWeighedItem.id),
                   name: selectedWeighedItem.name,
                   nameAr: selectedWeighedItem.nameAr || (selectedWeighedItem as any).name_ar,
                   pricePerKg: Number((selectedWeighedItem as any).sellingPrice || selectedWeighedItem.price || 0),
@@ -4500,7 +5105,8 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                             selectedWeighedItem.name.toLowerCase().includes('onion') ? '🧅' :
                               selectedWeighedItem.name.toLowerCase().includes('sweet') ? '🍬' :
                                 selectedWeighedItem.name.toLowerCase().includes('rice') ? '🍚' : '⚖️',
-                  barcode: selectedWeighedItem.barcode
+                  barcode: selectedWeighedItem.barcode,
+                  productId: selectedWeighedItem.id
                 } : null}
                 onResetItem={() => setSelectedWeighedItem(null)}
                 onAddToCart={handleOmniAddToCart}
@@ -4634,896 +5240,988 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       )}
 
       {/* QUICK PRODUCT EDIT MODAL */}
-      {Boolean(editingQuickProduct) && (
-        <QuickProductEditModal
-          isOpen={Boolean(editingQuickProduct)}
-          onClose={() => setEditingQuickProduct(null)}
-          product={editingQuickProduct}
-          catalog={catalog}
-          apiBase={apiBase}
-          onSwapProduct={handleSwapQuickProduct}
-          onUpdateColor={handleUpdateQuickProductColor}
-          onRemoveProduct={handleRemoveQuickProduct}
-          onMovePosition={handleMovePosition}
-          onProductUpdated={() => {
-            fetchQuickProducts();
-            fetchCatalog();
-          }}
-          showToast={showToast}
-          categories={quickCategories}
-        />
-      )}
+      <Suspense fallback={null}>
+        {Boolean(editingQuickProduct) && (
+          <QuickProductEditModal
+            isOpen={Boolean(editingQuickProduct)}
+            onClose={() => setEditingQuickProduct(null)}
+            product={editingQuickProduct}
+            catalog={catalog}
+            apiBase={apiBase}
+            onSwapProduct={handleSwapQuickProduct}
+            onUpdateColor={handleUpdateQuickProductColor}
+            onRemoveProduct={handleRemoveQuickProduct}
+            onMovePosition={handleMovePosition}
+            onProductUpdated={() => {
+              fetchQuickProducts();
+              fetchCatalog();
+            }}
+            showToast={showToast}
+            categories={quickCategories}
+          />
+        )}
 
-      {/* ADD QUICK PRODUCT MODAL */}
-      {showAddQuickModal && (
-        <AddQuickProductModal
-          isOpen={showAddQuickModal}
-          onClose={() => setShowAddQuickModal(false)}
-          catalog={catalog}
-          currentQuickIds={new Set(activeQuickProducts.map((p) => p.id))}
-          apiBase={apiBase}
-          onAddProduct={handleAddQuickProduct}
-          onProductAdded={() => {
-            fetchQuickProducts();
-            fetchCatalog();
-          }}
-          showToast={showToast}
-          categories={quickCategories}
-        />
-      )}
+        {/* ADD QUICK PRODUCT MODAL */}
+        {showAddQuickModal && (
+          <AddQuickProductModal
+            isOpen={showAddQuickModal}
+            onClose={() => setShowAddQuickModal(false)}
+            catalog={catalog}
+            currentQuickIds={new Set(activeQuickProducts.map((p) => p.id))}
+            apiBase={apiBase}
+            onAddProduct={handleAddQuickProduct}
+            onProductAdded={() => {
+              fetchQuickProducts();
+              fetchCatalog();
+            }}
+            showToast={showToast}
+            categories={quickCategories}
+          />
+        )}
 
-      {/* EDIT QUICK TABS MODAL */}
-      {showEditTabsModal && (
-        <EditQuickTabsModal
-          isOpen={showEditTabsModal}
-          onClose={() => setShowEditTabsModal(false)}
-          categories={quickCategories}
-          onSaveCategories={handleSaveCategories}
-          showToast={showToast}
-        />
-      )}
+        {/* EDIT QUICK TABS MODAL */}
+        {showEditTabsModal && (
+          <EditQuickTabsModal
+            isOpen={showEditTabsModal}
+            onClose={() => setShowEditTabsModal(false)}
+            categories={quickCategories}
+            onSaveCategories={handleSaveCategories}
+            showToast={showToast}
+          />
+        )}
 
-      {/* DEVELOPER & HARDWARE DIAGNOSTICS MODAL */}
-      {showDevPanel && (
-        <DeveloperDiagnosticsModal
-          isOpen={showDevPanel}
-          onClose={() => setShowDevPanel(false)}
-          apiBase={apiBase}
-          onOpenServerConfig={() => setShowServerConfigModal(true)}
-          onOpenBenefitPayConfig={() => setShowBenefitPayConfigModal(true)}
-          onOpenPrinterStyleConfig={() => setShowPrinterStyleModal(true)}
-          hardwareSupported={Boolean(hardwareSupported)}
-          isScanning={isNfcReaderScanning}
-          customerScreenReady={Boolean(customerScreenReady)}
-          lastDetectedUid={lastDetectedUid}
-          simulateScan={simulateScan}
-          lastScannedBarcode={lastScannedBarcode}
-          handleBarcodeScan={handleBarcodeScan}
-          onOpenCashOut={() => setShowCashOutModal(true)}
-          onOpenPnl={() => {
-            setShowDevPanel(false);
-            setEmergencyUnlocked(true);
-            setViewMode('pnl');
-          }}
-          onOpenMaster={() => {
-            setShowDevPanel(false);
-            setEmergencyUnlocked(true);
-            setViewMode('master');
-          }}
-          onOpenZReport={() => {
-            setShowDevPanel(false);
-            setShowZReportModal(true);
-          }}
-        />
-      )}
+        {/* DEVELOPER & HARDWARE DIAGNOSTICS MODAL */}
+        {showDevPanel && (
+          <DeveloperDiagnosticsModal
+            isOpen={showDevPanel}
+            onClose={() => setShowDevPanel(false)}
+            apiBase={apiBase}
+            onOpenServerConfig={() => setShowServerConfigModal(true)}
+            onOpenBenefitPayConfig={() => setShowBenefitPayConfigModal(true)}
+            onOpenPrinterStyleConfig={() => setShowPrinterStyleModal(true)}
+            hardwareSupported={Boolean(hardwareSupported)}
+            isScanning={isNfcReaderScanning}
+            customerScreenReady={Boolean(customerScreenReady)}
+            lastDetectedUid={lastDetectedUid}
+            simulateScan={simulateScan}
+            lastScannedBarcode={lastScannedBarcode}
+            handleBarcodeScan={handleBarcodeScan}
+            onOpenCashOut={() => setShowCashOutModal(true)}
+            onOpenPnl={() => {
+              setShowDevPanel(false);
+              setEmergencyUnlocked(true);
+              setViewMode('pnl');
+            }}
+            onOpenMaster={() => {
+              setShowDevPanel(false);
+              setEmergencyUnlocked(true);
+              setViewMode('master');
+            }}
+            onOpenZReport={() => {
+              setShowDevPanel(false);
+              setShowZReportModal(true);
+            }}
+          />
+        )}
 
-      {/* CUSTOMER ENROLLMENT & KHATA MODAL */}
-      {showCustomersModal && (
-        <CustomerEnrollmentModal
-          isOpen={showCustomersModal}
-          onClose={() => setShowCustomersModal(false)}
-          customersList={customersList}
-          onSelectCustomer={(c) => setCustomer(c)}
-          onCreateCustomer={async (name, cardUid, previousBalance) => {
-            try {
-              const res = await fetch(`${apiBase}/api/customers`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-pos-client': 'store-pos'
-                },
-                body: JSON.stringify({
-                  name,
-                  cardUid: cardUid || undefined,
-                  previousBalance: Number(previousBalance) || 0
-                })
-              });
-              const data = await res.json();
-              if (res.ok && (data.success || data.id)) {
-                const balNotice = Number(previousBalance) > 0 ? ` with opening balance BD ${Number(previousBalance).toFixed(3)}` : '';
-                showToast(`✅ Customer "${name}" created${balNotice}${cardUid ? ' & NFC linked' : ''}!`, 'success');
-                setNewCustCardUid('');
-                await loadCustomers();
-              } else {
-                showToast(`❌ ${data.error || 'Failed to create customer'}`, 'error');
+        {/* CUSTOMER ENROLLMENT & KHATA MODAL */}
+        {showCustomersModal && (
+          <CustomerEnrollmentModal
+            isOpen={showCustomersModal}
+            onClose={() => setShowCustomersModal(false)}
+            customersList={customersList}
+            onSelectCustomer={(c) => setCustomer(c)}
+            onCreateCustomer={async (name, cardUid, previousBalance, cardDepositAmount, cardType, paydayDayOfMonth, depositPaymentMode) => {
+              try {
+                const res = await fetch(`${apiBase}/api/customers`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-pos-client': 'store-pos'
+                  },
+                  body: JSON.stringify({
+                    name,
+                    cardUid: cardUid || undefined,
+                    previousBalance: Number(previousBalance) || 0,
+                    card_deposit_amount: Number(cardDepositAmount) || 0,
+                    card_type: cardType || 'PHYSICAL_NFC',
+                    payday_day_of_month: Number(paydayDayOfMonth) || 28,
+                    deposit_payment_mode: depositPaymentMode || 'DEFERRED_PAYDAY'
+                  })
+                });
+                const data = await res.json();
+                if (res.ok && (data.success || data.id)) {
+                  const balNotice = Number(previousBalance) > 0 ? ` with opening balance BD ${Number(previousBalance).toFixed(3)}` : '';
+                  const depModeStr = depositPaymentMode === 'CASH_UPFRONT' ? 'Paid Upfront' : 'Due on Payday';
+                  const depNotice = Number(cardDepositAmount) > 0 ? ` [Deposit BD ${Number(cardDepositAmount).toFixed(3)} (${depModeStr})]` : '';
+                  showToast(`✅ Customer "${name}" created${balNotice}${cardUid ? ' & NFC linked' : ''}${depNotice}!`, 'success');
+                  setNewCustCardUid('');
+                  await loadCustomers();
+                } else {
+                  showToast(`❌ ${data.error || 'Failed to create customer'}`, 'error');
+                }
+              } catch (e) {
+                console.error(e);
+                showToast("❌ Error creating customer", 'error');
               }
-            } catch (e) {
-              console.error(e);
-              showToast("❌ Error creating customer", 'error');
-            }
-          }}
-          onBindCard={handleBindCard}
-          lastDetectedUid={lastDetectedUid}
-          bindingCustomerId={bindingCustomerId}
-          setBindingCustomerId={setBindingCustomerId}
-          newCustCardUid={newCustCardUid}
-          setNewCustCardUid={setNewCustCardUid}
-        />
-      )}
+            }}
+            onBindCard={handleBindCard}
+            lastDetectedUid={lastDetectedUid}
+            bindingCustomerId={bindingCustomerId}
+            setBindingCustomerId={setBindingCustomerId}
+            newCustCardUid={newCustCardUid}
+            setNewCustCardUid={setNewCustCardUid}
+          />
+        )}
 
-      {/* PRODUCTS & BARCODES ASSIGNMENT MODAL */}
-      {showProductsModal && (
-        <ProductBarcodeModal
-          isOpen={showProductsModal}
-          onClose={() => setShowProductsModal(false)}
-          catalog={catalog}
-          onReloadCatalog={fetchCatalog}
-          onOpenPosAddModal={() => setShowPosAddModal(true)}
-          onSaveProduct={async (name, sellingPrice, costPrice, barcode) => {
-            try {
-              const res = await fetch(`${apiBase}/products`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  name,
-                  sellingPrice,
-                  purchasePrice: costPrice,
-                  stockQuantity: 100,
-                  barcode: barcode || undefined
-                })
-              });
-              if (res.ok) {
-                showToast(`✅ Product "${name}" created!`, 'success');
-                await fetchCatalog();
-              } else {
-                const err = await res.json();
-                showToast(`❌ ${err.error || 'Failed to create product'}`, 'error');
+        {/* PRODUCTS & BARCODES ASSIGNMENT MODAL */}
+        {showProductsModal && (
+          <ProductBarcodeModal
+            isOpen={showProductsModal}
+            onClose={() => setShowProductsModal(false)}
+            catalog={catalog}
+            onReloadCatalog={fetchCatalog}
+            onOpenPosAddModal={() => setShowPosAddModal(true)}
+            onSaveProduct={async (name, sellingPrice, costPrice, barcode) => {
+              try {
+                const res = await fetch(`${apiBase}/products`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name,
+                    sellingPrice,
+                    purchasePrice: costPrice,
+                    stockQuantity: 100,
+                    barcode: barcode || undefined
+                  })
+                });
+                if (res.ok) {
+                  showToast(`✅ Product "${name}" created!`, 'success');
+                  await fetchCatalog();
+                } else {
+                  const err = await res.json();
+                  showToast(`❌ ${err.error || 'Failed to create product'}`, 'error');
+                }
+              } catch (e) {
+                console.error(e);
+                showToast("❌ Error creating product", 'error');
               }
-            } catch (e) {
-              console.error(e);
-              showToast("❌ Error creating product", 'error');
-            }
-          }}
-          onBindBarcode={handleBindBarcode}
-          lastScannedBarcode={lastScannedBarcode}
-          unassignedBarcode={unassignedBarcode}
-          bindingProductId={bindingProductId}
-          setBindingProductId={setBindingProductId}
-        />
-      )}
+            }}
+            onBindBarcode={handleBindBarcode}
+            lastScannedBarcode={lastScannedBarcode}
+            unassignedBarcode={unassignedBarcode}
+            bindingProductId={bindingProductId}
+            setBindingProductId={setBindingProductId}
+          />
+        )}
 
-      {/* MASTER BACK-OFFICE SERVER IP CONFIGURATION MODAL */}
-      {showServerConfigModal && (
-        <ServerConfigModal
-          isOpen={showServerConfigModal}
-          onClose={() => setShowServerConfigModal(false)}
-          activeServerIp={apiBase}
-          onSaveServerIp={(ip) => handleSaveMasterIp(ip)}
-        />
-      )}
+        {/* MASTER BACK-OFFICE SERVER IP CONFIGURATION MODAL */}
+        {showServerConfigModal && (
+          <ServerConfigModal
+            isOpen={showServerConfigModal}
+            onClose={() => setShowServerConfigModal(false)}
+            activeServerIp={apiBase}
+            onSaveServerIp={(ip) => handleSaveMasterIp(ip)}
+          />
+        )}
 
-      {/* BENEFITPAY OWNER ACCOUNT CONFIGURATION MODAL */}
-      {showBenefitPayConfigModal && (
-        <BenefitPayConfigModal
-          isOpen={showBenefitPayConfigModal}
-          onClose={() => setShowBenefitPayConfigModal(false)}
-          apiBase={apiBase}
-        />
-      )}
+        {/* BENEFITPAY OWNER ACCOUNT CONFIGURATION MODAL */}
+        {showBenefitPayConfigModal && (
+          <BenefitPayConfigModal
+            isOpen={showBenefitPayConfigModal}
+            onClose={() => setShowBenefitPayConfigModal(false)}
+            apiBase={apiBase}
+          />
+        )}
 
-      {/* SUNMI INNERPRINTER & RECEIPT STYLE CONFIGURATION MODAL */}
-      {showPrinterStyleModal && (
-        <PrinterStyleConfigModal
-          isOpen={showPrinterStyleModal}
-          onClose={() => setShowPrinterStyleModal(false)}
-        />
-      )}
+        {/* SUNMI INNERPRINTER & RECEIPT STYLE CONFIGURATION MODAL */}
+        {showPrinterStyleModal && (
+          <PrinterStyleConfigModal
+            isOpen={showPrinterStyleModal}
+            onClose={() => setShowPrinterStyleModal(false)}
+          />
+        )}
 
-      {/* KHATA HUB MODAL */}
-      {showKhataHub && (
-        <KhataHubModal
-          onClose={() => setShowKhataHub(false)}
-          apiBase={apiBase}
-          lastScannedCardUid={lastDetectedUid}
-          onCustomerUpdated={() => {
-            loadCustomers();
-          }}
-          onSelectCustomerForCart={(selected) => {
-            setCustomer(selected);
-            showToast(`💳 Linked ${selected.name} to active cart (Balance: BD ${Number(selected.currentBalance ?? selected.balance ?? 0).toFixed(3)})`, 'success');
-          }}
-          showToast={showToast}
-        />
-      )}
+        {/* KHATA HUB MODAL */}
+        {showKhataHub && (
+          <KhataHubModal
+            onClose={() => setShowKhataHub(false)}
+            apiBase={apiBase}
+            lastScannedCardUid={lastDetectedUid}
+            onCustomerUpdated={() => {
+              loadCustomers();
+            }}
+            onSelectCustomerForCart={(selected) => {
+              setCustomer(selected);
+              showToast(`💳 Linked ${selected.name} to active cart (Balance: BD ${Number(selected.currentBalance ?? selected.balance ?? 0).toFixed(3)})`, 'success');
+            }}
+            showToast={showToast}
+          />
+        )}
 
-      {/* NFC CARD MANAGER MODAL */}
-      {showNfcManager && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-3.5 bg-slate-900 text-white">
-              <div className="flex items-center gap-2.5">
-                <Radio className="text-emerald-400 animate-pulse" size={18} />
-                <span className="font-bold text-sm tracking-wide">NFC Smart Card & Mess Group Manager</span>
+        {/* DEPOSIT & SALFAH GUIDED TOUCH WIZARD */}
+        {showDepositSalfahWizard && (
+          <Suspense fallback={null}>
+            <DepositAndSalfahWizard
+              isOpen={showDepositSalfahWizard}
+              onClose={() => setShowDepositSalfahWizard(false)}
+              customersList={customersList}
+              initialCustomer={customer}
+              onCustomerUpdated={() => {
+                loadCustomers();
+              }}
+              showToast={showToast}
+            />
+          </Suspense>
+        )}
+
+        {/* NFC CARD MANAGER MODAL */}
+        {showNfcManager && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+            <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-6 py-3.5 bg-slate-900 text-white">
+                <div className="flex items-center gap-2.5">
+                  <Radio className="text-emerald-400 animate-pulse" size={18} />
+                  <span className="font-bold text-sm tracking-wide">NFC Smart Card & Mess Group Manager</span>
+                </div>
+                <button
+                  onClick={() => setShowNfcManager(false)}
+                  className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
               </div>
-              <button
-                onClick={() => setShowNfcManager(false)}
-                className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading NFC Card Manager...</div>}>
-                <NfcManager
-                  apiBase={apiBase}
-                  initialTab="CARDS"
-                  onSelectCustomerForCart={(selected) => {
-                    setCustomer(selected);
-                    setShowNfcManager(false);
-                    showToast(`💳 Linked ${selected.group_name || selected.name} to active cart`, 'success');
-                  }}
-                  onNavigateToKhata={() => {
-                    setShowNfcManager(false);
-                    setShowKhataHub(true);
-                  }}
-                  onOpenCustomerStatement={(cust) => {
-                    setShowNfcManager(false);
-                    openCustomerStatement(cust);
-                  }}
-                />
-              </Suspense>
+              <div className="flex-1 overflow-y-auto">
+                <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading NFC Card Manager...</div>}>
+                  <NfcManager
+                    apiBase={apiBase}
+                    initialTab="CARDS"
+                    onSelectCustomerForCart={(selected) => {
+                      setCustomer(selected);
+                      setShowNfcManager(false);
+                      showToast(`💳 Linked ${selected.group_name || selected.name} to active cart`, 'success');
+                    }}
+                    onNavigateToKhata={() => {
+                      setShowNfcManager(false);
+                      setShowKhataHub(true);
+                    }}
+                    onOpenCustomerStatement={(cust) => {
+                      setShowNfcManager(false);
+                      openCustomerStatement(cust);
+                    }}
+                  />
+                </Suspense>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* MESS GROUPS MODAL (CAMP DINING SPLIT-BILLING) */}
-      {showMessModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-3.5 bg-indigo-950 text-white">
-              <div className="flex items-center gap-2.5">
-                <Users className="text-indigo-400" size={20} />
-                <span className="font-bold text-sm tracking-wide">Mess Groups & Labor Camp Dining Split-Billing</span>
+        {/* MESS GROUPS MODAL (CAMP DINING SPLIT-BILLING) */}
+        {showMessModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+            <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-6 py-3.5 bg-indigo-950 text-white">
+                <div className="flex items-center gap-2.5">
+                  <Users className="text-indigo-400" size={20} />
+                  <span className="font-bold text-sm tracking-wide">Mess Groups & Labor Camp Dining Split-Billing</span>
+                </div>
+                <button
+                  onClick={() => setShowMessModal(false)}
+                  className="p-1 hover:bg-indigo-900 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
               </div>
-              <button
-                onClick={() => setShowMessModal(false)}
-                className="p-1 hover:bg-indigo-900 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading Mess Groups...</div>}>
-                <NfcManager
-                  apiBase={apiBase}
-                  initialTab="MESS_GROUPS"
-                  onSelectCustomerForCart={(selectedMess) => {
-                    setCustomer(selectedMess);
-                    setShowMessModal(false);
-                    showToast(`👥 Linked to Mess Group: ${selectedMess.group_name || selectedMess.name} (${selectedMess.members?.length || selectedMess.memberCount || 0} members) - Ready for Split Bill [F3]`, 'success');
-                  }}
-                  onNavigateToKhata={() => {
-                    setShowMessModal(false);
-                    setShowKhataHub(true);
-                  }}
-                />
-              </Suspense>
+              <div className="flex-1 overflow-y-auto">
+                <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading Mess Groups...</div>}>
+                  <NfcManager
+                    apiBase={apiBase}
+                    initialTab="MESS_GROUPS"
+                    onSelectCustomerForCart={(selectedMess) => {
+                      setCustomer(selectedMess);
+                      setShowMessModal(false);
+                      showToast(`👥 Linked to Mess Group: ${selectedMess.group_name || selectedMess.name} (${selectedMess.members?.length || selectedMess.memberCount || 0} members) - Ready for Split Bill [F3]`, 'success');
+                    }}
+                    onNavigateToKhata={() => {
+                      setShowMessModal(false);
+                      setShowKhataHub(true);
+                    }}
+                  />
+                </Suspense>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* BLIND CLOSEOUT SHIFT MODAL (ENTERPRISE CASH RECONCILIATION) */}
-      {showBlindCloseModal && (
-        <BlindCloseShiftModal
-          shiftId={shiftId || localStorage.getItem('active_shift_id') || localStorage.getItem('askar_shift_id') || ''}
-          cashierName={localStorage.getItem('active_shift_cashier') || 'Cashier 1'}
-          apiBase={apiBase}
-          onSuccess={(reconciliation) => {
-            setShowBlindCloseModal(false);
-            showToast(`✅ Shift Closed: Declared BHD ${reconciliation.actualCash?.toFixed(3) || '0.000'}`, 'success');
-            if (onLockTerminal) onLockTerminal();
-          }}
-          onCancel={() => setShowBlindCloseModal(false)}
-        />
-      )}
+        {/* BLIND CLOSEOUT SHIFT MODAL (ENTERPRISE CASH RECONCILIATION) */}
+        {showBlindCloseModal && (
+          <BlindCloseShiftModal
+            shiftId={shiftId || localStorage.getItem('active_shift_id') || localStorage.getItem('askar_shift_id') || ''}
+            cashierName={localStorage.getItem('active_shift_cashier') || 'Cashier 1'}
+            apiBase={apiBase}
+            onSuccess={(reconciliation) => {
+              setShowBlindCloseModal(false);
+              showToast(`✅ Shift Closed: Declared BHD ${reconciliation.actualCash?.toFixed(3) || '0.000'}`, 'success');
+              if (onLockTerminal) onLockTerminal();
+            }}
+            onCancel={() => setShowBlindCloseModal(false)}
+          />
+        )}
 
-      {/* END OF DAY Z-REPORT MODAL */}
-      {showZReportModal && (
-        <ZReportModal
-          onClose={() => setShowZReportModal(false)}
-          apiBase={apiBase}
-          shiftId={shiftId}
-          onShiftClosed={() => {
-            if (onLockTerminal) onLockTerminal();
-          }}
-        />
-      )}
+        {/* END OF DAY Z-REPORT MODAL */}
+        {showZReportModal && (
+          <ZReportModal
+            onClose={() => setShowZReportModal(false)}
+            apiBase={apiBase}
+            shiftId={shiftId}
+            onShiftClosed={() => {
+              if (onLockTerminal) onLockTerminal();
+            }}
+          />
+        )}
 
-      {/* CASH OUT / EXPENSE RECORDING MODAL */}
-      {showCashOutModal && (
-        <CashOutModal
-          onClose={() => setShowCashOutModal(false)}
-          apiBase={apiBase}
-          onExpenseRecorded={() => {
-            showToast("💸 Expense recorded! Cash drawer updated.", 'success');
-          }}
-        />
-      )}
+        {/* CASH OUT / EXPENSE RECORDING MODAL */}
+        {showCashOutModal && (
+          <CashOutModal
+            onClose={() => setShowCashOutModal(false)}
+            apiBase={apiBase}
+            onExpenseRecorded={() => {
+              showToast("💸 Expense recorded! Cash drawer updated.", 'success');
+            }}
+          />
+        )}
 
-      {/* MULTI-MESS / DUAL-WALLET PICKER MODAL */}
-      {showMultiMessPickerModal && customer && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                  <CreditCard size={18} />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-white">Choose Account to Charge</h3>
-                  <p className="text-xs text-slate-400">Customer: <strong className="text-slate-200">{customer.name}</strong></p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowMultiMessPickerModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300">
-              Select whether to charge {customer.name}'s individual account or split the bill across a shared labor camp mess group:
-            </p>
-
-            <div className="space-y-2">
-              {/* Option 1: Personal Account */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMultiMessPickerModal(false);
-                  processCheckout('CREDIT_PERSONAL');
-                }}
-                className="w-full p-3.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">1</span>
+        {/* MULTI-MESS / DUAL-WALLET PICKER MODAL */}
+        {showMultiMessPickerModal && customer && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                    <CreditCard size={18} />
+                  </div>
                   <div>
-                    <div className="text-sm font-bold text-amber-200 flex items-center gap-1.5">
-                      <span>👤 Personal Account</span>
-                    </div>
-                    <div className="text-xs text-slate-400">Charge directly to {customer.name}</div>
+                    <h3 className="text-base font-black text-white">Choose Account to Charge</h3>
+                    <p className="text-xs text-slate-400">Customer: <strong className="text-slate-200">{customer.name}</strong></p>
                   </div>
                 </div>
-                <div className="text-right font-mono text-xs font-bold text-amber-400">
-                  Press [1]
-                </div>
-              </button>
-
-              {/* Option 2+: Enrolled Mess Groups */}
-              {((customer.messes && customer.messes.length > 0)
-                ? customer.messes
-                : [customer.messGroup || { id: customer.mess_id, group_name: customer.group_name, members: customer.members, memberCount: customer.memberCount }]
-              ).map((mg: any, idx: number) => (
                 <button
-                  key={mg.id || idx}
+                  type="button"
+                  onClick={() => setShowMultiMessPickerModal(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-300">
+                Select whether to charge {customer.name}'s individual account or split the bill across a shared labor camp mess group:
+              </p>
+
+              <div className="space-y-2">
+                {/* Option 1: Personal Account */}
+                <button
                   type="button"
                   onClick={() => {
                     setShowMultiMessPickerModal(false);
-                    setCustomer((prev: any) => ({
-                      ...prev,
-                      mess_id: mg.id,
-                      group_name: mg.group_name,
-                      messGroup: mg,
-                      members: mg.members,
-                      memberCount: mg.memberCount || mg.members?.length || 0
-                    }));
-                    processCheckout('CREDIT_MESS', false, undefined, mg);
+                    processCheckout('CREDIT_PERSONAL');
                   }}
-                  className="w-full p-3.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
+                  className="w-full p-3.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">{idx + 2}</span>
+                    <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">1</span>
                     <div>
-                      <div className="text-sm font-bold text-emerald-200 flex items-center gap-1.5">
-                        <span>👥 Split Mess: {mg.group_name}</span>
+                      <div className="text-sm font-bold text-amber-200 flex items-center gap-1.5">
+                        <span>👤 Personal Account</span>
                       </div>
-                      <div className="text-xs text-slate-400">
-                        Split bill equally across all {mg.members?.length || mg.memberCount || 'camp'} members
-                      </div>
+                      <div className="text-xs text-slate-400">Charge directly to {customer.name}</div>
                     </div>
                   </div>
-                  <div className="text-right font-mono text-xs font-bold text-emerald-400">
-                    Press [{idx + 2}]
+                  <div className="text-right font-mono text-xs font-bold text-amber-400">
+                    Press [1]
                   </div>
                 </button>
-              ))}
-            </div>
 
-            <div className="pt-2 border-t border-slate-800 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowMultiMessPickerModal(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
-              >
-                Cancel [Esc]
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ADD PRODUCT MODAL (DISTRIBUTOR BINDING) */}
-      {showAddProductModal && (
-        <AddProductModal
-          onClose={() => setShowAddProductModal(false)}
-          onSuccess={() => {
-            fetchCatalog();
-            showToast("Product added and linked to distributor!", "success");
-          }}
-          apiBase={apiBase}
-        />
-      )}
-
-      {/* POS QUICK ADD PRODUCT MODAL (TOUCH-OPTIMIZED FOR SUNMI TERMINAL) */}
-      {showPosAddModal && (
-        <PosAddProductModal
-          onClose={() => setShowPosAddModal(false)}
-          initialBarcode={unassignedBarcode || lastScannedBarcode || ''}
-          apiBase={apiBase}
-          categories={quickCategories}
-          catalog={catalog}
-          onProductAdded={(newProduct, andAddToCart = true) => {
-            const price = Number(newProduct.sellingPrice || newProduct.price || 0);
-            const cost = Number(newProduct.unitCost || newProduct.purchasePrice || 0);
-            const prodToAdd: Product = {
-              id: newProduct.id,
-              name: newProduct.name,
-              price,
-              unitCost: cost,
-              barcode: newProduct.barcode || newProduct.id,
-              category: newProduct.category,
-              isScaleItem: Boolean(newProduct.isScaleItem ?? newProduct.is_weighed_item),
-              vatRate: Number(newProduct.vatRate ?? 0),
-              stockQuantity: Number(newProduct.stockQuantity ?? 0),
-            };
-            if (andAddToCart) {
-              addToCart(prodToAdd);
-            }
-            setUnassignedBarcode(null);
-            setCatalog((prev) => {
-              const existingIdx = prev.findIndex(p => p.id === prodToAdd.id || (p.barcode && p.barcode === prodToAdd.barcode));
-              let nextList: Product[];
-              if (existingIdx !== -1) {
-                nextList = [...prev];
-                nextList[existingIdx] = prodToAdd;
-              } else {
-                nextList = [prodToAdd, ...prev];
-              }
-              writeCatalogCache(nextList);
-              try {
-                localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
-              } catch { }
-              return nextList;
-            });
-            refreshCatalogNow();
-            showToast(`✅ "${newProduct.name}" saved to catalog${andAddToCart ? ' and added to cart' : ''}!`, 'success');
-          }}
-        />
-      )}
-
-      {/* CUSTOMER KHATA STATEMENT MODAL (TOUCH-OPTIMIZED FOR SUNMI CASHIER) */}
-      {statementCustomer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            {/* Header */}
-            <div className="bg-slate-900 text-white p-4 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
-                  <FileText size={20} />
-                </div>
-                <div>
-                  <h3 className="text-lg font-black leading-tight">{statementCustomer.name}</h3>
-                  <p className="text-xs text-slate-400 flex items-center gap-2">
-                    {statementCustomer.phone && <span>📞 {statementCustomer.phone}</span>}
-                    {statementCustomer.cpr && <span>🆔 CPR: {statementCustomer.cpr}</span>}
-                    <span>• Balance: <strong className="text-amber-400 font-mono">BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}</strong></span>
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handlePrintStatement}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
-                  title="Print 58mm Thermal Statement Slip on Sunmi"
-                >
-                  <Printer size={14} />
-                  <span>Print (58mm)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatementCustomer(null)}
-                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            {/* Filter Tabs & Date to Date Filter Bar */}
-            <div className="bg-slate-100 p-3 border-b border-slate-200 space-y-2 shrink-0">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  {(['ALL', 'CHARGES', 'PAYMENTS'] as const).map((filter) => (
-                    <button
-                      key={filter}
-                      type="button"
-                      onClick={() => setStatementFilter(filter)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${statementFilter === filter
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:bg-slate-200'
-                        }`}
-                    >
-                      {filter === 'ALL' ? 'All Transactions' : filter === 'CHARGES' ? 'Purchases (+)' : 'Payments (-)'}
-                    </button>
-                  ))}
-                </div>
-                <span className="text-xs text-slate-500 font-bold font-mono">
-                  {filteredCustomerStatement.length} of {customerStatementList.length} items
-                </span>
-              </div>
-
-              {/* Date to Date Filter Row */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200 text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">FROM</span>
-                    <input
-                      type="date"
-                      value={statementStartDate}
-                      onChange={(e) => setStatementStartDate(e.target.value)}
-                      className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TO</span>
-                    <input
-                      type="date"
-                      value={statementEndDate}
-                      onChange={(e) => setStatementEndDate(e.target.value)}
-                      className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
-                    />
-                  </div>
-
-                  {/* Quick Presets */}
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setStatementQuickRange('TODAY')}
-                      className={`px-2 py-1 rounded-md font-bold text-[11px] transition-all cursor-pointer ${statementStartDate && statementStartDate === statementEndDate && statementStartDate === new Date().toISOString().slice(0, 10)
-                        ? 'bg-blue-600 text-white shadow-2xs'
-                        : 'bg-white hover:bg-slate-200 text-slate-700 border border-slate-200'
-                        }`}
-                    >
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatementQuickRange('THIS_MONTH')}
-                      className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md font-bold text-[11px] transition-all cursor-pointer"
-                    >
-                      This Month
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatementQuickRange('LAST_MONTH')}
-                      className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md font-bold text-[11px] transition-all cursor-pointer"
-                    >
-                      Last Month
-                    </button>
-                    {(statementStartDate || statementEndDate || statementFilter !== 'ALL') && (
-                      <button
-                        type="button"
-                        onClick={() => { setStatementStartDate(''); setStatementEndDate(''); setStatementFilter('ALL'); }}
-                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded-md font-bold text-[11px] transition-all cursor-pointer"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Filtered Range Totals */}
-                <div className="flex items-center gap-3 font-mono text-[11px]">
-                  <span className="text-rose-600 font-bold">
-                    Charges: +BD {filteredCustomerDebitTotal.toFixed(3)}
-                  </span>
-                  <span className="text-emerald-600 font-bold">
-                    Payments: -BD {filteredCustomerCreditTotal.toFixed(3)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Statement Items List */}
-            <div className="flex-1 overflow-y-auto p-4 divide-y divide-slate-100">
-              {isLoadingStatement ? (
-                <div className="py-12 text-center text-slate-400 flex flex-col items-center gap-2">
-                  <RefreshCw size={24} className="animate-spin text-blue-500" />
-                  <span className="text-sm font-bold">Loading statement records...</span>
-                </div>
-              ) : filteredCustomerStatement.length === 0 ? (
-                <div className="py-12 text-center text-slate-400">
-                  <p className="text-sm font-bold">
-                    {customerStatementList.length === 0 ? 'No ledger records found for this account.' : 'No transactions match the selected date filter.'}
-                  </p>
-                </div>
-              ) : (
-                filteredCustomerStatement
-                  .map((item, idx) => {
-                    const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.amount) < 0;
-                    const displayAmt = Math.abs(Number(item.amount || item.total || 0));
-                    const dateStr = item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : '');
-                    const timeStr = item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
-
-                    return (
-                      <div key={item.id || idx} className="py-2.5 flex items-center justify-between text-xs">
-                        <div className="min-w-0 pr-3">
-                          <p className="font-bold text-slate-800 truncate">
-                            {item.reference || item.invoiceNo || (isPayment ? 'Cash Payment Received' : 'Store Purchase')}
-                          </p>
-                          <p className="text-[11px] text-slate-400">
-                            {dateStr} {timeStr}
-                          </p>
+                {/* Option 2+: Enrolled Mess Groups */}
+                {((customer.messes && customer.messes.length > 0)
+                  ? customer.messes
+                  : [customer.messGroup || { id: customer.mess_id, group_name: customer.group_name, members: customer.members, memberCount: customer.memberCount }]
+                ).map((mg: any, idx: number) => (
+                  <button
+                    key={mg.id || idx}
+                    type="button"
+                    onClick={() => {
+                      setShowMultiMessPickerModal(false);
+                      setCustomer((prev: any) => ({
+                        ...prev,
+                        mess_id: mg.id,
+                        group_name: mg.group_name,
+                        messGroup: mg,
+                        members: mg.members,
+                        memberCount: mg.memberCount || mg.members?.length || 0
+                      }));
+                      processCheckout('CREDIT_MESS', false, undefined, mg);
+                    }}
+                    className="w-full p-3.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-left transition-all active:scale-[0.99] flex items-center justify-between group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 h-6 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">{idx + 2}</span>
+                      <div>
+                        <div className="text-sm font-bold text-emerald-200 flex items-center gap-1.5">
+                          <span>👥 Split Mess: {mg.group_name}</span>
                         </div>
-                        <div className="text-right shrink-0">
-                          <span className={`font-mono font-bold ${isPayment ? 'text-emerald-600' : 'text-slate-800'}`}>
-                            {isPayment ? '-' : '+'}BD {displayAmt.toFixed(3)}
-                          </span>
-                          {item.runningBalance !== undefined && (
-                            <p className="text-[10px] text-slate-400 font-mono">
-                              Bal: BD {Number(item.runningBalance).toFixed(3)}
-                            </p>
-                          )}
+                        <div className="text-xs text-slate-400">
+                          Split bill equally across all {mg.members?.length || mg.memberCount || 'camp'} members
                         </div>
                       </div>
-                    );
-                  })
-              )}
-            </div>
-
-            {/* Footer Summary & Close */}
-            <div className="bg-slate-50 border-t border-slate-200 p-3 px-4 flex items-center justify-between shrink-0">
-              <div>
-                <span className="text-[11px] text-slate-500 uppercase font-bold tracking-wider">Current Balance:</span>
-                <p className="text-base font-black font-mono text-slate-900">
-                  BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}
-                </p>
+                    </div>
+                    <div className="text-right font-mono text-xs font-bold text-emerald-400">
+                      Press [{idx + 2}]
+                    </div>
+                  </button>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="pt-2 border-t border-slate-800 flex justify-end">
                 <button
                   type="button"
-                  onClick={handlePrintStatement}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  onClick={() => setShowMultiMessPickerModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
                 >
-                  <Printer size={14} />
-                  <span>Print Slip</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatementCustomer(null)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
-                >
-                  Close
+                  Cancel [Esc]
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* RETURN & REFUND MODAL */}
-      {showRefundModal && (
-        <RefundModal
-          onClose={() => setShowRefundModal(false)}
-          apiBase={apiBase}
-          onSuccess={(data) => {
-            fetchCatalog();
-            loadCustomers();
-            showToast(`✅ Credit Note ${data.creditNoteNo} processed successfully!`, 'success');
-          }}
-        />
-      )}
-
-      {/* PIN-LOCKED RECEIVING DRAWER (IN-TRANSIT POS & BARCODE AUDITING) */}
-      {showReceivingDrawer && (
-        <ReceivingDrawer
-          isOpen={showReceivingDrawer}
-          onClose={() => setShowReceivingDrawer(false)}
-          apiBase={apiBase}
-          onCatalogRefresh={fetchCatalog}
-          registerScanListener={handleRegisterReceivingScanListener}
-        />
-      )}
-
-      {/* PIN-LOCKED ORDER HISTORY & NBR VOID DRAWER */}
-      {showOrderHistoryDrawer && (
-        <OrderHistoryDrawer
-          isOpen={showOrderHistoryDrawer}
-          onClose={() => setShowOrderHistoryDrawer(false)}
-          apiBase={apiBase}
-          onCatalogRefresh={fetchCatalog}
-        />
-      )}
-
-      {/* HARD CREDIT LIMIT POS BLOCKING MODAL */}
-      {creditLimitBlockedInfo && (
-        <HardCreditLimitModal
-          info={creditLimitBlockedInfo}
-          onClose={() => setCreditLimitBlockedInfo(null)}
-          onAuthorizeOverride={handleAuthorizeCreditOverride}
-          onOpenKhataHub={() => setShowKhataHub(true)}
-        />
-      )}
-
-      {/* TAP-TO-EDIT PRICE & DISCOUNT OVERRIDE MODAL */}
-      {priceOverrideItem && (
-        <TapToEditDiscountModal
-          key={priceOverrideItem ? `${priceOverrideItem.index}-${priceOverrideItem.product.id}` : 'closed'}
-          item={priceOverrideItem}
-          onClose={() => setPriceOverrideItem(null)}
-          onApplyOverride={applyPriceOverride}
-          onShowToast={showToast}
-          onRemoveItem={(indexOrId) => {
-            useCartStore.getState().removeItem(indexOrId as any);
-            showToast('🗑️ Removed item from cart', 'info');
-            setPriceOverrideItem(null);
-          }}
-        />
-      )}
-
-      {/* UNIFIED PREDICTIVE OMNI-PAD FULLSCREEN MODAL (SUNMI TERMINAL HIGH-SPEED TIKTOK-STYLE WORKFLOW) */}
-      {(showOmniPadModal || showFreshProduceGrid || showPluModal || isWeightModalOpen) && (
-        <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in duration-150">
-          <PredictiveOmniPad
-            customItems={omniItemsList}
-            isFullscreen={true}
-            cartCount={cart.length}
-            cartTotal={total}
-            initialItem={selectedWeighedItem ? {
-              code: selectedWeighedItem.barcode || selectedWeighedItem.id,
-              name: selectedWeighedItem.name,
-              nameAr: selectedWeighedItem.nameAr || (selectedWeighedItem as any).name_ar,
-              pricePerKg: Number((selectedWeighedItem as any).sellingPrice || selectedWeighedItem.price || 0),
-              icon: selectedWeighedItem.name.toLowerCase().includes('tomato') ? '🍅' :
-                selectedWeighedItem.name.toLowerCase().includes('chicken') ? '🍗' :
-                  selectedWeighedItem.name.toLowerCase().includes('cucumber') ? '🥒' :
-                    selectedWeighedItem.name.toLowerCase().includes('banana') ? '🍌' :
-                      selectedWeighedItem.name.toLowerCase().includes('potato') ? '🥔' :
-                        selectedWeighedItem.name.toLowerCase().includes('onion') ? '🧅' :
-                          selectedWeighedItem.name.toLowerCase().includes('sweet') ? '🍬' :
-                            selectedWeighedItem.name.toLowerCase().includes('rice') ? '🍚' : '⚖️',
-              barcode: selectedWeighedItem.barcode
-            } : null}
-            onClose={() => {
-              setShowOmniPadModal(false);
-              setShowFreshProduceGrid(false);
-              setShowPluModal(false);
-              setIsWeightModalOpen(false);
-              setSelectedWeighedItem(null);
+        {/* ADD PRODUCT MODAL (DISTRIBUTOR BINDING) */}
+        {showAddProductModal && (
+          <AddProductModal
+            onClose={() => setShowAddProductModal(false)}
+            onSuccess={() => {
+              fetchCatalog();
+              showToast("Product added and linked to distributor!", "success");
             }}
-            onResetItem={() => setSelectedWeighedItem(null)}
-            onAddToCart={handleOmniAddToCart}
-            onTenderCash={() => {
-              setShowOmniPadModal(false);
-              setShowFreshProduceGrid(false);
-              setShowPluModal(false);
-              setIsWeightModalOpen(false);
-              setSelectedWeighedItem(null);
-              handlePayment();
-            }}
-            onTenderBenefit={() => {
-              setShowOmniPadModal(false);
-              setShowFreshProduceGrid(false);
-              setShowPluModal(false);
-              setIsWeightModalOpen(false);
-              setSelectedWeighedItem(null);
-              if (cart.length === 0) {
-                showToast("⚠️ Cart is empty!", 'info');
-                return;
+            apiBase={apiBase}
+          />
+        )}
+
+        {/* POS QUICK ADD PRODUCT MODAL (TOUCH-OPTIMIZED FOR SUNMI TERMINAL) */}
+        {showPosAddModal && (
+          <PosAddProductModal
+            onClose={() => setShowPosAddModal(false)}
+            initialBarcode={unassignedBarcode || lastScannedBarcode || ''}
+            apiBase={apiBase}
+            categories={quickCategories}
+            catalog={catalog}
+            onProductAdded={(newProduct, andAddToCart = true) => {
+              const price = Number(newProduct.sellingPrice || newProduct.price || 0);
+              const cost = Number(newProduct.unitCost || newProduct.purchasePrice || 0);
+              const prodToAdd: Product = {
+                id: newProduct.id,
+                name: newProduct.name,
+                price,
+                unitCost: cost,
+                barcode: newProduct.barcode || newProduct.id,
+                category: newProduct.category,
+                isScaleItem: Boolean(newProduct.isScaleItem ?? newProduct.is_weighed_item),
+                vatRate: Number(newProduct.vatRate ?? 0),
+                stockQuantity: Number(newProduct.stockQuantity ?? 0),
+              };
+              if (andAddToCart) {
+                addToCart(prodToAdd);
               }
-              setPaymentModalMethod('BENEFIT_PAY');
-              setShowPaymentModal(true);
-            }}
-            onTenderKhata={() => {
-              setShowOmniPadModal(false);
-              setShowFreshProduceGrid(false);
-              setShowPluModal(false);
-              setIsWeightModalOpen(false);
-              setSelectedWeighedItem(null);
-              if (cart.length === 0) {
-                showToast("⚠️ Cart is empty!", 'info');
-                return;
-              }
-              setShowKhataHub(true);
+              setUnassignedBarcode(null);
+              setCatalog((prev) => {
+                const existingIdx = prev.findIndex(p => p.id === prodToAdd.id || (p.barcode && p.barcode === prodToAdd.barcode));
+                let nextList: Product[];
+                if (existingIdx !== -1) {
+                  nextList = [...prev];
+                  nextList[existingIdx] = prodToAdd;
+                } else {
+                  nextList = [prodToAdd, ...prev];
+                }
+                writeCatalogCache(nextList);
+                try {
+                  localStorage.setItem('askar_local_db_cache_Product', JSON.stringify(nextList));
+                } catch { }
+                return nextList;
+              });
+
+              // ⚡ Update Quick Product Grid ONLY if item was already a quick product
+              setQuickProducts((prev) => {
+                const existingIdx = prev.findIndex(p => p.id === prodToAdd.id || (p.barcode && p.barcode === prodToAdd.barcode));
+                if (existingIdx === -1) return prev;
+                const nextQuick = [...prev];
+                nextQuick[existingIdx] = {
+                  ...nextQuick[existingIdx],
+                  ...prodToAdd,
+                  sellingPrice: price,
+                };
+                writeQuickCache(nextQuick);
+                return nextQuick;
+              });
+
+              refreshCatalogNow();
+              showToast(`✅ "${newProduct.name}" saved to catalog${andAddToCart ? ' and added to cart' : ''}!`, 'success');
             }}
           />
+        )}
+
+        {/* CUSTOMER KHATA STATEMENT MODAL (TOUCH-OPTIMIZED FOR SUNMI CASHIER) */}
+        {statementCustomer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+              {/* Header */}
+              <div className="bg-slate-900 text-white p-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black leading-tight">{statementCustomer.name}</h3>
+                    <p className="text-xs text-slate-400 flex items-center gap-2">
+                      {statementCustomer.phone && <span>📞 {statementCustomer.phone}</span>}
+                      {statementCustomer.cpr && <span>🆔 CPR: {statementCustomer.cpr}</span>}
+                      <span>• Balance: <strong className="text-amber-400 font-mono">BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}</strong></span>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintStatement}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
+                    title="Print 58mm Thermal Statement Slip on Sunmi"
+                  >
+                    <Printer size={14} />
+                    <span>Print (58mm)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatementCustomer(null)}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Tabs & Date to Date Filter Bar */}
+              <div className="bg-slate-100 p-3 border-b border-slate-200 space-y-2 shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    {(['ALL', 'CHARGES', 'PAYMENTS'] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => setStatementFilter(filter)}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${statementFilter === filter
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-600 hover:bg-slate-200'
+                          }`}
+                      >
+                        {filter === 'ALL' ? 'All Transactions' : filter === 'CHARGES' ? 'Purchases (+)' : 'Payments (-)'}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-xs text-slate-500 font-bold font-mono">
+                    {filteredCustomerStatement.length} of {customerStatementList.length} items
+                  </span>
+                </div>
+
+                {/* Date to Date Filter Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">FROM</span>
+                      <input
+                        type="date"
+                        value={statementStartDate}
+                        onChange={(e) => setStatementStartDate(e.target.value)}
+                        className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TO</span>
+                      <input
+                        type="date"
+                        value={statementEndDate}
+                        onChange={(e) => setStatementEndDate(e.target.value)}
+                        className="text-xs font-bold text-slate-800 outline-none bg-transparent cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setStatementQuickRange('TODAY')}
+                        className={`px-2 py-1 rounded-md font-bold text-[11px] transition-all cursor-pointer ${statementStartDate && statementStartDate === statementEndDate && statementStartDate === new Date().toISOString().slice(0, 10)
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'bg-white hover:bg-slate-200 text-slate-700 border border-slate-200'
+                          }`}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatementQuickRange('THIS_MONTH')}
+                        className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                      >
+                        This Month
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatementQuickRange('LAST_MONTH')}
+                        className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                      >
+                        Last Month
+                      </button>
+                      {(statementStartDate || statementEndDate || statementFilter !== 'ALL') && (
+                        <button
+                          type="button"
+                          onClick={() => { setStatementStartDate(''); setStatementEndDate(''); setStatementFilter('ALL'); }}
+                          className="px-2 py-1 text-red-600 hover:bg-red-50 rounded-md font-bold text-[11px] transition-all cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Filtered Range Totals */}
+                  <div className="flex items-center gap-3 font-mono text-[11px]">
+                    <span className="text-rose-600 font-bold">
+                      Charges: +BD {filteredCustomerDebitTotal.toFixed(3)}
+                    </span>
+                    <span className="text-emerald-600 font-bold">
+                      Payments: -BD {filteredCustomerCreditTotal.toFixed(3)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Statement Items List */}
+              <div className="flex-1 overflow-y-auto p-4 divide-y divide-slate-100">
+                {isLoadingStatement ? (
+                  <div className="py-12 text-center text-slate-400 flex flex-col items-center gap-2">
+                    <RefreshCw size={24} className="animate-spin text-blue-500" />
+                    <span className="text-sm font-bold">Loading statement records...</span>
+                  </div>
+                ) : filteredCustomerStatement.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400">
+                    <p className="text-sm font-bold">
+                      {customerStatementList.length === 0 ? 'No ledger records found for this account.' : 'No transactions match the selected date filter.'}
+                    </p>
+                  </div>
+                ) : (
+                  filteredCustomerStatement
+                    .map((item, idx) => {
+                      const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || Number(item.amount) < 0;
+                      const displayAmt = Math.abs(Number(item.amount || item.total || 0));
+                      const dateStr = item.formattedDate || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleDateString() : '');
+                      const timeStr = item.formattedTime || (item.created_at || item.timestamp ? new Date(item.created_at || item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+                      return (
+                        <div key={item.id || idx} className="py-2.5 flex items-center justify-between text-xs">
+                          <div className="min-w-0 pr-3">
+                            <p className="font-bold text-slate-800 truncate">
+                              {item.reference || item.invoiceNo || (isPayment ? 'Cash Payment Received' : 'Store Purchase')}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              {dateStr} {timeStr}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`font-mono font-bold ${isPayment ? 'text-emerald-600' : 'text-slate-800'}`}>
+                              {isPayment ? '-' : '+'}BD {displayAmt.toFixed(3)}
+                            </span>
+                            {item.runningBalance !== undefined && (
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                Bal: BD {Number(item.runningBalance).toFixed(3)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+
+              {/* Footer Summary & Close */}
+              <div className="bg-slate-50 border-t border-slate-200 p-3 px-4 flex items-center justify-between shrink-0">
+                <div>
+                  <span className="text-[11px] text-slate-500 uppercase font-bold tracking-wider">Current Balance:</span>
+                  <p className="text-base font-black font-mono text-slate-900">
+                    BD {Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0).toFixed(3)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintStatement}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  >
+                    <Printer size={14} />
+                    <span>Print Slip</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatementCustomer(null)}
+                    className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RETURN & REFUND MODAL */}
+        {showRefundModal && (
+          <RefundModal
+            onClose={() => {
+              setShowRefundModal(false);
+              setIsReturnMode(false);
+            }}
+            apiBase={apiBase}
+            onSuccess={(data) => {
+              setIsReturnMode(false);
+              fetchCatalog();
+              loadCustomers();
+              showToast(`✅ Credit Note ${data.creditNoteNo} processed successfully!`, 'success');
+            }}
+          />
+        )}
+
+        {/* PIN-LOCKED RECEIVING DRAWER (IN-TRANSIT POS & BARCODE AUDITING) */}
+        {showReceivingDrawer && (
+          <ReceivingDrawer
+            isOpen={showReceivingDrawer}
+            onClose={() => setShowReceivingDrawer(false)}
+            apiBase={apiBase}
+            onCatalogRefresh={fetchCatalog}
+            registerScanListener={handleRegisterReceivingScanListener}
+          />
+        )}
+
+        {/* PIN-LOCKED ORDER HISTORY & NBR VOID DRAWER */}
+        {showOrderHistoryDrawer && (
+          <OrderHistoryDrawer
+            isOpen={showOrderHistoryDrawer}
+            onClose={() => setShowOrderHistoryDrawer(false)}
+            apiBase={apiBase}
+            onCatalogRefresh={fetchCatalog}
+          />
+        )}
+
+        {/* HARD CREDIT LIMIT POS BLOCKING MODAL */}
+        {creditLimitBlockedInfo && (
+          <HardCreditLimitModal
+            info={creditLimitBlockedInfo}
+            onClose={() => setCreditLimitBlockedInfo(null)}
+            onAuthorizeOverride={handleAuthorizeCreditOverride}
+            onOpenKhataHub={() => setShowKhataHub(true)}
+          />
+        )}
+
+        {/* TAP-TO-EDIT PRICE & DISCOUNT OVERRIDE MODAL */}
+        {priceOverrideItem && (
+          <TapToEditDiscountModal
+            key={priceOverrideItem ? `${priceOverrideItem.index}-${priceOverrideItem.product.id}` : 'closed'}
+            item={priceOverrideItem}
+            onClose={() => setPriceOverrideItem(null)}
+            onApplyOverride={applyPriceOverride}
+            onShowToast={showToast}
+            onRemoveItem={(indexOrId) => {
+              useCartStore.getState().removeItem(indexOrId as any);
+              showToast('🗑️ Removed item from cart', 'info');
+              setPriceOverrideItem(null);
+            }}
+          />
+        )}
+
+        {/* UNIFIED PREDICTIVE OMNI-PAD FULLSCREEN MODAL (SUNMI TERMINAL HIGH-SPEED TIKTOK-STYLE WORKFLOW) */}
+        {(showOmniPadModal || showFreshProduceGrid || showPluModal || isWeightModalOpen) && (
+          <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in duration-150">
+            <PredictiveOmniPad
+              customItems={omniItemsList}
+              isFullscreen={true}
+              cartCount={cart.length}
+              cartTotal={total}
+              initialItem={selectedWeighedItem ? {
+                code: String(selectedWeighedItem.plu_code || (selectedWeighedItem as any).pluCode || selectedWeighedItem.barcode || selectedWeighedItem.id),
+                name: selectedWeighedItem.name,
+                nameAr: selectedWeighedItem.nameAr || (selectedWeighedItem as any).name_ar,
+                pricePerKg: Number((selectedWeighedItem as any).sellingPrice || selectedWeighedItem.price || 0),
+                icon: selectedWeighedItem.name.toLowerCase().includes('tomato') ? '🍅' :
+                  selectedWeighedItem.name.toLowerCase().includes('chicken') ? '🍗' :
+                    selectedWeighedItem.name.toLowerCase().includes('cucumber') ? '🥒' :
+                      selectedWeighedItem.name.toLowerCase().includes('banana') ? '🍌' :
+                        selectedWeighedItem.name.toLowerCase().includes('potato') ? '🥔' :
+                          selectedWeighedItem.name.toLowerCase().includes('onion') ? '🧅' :
+                            selectedWeighedItem.name.toLowerCase().includes('sweet') ? '🍬' :
+                              selectedWeighedItem.name.toLowerCase().includes('rice') ? '🍚' : '⚖️',
+                barcode: selectedWeighedItem.barcode,
+                productId: selectedWeighedItem.id
+              } : null}
+              onClose={() => {
+                setShowOmniPadModal(false);
+                setShowFreshProduceGrid(false);
+                setShowPluModal(false);
+                setIsWeightModalOpen(false);
+                setSelectedWeighedItem(null);
+              }}
+              onResetItem={() => setSelectedWeighedItem(null)}
+              onAddToCart={handleOmniAddToCart}
+              onTenderCash={() => {
+                setShowOmniPadModal(false);
+                setShowFreshProduceGrid(false);
+                setShowPluModal(false);
+                setIsWeightModalOpen(false);
+                setSelectedWeighedItem(null);
+                handlePayment();
+              }}
+              onTenderBenefit={() => {
+                setShowOmniPadModal(false);
+                setShowFreshProduceGrid(false);
+                setShowPluModal(false);
+                setIsWeightModalOpen(false);
+                setSelectedWeighedItem(null);
+                if (cart.length === 0) {
+                  showToast("⚠️ Cart is empty!", 'info');
+                  return;
+                }
+                setPaymentModalMethod('BENEFIT_PAY');
+                setShowPaymentModal(true);
+              }}
+              onTenderKhata={() => {
+                setShowOmniPadModal(false);
+                setShowFreshProduceGrid(false);
+                setShowPluModal(false);
+                setIsWeightModalOpen(false);
+                setSelectedWeighedItem(null);
+                if (cart.length === 0) {
+                  showToast("⚠️ Cart is empty!", 'info');
+                  return;
+                }
+                setShowKhataHub(true);
+              }}
+            />
+          </div>
+        )}
+
+        {/* BENEFITPAY & POS PAYMENT MODAL */}
+        {showPaymentModal && (
+          <PaymentModal
+            isOpen={showPaymentModal}
+            onClose={() => {
+              setShowPaymentModal(false);
+              setPendingBenefitPayment(null);
+            }}
+            totalAmount={total}
+            subtotal={subtotal}
+            vat={vat}
+            cart={cart}
+            customer={customer}
+            apiBase={apiBase}
+            initialMethod={paymentModalMethod}
+            initialBenefitPayment={pendingBenefitPayment}
+            autoPrintReceipt={isAutoPrintEnabled}
+            onToggleAutoPrint={(enabled) => setIsAutoPrintEnabled(enabled)}
+            receiptFormat={receiptFormat}
+            onReceiptFormatChange={(format) => setReceiptFormat(format)}
+            onSuccess={(receiptData) => {
+              setShowPaymentModal(false);
+              setPendingBenefitPayment(null);
+              if (receiptData) {
+                setLastCompletedSale({
+                  invoiceNo: receiptData.invoiceNo,
+                  items: [...cart],
+                  subtotal,
+                  totalVat: vat,
+                  total,
+                  paymentMode: receiptData.paymentMethod || 'BENEFIT_PAY',
+                  cashTendered: receiptData.cashTendered,
+                  changeDue: receiptData.changeDue,
+                  date: `${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}`,
+                  cashierName: localStorage.getItem('active_shift_cashier') || 'Register 01'
+                });
+              }
+              if (receiptData?.paymentMethod === 'CASH' && receiptData?.cashTendered !== undefined) {
+                const tendered = Number(receiptData.cashTendered);
+                const change = receiptData.changeDue !== undefined ? Number(receiptData.changeDue) : (tendered > total ? tendered - total : 0);
+                setChangeFlashNotice({ changeDue: change, tendered });
+                if (changeFlashTimeoutRef.current) clearTimeout(changeFlashTimeoutRef.current);
+                changeFlashTimeoutRef.current = setTimeout(() => {
+                  setChangeFlashNotice(null);
+                }, 6000);
+              }
+              clearActiveCart();
+              showToast(`🧾 ${receiptData?.paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay' : (receiptData?.paymentMethod || 'Payment')} Confirmed!`, 'success');
+            }}
+          />
+        )}
+
+        {/* PREVIOUS BILLS & REPRINTS MODAL [F9] */}
+        {showPreviousBillsModal && (
+          <PreviousBillsModal
+            isOpen={showPreviousBillsModal}
+            onClose={() => setShowPreviousBillsModal(false)}
+          />
+        )}
+      </Suspense>
+
+      {/* 🟢 CUSTOMER AT COUNTER BEACON BANNER */}
+      {customerAtCounter && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-top duration-200 border-2 border-emerald-400">
+          <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center animate-pulse">
+            <Radio size={28} />
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+              Customer Standing at Counter
+            </div>
+            <div className="text-base font-black tracking-tight text-white flex items-center gap-2">
+              {customerAtCounter.name}
+              {(customerAtCounter.roomNumber || customerAtCounter.group_name || customerAtCounter.messName) && (
+                <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-md font-mono text-emerald-300 border border-slate-700 flex items-center gap-1">
+                  👥 {customerAtCounter.group_name || customerAtCounter.messName || `Room ${customerAtCounter.roomNumber}`}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-slate-300 font-mono mt-0.5 flex items-center gap-2">
+              <span>Personal: BD {Number(customerAtCounter.personalBalance ?? customerAtCounter.currentBalance ?? customerAtCounter.balance ?? 0).toFixed(3)}</span>
+              {Number(customerAtCounter.messShare || 0) > 0 && (
+                <span className="text-emerald-300 font-semibold">• Mess: BD {Number(customerAtCounter.messShare).toFixed(3)}</span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCustomer(customerAtCounter);
+              setCustomerAtCounter(null);
+              showToast(`💳 Linked ${customerAtCounter.name} to active cart!`, 'success');
+            }}
+            className="ml-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+          >
+            <span>Link to Cart [F4]</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCustomerAtCounter(null)}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg cursor-pointer"
+            title="Dismiss"
+          >
+            <X size={18} />
+          </button>
         </div>
-      )}
-
-      {/* BENEFITPAY & POS PAYMENT MODAL */}
-      {showPaymentModal && (
-        <PaymentModal
-          isOpen={showPaymentModal}
-          onClose={() => {
-            setShowPaymentModal(false);
-            setPendingBenefitPayment(null);
-          }}
-          totalAmount={total}
-          subtotal={subtotal}
-          vat={vat}
-          cart={cart}
-          customer={customer}
-          apiBase={apiBase}
-          initialMethod={paymentModalMethod}
-          initialBenefitPayment={pendingBenefitPayment}
-          autoPrintReceipt={isAutoPrintEnabled}
-          onToggleAutoPrint={(enabled) => setIsAutoPrintEnabled(enabled)}
-          receiptFormat={receiptFormat}
-          onReceiptFormatChange={(format) => setReceiptFormat(format)}
-          onSuccess={(receiptData) => {
-            setShowPaymentModal(false);
-            setPendingBenefitPayment(null);
-            if (receiptData) {
-              setLastCompletedSale({
-                invoiceNo: receiptData.invoiceNo,
-                items: [...cart],
-                subtotal,
-                totalVat: vat,
-                total,
-                paymentMode: receiptData.paymentMethod || 'BENEFIT_PAY',
-                cashTendered: receiptData.cashTendered,
-                changeDue: receiptData.changeDue,
-                date: `${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}`,
-                cashierName: localStorage.getItem('active_shift_cashier') || 'Register 01'
-              });
-            }
-            if (receiptData?.paymentMethod === 'CASH' && receiptData?.cashTendered !== undefined) {
-              const tendered = Number(receiptData.cashTendered);
-              const change = receiptData.changeDue !== undefined ? Number(receiptData.changeDue) : (tendered > total ? tendered - total : 0);
-              setChangeFlashNotice({ changeDue: change, tendered });
-              if (changeFlashTimeoutRef.current) clearTimeout(changeFlashTimeoutRef.current);
-              changeFlashTimeoutRef.current = setTimeout(() => {
-                setChangeFlashNotice(null);
-              }, 6000);
-            }
-            clearActiveCart();
-            showToast(`🧾 ${receiptData?.paymentMethod === 'BENEFIT_PAY' ? 'BenefitPay' : (receiptData?.paymentMethod || 'Payment')} Confirmed!`, 'success');
-          }}
-        />
-      )}
-
-      {/* PREVIOUS BILLS & REPRINTS MODAL [F9] */}
-      {showPreviousBillsModal && (
-        <PreviousBillsModal
-          isOpen={showPreviousBillsModal}
-          onClose={() => setShowPreviousBillsModal(false)}
-        />
       )}
 
       {/* CASH CHANGE TO RETURN FLASH BANNER */}
@@ -5567,7 +6265,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       {/* NBR-COMPLIANT SIMPLIFIED TAX INVOICE PRINT STRIP (58mm / 80mm Thermal Receipt - Nesto/NBB Style) */}
       <div className={`hidden print:block print-receipt format-${receiptFormat} bg-white text-black font-mono`}>
         {/* HEADER */}
-        <div className="center bold large">ASKAR SUPERMARKET</div>
+        <div className="center bold large">LAYALI SUPERMARKET</div>
         <div className="center bold">أسواق عسكر المركزية</div>
         <div className="center" style={{ fontSize: '9px' }}>Simplified Tax Invoice</div>
         <div className="center" style={{ fontSize: '9px' }}>فاتورة ضريبية مبسطة</div>
@@ -5661,6 +6359,24 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           <p className="text-[8px] font-bold text-center mt-1">SCAN FOR LIVE STATEMENT & BENEFITPAY</p>
         </div>
       </div>
+
+      {/* COMPACT SEMI-TRANSPARENT KEYPAD OVERLAY (~34% Screen Height - Zero Squish) */}
+      <PosKeypadOverlay
+        isOpen={showNumpad}
+        onClose={() => setShowNumpad(false)}
+        onDigit={handleBufferDigit}
+        onBackspace={handleBufferBackspace}
+        onClear={handleBufferClear}
+        onEnter={handleBufferConfirm}
+        onQtySet={handleBufferSetQty}
+        onQtyAdjust={(delta) => adjustLastItemQty(delta > 0 ? 1 : -1)}
+        onKhataLookup={() => {
+          setShowKhataHub(true);
+        }}
+        onTenderCash={handlePayment}
+        currentBuffer={searchQuery}
+        activeMode={bufferMode}
+      />
 
     </div>
   );

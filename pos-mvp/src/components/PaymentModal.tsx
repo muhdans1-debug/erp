@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import {
   X,
   Smartphone,
@@ -31,10 +31,11 @@ import {
   fetchBenefitPayConfig,
   generateBenefitPayPayload,
 } from '../utils/benefitPay';
-import BenefitPayConfigModal from './BenefitPayConfigModal';
+const BenefitPayConfigModal = lazy(() => import('./BenefitPayConfigModal'));
 import { DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { getRegionalIsoString, getSynchronizedDate } from '../utils/time';
 import { saveRecentSale } from '../services/recentSalesService';
+import { safeUUID } from '../utils/idUtils';
 
 export interface PaymentItem {
   id: string;
@@ -199,7 +200,7 @@ export default function PaymentModal({
   // Bahrain NBR Simplified Tax Invoice QR (Article 53 TLV Base64)
   const nbrPayload = useMemo(() => {
     return generateNbrTlvBase64({
-      sellerName: 'ASKAR SUPERMARKET',
+      sellerName: 'LAYALI SUPERMARKET',
       vatNumber: '200012345678901',
       timestamp: new Date(),
       total: totalAmount,
@@ -246,7 +247,11 @@ export default function PaymentModal({
 
   // Copy reference code to clipboard
   const handleCopyRef = () => {
-    navigator.clipboard.writeText(transactionRef);
+    try {
+      if (typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(transactionRef);
+      }
+    } catch (_) {}
     setCopiedRef(true);
     setTimeout(() => setCopiedRef(false), 2000);
   };
@@ -258,98 +263,106 @@ export default function PaymentModal({
     const finalRef = overrideRef || (finalMethod === 'BENEFIT_PAY' ? transactionRef : undefined);
     setProcessing(true);
 
-    const configuredTerminalId = typeof window !== 'undefined'
-      ? (localStorage.getItem('terminal_id') || localStorage.getItem('active_terminal_id') || 'T1')
-      : 'T1';
-
-    const salePayload = {
-      id: crypto.randomUUID(),
-      tenantId: 'tenant_askar_01',
-      terminalId: configuredTerminalId,
-      storeId: 'store_askar_01',
-      invoiceNo: activeInvoiceNo,
-      cart,
-      subtotal,
-      vat,
-      vatTotal: vat,
-      total: totalAmount,
-      paymentType: finalMethod,
-      customerId: customer ? customer.id : null,
-      transactionRef: finalRef,
-      cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
-      changeDue: finalMethod === 'CASH' ? changeDue : undefined,
-      items: cart.map((item) => {
-        const qty = item.quantity ?? (item as any).qty ?? 1;
-        const unitPrice = item.sellingPrice ?? (item as any).price ?? 0;
-        const lineTotal = Number((unitPrice * qty).toFixed(3));
-        const prodName = item.name || (item as any).productName || 'Item';
-        return {
-          id: item.id || `si_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          productId: item.id || (item as any).productId,
-          name: prodName,
-          productName: prodName,
-          barcode: (item as any).barcode || item.id,
-          quantity: qty,
-          qty,
-          price: unitPrice,
-          sellingPrice: unitPrice,
-          priceAtSale: unitPrice,
-          unitPrice: unitPrice,
-          total_price: lineTotal,
-          total: lineTotal,
-          costAtSale: item.purchasePrice || (item as any).unitCost || 0,
-          unitCost: item.purchasePrice || (item as any).unitCost || 0,
-        };
-      }),
-    };
-
-    // Authorised POS terminal handshake header (required by requirePosOrManagerAuth middleware)
-    const posAuthHeaders = {
-      'Content-Type': 'application/json',
-      'x-pos-client': 'sunmi-d2mini',
-    };
-
-    let data: any = null;
     try {
-      const res = await fetch(`${apiBase}/checkout`, {
-        method: 'POST',
-        headers: posAuthHeaders,
-        body: JSON.stringify(salePayload),
-        signal: AbortSignal.timeout(8000)  // Extended: Cloudflare Worker RTT from Bahrain ~900-1200ms + cold-start buffer
-      });
-      if (res.ok) {
-        data = await res.json();
-      } else {
-        try { data = await res.json(); } catch { }
-      }
-    } catch (netErr) {
-      console.warn('Payment checkout network notice (initiating instant local zero-block fallback):', netErr);
-    }
+      const configuredTerminalId = typeof window !== 'undefined'
+        ? (localStorage.getItem('terminal_id') || localStorage.getItem('active_terminal_id') || 'T1')
+        : 'T1';
 
-    // Try failover alternative server if primary failed
-    if (!data || !data.success) {
-      const altCandidates = [DEFAULT_EDGE_API_URL].filter(u => !apiBase.startsWith(u));
-      for (const altBase of altCandidates) {
-        try {
-          const altRes = await fetch(`${altBase}/checkout`, {
-            method: 'POST',
-            headers: posAuthHeaders,
-            body: JSON.stringify(salePayload),
-            signal: AbortSignal.timeout(6000)
-          });
-          if (altRes.ok) {
-            const altData = await altRes.json();
-            if (altData && altData.success) {
-              data = altData;
-              localStorage.setItem('master_server_url', altBase);
-              break;
+      const salePayload = {
+        id: safeUUID(),
+        tenantId: 'tenant_askar_01',
+        terminalId: configuredTerminalId,
+        storeId: 'store_askar_01',
+        invoiceNo: activeInvoiceNo,
+        cart,
+        subtotal,
+        vat,
+        vatTotal: vat,
+        total: totalAmount,
+        paymentType: finalMethod,
+        customerId: customer ? customer.id : null,
+        transactionRef: finalRef,
+        cashTendered: finalMethod === 'CASH' ? activeTendered : undefined,
+        changeDue: finalMethod === 'CASH' ? changeDue : undefined,
+        items: cart.map((item) => {
+          const qty = item.quantity ?? (item as any).qty ?? 1;
+          const unitPrice = item.sellingPrice ?? (item as any).price ?? 0;
+          const lineTotal = Number((unitPrice * qty).toFixed(3));
+          const prodName = item.name || (item as any).productName || 'Item';
+          return {
+            id: item.id || `si_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            productId: item.id || (item as any).productId,
+            name: prodName,
+            productName: prodName,
+            barcode: (item as any).barcode || item.id,
+            quantity: qty,
+            qty,
+            price: unitPrice,
+            sellingPrice: unitPrice,
+            priceAtSale: unitPrice,
+            unitPrice: unitPrice,
+            total_price: lineTotal,
+            total: lineTotal,
+            costAtSale: item.purchasePrice || (item as any).unitCost || 0,
+            unitCost: item.purchasePrice || (item as any).unitCost || 0,
+          };
+        }),
+      };
+
+      // Authorised POS terminal handshake header (required by requirePosOrManagerAuth middleware)
+      const posAuthHeaders = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'sunmi-d2mini',
+      };
+
+      let data: any = null;
+      try {
+        const timeoutSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+          ? AbortSignal.timeout(4000)
+          : undefined;
+
+        const res = await fetch(`${apiBase || ''}/checkout`, {
+          method: 'POST',
+          headers: posAuthHeaders,
+          body: JSON.stringify(salePayload),
+          signal: timeoutSignal
+        });
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          try { data = await res.json(); } catch { }
+        }
+      } catch (netErr) {
+        console.warn('Payment checkout network notice (initiating instant local zero-block fallback):', netErr);
+      }
+
+      // Try failover alternative server if primary failed
+      if (!data || !data.success) {
+        const altCandidates = [DEFAULT_EDGE_API_URL].filter(u => !apiBase.startsWith(u));
+        for (const altBase of altCandidates) {
+          try {
+            const altSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+              ? AbortSignal.timeout(3000)
+              : undefined;
+
+            const altRes = await fetch(`${altBase}/checkout`, {
+              method: 'POST',
+              headers: posAuthHeaders,
+              body: JSON.stringify(salePayload),
+              signal: altSignal
+            });
+            if (altRes.ok) {
+              const altData = await altRes.json();
+              if (altData && altData.success) {
+                data = altData;
+                localStorage.setItem('master_server_url', altBase);
+                break;
+              }
             }
-          }
-        } catch { }
+          } catch { }
+        }
       }
-    }
 
-    try {
       // Zero-block safeguard: Even if master server is unavailable, complete sale locally and print
       const isOnlineSuccess = Boolean(data && data.success);
       const verifiedInvoiceNo = isOnlineSuccess
@@ -895,8 +908,8 @@ export default function PaymentModal({
                 }}
               >
                 <div style={{ textAlign: 'center', borderBottom: '1px dashed #000000', paddingBottom: '6px' }}>
-                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '14px' : '12.5px' }}>ASKAR SUPERMARKET</div>
-                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '13px' : '11.5px' }}>أسواق عسكر المركزية</div>
+                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '14px' : '12.5px' }}>LAYALI SUPERMARKET</div>
+                  <div style={{ fontWeight: '700', fontSize: receiptFormat === '80mm' ? '13px' : '11.5px' }}>أسواق ليالي المركزية</div>
                   <div style={{ fontSize: '9px' }}>Simplified Tax Invoice</div>
                   <div style={{ fontSize: '9px' }}>VAT No: 200012345678901</div>
                   <div style={{ fontSize: '9px' }}>Tel: +973 1700 0000</div>
@@ -1789,12 +1802,14 @@ export default function PaymentModal({
       </div>
 
       {/* BENEFITPAY OWNER ACCOUNT CONFIG MODAL */}
-      <BenefitPayConfigModal
-        isOpen={showBenefitConfigModal}
-        onClose={() => setShowBenefitConfigModal(false)}
-        apiBase={apiBase}
-        onConfigSaved={(updated) => setBenefitConfig(updated)}
-      />
+      <Suspense fallback={null}>
+        <BenefitPayConfigModal
+          isOpen={showBenefitConfigModal}
+          onClose={() => setShowBenefitConfigModal(false)}
+          apiBase={apiBase}
+          onConfigSaved={(updated) => setBenefitConfig(updated)}
+        />
+      </Suspense>
     </div>
   );
 }

@@ -5390,20 +5390,22 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* KHATA HUB MODAL */}
         {showKhataHub && (
-          <KhataHubModal
-            onClose={() => setShowKhataHub(false)}
-            apiBase={apiBase}
-            lastScannedCardUid={lastDetectedUid}
-            initialCustomers={customersList}
-            onCustomerUpdated={() => {
-              loadCustomers();
-            }}
-            onSelectCustomerForCart={(selected) => {
-              setCustomer(selected);
-              showToast(`💳 Linked ${selected.name} to active cart (Balance: BD ${Number(selected.currentBalance ?? selected.balance ?? 0).toFixed(3)})`, 'success');
-            }}
-            showToast={showToast}
-          />
+          <Suspense fallback={null}>
+            <KhataHubModal
+              onClose={() => setShowKhataHub(false)}
+              apiBase={apiBase}
+              lastScannedCardUid={lastDetectedUid}
+              initialCustomers={customersList}
+              onCustomerUpdated={() => {
+                loadCustomers();
+              }}
+              onSelectCustomerForCart={(selected) => {
+                setCustomer(selected);
+                showToast(`💳 Linked ${selected.name} to active cart (Balance: BD ${Number(selected.currentBalance ?? selected.balance ?? 0).toFixed(3)})`, 'success');
+              }}
+              showToast={showToast}
+            />
+          </Suspense>
         )}
 
         {/* DEPOSIT & SALFAH GUIDED TOUCH WIZARD */}

@@ -163,13 +163,13 @@ export default function KhataHubModal({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 p-2 pt-2 md:pt-3 animate-in fade-in overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[96vh] overflow-hidden flex flex-col">
         {/* Header & Tabs */}
-        <div className="bg-slate-50 border-b">
-          <div className="flex justify-between items-center p-4">
+        <div className="bg-slate-50 border-b shrink-0">
+          <div className="flex justify-between items-center p-3 sm:p-4">
             <div className="flex items-center gap-3">
-              <h3 className="text-2xl font-bold text-slate-800">Khata Hub</h3>
+              <h3 className="text-xl sm:text-2xl font-bold text-slate-800">Khata Hub</h3>
               <button
                 type="button"
                 onClick={() => {
@@ -185,12 +185,12 @@ export default function KhataHubModal({
             </div>
             <button
               onClick={onClose}
-              className="p-3 bg-slate-200 hover:bg-slate-300 rounded-full active:scale-90 transition-transform cursor-pointer"
+              className="p-2.5 bg-slate-200 hover:bg-slate-300 rounded-full active:scale-90 transition-transform cursor-pointer"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
           </div>
-          <div className="flex w-full text-base font-bold overflow-x-auto">
+          <div className="flex w-full text-sm sm:text-base font-bold overflow-x-auto">
             <button
               onClick={() => setActiveTab('SETTLE')}
               className={`flex-1 py-3.5 border-b-4 transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${activeTab === 'SETTLE'
@@ -235,7 +235,7 @@ export default function KhataHubModal({
         </div>
 
         {/* Dynamic Content Area */}
-        <div className="p-6 bg-white min-h-[420px] max-h-[75vh] overflow-y-auto">
+        <div className="p-3 sm:p-4 bg-white min-h-[200px] max-h-[calc(100vh-130px)] overflow-y-auto">
           {activeTab === 'GROUPS' ? (
             <MessGroupsHubView
               apiBase={apiBase}
@@ -520,7 +520,7 @@ function SettleBalanceView({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        kickCashDrawer().catch(() => {});
+        kickCashDrawer().catch(() => { });
         printCardDepositRefundVoucher({
           receiptNo: data.voucherNo || `REF-${Date.now().toString().slice(-6)}`,
           customerName: customer.name,
@@ -529,7 +529,7 @@ function SettleBalanceView({
           cardUid: customer.cardUid,
           refundAmount: depAmt,
           cashierName: 'Cashier 1'
-        }).catch(() => {});
+        }).catch(() => { });
 
         showToast ? showToast(`✅ BD ${depAmt.toFixed(3)} deposit refunded in cash!`, 'success') : alert(`✅ Deposit refunded!`);
         const updated = {
@@ -573,7 +573,7 @@ function SettleBalanceView({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        kickCashDrawer().catch(() => {});
+        kickCashDrawer().catch(() => { });
         printCardDepositReceipt({
           receiptNo: data.receiptNo || `DEP-${Date.now().toString().slice(-6)}`,
           customerName: customer.name,
@@ -582,7 +582,7 @@ function SettleBalanceView({
           cardUid: customer.cardUid,
           depositAmount: amount,
           cashierName: 'Cashier 1'
-        }).catch(() => {});
+        }).catch(() => { });
 
         showToast ? showToast(`✅ BD ${amount.toFixed(3)} card deposit collected!`, 'success') : alert(`✅ Deposit collected!`);
         const updated = {
@@ -651,7 +651,7 @@ function SettleBalanceView({
           } else if (data.error) {
             lastErrMsg = data.error;
           }
-        } catch {}
+        } catch { }
       }
 
       if (!success) {
@@ -689,7 +689,7 @@ function SettleBalanceView({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        kickCashDrawer().catch(() => {});
+        kickCashDrawer().catch(() => { });
         printCashAdvanceReceipt({
           receiptNo: data.receiptNo || `SAL-${Date.now().toString().slice(-6)}`,
           customerName: customer.name,
@@ -699,7 +699,7 @@ function SettleBalanceView({
           newAdvanceBalance: data.newAdvanceBalance ?? ((Number(customer.cash_advance_balance || 0) + amount)),
           paydayDueDay: customer.payday_day_of_month || 28,
           cashierName: 'Cashier 1'
-        }).catch(() => {});
+        }).catch(() => { });
 
         showToast ? showToast(`✅ Dispensed BD ${amount.toFixed(3)} Salfah from till!`, 'success') : alert('✅ Cash advance dispensed!');
         const updated = {
@@ -771,23 +771,23 @@ function SettleBalanceView({
       badgeText: isInCredit
         ? `IN CREDIT (DUE): BD ${amt.toFixed(3)}`
         : isHeld
-        ? `HELD IN TRUST: BD ${amt.toFixed(3)}`
-        : 'NO DEPOSIT',
+          ? `HELD IN TRUST: BD ${amt.toFixed(3)}`
+          : 'NO DEPOSIT',
       shortStatusText: isInCredit
         ? 'IN CREDIT (DUE)'
         : isHeld
-        ? 'HELD IN TRUST'
-        : 'NO DEPOSIT',
+          ? 'HELD IN TRUST'
+          : 'NO DEPOSIT',
       textColorClass: isInCredit
         ? 'text-rose-700'
         : isHeld
-        ? 'text-emerald-700'
-        : 'text-slate-500',
+          ? 'text-emerald-700'
+          : 'text-slate-500',
       badgeClass: isInCredit
         ? 'bg-rose-50 border-rose-200 text-rose-700'
         : isHeld
-        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-        : 'bg-slate-100 border-slate-200 text-slate-500'
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          : 'bg-slate-100 border-slate-200 text-slate-500'
     };
   };
 
@@ -992,7 +992,7 @@ function SettleBalanceView({
           }));
           setCustomers((prev) => (prev.length === 0 ? warmList : prev));
         }
-      } catch {}
+      } catch { }
 
       let data: any = null;
       let messGroupsList: any[] = [];
@@ -1756,8 +1756,8 @@ function SettleBalanceView({
       ? `Full Mess Group Total (${activeMessName})`
       : (paymentTarget === 'PERSONAL'
         ? 'Personal Tab'
-        : (paymentTarget === 'MESS' 
-          ? `Mess Share (${activeMessName})` 
+        : (paymentTarget === 'MESS'
+          ? `Mess Share (${activeMessName})`
           : (paymentTarget === 'DEPOSIT'
             ? 'Card Security Deposit'
             : (paymentTarget === 'CASH_ADVANCE' ? 'Payday Cash Advance' : 'Total Account'))));
@@ -2198,19 +2198,17 @@ function SettleBalanceView({
                       const targetAmt = depInfo.status === 'IN_CREDIT' ? depInfo.amount : (depInfo.amount || 3.0);
                       setPayAmount(targetAmt.toFixed(3));
                     }}
-                    className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${
-                      isSelected
+                    className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${isSelected
                         ? 'bg-rose-50 border-rose-500 ring-2 ring-rose-200 shadow-xs'
                         : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}
+                      }`}
                   >
                     <div className="text-xs text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
                       <span>Card Deposit (تأمين)</span>
                       <ShieldCheck size={14} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
                     </div>
-                    <div className={`text-2xl font-black mt-1 ${
-                      depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
-                    }`}>
+                    <div className={`text-2xl font-black mt-1 ${depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                      }`}>
                       BD {depInfo.amount.toFixed(3)}
                     </div>
                     <div className="text-[11px] font-black uppercase tracking-wider mt-0.5">
@@ -2265,8 +2263,7 @@ function SettleBalanceView({
                   return (
                     <div
                       key={m.id}
-                      className={`p-3 rounded-xl border-2 transition-all flex flex-col justify-between ${
-                        isFullMessSelected || isRoomShareSelected
+                      className={`p-3 rounded-xl border-2 transition-all flex flex-col justify-between ${isFullMessSelected || isRoomShareSelected
                           ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 shadow-xs'
                           : 'bg-purple-50/40 border-purple-200 hover:border-purple-300'
                         }`}
@@ -2295,11 +2292,10 @@ function SettleBalanceView({
                             setSelectedPaymentMessId(m.id);
                             setPayAmount(mShare.toFixed(3));
                           }}
-                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
-                            isRoomShareSelected
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${isRoomShareSelected
                               ? 'bg-indigo-600 text-white shadow-xs'
                               : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
-                          }`}
+                            }`}
                           title={`Pay only this customer's share (${mShare.toFixed(3)} BHD) in ${mName}`}
                         >
                           Pay Share (BD {mShare.toFixed(3)})
@@ -2312,11 +2308,10 @@ function SettleBalanceView({
                             setSelectedPaymentMessId(m.id);
                             setPayAmount(gTotal.toFixed(3));
                           }}
-                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
-                            isFullMessSelected
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${isFullMessSelected
                               ? 'bg-purple-700 text-white shadow-xs'
                               : 'bg-purple-200 text-purple-900 hover:bg-purple-300'
-                          }`}
+                            }`}
                           title={`Pay entire room communal debt (${gTotal.toFixed(3)} BHD) in ${mName}`}
                         >
                           Pay Room (BD {gTotal.toFixed(3)})
@@ -2583,15 +2578,15 @@ function SettleBalanceView({
                   ? Math.max(0, getPersonalBal(selectedCustomer))
                   : (paymentTarget === 'MESS'
                     ? (selectedPaymentMessId
-                        ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.memberShare ?? getMessBal(selectedCustomer)))
-                        : Math.max(0, getMessBal(selectedCustomer)))
+                      ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.memberShare ?? getMessBal(selectedCustomer)))
+                      : Math.max(0, getMessBal(selectedCustomer)))
                     : (paymentTarget === 'MESS_GROUP'
                       ? (selectedPaymentMessId
-                          ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.groupTotal ?? getMessGroupTotal(selectedCustomer)))
-                          : Math.max(0, getMessGroupTotal(selectedCustomer)))
+                        ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.groupTotal ?? getMessGroupTotal(selectedCustomer)))
+                        : Math.max(0, getMessGroupTotal(selectedCustomer)))
                       : (paymentTarget === 'CASH_ADVANCE'
-                          ? Math.max(0, Number(selectedCustomer.cash_advance_balance || 0))
-                          : Math.max(0, getTotalBal(selectedCustomer)))));
+                        ? Math.max(0, Number(selectedCustomer.cash_advance_balance || 0))
+                        : Math.max(0, getTotalBal(selectedCustomer)))));
 
                 return activeBal > 0 ? (
                   <div className="flex items-center gap-2 flex-wrap">
@@ -3280,40 +3275,9 @@ function SettleBalanceView({
   // Otherwise, show the Searchable List with the NFC waiting prompt
   return (
     <>
-      <div className="space-y-4 animate-in slide-in-from-left-4 h-full flex flex-col">
-        {/* Visual NFC Prompt */}
-        <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between shadow-md">
-          <div className="flex items-center gap-3">
-            <div className="relative flex h-10 w-10 items-center justify-center">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-20"></span>
-              <div className="bg-emerald-500 p-2 rounded-full">
-                <Wifi size={20} className="text-white" />
-              </div>
-            </div>
-            <div>
-              <h4 className="font-bold text-lg flex items-center gap-2">
-                Ready to Scan
-                {isNfcLoading && (
-                  <span className="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded animate-pulse">
-                    Reading card...
-                  </span>
-                )}
-              </h4>
-              <p className="text-slate-400 text-sm">Tap customer Khata card on terminal...</p>
-            </div>
-          </div>
-          {/* Hidden button for testing in the browser without hardware */}
-          <button
-            type="button"
-            onClick={() => handleNfcLookup('04:8A:21:5A:F1:48:80')}
-            className="text-xs bg-slate-800 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer active:scale-95"
-          >
-            Simulate Scan
-          </button>
-        </div>
-
-        {/* Search Bar + Mess Filter + Sort Order Controls */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-2">
+      <div className="space-y-3 animate-in slide-in-from-left-4 h-full flex flex-col">
+        {/* Sticky Top-Pinned Search Bar & Filters (Toast/Clover Enterprise POS standard: immune to keyboard occlusion) */}
+        <div className="sticky top-0 z-30 bg-white pt-0.5 pb-2 border-b border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
               <CreditCard size={18} className="text-emerald-600" />
@@ -3323,7 +3287,7 @@ function SettleBalanceView({
               placeholder="🔍 Search Name, Phone, CPR, Mess, or Tap/Type NFC Card UID..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full text-base py-3 pl-10 pr-10 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-400 font-medium"
+              className="w-full text-base py-2.5 pl-10 pr-10 bg-slate-100 border-2 border-slate-200 rounded-xl focus:border-emerald-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 font-medium"
             />
             {search && (
               <button
@@ -3337,7 +3301,7 @@ function SettleBalanceView({
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-1.5 shrink-0 bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
               type="button"
               onClick={() => setMessOnlyFilter(!messOnlyFilter)}
@@ -3375,8 +3339,40 @@ function SettleBalanceView({
           </div>
         </div>
 
+        {/* Visual NFC Prompt - Compact Banner (Collapses during active text search to preserve screen space) */}
+        {!search && (
+          <div className="bg-slate-900 text-white py-2 px-3.5 rounded-xl flex items-center justify-between shadow-xs shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="relative flex h-7 w-7 items-center justify-center shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-20"></span>
+                <div className="bg-emerald-500 p-1.5 rounded-full">
+                  <Wifi size={14} className="text-white" />
+                </div>
+              </div>
+              <div>
+                <h4 className="font-bold text-sm flex items-center gap-2 leading-tight">
+                  Ready to Scan
+                  {isNfcLoading && (
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-1.5 py-0.5 rounded animate-pulse">
+                      Reading card...
+                    </span>
+                  )}
+                </h4>
+                <p className="text-slate-400 text-xs">Tap customer Khata card on terminal anytime</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleNfcLookup('04:8A:21:5A:F1:48:80')}
+              className="text-[11px] bg-slate-800 text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer active:scale-95"
+            >
+              Simulate Scan
+            </button>
+          </div>
+        )}
+
         {/* Scrollable Customer List */}
-        <div className="flex-1 overflow-y-auto scroll-zone space-y-3 max-h-[380px] pr-1">
+        <div className="flex-1 overflow-y-auto scroll-zone space-y-2.5 max-h-[calc(100vh-380px)] min-h-[160px] pr-1">
           {displayedCustomers.map((customer) => {
             const personalBal = getPersonalBal(customer);
             const messBal = getMessBal(customer);
@@ -3524,9 +3520,8 @@ function SettleBalanceView({
                           <ShieldCheck size={12} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
                           <span>Card Deposit (تأمين)</span>
                         </div>
-                        <div className={`text-base font-black mt-0.5 ${
-                          depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
-                        }`}>
+                        <div className={`text-base font-black mt-0.5 ${depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                          }`}>
                           BD {depInfo.amount.toFixed(3)}
                         </div>
                         <div className="text-[9px] font-black uppercase tracking-wider">
@@ -4185,11 +4180,10 @@ function NewCustomerView({
                   depositAmount: prev.depositAmount === '0.000' ? '3.000' : prev.depositAmount
                 }));
               }}
-              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                formData.cardType === 'PHYSICAL_NFC'
+              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${formData.cardType === 'PHYSICAL_NFC'
                   ? 'bg-blue-50 border-blue-500 text-blue-900 shadow-xs'
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <span>💳 Physical NFC Card</span>
             </button>
@@ -4204,11 +4198,10 @@ function NewCustomerView({
                 }));
                 setCardStatus({ status: 'idle' });
               }}
-              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                formData.cardType === 'DIGITAL_PASS'
+              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${formData.cardType === 'DIGITAL_PASS'
                   ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-xs'
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
-              }`}
+                }`}
             >
               <span>📱 Free Digital Pass (0 BD)</span>
             </button>
@@ -4229,11 +4222,10 @@ function NewCustomerView({
                   name="depositAmount"
                   value={formData.depositAmount}
                   onChange={handleChange}
-                  className={`w-full text-lg p-3 pl-12 border-2 rounded-lg outline-none font-bold font-mono transition-colors ${
-                    formData.cardType === 'DIGITAL_PASS'
+                  className={`w-full text-lg p-3 pl-12 border-2 rounded-lg outline-none font-bold font-mono transition-colors ${formData.cardType === 'DIGITAL_PASS'
                       ? 'bg-slate-100 border-slate-200 text-slate-400'
                       : 'bg-white border-slate-300 focus:border-blue-500 text-emerald-700'
-                  }`}
+                    }`}
                   placeholder="3.000"
                 />
               </div>
@@ -4524,7 +4516,7 @@ function KhataEditModal({
           } else if (data.error) {
             errStr = data.error;
           }
-        } catch {}
+        } catch { }
       }
 
       if (!ok) {
@@ -5046,11 +5038,10 @@ function KhataEditModal({
                     type="button"
                     disabled={isProcessingDeposit || depositStatus === 'HELD'}
                     onClick={() => handleChargeDepositAction('CHARGE_CREDIT')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer transition active:scale-95 ${
-                      depositStatus === 'IN_CREDIT'
+                    className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer transition active:scale-95 ${depositStatus === 'IN_CREDIT'
                         ? 'bg-amber-100 border-amber-400 text-amber-950 font-black'
                         : 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900'
-                    }`}
+                      }`}
                     title="Charge deposit to customer credit tab. Collected when customer pays credit debt."
                   >
                     <div className="flex items-center gap-1">
@@ -5080,11 +5071,10 @@ function KhataEditModal({
                     type="button"
                     disabled={isProcessingDeposit || Number(customer.currentBalance ?? customer.balance ?? 0) > 0}
                     onClick={() => handleChargeDepositAction('REFUND')}
-                    className={`w-full p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
-                      Number(customer.currentBalance ?? customer.balance ?? 0) > 0
+                    className={`w-full p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${Number(customer.currentBalance ?? customer.balance ?? 0) > 0
                         ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                         : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-300 cursor-pointer active:scale-95'
-                    }`}
+                      }`}
                     title={Number(customer.currentBalance ?? customer.balance ?? 0) > 0 ? 'Debt must be 0 to refund deposit' : 'Refund deposit upon card return'}
                   >
                     <span>💸 Refund Deposit in Cash</span>

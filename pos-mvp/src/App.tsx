@@ -26,6 +26,7 @@ import { syncClockWithMasterServer, updateClockOffsetFromHeartbeat } from './uti
 import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 import { setManagerSessionPin, clearManagerSessionPin } from './utils/authUtils';
 import { initPushNotifications, requestNotificationPermission, getNotificationPermissionStatus, showTransactionNotification, triggerTestTransactionNotification } from './utils/pushNotification';
+import { initGlobalKeyboardAutoScroll } from './utils/keyboardAware';
 import { Bell, X as CloseIcon } from 'lucide-react';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
@@ -33,6 +34,12 @@ const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 export default function App() {
   // Ultra-Speed Hardware Barcode Scanner & Sunmi Native Broadcast Wedge
   useBarcodeWedge();
+
+  // Initialize global keyboard-aware auto-scrolling (eliminates blind typing on Sunmi 1280x800)
+  useEffect(() => {
+    const cleanupKeyboard = initGlobalKeyboardAutoScroll();
+    return cleanupKeyboard;
+  }, []);
 
   // Target the 4.3" SUNMI Customer Display route directly (800x480)
   const isCustomerDisplayRoute = typeof window !== 'undefined' && (

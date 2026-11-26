@@ -160,16 +160,16 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-slate-950/80 z-[9999] flex flex-col items-center justify-start p-4 md:p-8 animate-in fade-in duration-150"
+      className="fixed inset-0 bg-slate-950/80 z-[9999] flex flex-col items-center justify-start p-2 pt-2 md:pt-3 animate-in fade-in duration-150 overflow-hidden"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[88vh] border border-slate-200"
+        className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[96vh] border border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search Header */}
-        <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center gap-3">
-          <Search size={28} className="text-slate-400 shrink-0 ml-2" />
+        {/* Search Header - Sticky Top Pinned (immune to keyboard occlusion on Sunmi 1280x800) */}
+        <div className="p-3 sm:p-4 border-b border-slate-200 bg-slate-50 flex items-center gap-3 shrink-0 sticky top-0 z-30">
+          <Search size={26} className="text-slate-400 shrink-0 ml-1 sm:ml-2" />
           <input
             ref={inputRef}
             autoFocus
@@ -187,22 +187,22 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
                 }
               }
             }}
-            className="w-full text-2xl font-bold py-2 bg-transparent outline-none text-slate-800 placeholder-slate-400"
+            className="w-full text-xl sm:text-2xl font-bold py-1.5 sm:py-2 bg-transparent outline-none text-slate-800 placeholder-slate-400"
           />
           <div className="flex items-center gap-2 shrink-0">
             <kbd className="px-2 py-1 bg-slate-200 text-slate-600 rounded text-xs font-mono font-bold">Esc</kbd>
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
             >
-              <X size={22} />
+              <X size={20} />
             </button>
           </div>
         </div>
 
-        {/* Search Results */}
-        <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 scroll-zone">
+        {/* Search Results - Sized dynamically above software keyboard */}
+        <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 scroll-zone max-h-[calc(100vh-280px)] min-h-[160px]">
           {displayedProducts.length === 0 ? (
             <div className="text-center py-16 text-slate-400">
               <Search size={48} className="mx-auto mb-3 opacity-20" />

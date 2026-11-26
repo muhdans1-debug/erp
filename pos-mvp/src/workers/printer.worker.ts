@@ -18,8 +18,8 @@ self.onmessage = (event: MessageEvent) => {
 
     // Hardware ESC/POS command stream (with clean single dashes and strict 32-col layout)
     commands.push({ action: 'setAlignment', data: 1 }); // Center
-    commands.push({ action: 'printText', data: `${payload.shopName || 'ASKAR SUPERMARKET'}\n` });
-    commands.push({ action: 'printText', data: `${payload.shopNameAr || 'أسواق عسكر المركزية'}\n` });
+    commands.push({ action: 'printText', data: `${payload.shopName || 'LAYALI SUPERMARKET'}\n` });
+    commands.push({ action: 'printText', data: `${payload.shopNameAr || 'أسواق ليالي المركزية'}\n` });
     commands.push({ action: 'printText', data: 'SIMPLIFIED TAX INVOICE\n' });
     commands.push({ action: 'printText', data: 'فاتورة ضريبية مبسطة\n' });
     commands.push({ action: 'printText', data: `C.R. No: ${payload.crNumber || '790614189'}\n` });

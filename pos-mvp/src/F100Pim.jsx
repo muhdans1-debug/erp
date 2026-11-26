@@ -1335,7 +1335,6 @@ export default function F100Pim({ onSwitchToPos }) {
                   bottom: '8px',
                   right: '8px',
                   backgroundColor: 'rgba(15, 23, 42, 0.85)',
-                  backdropFilter: 'blur(4px)',
                   color: 'white',
                   padding: '5px 10px',
                   borderRadius: '6px',

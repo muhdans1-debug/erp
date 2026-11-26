@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { CapacitorNfc } from '@capgo/capacitor-nfc';
 import { playNfcChime } from '../utils/sound';
-import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 const NFC_SESSION_TIMEOUT_SECONDS = 300; // 5 minutes auto-off
 
@@ -17,11 +17,12 @@ export const useNfcReader = (
   onCardScanned: (uid: string) => void,
   onNfcUnavailable?: () => void
 ) => {
-  const [isScanning, setIsScanning] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(0);
+  const isNative = Boolean(Capacitor.isNativePlatform());
+  const [isScanning, setIsScanning] = useState(() => isNative);
+  const [secondsLeft, setSecondsLeft] = useState(isNative ? 999999 : 0);
   const [nfcError, setNfcError] = useState<string | null>(null);
 
-  const isScanningRef = useRef(false);
+  const isScanningRef = useRef(isNative);
   const controllerRef = useRef<AbortController | null>(null);
   const capacitorListenerRef = useRef<any>(null);
   const onCardScannedRef = useRef(onCardScanned);
@@ -82,9 +83,9 @@ export const useNfcReader = (
   }, []);
 
   // Suppress duplicate continuous RF antenna triggers within 800ms
-  // Automatically turns off NFC tap upon successful card scan
+  // Zero-Touch Speed Workflow: Always active on native Sunmi hardware
   const handleScannedUid = useCallback((cleanUid: string) => {
-    if (!isScanningRef.current) return;
+    if (!Capacitor.isNativePlatform() && !isScanningRef.current) return;
 
     const now = Date.now();
     if (lastScanRef.current.uid === cleanUid && (now - lastScanRef.current.time) < 800) {
@@ -92,8 +93,10 @@ export const useNfcReader = (
     }
     lastScanRef.current = { uid: cleanUid, time: now };
 
-    // Turn off NFC tap immediately upon successful read (user request)
-    stopScan();
+    // Turn off NFC tap immediately upon successful read on web (keep active on native Sunmi)
+    if (!Capacitor.isNativePlatform()) {
+      stopScan();
+    }
 
     if (onCardScannedRef.current) {
       onCardScannedRef.current(cleanUid);
@@ -131,7 +134,7 @@ export const useNfcReader = (
           await CapacitorNfc.startScanning({ invalidateAfterFirstRead: false });
 
           const parseTagId = (event: any) => {
-            if (!isScanningRef.current) return;
+            if (!Capacitor.isNativePlatform() && !isScanningRef.current) return;
             let hexString = '';
             const rawId = event?.tag?.id || event?.id || event?.tagId;
             if (rawId) {
@@ -149,19 +152,6 @@ export const useNfcReader = (
               try { playNfcChime(); } catch { }
               window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: hexString, tag_id: hexString } }));
               handleScannedUid(hexString);
-
-              // Auto-relay to Cloud Edge so laptops can pick up this tap instantly over the web
-              try {
-                const bases = [getApiBaseUrl(), DEFAULT_EDGE_API_URL].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
-                for (const base of bases) {
-                  fetch(`${base}/api/nfc/relay`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
-                    body: JSON.stringify({ tag_id: hexString, terminalId: 'Sunmi/F100' }),
-                    signal: AbortSignal.timeout(2000)
-                  }).catch(() => { });
-                }
-              } catch { }
             }
           };
 
@@ -260,29 +250,19 @@ export const useNfcReader = (
     }
   }, [handleScannedUid, stopScan]);
 
-  // PATH 4: Hardware broadcast receiver for Sunmi native broadcasts (Only active when isScanning is true)
+  // PATH 4: Hardware broadcast receiver for Sunmi native broadcasts
   useEffect(() => {
     const handleSunmiScan = (e: any) => {
-      if (!isScanningRef.current) return;
+      // Ignore echoed relay scans to prevent loops
       if (e?.detail?.isRelayed || e?.detail?.fromRelay) return;
-      if (!Capacitor.isNativePlatform()) return;
+      // On web/desktop, only process if actively scanning; on native Sunmi hardware, always active
+      if (!Capacitor.isNativePlatform() && !isScanningRef.current) return;
 
       const rawId = e?.detail?.nfcId || e?.detail?.tag_id || e?.detail;
       if (typeof rawId === 'string' && rawId.trim()) {
         const cleanUid = rawId.replace(/[:\-]/g, '').toUpperCase();
         try { playNfcChime(); } catch { }
         handleScannedUid(cleanUid);
-
-        try {
-          const bases = [getApiBaseUrl(), DEFAULT_EDGE_API_URL].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
-          for (const base of bases) {
-            fetch(`${base}/api/nfc/relay`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
-              body: JSON.stringify({ tag_id: cleanUid, terminalId: 'Sunmi POS' })
-            }).catch(() => { });
-          }
-        } catch { }
       }
     };
 
@@ -294,6 +274,13 @@ export const useNfcReader = (
       window.removeEventListener('sunmi-nfc-broadcast', handleSunmiScan);
     };
   }, [handleScannedUid]);
+
+  // Zero-Touch Speed Workflow: Automatically initialize hardware NFC scanning on native Sunmi
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      startScan();
+    }
+  }, [startScan]);
 
   // Cleanup on unmount
   useEffect(() => {

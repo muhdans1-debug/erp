@@ -4,6 +4,7 @@ import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
+import { safeUUID } from '../utils/idUtils';
 
 export interface PosAddProductModalProps {
   onClose: () => void;
@@ -22,7 +23,16 @@ export default function PosAddProductModal({
   categories = [],
   catalog = []
 }: PosAddProductModalProps) {
-  const [distributors, setDistributors] = useState<any[]>([]);
+  // Pre-load distributors instantly from localStorage cache (0ms)
+  const [distributors, setDistributors] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('cached_distributors');
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
   const nameInputRef = React.useRef<HTMLInputElement>(null);
   const initialBarcodeConsumedRef = React.useRef(false);
@@ -60,28 +70,38 @@ export default function PosAddProductModal({
     }
   }, [catalog]);
 
-  // 1. Detect existing product by Barcode / ID
+  // Pre-index product barcode and name maps once when allProducts updates (O(1) lookups on typing)
+  const { barcodeMap, nameMap } = useMemo(() => {
+    const bMap = new Map<string, any>();
+    const nMap = new Map<string, any>();
+    for (let i = 0; i < allProducts.length; i++) {
+      const p = allProducts[i];
+      if (p.barcode) {
+        bMap.set(String(p.barcode).trim().toLowerCase(), p);
+      }
+      if (p.id) {
+        bMap.set(String(p.id).trim().toLowerCase(), p);
+      }
+      if (p.name) {
+        nMap.set(String(p.name).trim().toLowerCase(), p);
+      }
+    }
+    return { barcodeMap: bMap, nameMap: nMap };
+  }, [allProducts]);
+
+  // 1. Detect existing product by Barcode / ID in O(1)
   const detectedByBarcode = useMemo(() => {
     const rawBarcode = formData.barcode.trim();
     if (!rawBarcode || rawBarcode.length < 2) return null;
-    const target = rawBarcode.toLowerCase();
-    return allProducts.find((p) => {
-      const b = (p.barcode || '').trim().toLowerCase();
-      const id = (p.id || '').trim().toLowerCase();
-      return b === target || id === target;
-    }) || null;
-  }, [allProducts, formData.barcode]);
+    return barcodeMap.get(rawBarcode.toLowerCase()) || null;
+  }, [barcodeMap, formData.barcode]);
 
-  // 2. Detect existing product by Exact Name (case-insensitive)
+  // 2. Detect existing product by Exact Name in O(1) (zero keyboard lag)
   const detectedByName = useMemo(() => {
     const rawName = formData.name.trim();
     if (!rawName || rawName.length < 2) return null;
-    const target = rawName.toLowerCase();
-    return allProducts.find((p) => {
-      const n = (p.name || '').trim().toLowerCase();
-      return n === target;
-    }) || null;
-  }, [allProducts, formData.name]);
+    return nameMap.get(rawName.toLowerCase()) || null;
+  }, [nameMap, formData.name]);
 
   // Active detected existing product (prioritize barcode match, then exact name match)
   const existingProduct = useMemo(() => {
@@ -138,11 +158,14 @@ export default function PosAddProductModal({
     onClose();
   };
 
-  // Sync initial barcode on first mount
+  // Sync initial barcode on first mount and autofocus Product Name
   useEffect(() => {
     if (initialBarcode && !initialBarcodeConsumedRef.current) {
       initialBarcodeConsumedRef.current = true;
       setFormData(prev => ({ ...prev, barcode: initialBarcode }));
+      setTimeout(() => {
+        nameInputRef.current?.focus();
+      }, 50);
     }
   }, [initialBarcode]);
 
@@ -157,28 +180,28 @@ export default function PosAddProductModal({
     ].filter((val, idx, arr): val is string => Boolean(val) && arr.indexOf(val) === idx);
   };
 
-  // Fetch official distributors
+  // Fetch official distributors asynchronously in background without blocking modal UI
   useEffect(() => {
+    let isMounted = true;
     const fetchDistributors = async () => {
-      const candidates = getCandidateUrls();
-      for (const url of candidates) {
-        try {
-          const res = await fetch(`${url}/api/distributors`, { signal: AbortSignal.timeout(2500) });
-          if (res.ok) {
-            const data = await res.json();
-            const list = Array.isArray(data) ? data : (data.distributors || []);
+      const targetUrl = apiBase && !apiBase.includes('localhost') ? apiBase : getApiBaseUrl();
+      try {
+        const res = await fetch(`${targetUrl}/api/distributors`, { signal: AbortSignal.timeout(1000) });
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          const list = Array.isArray(data) ? data : (data.distributors || []);
+          if (list.length > 0) {
             setDistributors(list);
-            if (list.length > 0) {
-              setFormData(prev => ({ ...prev, distributorId: prev.distributorId || list[0].id }));
-            }
-            break;
+            try { localStorage.setItem('cached_distributors', JSON.stringify(list)); } catch {}
+            setFormData(prev => ({ ...prev, distributorId: prev.distributorId || list[0].id }));
           }
-        } catch {
-          // Try next
         }
+      } catch {
+        // Non-blocking fallback: already pre-loaded from cache (0ms)
       }
     };
     fetchDistributors();
+    return () => { isMounted = false; };
   }, [apiBase]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -224,8 +247,8 @@ export default function PosAddProductModal({
     }
 
     const existing = existingProduct || detectedByBarcode || detectedByName;
-    const targetId = (existing ? existing.id : (formData.barcode || crypto.randomUUID())).trim();
-    const cleanBarcode = (formData.barcode || (existing ? existing.barcode : targetId) || crypto.randomUUID()).trim();
+    const targetId = (existing ? existing.id : (formData.barcode || safeUUID())).trim();
+    const cleanBarcode = (formData.barcode || (existing ? existing.barcode : targetId) || safeUUID()).trim();
     const costPrice = parseFloat(formData.purchasePrice) || 0;
     const salePrice = parseFloat(formData.sellingPrice) || 0;
     const vat = parseFloat(formData.vatRate) || 10.0;
@@ -317,7 +340,8 @@ export default function PosAddProductModal({
           headers: {
             'Content-Type': 'application/json',
             'x-manager-pin': managerPin,
-            'x-pos-client': 'store-pos'
+            'x-pos-client': 'store-pos',
+            'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(4000)
@@ -413,7 +437,7 @@ export default function PosAddProductModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 p-4 animate-in fade-in">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[92vh]">
 
         {/* Header */}

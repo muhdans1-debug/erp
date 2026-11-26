@@ -153,7 +153,8 @@ export function useOfflineSync(apiBaseUrl?: string) {
               headers: {
                 'Content-Type': 'application/json',
                 'x-manager-pin': getManagerPin(),
-                'x-pos-client': 'store-pos'
+                'x-pos-client': 'store-pos',
+                'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
               },
               body: JSON.stringify(item.payload || item),
               signal: AbortSignal.timeout(4000)

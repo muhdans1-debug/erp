@@ -49,7 +49,7 @@ export interface FetchRecentSalesOptions {
 }
 
 export const RECENT_SALES_STORAGE_KEY = 'askar_recent_sales_history_v1';
-export const MAX_RECENT_SALES = 1000;
+export const MAX_RECENT_SALES = 150;
 
 /**
  * Persist a completed sale to durable localStorage cache
@@ -183,7 +183,17 @@ function mergeIntoLocalSalesCache(newSales: RecentSale[]): void {
     const merged = Array.from(existingMap.values())
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, MAX_RECENT_SALES);
-    localStorage.setItem(RECENT_SALES_STORAGE_KEY, JSON.stringify(merged));
+
+    // Defer write to non-blocking microtask or idle callback to prevent halting UI thread on low-power POS
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(() => {
+        try { localStorage.setItem(RECENT_SALES_STORAGE_KEY, JSON.stringify(merged)); } catch {}
+      }, { timeout: 400 });
+    } else {
+      setTimeout(() => {
+        try { localStorage.setItem(RECENT_SALES_STORAGE_KEY, JSON.stringify(merged)); } catch {}
+      }, 50);
+    }
   } catch {}
 }
 
@@ -194,11 +204,11 @@ function mergeIntoLocalSalesCache(newSales: RecentSale[]): void {
  * 3. Reconciles and backfills `localStorage` cache for instant offline reads.
  */
 export async function fetchRecentSalesFromDb(
-  optionsOrLimit: number | FetchRecentSalesOptions = 500
+  optionsOrLimit: number | FetchRecentSalesOptions = 30
 ): Promise<RecentSale[]> {
   const options: FetchRecentSalesOptions =
     typeof optionsOrLimit === 'number' ? { limit: optionsOrLimit } : (optionsOrLimit || {});
-  const limit = options.limit || 500;
+  const limit = options.limit || 30;
   const targetDate = options.date;
   const isAll = !targetDate || targetDate === 'ALL' || targetDate === 'all';
 

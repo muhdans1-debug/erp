@@ -252,7 +252,7 @@ export const PrinterStyleConfigModal: React.FC<PrinterStyleConfigModalProps> = (
   }).replace(/<<\/?JUMBO_[A-Z]+>>/g, '');
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 select-none">
+    <div className="fixed inset-0 bg-slate-950/80 flex items-center justify-center z-50 p-2 sm:p-4 select-none">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl h-[92vh] max-h-[820px] flex flex-col shadow-2xl overflow-hidden text-slate-100">
 
         {/* HEADER BAR */}

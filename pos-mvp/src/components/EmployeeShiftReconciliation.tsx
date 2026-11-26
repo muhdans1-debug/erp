@@ -389,7 +389,7 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
       </head>
       <body>
         <div class="header">
-          <h1 class="title">ASKAR MARKET W.L.L.</h1>
+          <h1 class="title">LAYALI MARKET W.L.L.</h1>
           <p class="sub">Kingdom of Bahrain | NBR TRN: 200000000000003</p>
           <p style="font-size: 16px; font-weight: 800; margin: 8px 0 0 0;">OFFICIAL SHIFT RECONCILIATION & Z-REPORT</p>
           <p class="sub">Audit Timestamp: ${new Date().toLocaleString()}</p>
@@ -751,7 +751,7 @@ export default function EmployeeShiftReconciliation({ apiBase }: EmployeeShiftRe
 
       {/* EMPLOYEE CREATE / EDIT MODAL */}
       {showEmpModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100">
             <form onSubmit={handleSaveEmployee}>
               <div className="p-6 bg-slate-900 text-white flex justify-between items-center">

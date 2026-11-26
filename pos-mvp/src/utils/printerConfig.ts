@@ -47,8 +47,8 @@ export interface SunmiPrinterStyleConfig {
 
 // ⚡ COMPACT PROFESSIONAL PRESET (Shrunk, Sleek, Paper-Saving & 100% NBR Compliant)
 export const COMPACT_PROFESSIONAL_CONFIG: SunmiPrinterStyleConfig = {
-  shopNameEn: 'ASKAR SUPERMARKET',
-  shopNameAr: 'أسواق عسكر المركزية',
+  shopNameEn: 'LAYALI SUPERMARKET',
+  shopNameAr: 'أسواق ليالي المركزية',
   crNumber: '790614189',
   vatNumber: '200012345678901',
   shopAddressEn: 'Askar, Bahrain',
@@ -79,8 +79,8 @@ export const COMPACT_PROFESSIONAL_CONFIG: SunmiPrinterStyleConfig = {
 
 // 📋 CLASSIC FULL PRESET (Extended layout with multi-line banners)
 export const CLASSIC_FULL_CONFIG: SunmiPrinterStyleConfig = {
-  shopNameEn: 'ASKAR SUPERMARKET',
-  shopNameAr: 'أسواق عسكر المركزية',
+  shopNameEn: 'LAYALI SUPERMARKET',
+  shopNameAr: 'أسواق ليالي المركزية',
   crNumber: '790614189',
   vatNumber: '200012345678901',
   shopAddressEn: 'Building 123, Road 456, Block 951, Askar, Bahrain',

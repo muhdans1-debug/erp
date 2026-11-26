@@ -308,10 +308,10 @@ export default function CustomerDisplayPage() {
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-black text-white tracking-wider uppercase">
-                Askar Supermarket
+                Layali Supermarket
               </h2>
               <p className="text-[10px] text-amber-400 font-bold font-arabic">
-                أسواق عسكر • تسوية حساب آجل (Khata Payment)
+                أسواق ليالي • تسوية حساب آجل (Khata Payment)
               </p>
             </div>
           </div>
@@ -460,7 +460,7 @@ export default function CustomerDisplayPage() {
               </p>
               <p className="text-[10px] text-slate-400 mt-0.5">
                 {khataPayment.paymentMethod === 'BENEFIT_PAY'
-                  ? `Pay directly to ${benefitConfig.merchantName || 'Askar Supermarket'} (${benefitConfig.accountType === 'MOBILE_FAWRI' ? `Tel: ${benefitConfig.mobileNumber || ''}` : `ID: ${benefitConfig.merchantId || ''}`})`
+                  ? `Pay directly to ${benefitConfig.merchantName || 'Layali Supermarket'} (${benefitConfig.accountType === 'MOBILE_FAWRI' ? `Tel: ${benefitConfig.mobileNumber || ''}` : `ID: ${benefitConfig.merchantId || ''}`})`
                   : 'Scan with any mobile camera to view your updated Khata balance anytime'}
               </p>
             </div>
@@ -468,7 +468,7 @@ export default function CustomerDisplayPage() {
 
           <div className="flex items-center gap-2 text-[11px] text-slate-400 shrink-0 font-mono">
             <ShieldCheck size={14} className="text-emerald-400" />
-            <span>Askar Central Ledger • Instant Sync</span>
+            <span>Layali Central Ledger • Instant Sync</span>
           </div>
         </div>
       </div>
@@ -487,21 +487,21 @@ export default function CustomerDisplayPage() {
         {/* Top Header: Store Brand & Sponsored Badge */}
         <div className="relative z-10 flex items-center justify-between border-b border-white/10 pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-xl shadow-xl">
+            <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-xl shadow-xl">
               🏪
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-black text-white tracking-wider uppercase">
-                Askar Supermarket
+                Layali Supermarket
               </h2>
               <p className="text-[10px] text-emerald-400 font-bold font-arabic">
-                أسواق عسكر المركزية • فرع عسكر الرئيسي
+                أسواق ليالي المركزية • فرع عسكر الرئيسي
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
-            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-white/15 text-white border border-white/20 backdrop-blur-md">
+            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-white/15 text-white border border-white/20 ">
               {activeAd.badge}
             </span>
             <div className="flex gap-1.5">
@@ -520,7 +520,7 @@ export default function CustomerDisplayPage() {
         {/* Center Spotlight: The Featured Supplier Billboard */}
         <div className="relative z-10 flex items-center justify-between gap-4 py-3 my-auto">
           <div className="max-w-xl space-y-2.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-white/10 backdrop-blur-md border border-white/15 text-white text-xs font-bold">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-white/10 border border-white/15 text-white text-xs font-bold">
               <span>{activeAd.icon}</span>
               <span>{activeAd.brand}</span>
             </div>
@@ -533,14 +533,14 @@ export default function CustomerDisplayPage() {
               {activeAd.subtext}
             </p>
 
-            <div className="p-3 rounded-xl bg-black/40 border border-white/10 backdrop-blur-md flex items-center gap-2.5 text-xs text-emerald-300 font-bold">
+            <div className="p-3 rounded-xl bg-black/40 border border-white/10 flex items-center gap-2.5 text-xs text-emerald-300 font-bold">
               <Sparkles size={16} className="text-emerald-400 shrink-0" />
               <span>{activeAd.dealText}</span>
             </div>
           </div>
 
           {/* Right Brand Icon / Visual Box */}
-          <div className="shrink-0 flex flex-col items-center justify-center w-24 h-24 sm:w-48 sm:h-48 rounded-2xl bg-white/5 border border-white/15 backdrop-blur-md shadow-2xl relative">
+          <div className="shrink-0 flex flex-col items-center justify-center w-24 h-24 sm:w-48 sm:h-48 rounded-2xl bg-white/5 border border-white/15 shadow-2xl relative">
             <div className="text-4xl sm:text-6xl animate-bounce duration-1000">
               {activeAd.icon}
             </div>
@@ -610,9 +610,9 @@ export default function CustomerDisplayPage() {
             </p>
 
             {/* Owner Beneficiary Info */}
-            <div className="mt-2.5 px-3 py-1.5 bg-black/30 backdrop-blur-xs rounded-xl border border-white/10 text-center">
+            <div className="mt-2.5 px-3 py-1.5 bg-black/30 rounded-xl border border-white/10 text-center">
               <p className="text-xs font-black text-white">
-                {benefitConfig.merchantName || 'ASKAR SUPERMARKET'}
+                {benefitConfig.merchantName || 'LAYALI SUPERMARKET'}
               </p>
               <p className="text-[11px] font-mono text-emerald-300 font-bold">
                 {benefitConfig.accountType === 'MOBILE_FAWRI'
@@ -666,9 +666,9 @@ export default function CustomerDisplayPage() {
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
             <div>
               <h2 className="text-sm font-black text-emerald-400 tracking-wider uppercase">
-                Askar Supermarket
+                Layali Supermarket
               </h2>
-              <p className="text-[10px] text-slate-400">أسواق عسكر المركزية</p>
+              <p className="text-[10px] text-slate-400">أسواق ليالي المركزية</p>
             </div>
             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
               {cart.length} {cart.length === 1 ? 'Item' : 'Items'}

@@ -244,7 +244,7 @@ export const QuickProductEditModal: React.FC<QuickProductEditModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-start justify-center pt-4 pb-24 px-4 overflow-y-auto animate-in fade-in duration-150"
+      className="fixed inset-0 bg-slate-950/80 z-[9999] flex items-start justify-center pt-4 pb-24 px-4 overflow-y-auto animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div 

@@ -1,6 +1,6 @@
 /**
  * Enterprise NBR-Compliant Thermal Receipt Generator (Bahrain Retail Standard)
- * Designed for Askar Supermarket with Sunmi D2mini & 80mm thermal hardware support.
+ * Designed for Layali Supermarket with Sunmi D2mini & 80mm thermal hardware support.
  * 
  * Features:
  * 1. Compact Professional layout: Paper-saving, ultra-clean, sleek typography.

@@ -35,7 +35,7 @@ export const HardCreditLimitModal: React.FC<HardCreditLimitModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 bg-slate-950/80 flex items-center justify-center z-[100] p-4 animate-in fade-in duration-150">
       <div className="bg-white rounded-3xl shadow-2xl border-2 border-red-500 w-full max-w-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="bg-red-600 text-white p-5 flex items-center justify-between">

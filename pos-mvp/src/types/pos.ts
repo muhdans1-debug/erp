@@ -61,6 +61,15 @@ export interface Customer {
   isDual?: boolean;
   isMultiMess?: boolean;
   card_type?: string;
+  card_deposit_amount?: number;
+  depositAmount?: number;
+  card_deposit_status?: string;
+  depositStatus?: string;
+  depositInCredit?: number;
+  card_deposit_receipt_no?: string;
+  card_deposit_date?: string;
+  payday_day_of_month?: number;
+  cash_advance_balance?: number;
   mess_id?: string | null;
   messName?: string | null;
   mess_name?: string | null;

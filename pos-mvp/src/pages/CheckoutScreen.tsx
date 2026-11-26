@@ -3512,7 +3512,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   if (viewMode !== 'pos' && !emergencyUnlocked) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen w-screen bg-slate-900 text-slate-100 p-6 select-none font-sans">
-        <div className="max-w-md w-full bg-slate-800/90 border border-slate-700/80 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center">
+        <div className="max-w-md w-full bg-slate-800/90 border border-slate-700/80 rounded-3xl p-8 shadow-2xl text-center">
           <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto mb-5 shadow-lg">
             <Lock className="w-8 h-8" />
           </div>
@@ -3534,7 +3534,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   window.history.replaceState({}, '', url.toString());
                 }
               }}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition active:scale-95 cursor-pointer text-sm"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition active:opacity-85 cursor-pointer text-sm"
             >
               ← Return to Fast Checkout Register
             </button>
@@ -3687,7 +3687,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           <button
             type="button"
             onClick={() => setIsCloudModeActive(true)}
-            className="bg-red-700 hover:bg-red-800 text-white text-xs px-3 py-1.5 rounded-lg shadow-sm font-bold transition active:scale-95 cursor-pointer ml-3 shrink-0"
+            className="bg-red-700 hover:bg-red-800 text-white text-xs px-3 py-1.5 rounded-lg shadow-sm font-bold transition active:opacity-85 cursor-pointer ml-3 shrink-0"
           >
             Activate Cloud Fallback Mode
           </button>
@@ -3731,7 +3731,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <button
               type="button"
               onClick={handleEnablePushNotifications}
-              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition active:opacity-85 cursor-pointer flex items-center gap-1.5"
             >
               <Bell size={13} />
               <span>Enable Alerts</span>
@@ -3755,7 +3755,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <button
               type="button"
               onClick={() => setShowHamburgerMenu(true)}
-              className="h-9 w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-750 transition cursor-pointer shadow-xs border border-slate-200/90"
+              className="h-9 w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:opacity-85 text-slate-750 transition cursor-pointer shadow-xs border border-slate-200/90"
               title="Open Operations & Tools Menu [Esc to close]"
             >
               <Menu size={18} />
@@ -3939,7 +3939,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               fetchCatalog();
               setShowF12SearchModal(true);
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-blue-50/90 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold rounded-xl text-xs border border-blue-200/80 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-blue-50/90 hover:bg-blue-100 active:opacity-85 text-blue-700 font-bold rounded-xl text-xs border border-blue-200/80 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Manual item search overlay [F12]"
           >
             <Search size={14} className="text-blue-600" />
@@ -3954,7 +3954,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               setShowKhataHub(true);
               loadCustomers();
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 active:opacity-85 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200/90 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Khata Hub & Customer Ledger [F3]"
           >
             <CreditCard size={14} className="text-indigo-600" />
@@ -3969,7 +3969,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               setShowDepositSalfahWizard(true);
               loadCustomers();
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-900 font-bold rounded-xl text-xs border border-amber-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-amber-50 hover:bg-amber-100 active:opacity-85 text-amber-900 font-bold rounded-xl text-xs border border-amber-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="Deposit & Salfah Touch Wizard (أمانة وسلفة)"
           >
             <Banknote size={14} className="text-amber-700" />
@@ -3983,7 +3983,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             onClick={() => {
               setShowNfcManager(true);
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 font-bold rounded-xl text-xs border border-emerald-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            className="h-9 flex items-center gap-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 active:opacity-85 text-emerald-800 font-bold rounded-xl text-xs border border-emerald-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
             title="NFC Card Manager & Mess Groups"
           >
             <Radio size={14} className="text-emerald-600 animate-pulse" />
@@ -3996,7 +3996,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               type="button"
               onClick={() => drainOfflineQueue()}
               disabled={isDrainingOfflineSales}
-              className="h-9 flex items-center gap-1.5 px-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer animate-pulse select-none"
+              className="h-9 flex items-center gap-1.5 px-2.5 bg-amber-500 hover:bg-amber-600 active:opacity-85 text-white rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer animate-pulse select-none"
               title="Offline sales queued in device memory. Tap to sync immediately."
             >
               <RefreshCw size={12} className={isDrainingOfflineSales ? "animate-spin" : ""} />
@@ -4022,7 +4022,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         <div className="fixed inset-0 z-50 overflow-hidden select-none">
           {/* Backdrop */}
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+            className="fixed inset-0 bg-black/60 transition-opacity animate-in fade-in duration-200"
             onClick={() => setShowHamburgerMenu(false)}
           />
 
@@ -4563,7 +4563,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   <button
                     type="button"
                     onClick={() => openCustomerStatement(customer)}
-                    className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95 whitespace-nowrap"
+                    className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs active:opacity-85 whitespace-nowrap"
                     title="View Customer Khata Statement Ledger"
                   >
                     <FileText size={13} />
@@ -4577,7 +4577,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     loadCustomers();
                     setShowCustomersModal(true);
                   }}
-                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 active:opacity-85 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs"
                   title="Link Khata Customer to Active Cart"
                 >
                   <UserPlus size={13} />
@@ -4602,7 +4602,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <button
                 type="button"
                 onClick={() => setIsReturnMode(false)}
-                className="bg-white text-rose-700 px-2.5 py-0.5 rounded text-[10px] uppercase font-black cursor-pointer hover:bg-rose-50 active:scale-95 transition-all shadow-xs"
+                className="bg-white text-rose-700 px-2.5 py-0.5 rounded text-[10px] uppercase font-black cursor-pointer hover:bg-rose-50 active:opacity-85 shadow-xs"
               >
                 Exit Return Mode
               </button>
@@ -4725,7 +4725,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <button
                 type="button"
                 onClick={toggleAutoPrint}
-                className={`flex-1 py-1 px-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95 ${isAutoPrintEnabled
+                className={`flex-1 py-1 px-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer active:opacity-85 ${isAutoPrintEnabled
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700'
                   : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
                   }`}
@@ -4738,7 +4738,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <button
                 type="button"
                 onClick={() => setShowPrinterStyleModal(true)}
-                className="py-1 px-2 bg-slate-100 hover:bg-sky-100 hover:text-sky-800 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                className="py-1 px-2 bg-slate-100 hover:bg-sky-100 hover:text-sky-800 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1 active:opacity-85 cursor-pointer"
                 title="Configure Sunmi Innerprinter & Receipt Style (58mm/80mm, Density, Layout)"
               >
                 <Settings size={11} className="text-slate-500" />
@@ -4749,7 +4749,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 <button
                   type="button"
                   onClick={handleReprintLastReceipt}
-                  className="py-1 px-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition-transform cursor-pointer"
+                  className="py-1 px-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 active:opacity-85 cursor-pointer"
                   title={`Print receipt for #${lastCompletedSale.invoiceNo}`}
                 >
                   <Receipt size={13} className="text-blue-600" />
@@ -4760,7 +4760,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               <button
                 type="button"
                 onClick={() => setShowPreviousBillsModal(true)}
-                className="py-1 px-2.5 bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition-transform cursor-pointer"
+                className="py-1 px-2.5 bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 rounded-lg text-xs font-bold flex items-center gap-1 active:opacity-85 cursor-pointer"
                 title="Browse & Reprint Previous Bills [F9]"
               >
                 <Receipt size={13} className="text-green-400" />
@@ -4774,7 +4774,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 type="button"
                 onClick={() => handlePayment()}
                 disabled={cart.length === 0}
-                className="h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:scale-95 transition-all shadow-md disabled:opacity-50 cursor-pointer"
+                className="h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:opacity-85 shadow-md disabled:opacity-50 cursor-pointer"
               >
                 <span className="text-[10px] opacity-80 mb-0.5 font-normal">[F1] Tender</span>
                 PAY CASH
@@ -4790,7 +4790,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   setShowPaymentModal(true);
                 }}
                 disabled={cart.length === 0}
-                className="h-14 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:scale-95 transition-all shadow-md disabled:opacity-50 cursor-pointer"
+                className="h-14 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:opacity-85 shadow-md disabled:opacity-50 cursor-pointer"
               >
                 <span className="text-[10px] opacity-80 mb-0.5 font-normal">Fawri+</span>
                 BENEFIT
@@ -4799,7 +4799,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 type="button"
                 onClick={() => processCheckout('CARD')}
                 disabled={cart.length === 0}
-                className="h-14 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:scale-95 transition-all shadow-md disabled:opacity-50 cursor-pointer"
+                className="h-14 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-black text-base flex flex-col items-center justify-center active:opacity-85 shadow-md disabled:opacity-50 cursor-pointer"
               >
                 <span className="text-[10px] opacity-80 mb-0.5 font-normal">[F2]</span>
                 CARD
@@ -4821,7 +4821,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                       type="button"
                       onClick={() => processCheckout('CREDIT_PERSONAL')}
                       disabled={cart.length === 0}
-                      className="py-2.5 px-2 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
+                      className="py-2.5 px-2 bg-amber-500 hover:bg-amber-600 active:opacity-85 rounded-xl font-bold text-xs text-white shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
                       title={`Charge entirely to ${customer.name}'s Personal Khata (Balance: BD ${(customer.personalBalance ?? customer.currentBalance ?? 0).toFixed(3)})`}
                     >
                       <span className="text-[10px] opacity-90 font-normal">Personal [1]</span>
@@ -4846,7 +4846,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                           processCheckout('CREDIT_MESS', false, undefined, mg);
                         }}
                         disabled={cart.length === 0}
-                        className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-transform rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
+                        className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 active:opacity-85 rounded-xl font-bold text-xs text-white shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer flex flex-col items-center justify-center leading-tight"
                         title={`Split equally across ${mg.group_name} (${mg.members?.length || mg.memberCount || 0} members) with ${customer.name} as shopper`}
                       >
                         <span className="text-[10px] opacity-90 font-normal">Split Mess [{idx + 2}]</span>
@@ -4860,7 +4860,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     type="button"
                     onClick={() => processCheckout('CREDIT')}
                     disabled={cart.length === 0}
-                    className={`w-full py-2.5 rounded-xl font-bold text-xs active:scale-95 transition-transform flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 text-white ${customer.isMess
+                    className={`w-full py-2.5 rounded-xl font-bold text-xs active:opacity-85 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 text-white ${customer.isMess
                       ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
                       : 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20'
                       }`}
@@ -4881,7 +4881,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 <button
                   type="button"
                   onClick={isNfcReaderScanning ? stopNfcScan : startNfcScan}
-                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs text-white shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${isNfcReaderScanning
+                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs text-white shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:opacity-85 ${isNfcReaderScanning
                     ? 'bg-emerald-600 animate-pulse ring-2 ring-emerald-400'
                     : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
                     }`}
@@ -4940,7 +4940,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 <button
                   type="button"
                   onClick={() => setShowEditTabsModal(true)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all cursor-pointer active:scale-95"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all cursor-pointer active:opacity-85"
                   title="Rename tabs, reorder, change colors, or add custom category tabs"
                 >
                   <span>✏️ Edit Tabs</span>
@@ -4987,7 +4987,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     setUnassignedBarcode(null);
                     setShowPosAddModal(true);
                   }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap active:opacity-85"
                   title="Quick Add Product to Catalog [Sunmi Touch]"
                 >
                   <PlusCircle size={13} className="text-amber-600" />
@@ -5089,7 +5089,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                         setSwapSourceProduct(null);
                         showToast('🔒 Quick Grid LOCKED: Fast checkout active', 'success');
                       }}
-                      className="px-3.5 py-1.5 bg-amber-800 hover:bg-amber-900 text-white rounded-xl font-bold text-xs shadow-xs cursor-pointer active:scale-95"
+                      className="px-3.5 py-1.5 bg-amber-800 hover:bg-amber-900 text-white rounded-xl font-bold text-xs shadow-xs cursor-pointer active:opacity-85"
                     >
                       Done Editing
                     </button>
@@ -5392,7 +5392,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* NFC CARD MANAGER MODAL */}
         {showNfcManager && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
             <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-6 py-3.5 bg-slate-900 text-white">
                 <div className="flex items-center gap-2.5">
@@ -5433,7 +5433,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* MESS GROUPS MODAL (CAMP DINING SPLIT-BILLING) */}
         {showMessModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
             <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-6 py-3.5 bg-indigo-950 text-white">
                 <div className="flex items-center gap-2.5">
@@ -5508,7 +5508,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* MULTI-MESS / DUAL-WALLET PICKER MODAL */}
         {showMultiMessPickerModal && customer && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                 <div className="flex items-center gap-2">
@@ -5686,7 +5686,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
         {/* CUSTOMER KHATA STATEMENT MODAL (TOUCH-OPTIMIZED FOR SUNMI CASHIER) */}
         {statementCustomer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
               {/* Header */}
               <div className="bg-slate-900 text-white p-4 flex items-center justify-between shrink-0">
@@ -5707,7 +5707,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   <button
                     type="button"
                     onClick={handlePrintStatement}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:opacity-85 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
                     title="Print 58mm Thermal Statement Slip on Sunmi"
                   >
                     <Printer size={14} />
@@ -5878,7 +5878,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   <button
                     type="button"
                     onClick={handlePrintStatement}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:opacity-85 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
                     <Printer size={14} />
                     <span>Print Slip</span>
@@ -6124,7 +6124,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
               setCustomerAtCounter(null);
               showToast(`💳 Linked ${customerAtCounter.name} to active cart!`, 'success');
             }}
-            className="ml-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+            className="ml-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer transition-transform hover:scale-105 active:opacity-85"
           >
             <span>Link to Cart [F4]</span>
           </button>

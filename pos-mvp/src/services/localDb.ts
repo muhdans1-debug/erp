@@ -219,11 +219,11 @@ export async function fetchProductByBarcode(scannedCode: string): Promise<CartIt
 
   // Fallback to Local Fastify / LibSQL HTTP endpoint if not in catalog cache
 
-  // 3. Fallback to Local Fastify / LibSQL HTTP endpoint
+  // 3. Fallback to Local Fastify / LibSQL HTTP endpoint (Ultra-fast LAN threshold 150ms)
   try {
     const apiBase = getApiBaseUrl();
     const res = await fetch(`${apiBase}/api/products/barcode/${encodeURIComponent(cleanCode)}`, {
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(150),
     });
 
     if (res.ok) {

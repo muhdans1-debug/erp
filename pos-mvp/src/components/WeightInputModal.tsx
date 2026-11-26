@@ -81,7 +81,7 @@ export const WeightInputModal: React.FC<WeightInputModalProps> = ({ item, isOpen
   const calculatedTotal = (currentFloatWeight * unitPrice).toFixed(3);
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
       <div className="bg-gray-900 p-6 rounded-2xl w-full max-w-sm sm:w-96 text-white border border-gray-600 shadow-2xl relative select-none">
         
         {/* Header with Title and Close Button */}

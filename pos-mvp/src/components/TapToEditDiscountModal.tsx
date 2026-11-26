@@ -205,7 +205,7 @@ export const TapToEditDiscountModal: React.FC<TapToEditDiscountModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-3">
+    <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-3">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
         
         {/* Modal Header */}

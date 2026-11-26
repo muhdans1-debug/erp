@@ -40,6 +40,31 @@ export function useBarcodeWedge() {
         return;
       }
 
+      // Check if cashier scanned a Customer Digital Khata Pass / PWA tab QR code, EAN-13 In-Store Pass (Prefix 29), or Customer UUID
+      const isTabUrl = cleanCode.toLowerCase().includes('/tab/');
+      const isKhataPrefix = upper.startsWith('KHATA:');
+      const isCustPrefix = upper.startsWith('CUST-');
+      const isEanCustomer = cleanCode.length === 13 && cleanCode.startsWith('29');
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanCode);
+
+      if (isTabUrl || isKhataPrefix || isCustPrefix || isEanCustomer || isUuid) {
+        let extractedId = cleanCode;
+        if (isTabUrl) {
+          const match = cleanCode.match(/\/tab\/([^\/\?\#]+)/i);
+          extractedId = match ? match[1].trim() : cleanCode.split(/\/tab\//i)[1].split(/[\/?#]/)[0].trim();
+        } else if (isKhataPrefix) {
+          extractedId = cleanCode.slice(6).trim();
+        } else if (isCustPrefix) {
+          extractedId = cleanCode.slice(5).trim();
+        } else if (isEanCustomer) {
+          extractedId = String(parseInt(cleanCode.slice(2, 12), 10));
+        }
+        extractedId = extractedId.replace(/^#+|#+$/g, '');
+        console.log('💳 [Customer QR/Pass Intercepted]:', { extractedId, rawCode: cleanCode });
+        window.dispatchEvent(new CustomEvent('customer-barcode-scanned', { detail: { customerId: extractedId, rawCode: cleanCode } }));
+        return;
+      }
+
       // Microsecond Fast-Path: Zero-GC in-memory catalog resolution (0.005ms)
       const fastProduct = lookupProductFast(cleanCode);
       if (fastProduct) {
@@ -70,7 +95,12 @@ export function useBarcodeWedge() {
       if (typeof barcode === 'string') {
         const clean = barcode.trim();
         // Ignore NFC UID scans (handled separately by useNfcReader)
-        if (clean.includes(':')) return;
+        // ONLY ignore if it looks like a hex NFC UID (e.g. "04:75:58:34:D7:2A:81"), NEVER URLs or KHATA codes!
+        if (clean.includes(':') && !clean.startsWith('http://') && !clean.startsWith('https://') && !clean.toUpperCase().startsWith('KHATA:')) {
+          if (/^([0-9a-f]{2}:){3,9}[0-9a-f]{2}$/i.test(clean)) {
+            return;
+          }
+        }
         processBarcode(clean, 'broadcast');
       }
     };
@@ -81,7 +111,7 @@ export function useBarcodeWedge() {
       // 1. Password and security PIN fields must never capture keystrokes
       if (
         (e.target instanceof HTMLInputElement && e.target.type === 'password') ||
-        (e.target as HTMLElement)?.getAttribute('data-prevent-scanner') === 'true'
+        (e.target instanceof HTMLElement && e.target.getAttribute('data-prevent-scanner') === 'true')
       ) {
         return;
       }
@@ -105,6 +135,12 @@ export function useBarcodeWedge() {
         if (scannedCode.length >= 2) {
           e.preventDefault();
           e.stopPropagation();
+          if (isInput && e.target instanceof HTMLInputElement) {
+            // Strip the scanned barcode from input if it was typed into an active search/form field
+            if (e.target.value.endsWith(scannedCode) || e.target.value === scannedCode) {
+              e.target.value = e.target.value.replace(scannedCode, '').trim();
+            }
+          }
           processBarcode(scannedCode, 'keyboard');
           return;
         }
@@ -124,7 +160,7 @@ export function useBarcodeWedge() {
       timeout.current = setTimeout(() => {
         const potentialCode = buffer.current.trim();
         buffer.current = '';
-        if (potentialCode.length >= 4 && !isInput) {
+        if (potentialCode.length >= 2 && !isInput) {
           processBarcode(potentialCode, 'keyboard');
         }
       }, 250);

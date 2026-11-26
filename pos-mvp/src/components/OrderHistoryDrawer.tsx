@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { printCreditNote } from '../utils/printer';
 import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
+import { getRecentSales } from '../services/recentSalesService';
+import { getResilientApiCandidates } from '../utils/apiConfig';
 
 export interface SaleItem {
   id: string;
@@ -93,24 +95,64 @@ export default function OrderHistoryDrawer({
 
   // Fetch sales (today or date-to-date)
   const fetchSales = useCallback(async () => {
-    setLoading(true);
+    // 1. Instant local read from cache: Cashier sees bills immediately (0ms)
+    const local = getRecentSales();
+    if (local && local.length > 0 && sales.length === 0) {
+      setSales(local.map((s: any) => ({
+        id: s.id || s.invoiceNo,
+        invoiceNo: s.invoiceNo,
+        total: s.total,
+        subtotal: s.subtotal,
+        vatTotal: s.vat,
+        paymentType: s.paymentMode || 'CASH',
+        status: 'COMPLETED',
+        createdAt: s.timestamp,
+        items: (s.items || []).map((it: any) => ({
+          id: it.name,
+          name: it.name,
+          productId: it.name,
+          quantity: it.qty,
+          priceAtSale: it.price
+        }))
+      })));
+    }
+
+    setLoading(sales.length === 0);
     try {
-      let endpoint = `${apiBase}/api/sales/today`;
-      if (filterMode === 'CUSTOM' && startDate && endDate) {
-        endpoint = `${apiBase}/api/reports/sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+      const candidates = [apiBase, ...getResilientApiCandidates()].filter(
+        (val, idx, arr): val is string => Boolean(val && val.trim()) && arr.indexOf(val) === idx
+      );
+
+      let fetchedData: any = null;
+      for (const base of candidates) {
+        try {
+          let endpoint = `${base}/api/sales/today`;
+          if (filterMode === 'CUSTOM' && startDate && endDate) {
+            endpoint = `${base}/api/reports/sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+          }
+          const res = await fetch(endpoint, {
+            headers: { 'x-manager-pin': getManagerPin() },
+            signal: AbortSignal.timeout(2500)
+          });
+          if (res.ok) {
+            fetchedData = await res.json();
+            break;
+          }
+        } catch { }
       }
-      const res = await fetch(endpoint, {
-        headers: { 'x-manager-pin': getManagerPin() }
-      });
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : (data?.sales || data?.data || []);
-      setSales(list);
+
+      if (fetchedData) {
+        const list = Array.isArray(fetchedData) ? fetchedData : (fetchedData?.sales || fetchedData?.data || []);
+        if (Array.isArray(list) && list.length > 0) {
+          setSales(list);
+        }
+      }
     } catch (err) {
-      console.warn('Failed to load sales history:', err);
+      console.warn('Failed to load sales history from network:', err);
     } finally {
       setLoading(false);
     }
-  }, [apiBase, filterMode, startDate, endDate]);
+  }, [apiBase, filterMode, startDate, endDate, sales.length]);
 
   const fetchTodaySales = fetchSales;
 

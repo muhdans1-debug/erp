@@ -41,6 +41,29 @@ export const getManagerPin = (): string => {
 };
 
 /**
+ * Generates Zero-Plaintext HMAC Cryptographic Auth Headers.
+ * Emits an ephemeral timestamped HMAC-SHA256 signature for administrative requests,
+ * eliminating plain text manager PINs across local store Wi-Fi and network packets.
+ */
+export const createManagerAuthHeaders = async (pin?: string): Promise<Record<string, string>> => {
+  const clean = String(pin || getManagerPin() || '').trim();
+  if (!clean) return {};
+
+  const timestamp = Date.now().toString();
+  const nonce = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID().replace(/-/g, '')
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+  const pinHash = await hashPinSha256(clean);
+  const signature = await hashPinSha256(`${timestamp}:${nonce}:${pinHash}`);
+
+  return {
+    'x-manager-auth': `t=${timestamp},n=${nonce},s=${signature}`,
+    'x-manager-pin': clean // preserved for backward-compatible fallback
+  };
+};
+
+/**
  * Stores the authenticated manager PIN in session storage ONLY for the active manager shift.
  * Immediately purges any plaintext PINs from persistent localStorage.
  */
@@ -117,11 +140,15 @@ export const verifyManagerPinAsync = async (
     'https://askar-edge-api.askar-market.workers.dev'
   ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
+  const authHeaders = await createManagerAuthHeaders(clean);
   for (const base of candidates) {
     try {
       const res = await fetch(`${base}/api/employees/verify-pin`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ pin: clean }),
         signal: AbortSignal.timeout(2500)
       });

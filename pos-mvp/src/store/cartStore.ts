@@ -128,8 +128,8 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   addItem: (product, quantity = 1, isReturnMode = false) => {
     const state = get();
-    const unitPrice = Number((product.sellingPrice ?? product.price ?? 0).toFixed(3));
-    const qtyModifier = isReturnMode ? -Math.abs(quantity) : quantity;
+    const unitPrice = Math.max(0, Math.abs(Number((product.sellingPrice ?? product.price ?? 0).toFixed(3))));
+    const qtyModifier = isReturnMode ? -Math.abs(quantity) : Math.abs(quantity);
 
     const existingIndex = state.items.findIndex((p) => p.id === product.id);
 

@@ -66,7 +66,7 @@ export default function BarcodeGenerator({ apiBase = 'http://localhost:3000' }: 
   const [stickerCount, setStickerCount] = useState<number>(24);
   const [labelFormat, setLabelFormat] = useState<'A4_SHEET' | 'THERMAL_ROLL' | 'SHELF_TALKER' | 'SCALE_STICKER'>('A4_SHEET');
   const [loading, setLoading] = useState<boolean>(true);
-  const [customText, setCustomText] = useState<string>('Askar Supermarket');
+  const [customText, setCustomText] = useState<string>('Layali Supermarket');
   const [includeStoreTag, setIncludeStoreTag] = useState<boolean>(true);
 
   // Scale Produce & Butchery Settings

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CapacitorNfc } from '@capgo/capacitor-nfc';
 import { playNfcChime } from '../utils/sound';
-import { getApiBaseUrl } from '../utils/apiConfig';
 
 // Shared singleton state across components to prevent premature hardware shutdown
 let activeSubscribers = 0;
@@ -52,16 +51,6 @@ export const startHardwareScanning = async () => {
           window.dispatchEvent(new CustomEvent('sunmi-nfc-broadcast', { detail: { nfcId: hexString } }));
         }
 
-        // Auto-relay to Cloud Edge so laptops can pick up this tap instantly over the web
-        try {
-          const apiBase = getApiBaseUrl();
-          fetch(`${apiBase}/api/nfc/relay`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
-            body: JSON.stringify({ tag_id: hexString, terminalId: 'Sunmi/F100' })
-          }).catch(() => {});
-        } catch {}
-
         setTimeout(() => {
           isCooldown = false;
         }, 600);
@@ -79,7 +68,7 @@ export const stopHardwareScanning = () => {
       globalListener.remove();
       globalListener = null;
     }
-    CapacitorNfc.stopScanning().catch(() => {});
+    CapacitorNfc.stopScanning().catch(() => { });
     isHardwareScanning = false;
   } catch (err) {
     console.warn('Error stopping NFC hardware scan:', err);

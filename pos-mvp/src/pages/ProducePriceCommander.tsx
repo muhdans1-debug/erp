@@ -1241,7 +1241,7 @@ export default function ProducePriceCommander({
 
       {/* STICKY BOTTOM FLOATING BROADCAST ACTION BAR */}
       {modifiedCount > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t-2 border-emerald-500/80 p-3.5 px-6 flex items-center justify-between shadow-2xl animate-in slide-in-from-bottom-2">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 border-t-2 border-emerald-500/80 p-3.5 px-6 flex items-center justify-between shadow-2xl animate-in slide-in-from-bottom-2">
           <div className="flex items-center gap-3">
             <span className="w-3 h-3 rounded-full bg-amber-400 animate-ping" />
             <div>
@@ -1280,7 +1280,7 @@ export default function ProducePriceCommander({
 
       {/* MODAL: SHORT CODE (PLU) MANAGER */}
       {pluModalItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <div className="flex items-center gap-2">
@@ -1381,7 +1381,7 @@ export default function ProducePriceCommander({
 
       {/* MODAL: PRODUCE PICTURE MANAGER */}
       {photoModalItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl animate-in zoom-in-95 flex flex-col max-h-[85vh]">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4 shrink-0">
               <div className="flex items-center gap-2">
@@ -1491,7 +1491,7 @@ export default function ProducePriceCommander({
 
       {/* MODAL: ADD NEW SCALE PRODUCE ITEM */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
               <h2 className="text-base font-black text-white flex items-center gap-2">
@@ -1612,7 +1612,7 @@ export default function ProducePriceCommander({
 
       {/* MODAL: PRINT SHELF TALKERS */}
       {showPrintModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl animate-in zoom-in-95 flex flex-col max-h-[85vh]">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4 shrink-0">
               <div>
@@ -1660,7 +1660,7 @@ export default function ProducePriceCommander({
                   >
                     <div>
                       <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                        <span>Askar Supermarket</span>
+                        <span>Layali Supermarket</span>
                         <span className="font-mono text-blue-700">PLU #{item.plu_code || item.barcode}</span>
                       </div>
                       <h3 className="text-base font-black text-slate-900 leading-tight">
@@ -1707,7 +1707,7 @@ export default function ProducePriceCommander({
       {/* MODAL: REMOVE FROM PRODUCE / DELETE FROM CATALOG                    */}
       {/* =================================================================== */}
       {removeModalItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
               <div className="flex items-center gap-3">

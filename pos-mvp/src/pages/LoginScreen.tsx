@@ -40,20 +40,33 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
     setTestResult(null);
     let target = (inputIp || '').trim();
     if (!target.startsWith('http://') && !target.startsWith('https://')) {
-      target = `http://${target}`;
+      if (target.includes('.workers.dev') || target.includes('.app') || target.includes('.com') || target.includes('.dev') || target.includes('.net')) {
+        target = `https://${target}`;
+      } else {
+        target = `http://${target}`;
+      }
     }
-    if (!target.includes(':', 7)) {
+    const isDomain = target.includes('.workers.dev') || target.includes('.app') || target.includes('.com') || target.includes('.dev') || target.includes('.net');
+    const isHttps = target.startsWith('https://');
+    if (!isDomain && !isHttps && !target.includes(':', 7)) {
       target = `${target}:3000`;
     }
+    target = target.replace(/\/$/, '');
+
     try {
-      const res = await fetch(`${target}/api/sync/status`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(`${target}/api/sync/status`, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
-        setTestResult({ success: true, message: `Connected to Laptop Hub at ${target}!` });
+        setTestResult({ success: true, message: `Connected to Gateway at ${target}!` });
       } else {
-        setTestResult({ success: false, message: `Server replied with status ${res.status}` });
+        const healthRes = await fetch(`${target}/api/health`, { signal: AbortSignal.timeout(2500) });
+        if (healthRes.ok) {
+          setTestResult({ success: true, message: `Connected to Gateway at ${target}!` });
+        } else {
+          setTestResult({ success: false, message: `Server replied with status ${res.status}` });
+        }
       }
     } catch {
-      setTestResult({ success: false, message: `Cannot reach ${target}. Check Wi-Fi & Firewall.` });
+      setTestResult({ success: false, message: `Cannot reach ${target}. Check Wi-Fi or Internet.` });
     } finally {
       setTesting(false);
     }
@@ -328,7 +341,7 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
             letterSpacing: '-0.5px'
           }}
         >
-          Askar Supermarket
+          Layali Supermarket
         </h1>
         <p
           style={{
@@ -522,6 +535,32 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
           >
             📱 iPhone 16 Pro Tap Pad & Scanner
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set('view', 'statement');
+              window.location.href = url.toString();
+            }}
+            style={{
+              marginTop: '8px',
+              padding: '10px 18px',
+              borderRadius: '20px',
+              border: '1.5px solid #10b981',
+              backgroundColor: '#ecfdf5',
+              color: '#065f46',
+              fontSize: '13px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)'
+            }}
+          >
+            👤 Customer Khata & Instant Alerts Portal 🔔
+          </button>
         </div>
       </div>
 
@@ -567,32 +606,84 @@ export default function LoginScreen({ onLogin, apiBase = 'http://localhost:3000'
               </button>
             </div>
 
-            <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
-              Enter the static IP address of the Supermarket Laptop (Store Hub) on your Wi-Fi router.
+            <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
+              Connect directly to <strong>Sovereign Cloud</strong> (runs 24/7 without laptop) or enter your Store Laptop IP.
             </p>
+
+            {/* Quick 1-Tap Presets */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setInputIp('https://askar-edge-api.layali-askar-pos.workers.dev');
+                  setTestResult(null);
+                }}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #0284c7',
+                  backgroundColor: '#f0f9ff',
+                  color: '#0369a1',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 2px 6px rgba(2, 132, 199, 0.15)'
+                }}
+              >
+                <span>☁️ Sovereign Cloud (No Laptop Required)</span>
+                <span style={{ fontSize: '11px', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '6px' }}>Recommended</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInputIp('http://192.168.8.7:3000');
+                  setTestResult(null);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#f8fafc',
+                  color: '#475569',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <span>💻 Store Laptop Wi-Fi LAN (:3000)</span>
+                <span style={{ fontSize: '10px', color: '#94a3b8' }}>192.168.8.7</span>
+              </button>
+            </div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
-                Laptop Static IP or Hostname:
+                Server URL or IP:
               </label>
               <input
                 type="text"
                 value={inputIp}
                 onChange={(e) => setInputIp(e.target.value)}
-                placeholder="e.g. 192.168.1.100 or 192.168.8.7"
+                placeholder="https://askar-edge-api.layali-askar-pos.workers.dev"
                 style={{
                   width: '100%',
                   padding: '12px 14px',
                   borderRadius: '10px',
                   border: '1.5px solid #cbd5e1',
-                  fontSize: '15px',
+                  fontSize: '13px',
                   fontFamily: 'monospace',
                   fontWeight: 700,
                   boxSizing: 'border-box'
                 }}
               />
               <span style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: '#94a3b8' }}>
-                Default port 3000 will be used automatically.
+                Cloud Gateway works worldwide 24/7 without needing the laptop turned on.
               </span>
             </div>
 

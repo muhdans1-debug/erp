@@ -64,9 +64,7 @@ export const ProductBarcodeModal: React.FC<ProductBarcodeModalProps> = ({
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: 'rgba(15,23,42,0.65)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
+        backgroundColor: 'rgba(15,23,42,0.75)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

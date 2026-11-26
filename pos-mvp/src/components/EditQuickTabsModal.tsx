@@ -1,20 +1,8 @@
 import React, { useState } from 'react';
 import { X, Plus, Trash2, ArrowUp, ArrowDown, RotateCcw, Check, Sparkles } from 'lucide-react';
-
-export interface QuickCategory {
-  id: string;
-  label: string;
-  color?: string; // emerald, amber, sky, rose, purple, slate, teal, orange
-}
-
-export const DEFAULT_CATEGORIES: QuickCategory[] = [
-  { id: 'ALL', label: 'All Items', color: 'slate' },
-  { id: 'PRODUCE', label: 'Produce 🥦', color: 'emerald' },
-  { id: 'BAKERY', label: 'Bakery 🥖', color: 'amber' },
-  { id: 'DAIRY', label: 'Dairy 🥛', color: 'sky' },
-  { id: 'MEAT', label: 'Meat / Deli 🥩', color: 'rose' },
-  { id: 'ESSENTIALS', label: 'Essentials ⚡', color: 'slate' }
-];
+import { QuickCategory, DEFAULT_CATEGORIES } from '../types/quickCategories';
+export type { QuickCategory };
+export { DEFAULT_CATEGORIES };
 
 export const COLOR_OPTIONS = [
   { key: 'emerald', label: 'Green', bg: 'bg-emerald-500', text: 'text-emerald-700', badge: 'bg-emerald-100 text-emerald-800' },
@@ -139,7 +127,7 @@ export const EditQuickTabsModal: React.FC<EditQuickTabsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="bg-slate-900 text-white p-4 flex items-center justify-between shrink-0">

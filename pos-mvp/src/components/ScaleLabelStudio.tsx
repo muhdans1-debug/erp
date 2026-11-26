@@ -24,7 +24,7 @@ export default function ScaleLabelStudio() {
   const [selectedItem, setSelectedItem] = useState(COMMON_WEIGHED_ITEMS[0]);
   const [weightKg, setWeightKg] = useState('1.250');
   const [prefix] = useState('20');
-  const [customStoreName, setCustomStoreName] = useState('Askar Supermarket');
+  const [customStoreName, setCustomStoreName] = useState('Layali Supermarket');
   const [labelFormat, setLabelFormat] = useState<'scale' | 'shelftalker'>('scale');
 
   const weightFloat = parseFloat(weightKg) || 0;

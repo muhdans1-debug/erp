@@ -114,17 +114,34 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           <button
             onClick={() => setCustomServerIp('https://askar-edge-api.layali-askar-pos.workers.dev')}
             style={{
-              padding: '4px 10px',
-              borderRadius: '6px',
-              border: '1px solid #38bdf8',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              border: '1.5px solid #0284c7',
               backgroundColor: '#f0f9ff',
               color: '#0369a1',
               fontWeight: 'bold',
               fontSize: '12px',
               cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
           >
-            ☁️ Cloudflare Edge (Global)
+            <span>☁️ Sovereign Cloud (No Laptop Required)</span>
+            <span style={{ fontSize: '10px', backgroundColor: '#e0f2fe', padding: '1px 6px', borderRadius: '4px' }}>Recommended</span>
+          </button>
+          <button
+            onClick={() => setCustomServerIp('http://192.168.8.7:3000')}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#f8fafc',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            💻 Laptop LAN (:3000)
           </button>
           <button
             onClick={() => setCustomServerIp('http://askar-master.local:3000')}
@@ -140,19 +157,6 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
             }}
           >
             📡 mDNS
-          </button>
-          <button
-            onClick={() => setCustomServerIp('http://192.168.8.7:3000')}
-            style={{
-              padding: '4px 10px',
-              borderRadius: '6px',
-              border: '1px solid #cbd5e1',
-              backgroundColor: '#f8fafc',
-              fontSize: '12px',
-              cursor: 'pointer',
-            }}
-          >
-            Wi-Fi LAN (:3000)
           </button>
           <button
             onClick={() => setCustomServerIp('http://localhost:3000')}

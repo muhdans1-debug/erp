@@ -324,7 +324,6 @@ export default function RefundModal({ onClose, apiBase: propApiBase, onSuccess }
         position: 'fixed',
         inset: 0,
         backgroundColor: 'rgba(15, 23, 42, 0.75)',
-        backdropFilter: 'blur(6px)',
         zIndex: 99999,
         display: 'flex',
         alignItems: 'center',

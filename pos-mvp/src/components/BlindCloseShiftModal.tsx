@@ -260,7 +260,7 @@ export default function BlindCloseShiftModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 animate-in fade-in">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col border border-slate-100 max-h-[95vh]">
         {/* Header */}
         <div className="p-6 bg-slate-900 text-white flex justify-between items-center">

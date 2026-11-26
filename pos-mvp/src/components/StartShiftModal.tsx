@@ -52,6 +52,13 @@ export default function StartShiftModal({
         localStorage.setItem('active_shift_cashier', cashierName);
         localStorage.setItem('active_shift_opening_cash', String(floatAmount));
         onShiftStart(data.shiftId, floatAmount);
+      } else if (data.shiftId || (data.error && data.error.includes('already exists'))) {
+        // Gracefully adopt existing open shift without cashier disruption
+        const existingId = data.shiftId || 'shift_current';
+        localStorage.setItem('active_shift_id', existingId);
+        localStorage.setItem('active_shift_cashier', cashierName);
+        localStorage.setItem('active_shift_opening_cash', String(floatAmount));
+        onShiftStart(existingId, floatAmount);
       } else {
         setError(data.error || 'Failed to start shift');
       }
@@ -69,7 +76,7 @@ export default function StartShiftModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 animate-in fade-in duration-300">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden p-6 sm:p-8 border border-slate-100 animate-in zoom-in-95">
         
         {/* Header Icon */}

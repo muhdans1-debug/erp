@@ -45,25 +45,29 @@ export interface PredictiveOmniPadProps {
 
 // Built-in fallback loose produce catalog for Bahrain retail (Synced with PIM & Daily Produce)
 export const DEFAULT_OMNI_ITEMS: OmniItem[] = [
-  { code: '10', name: 'Rice matta', nameAr: 'أرز ماتا كيرلا سائب', pricePerKg: 0.700, icon: '🍚', isPopular: true, category: 'PRODUCE' },
-  { code: '11', name: 'Garlic Pack', nameAr: 'ثوم طازج', pricePerKg: 2.200, icon: '🧄', isPopular: true, category: 'PRODUCE' },
+  { code: '10', name: 'Rice matta', nameAr: 'أرز ماتا كيرلا سائب', pricePerKg: 0.600, icon: '🍚', isPopular: true, category: 'PRODUCE' },
   { code: '12', name: 'Rice 900', nameAr: 'أرز فاخر', pricePerKg: 0.900, icon: '🍚', isPopular: true, category: 'PRODUCE' },
   { code: '13', name: 'Atta', nameAr: 'طحين أتا فاخر', pricePerKg: 0.100, icon: '🌾', isPopular: true, category: 'PRODUCE' },
-  { code: '14', name: 'Tomato', nameAr: 'طماطم طازجة', pricePerKg: 0.600, icon: '🍅', isPopular: true, category: 'PRODUCE' },
-  { code: '15', name: 'Cucaber', nameAr: 'خيار محلي طازج', pricePerKg: 0.800, icon: '🥒', isPopular: true, category: 'PRODUCE' },
-  { code: '22', name: 'Iemone', nameAr: 'ليمون أصفر', pricePerKg: 1.400, icon: '🍋', isPopular: true, category: 'PRODUCE' },
-  { code: '24', name: 'Ginjar', nameAr: 'زنجبيل طازج', pricePerKg: 2.400, icon: '🧄', category: 'PRODUCE' },
-  { code: '26', name: 'Chilly green', nameAr: 'فلفل أخضر حار', pricePerKg: 1.400, icon: '🌶️', category: 'PRODUCE' },
-  { code: '28', name: 'Baigane B', nameAr: 'باذنجان أسود', pricePerKg: 0.900, icon: '🍆', category: 'PRODUCE' },
-  { code: '32', name: 'Cabaj', nameAr: 'ملفوف أخضر', pricePerKg: 0.400, icon: '🥬', category: 'PRODUCE' },
-  { code: '34', name: 'Coli flower', nameAr: 'قرنبيط زهرة أبيض', pricePerKg: 1.020, icon: '🥦', category: 'PRODUCE' },
-  { code: '35', name: 'Apple', nameAr: 'تفاح رويال جالا', pricePerKg: 1.200, icon: '🍎', category: 'PRODUCE' },
-  { code: '36', name: 'Ladeyfinger', nameAr: 'بامية خضراء طازجة', pricePerKg: 2.000, icon: '🫛', category: 'PRODUCE' },
-  { code: '38', name: 'Kerala', nameAr: 'كارلا / كيريلا مر', pricePerKg: 1.200, icon: '🥒', category: 'PRODUCE' },
-  { code: '42', name: 'Stick muriga', nameAr: 'مورينجا / عيدان طازجة', pricePerKg: 2.200, icon: '🌿', category: 'PRODUCE' },
-  { code: '45', name: 'Carate', nameAr: 'جزر طازج ممتاز', pricePerKg: 0.800, icon: '🥕', category: 'PRODUCE' },
-  { code: '46', name: 'Capsicam', nameAr: 'فلفل بارد رومي', pricePerKg: 1.200, icon: '🫑', category: 'PRODUCE' },
-  { code: '77', name: 'Rice 1200', nameAr: 'أرز بسمتي فاخر 1200', pricePerKg: 1.200, icon: '🍚', category: 'ESSENTIALS' },
+  { code: '35', name: 'Apple', nameAr: 'تفاح رويال جالا', pricePerKg: 1.200, icon: '🍎', isPopular: true, category: 'PRODUCE' },
+  { code: '77', name: 'Rice 1200', nameAr: 'أرز بسمتي فاخر 1200', pricePerKg: 1.200, icon: '🍚', isPopular: true, category: 'ESSENTIALS' },
+  { code: '101', name: 'Chilly green', nameAr: 'فلفل أخضر حار', pricePerKg: 1.500, icon: '🌶️', isPopular: true, category: 'PRODUCE' },
+  { code: '102', name: 'Tomato', nameAr: 'طماطم طازجة', pricePerKg: 0.500, icon: '🍅', isPopular: true, category: 'PRODUCE' },
+  { code: '105', name: 'Coli flower', nameAr: 'قرنبيط زهرة أبيض', pricePerKg: 1.000, icon: '🥦', isPopular: true, category: 'PRODUCE' },
+  { code: '106', name: 'Ginjar', nameAr: 'زنجبيل طازج', pricePerKg: 2.400, icon: '🧄', isPopular: true, category: 'PRODUCE' },
+  { code: '107', name: 'Garlic Pack', nameAr: 'ثوم طازج', pricePerKg: 2.000, icon: '🧄', isPopular: true, category: 'PRODUCE' },
+  { code: '109', name: 'Cabaj', nameAr: 'ملفوف أخضر', pricePerKg: 0.500, icon: '🥬', isPopular: true, category: 'PRODUCE' },
+  { code: '110', name: 'Cucaber', nameAr: 'خيار محلي طازج', pricePerKg: 0.700, icon: '🥒', isPopular: true, category: 'PRODUCE' },
+  { code: '111', name: 'Iemone', nameAr: 'ليمون أصفر', pricePerKg: 1.400, icon: '🍋', isPopular: true, category: 'PRODUCE' },
+  { code: '112', name: 'Carate', nameAr: 'جزر طازج ممتاز', pricePerKg: 0.800, icon: '🥕', isPopular: true, category: 'PRODUCE' },
+  { code: '113', name: 'Capsicam', nameAr: 'فلفل بارد رومي', pricePerKg: 1.200, icon: '🫑', isPopular: true, category: 'PRODUCE' },
+  { code: '115', name: 'Baigane B', nameAr: 'باذنجان أسود', pricePerKg: 0.800, icon: '🍆', isPopular: true, category: 'PRODUCE' },
+  { code: '119', name: 'Ladeyfinger', nameAr: 'بامية خضراء طازجة', pricePerKg: 1.800, icon: '🫛', isPopular: true, category: 'PRODUCE' },
+  { code: '120', name: 'AVARAKA', nameAr: 'أفاراكا خضار', pricePerKg: 1.200, icon: '🫛', isPopular: true, category: 'PRODUCE' },
+  { code: '121', name: 'Kerala', nameAr: 'كارلا / كيريلا مر', pricePerKg: 1.200, icon: '🥒', isPopular: true, category: 'PRODUCE' },
+  { code: '125', name: 'Stick muriga', nameAr: 'مورينجا / عيدان طازجة', pricePerKg: 2.200, icon: '🌿', isPopular: true, category: 'PRODUCE' },
+  { code: '126', name: 'BEEF', nameAr: 'لحم بقري طازج', pricePerKg: 3.900, icon: '🥩', isPopular: true, category: 'MEAT' },
+  { code: '127', name: 'CHICKEN LOOS', nameAr: 'دجاج طازج سائب', pricePerKg: 1.500, icon: '🍗', isPopular: true, category: 'MEAT' },
+  { code: '128', name: 'CHIKEN  FINGER', nameAr: 'أصابع دجاج', pricePerKg: 1.200, icon: '🍗', isPopular: true, category: 'MEAT' },
 ];
 
 /**
@@ -95,6 +99,18 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
   }, [customItems]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const autoLockTimerRef = useRef<any>(null);
+
+  const clearAutoLockTimer = useCallback(() => {
+    if (autoLockTimerRef.current) {
+      clearTimeout(autoLockTimerRef.current);
+      autoLockTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearAutoLockTimer();
+  }, [clearAutoLockTimer]);
 
   // Active Category Filter for Fresh Omni-Pad
   const [activeCategory, setActiveCategory] = useState<string>('ALL');
@@ -105,9 +121,10 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
   const [weightInput, setWeightInput] = useState<string>('0');
 
   useEffect(() => {
-    if (initialItem) {
-      setSelectedItem(initialItem);
-      setWeightInput('0');
+    setSelectedItem(initialItem || null);
+    setWeightInput('0');
+    if (!initialItem) {
+      setTypedCode('');
     }
   }, [initialItem]);
 
@@ -163,12 +180,14 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
   // STATE TRANSITIONS & SPEED WORKFLOW HANDLERS
   // ---------------------------------------------------------------------------
   const handleSelectItem = (item: OmniItem) => {
+    clearAutoLockTimer();
     playChime(950);
     setSelectedItem(item);
     setWeightInput('0');
   };
 
   const handleCancelSelection = () => {
+    clearAutoLockTimer();
     playChime(600);
     setSelectedItem(null);
     setWeightInput('0');
@@ -176,6 +195,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
   };
 
   const handleClearCode = () => {
+    clearAutoLockTimer();
     playChime(500);
     setTypedCode('');
     searchInputRef.current?.focus();
@@ -183,6 +203,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
 
   // Dedicated Fresh Omni-Pad Handler (Resets selection to search other products instantly)
   const handleFreshOmniPad = useCallback(() => {
+    clearAutoLockTimer();
     playChime(750);
     setSelectedItem(null);
     setWeightInput('0');
@@ -191,7 +212,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
     setTimeout(() => {
       searchInputRef.current?.focus();
     }, 60);
-  }, [playChime, onResetItem]);
+  }, [playChime, onResetItem, clearAutoLockTimer]);
 
   // Numpad Tap Dispatcher
   const handlePadTap = (key: string) => {
@@ -231,10 +252,12 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
 
     // STATE 1 & 2: PLU Code Lookup Mode
     if (key === 'CLEAR') {
+      clearAutoLockTimer();
       setTypedCode('');
       return;
     }
     if (key === 'BACKSPACE') {
+      clearAutoLockTimer();
       setTypedCode((prev) => prev.slice(0, -1));
       return;
     }
@@ -243,15 +266,28 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
     }
     // Numbers 0-9
     if (typedCode.length < 5) {
+      clearAutoLockTimer();
       const nextCode = typedCode + key;
       setTypedCode(nextCode);
 
-      // Auto-lock if exact match
+      // Intelligent Auto-Locking with Prefix Collision Resolution:
+      // If code matches an item:
+      // 1. If strictly unique (no longer codes share prefix) -> instant auto-lock (120ms)
+      // 2. If longer codes share prefix (e.g. typed '10', but '101'..'110' exist) ->
+      //    debounce 350ms. If cashier stops typing, auto-lock '10'!
+      //    If they keep typing, timer clears and 3-digit item locks immediately.
       const matched = items.find((i) => i.code === nextCode);
-      if (matched && items.filter((i) => i.code.startsWith(nextCode)).length === 1) {
-        setTimeout(() => {
-          handleSelectItem(matched);
-        }, 120);
+      if (matched) {
+        const longerMatches = items.filter((i) => i.code !== nextCode && i.code.startsWith(nextCode));
+        if (longerMatches.length === 0) {
+          autoLockTimerRef.current = setTimeout(() => {
+            handleSelectItem(matched);
+          }, 120);
+        } else {
+          autoLockTimerRef.current = setTimeout(() => {
+            handleSelectItem(matched);
+          }, 350);
+        }
       }
     }
   };
@@ -302,6 +338,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
         }
       } else if (e.key === 'Enter') {
         e.preventDefault();
+        clearAutoLockTimer();
         if (selectedItem) {
           if (isValidWeight) handleConfirmAddToCart();
         } else if (exactMatch) {
@@ -345,7 +382,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
               </span>
             </div>
             <div className="text-xs text-zinc-400 font-medium hidden sm:block">
-              High-Speed Scale Weight & PLU Short Codes • Askar Supermarket
+              High-Speed Scale Weight & PLU Short Codes • Layali Supermarket
             </div>
           </div>
         </div>

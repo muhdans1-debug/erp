@@ -158,7 +158,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
   // Shelf-tag printing settings
   const [printTagsPerProduct, setPrintTagsPerProduct] = useState<number>(1);
-  const [printStoreName, setPrintStoreName] = useState<string>('ASKAR SUPERMARKET');
+  const [printStoreName, setPrintStoreName] = useState<string>('LAYALI SUPERMARKET');
   const [printOnlySelected, setPrintOnlySelected] = useState<boolean>(true);
 
   // Add Product form state
@@ -969,7 +969,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
       </div>
 
       {/* --- DASHBOARD HEADER --- */}
-      <div className="bg-slate-950/80 backdrop-blur border-b border-slate-800 p-6 sticky top-0 z-20">
+      <div className="bg-slate-950/80 border-b border-slate-800 p-6 sticky top-0 z-20">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -1823,7 +1823,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- DEDICATED EDIT PRODUCT DRAWER / MODAL --- */}
       {editModalProduct && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setEditModalProduct(null)}
@@ -2041,7 +2041,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- BULK ACTIONS & PRICE HIKE RULES MODAL --- */}
       {showBulkModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setShowBulkModal(false)}
@@ -2195,7 +2195,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- SHELF TAG PRINT MODAL & PREVIEW --- */}
       {showPrintModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setShowPrintModal(false)}
@@ -2333,7 +2333,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- PRICE HISTORY AUDIT TRAIL MODAL --- */}
       {historyModalProduct && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col">
             <button
               onClick={() => setHistoryModalProduct(null)}
@@ -2443,7 +2443,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- ADD PRODUCT MODAL --- */}
       {showAddProductModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setShowAddProductModal(false)}
@@ -2617,7 +2617,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- DELETE SINGLE PRODUCT CONFIRMATION MODAL --- */}
       {productToDelete && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-left">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-3 bg-rose-500/20 text-rose-400 rounded-xl">
@@ -2676,7 +2676,7 @@ export default function ProductManagement({ apiBase: propApiBase }: ProductManag
 
       {/* --- BULK DELETE SELECTED MODAL --- */}
       {showBulkDeleteModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-left">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-3 bg-rose-500/20 text-rose-400 rounded-xl">

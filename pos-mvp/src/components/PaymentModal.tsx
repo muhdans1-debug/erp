@@ -651,7 +651,6 @@ export default function PaymentModal({
         position: 'fixed',
         inset: 0,
         backgroundColor: 'rgba(15, 23, 42, 0.75)',
-        backdropFilter: 'blur(6px)',
         zIndex: 99999,
         display: 'flex',
         alignItems: 'center',
@@ -1504,7 +1503,7 @@ export default function PaymentModal({
                           setCashTendered(totalAmount.toFixed(3));
                           setTenderedAmount(totalAmount);
                         }}
-                        className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
+                        className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:opacity-85 cursor-pointer border ${Math.abs(activeTendered - totalAmount) < 0.001 && cashTendered === totalAmount.toFixed(3)
                           ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                           : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                           }`}
@@ -1523,7 +1522,7 @@ export default function PaymentModal({
                               setCashTendered(val.toFixed(3));
                               setTenderedAmount(val);
                             }}
-                            className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer border ${isSelected
+                            className={`h-14 rounded-xl font-mono font-black text-xs flex flex-col items-center justify-center active:opacity-85 cursor-pointer border ${isSelected
                               ? 'bg-emerald-600 text-white border-emerald-400 shadow-md ring-2 ring-emerald-400/40'
                               : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200 border-slate-600'
                               }`}
@@ -1685,7 +1684,7 @@ export default function PaymentModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="h-16 px-6 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-base rounded-xl active:scale-95 transition-transform border border-slate-700 cursor-pointer shadow-xs"
+                  className="h-16 px-6 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-base rounded-xl active:opacity-85 border border-slate-700 cursor-pointer shadow-xs"
                 >
                   Cancel
                 </button>
@@ -1694,7 +1693,7 @@ export default function PaymentModal({
                   type="button"
                   disabled={processing || (selectedMethod === 'CASH' && isShort)}
                   onClick={handleConfirmPayment}
-                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${selectedMethod === 'BENEFIT_PAY'
+                  className={`h-16 flex-1 rounded-xl font-bold text-lg text-white flex items-center justify-center gap-2 active:opacity-85 cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${selectedMethod === 'BENEFIT_PAY'
                     ? 'bg-red-600 hover:bg-red-700'
                     : selectedMethod === 'CASH'
                       ? isShort

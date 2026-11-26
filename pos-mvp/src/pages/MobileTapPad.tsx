@@ -194,7 +194,7 @@ export default function MobileTapPad() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none pb-12">
       {/* Top Dynamic Island Style Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-xl border-b border-slate-800/80 px-4 pt-3 pb-3">
+      <header className="sticky top-0 z-40 bg-slate-900/90 border-b border-slate-800/80 px-4 pt-3 pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
@@ -405,7 +405,7 @@ export default function MobileTapPad() {
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 border-[3px] border-cyan-400/60 rounded-3xl pointer-events-none animate-pulse m-6" />
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 backdrop-blur-md text-[11px] text-cyan-300 font-semibold flex items-center gap-1.5">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-[11px] text-cyan-300 font-semibold flex items-center gap-1.5">
                   <ScanLine className="w-3.5 h-3.5 animate-spin" />
                   <span>Aim at Customer QR / Barcode</span>
                 </div>

@@ -15,13 +15,15 @@ import {
   ChevronRight,
   TrendingDown,
   TrendingUp,
-  Receipt
+  Receipt,
+  BookOpen
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
+import { AddCustomerBookBalanceModal } from './AddCustomerBookBalanceModal';
 
 export interface CustomerStatementItem {
   id: string;
@@ -41,6 +43,9 @@ export interface CustomerStatementItem {
   creditLimit?: number;
   is_active?: number | boolean;
   isFrozen?: boolean;
+  card_deposit_amount?: number | null;
+  card_deposit_status?: string | null;
+  depositInCredit?: number;
 }
 
 interface PersonalStatementViewProps {
@@ -65,10 +70,12 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerStatementItem | null>(initialCustomer);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoadingList, setIsLoadingList] = useState<boolean>(false);
+  const [showBookBalanceModal, setShowBookBalanceModal] = useState<boolean>(false);
 
   // Statement ledger entries state
   const [statementEntries, setStatementEntries] = useState<any[]>([]);
   const [isLoadingStatement, setIsLoadingStatement] = useState<boolean>(false);
+  const [entryScope, setEntryScope] = useState<'PERSONAL' | 'ALL'>('PERSONAL');
   const [dateRangePreset, setDateRangePreset] = useState<'ALL' | 'THIS_MONTH' | 'LAST_MONTH' | 'TODAY'>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -100,7 +107,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
           signal: AbortSignal.timeout(3500)
         });
         if (res.ok) return res;
-      } catch {}
+      } catch { }
     }
     return null;
   }, [apiBase]);
@@ -122,7 +129,8 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
           const isAct = c.is_active !== 0 && c.is_active !== false && c.isActive !== false;
           const currBal = Number(c.currentBalance ?? c.balance ?? 0);
           const mShare = Number(c.messShare ?? 0);
-          const pBal = c.personalBalance !== undefined ? Number(c.personalBalance) : Number((currBal - mShare).toFixed(3));
+          const depInCred = Number(c.depositInCredit ?? ((c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY') ? (c.card_deposit_amount || 3) : 0));
+          const pBal = c.personalBalance !== undefined ? Number(c.personalBalance) : Math.max(0, Number((currBal - mShare - depInCred).toFixed(3)));
           return {
             id: c.id,
             name: c.name || 'Unnamed Customer',
@@ -139,7 +147,10 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
             messes: c.messes || [],
             creditLimit: Number(c.creditLimit || c.credit_limit || 30.0),
             is_active: isAct ? 1 : 0,
-            isFrozen: !isAct
+            isFrozen: !isAct,
+            card_deposit_amount: c.card_deposit_amount !== undefined ? Number(c.card_deposit_amount) : null,
+            card_deposit_status: c.card_deposit_status || null,
+            depositInCredit: depInCred
           };
         });
         setCustomers(sanitized);
@@ -201,7 +212,10 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     setIsLoadingStatement(true);
     try {
       const res = await fetchFromCandidates(`/api/customers/${customerId}/statement`, {
-        headers: { 'x-manager-pin': getManagerPin() }
+        headers: {
+          'x-pos-client': 'store-pos',
+          'x-manager-pin': getManagerPin()
+        }
       });
       if (res) {
         const data = await res.json();
@@ -247,10 +261,12 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     }
   };
 
-  // Filtered & Chronologically Recomputed Statement Entries (Strictly Personal Tab with Opening Balance)
+  // Filtered & Chronologically Recomputed Statement Entries (Strictly Personal Tab vs All Card Swipes with Opening Balance)
   const filteredStatement = useMemo(() => {
-    // 1. Isolate strictly personal purchases (exclude communal room mess splits)
-    const personalOnly = statementEntries.filter((item) => !item.mess_id || item.mess_id === '');
+    // 1. Isolate entries based on selected scope
+    const baseEntries = entryScope === 'PERSONAL'
+      ? statementEntries.filter((item) => !item.mess_id || item.mess_id === '')
+      : statementEntries;
 
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
@@ -260,7 +276,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     const dateFiltered: any[] = [];
 
     // 2. Accumulate prior transactions into Opening Balance and filter active range
-    personalOnly.forEach((item) => {
+    baseEntries.forEach((item) => {
       const numAmt = Number(item.raw_amount !== undefined ? item.raw_amount : item.amount || 0);
       const isPayment = item.type === 'PAYMENT' || item.type === 'WRITE_OFF' || numAmt < 0;
       const isCharge = item.type === 'CHARGE' || item.type === 'SALE' || numAmt > 0;
@@ -319,7 +335,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     }
 
     return recomputed.reverse();
-  }, [statementEntries, typeFilter, startDate, endDate]);
+  }, [statementEntries, entryScope, typeFilter, startDate, endDate]);
 
   // Aggregate Metrics for this customer
   const totalDebitPurchases = useMemo(() => {
@@ -369,7 +385,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     try {
       const dateLabel = startDate && endDate ? `${startDate} to ${endDate}` : (startDate ? `From ${startDate}` : 'All Time');
       await printKhataStatement({
-        shopName: "ASKAR SUPERMARKET",
+        shopName: "LAYALI SUPERMARKET",
         customerName: selectedCustomer.name,
         customerPhone: selectedCustomer.phone,
         customerCpr: selectedCustomer.cpr,
@@ -393,7 +409,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     const pBal = Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0).toFixed(3);
     const dateLabel = startDate && endDate ? `${startDate} to ${endDate}` : 'All Time';
 
-    let msg = `*ASKAR SUPERMARKET - OFFICIAL STATEMENT*\n`;
+    let msg = `*LAYALI SUPERMARKET - OFFICIAL STATEMENT*\n`;
     msg += `👤 *Customer:* ${selectedCustomer.name}\n`;
     if (selectedCustomer.phone) msg += `📞 *Phone:* ${selectedCustomer.phone}\n`;
     if (selectedCustomer.cpr) msg += `🆔 *CPR:* ${selectedCustomer.cpr}\n`;
@@ -412,7 +428,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     });
 
     msg += `--------------------------------\n`;
-    msg += `*Please settle payments at the Askar Supermarket counter or via BenefitPay Fawri+.* Thank you for shopping with us!\n`;
+    msg += `*Please settle payments at the Layali Supermarket counter or via BenefitPay Fawri+.* Thank you for shopping with us!\n`;
 
     const url = `https://wa.me/${selectedCustomer.phone ? selectedCustomer.phone.replace(/[^0-9]/g, '') : ''}?text=${encodeURIComponent(msg)}`;
     window.open(url, '_blank');
@@ -446,14 +462,14 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
       });
 
       if (res && res.ok) {
-        if (payMethod === 'CASH') kickCashDrawer().catch(() => {});
+        if (payMethod === 'CASH') kickCashDrawer().catch(() => { });
         playThankYouVoice('KHATA_PAYMENT');
 
         const prevBal = Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0);
         const newBal = Math.max(0, prevBal - amountNum);
 
         printKhataPaymentReceipt({
-          shopName: "ASKAR SUPERMARKET",
+          shopName: "LAYALI SUPERMARKET",
           customerName: selectedCustomer.name,
           customerPhone: selectedCustomer.phone,
           customerCpr: selectedCustomer.cpr,
@@ -463,7 +479,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
           paymentMethod: payMethod,
           receiptNo: `KP-${Date.now().toString().slice(-6)}`,
           timestamp: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(() => { });
 
         if (showToast) showToast(`✅ Received BD ${amountNum.toFixed(3)} for ${selectedCustomer.name}!`, 'success');
         onCustomerUpdated?.();
@@ -575,6 +591,19 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                             👥 {cust.messName}
                           </span>
                         )}
+                        {cust.card_deposit_status === 'IN_CREDIT' || cust.card_deposit_status === 'DEFERRED_CREDIT' || cust.card_deposit_status === 'DEFERRED_PAYDAY' || cust.depositInCredit ? (
+                          <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-300 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
+                            IN CREDIT (DUE): BD {Number(cust.card_deposit_amount || 3).toFixed(3)}
+                          </span>
+                        ) : (Number(cust.card_deposit_amount || 0) > 0 || cust.card_deposit_status === 'HELD') ? (
+                          <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
+                            HELD IN TRUST: BD {Number(cust.card_deposit_amount ?? 3).toFixed(3)}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                            NO DEPOSIT
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500">
                         <span>{cust.phone || 'No phone'}</span>
@@ -621,11 +650,24 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
               </button>
 
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-2xl font-black text-slate-900">{selectedCustomer.name}</h4>
                   {selectedCustomer.cardUid && (
                     <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-mono font-bold border border-slate-200">
                       Card: {selectedCustomer.cardUid}
+                    </span>
+                  )}
+                  {selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit ? (
+                    <span className="text-xs bg-rose-50 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">
+                      IN CREDIT (DUE): BD {Number(selectedCustomer.card_deposit_amount || 3).toFixed(3)}
+                    </span>
+                  ) : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD') ? (
+                    <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">
+                      HELD IN TRUST: BD {Number(selectedCustomer.card_deposit_amount ?? 3).toFixed(3)}
+                    </span>
+                  ) : (
+                    <span className="text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">
+                      NO DEPOSIT
                     </span>
                   )}
                 </div>
@@ -676,6 +718,16 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                 <span>WhatsApp</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => setShowBookBalanceModal(true)}
+                className="px-3.5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer shadow-xs"
+                title="Add previous physical paper book balance to this customer"
+              >
+                <BookOpen size={15} />
+                <span>+ Book Balance</span>
+              </button>
+
               {onSelectCustomerForCart && (
                 <button
                   type="button"
@@ -690,7 +742,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
           </div>
 
           {/* KPI Summary Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             {/* Personal Tab Debt */}
             <div className="bg-red-50 border-2 border-red-200/80 p-3 rounded-2xl">
               <div className="flex items-center justify-between text-red-700 text-[10px] font-bold uppercase tracking-wider">
@@ -701,6 +753,44 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                 BD {Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0).toFixed(3)}
               </p>
               <span className="text-[10px] font-semibold text-red-600">Strictly private debt</span>
+            </div>
+
+            {/* Card Security Deposit (Dedicated Column) */}
+            <div className={`border-2 p-3 rounded-2xl ${selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
+                ? 'bg-rose-50 border-rose-200/80'
+                : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
+                  ? 'bg-emerald-50 border-emerald-200/80'
+                  : 'bg-slate-50 border-slate-200'
+              }`}>
+              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
+                <span className={
+                  selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
+                    ? 'text-rose-700'
+                    : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
+                      ? 'text-emerald-700'
+                      : 'text-slate-600'
+                }>Card Deposit</span>
+              </div>
+              <p className={`text-2xl font-black mt-0.5 ${selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
+                  ? 'text-rose-700'
+                  : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
+                    ? 'text-emerald-700'
+                    : 'text-slate-400'
+                }`}>
+                BD {Number(selectedCustomer.card_deposit_amount || (selectedCustomer.depositInCredit ? 3 : 0)).toFixed(3)}
+              </p>
+              <span className={`text-[10px] font-black uppercase tracking-wider ${selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
+                  ? 'text-rose-700'
+                  : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
+                    ? 'text-emerald-700'
+                    : 'text-slate-400'
+                }`}>
+                {selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
+                  ? 'IN CREDIT (DUE)'
+                  : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
+                    ? 'HELD IN TRUST'
+                    : 'NO DEPOSIT'}
+              </span>
             </div>
 
             {/* Total Charged (Purchases) */}
@@ -744,84 +834,107 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
               <button
                 type="button"
                 onClick={() => applyDatePreset('ALL')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  dateRangePreset === 'ALL'
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${dateRangePreset === 'ALL'
                     ? 'bg-slate-900 text-white'
                     : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 All Time
               </button>
               <button
                 type="button"
                 onClick={() => applyDatePreset('THIS_MONTH')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  dateRangePreset === 'THIS_MONTH'
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${dateRangePreset === 'THIS_MONTH'
                     ? 'bg-slate-900 text-white'
                     : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 This Month
               </button>
               <button
                 type="button"
                 onClick={() => applyDatePreset('LAST_MONTH')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  dateRangePreset === 'LAST_MONTH'
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${dateRangePreset === 'LAST_MONTH'
                     ? 'bg-slate-900 text-white'
                     : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 Last Month
               </button>
               <button
                 type="button"
                 onClick={() => applyDatePreset('TODAY')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  dateRangePreset === 'TODAY'
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${dateRangePreset === 'TODAY'
                     ? 'bg-slate-900 text-white'
                     : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 Today
               </button>
             </div>
 
             {/* Type Filters (All / Charges / Payments) */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setTypeFilter('ALL')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  typeFilter === 'ALL'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                All Entries ({statementEntries.filter((i) => !i.mess_id).length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setTypeFilter('CHARGES')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  typeFilter === 'CHARGES'
-                    ? 'bg-slate-800 text-white'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                Charges Only
-              </button>
-              <button
-                type="button"
-                onClick={() => setTypeFilter('PAYMENTS')}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  typeFilter === 'PAYMENTS'
-                    ? 'bg-emerald-700 text-white'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                Payments
-              </button>
+            {/* Scope & Type Filters */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {/* Scope Switcher: Personal vs All Card Swipes */}
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setEntryScope('PERSONAL')}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${entryScope === 'PERSONAL'
+                      ? 'bg-white text-slate-800 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  title="Only view personal purchases"
+                >
+                  Personal ({statementEntries.filter((i) => !i.mess_id).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryScope('ALL')}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${entryScope === 'ALL'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  title="View all purchases made on this card, including dining hall mess splits"
+                >
+                  All Swipes ({statementEntries.length})
+                </button>
+              </div>
+
+              {/* Type Switcher: All / Charges / Payments */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter('ALL')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${typeFilter === 'ALL'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                >
+                  All Entries
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter('CHARGES')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${typeFilter === 'CHARGES'
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                >
+                  Charges Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter('PAYMENTS')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${typeFilter === 'PAYMENTS'
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                >
+                  Payments
+                </button>
+              </div>
             </div>
           </div>
 
@@ -865,11 +978,16 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                             {tx.reference?.match(/(INV-[A-Za-z0-9_-]+)/i)?.[1] || tx.reference || (isPayment ? 'Payment Settle' : 'Grocery Purchase')}
                           </span>
                           <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              isPayment ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
-                            }`}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tx.type === 'DEPOSIT_DEFERRED' ? 'bg-rose-100 text-rose-800' :
+                                tx.type === 'DEPOSIT_COLLECTED' ? 'bg-emerald-100 text-emerald-800' :
+                                  tx.type === 'DEPOSIT_REFUND' ? 'bg-amber-100 text-amber-800' :
+                                    isPayment ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
+                              }`}
                           >
-                            {isPayment ? 'PAYMENT RECEIVED' : 'PERSONAL CHARGE'}
+                            {tx.type === 'DEPOSIT_DEFERRED' ? 'CARD DEPOSIT (IN CREDIT)' :
+                              tx.type === 'DEPOSIT_COLLECTED' ? 'DEPOSIT COLLECTED' :
+                                tx.type === 'DEPOSIT_REFUND' ? 'DEPOSIT REFUNDED' :
+                                  isPayment ? 'PAYMENT RECEIVED' : 'PERSONAL CHARGE'}
                           </span>
                           <span className="text-slate-400">•</span>
                           <span className="text-slate-500 font-medium">
@@ -884,9 +1002,8 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
 
                       <div className="text-right shrink-0">
                         <span
-                          className={`text-base font-black ${
-                            isPayment ? 'text-emerald-600' : 'text-slate-900'
-                          }`}
+                          className={`text-base font-black ${isPayment ? 'text-emerald-600' : 'text-slate-900'
+                            }`}
                         >
                           {isPayment ? '-' : '+'}BD {Number(tx.amount || 0).toFixed(3)}
                         </span>
@@ -907,7 +1024,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
 
       {/* FAST PAYMENT MODAL INSIDE STATEMENT */}
       {showPayModal && selectedCustomer && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-slate-200">
             <div className="bg-emerald-600 text-white p-4 flex items-center justify-between">
               <div>
@@ -974,11 +1091,10 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setPayMethod('CASH')}
-                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                      payMethod === 'CASH'
+                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${payMethod === 'CASH'
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <Banknote size={16} />
                     <span>💵 Cash</span>
@@ -986,11 +1102,10 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setPayMethod('BENEFIT_PAY')}
-                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                      payMethod === 'BENEFIT_PAY'
+                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${payMethod === 'BENEFIT_PAY'
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <Smartphone size={16} />
                     <span>📱 BenefitPay</span>
@@ -1024,6 +1139,31 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Customer Book Balance Modal */}
+      {showBookBalanceModal && selectedCustomer && (
+        <AddCustomerBookBalanceModal
+          customer={selectedCustomer}
+          apiBase={apiBase}
+          onClose={() => setShowBookBalanceModal(false)}
+          onSuccess={(updatedCustomer) => {
+            setShowBookBalanceModal(false);
+            loadCustomers();
+            if (selectedCustomer) {
+              setSelectedCustomer((prev: any) => prev ? {
+                ...prev,
+                balance: updatedCustomer.balance ?? prev.balance,
+                personalBalance: updatedCustomer.balance ?? prev.personalBalance,
+                currentBalance: updatedCustomer.balance ?? prev.currentBalance
+              } : null);
+              loadCustomerStatement(selectedCustomer.id);
+            }
+            onCustomerUpdated?.();
+            showToast?.(`Added book balance to ${updatedCustomer.name || selectedCustomer.name}`, 'success');
+          }}
+          showToast={showToast}
+        />
       )}
     </div>
   );

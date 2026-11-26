@@ -157,7 +157,7 @@ export default function POReviewModal({ po, onClose, onFinalApprove, onDiscard, 
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col h-[85vh]">
         
         {/* Header */}

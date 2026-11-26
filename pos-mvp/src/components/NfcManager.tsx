@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { 
-  CreditCard, Users, User, Search, RefreshCw, CheckCircle, AlertCircle, 
-  Trash2, Copy, Check, ArrowUpDown, Plus, X, Radio, 
-  ExternalLink, Banknote, FileText
+import {
+  CreditCard, Users, User, Search, RefreshCw, CheckCircle, AlertCircle,
+  Trash2, Copy, Check, ArrowUpDown, Plus, X, Radio,
+  ExternalLink, Banknote, FileText, BookOpen
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
+import { AddCustomerBookBalanceModal } from './AddCustomerBookBalanceModal';
 
 interface NfcCardItem {
   tag_id: string;
@@ -138,14 +139,17 @@ export default function NfcManager({
   const [editGroupName, setEditGroupName] = useState('');
   const [editGroupTagId, setEditGroupTagId] = useState('');
   const [editGroupMembers, setEditGroupMembers] = useState<string[]>([]);
+  const [editGroupPreviousBalance, setEditGroupPreviousBalance] = useState('');
+  const [editGroupDescription, setEditGroupDescription] = useState('');
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
-  
+
   // Quick Create Customer on-the-fly
   const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustCpr, setNewCustCpr] = useState('');
   const [newCustBatch, setNewCustBatch] = useState('');
+  const [bookBalanceCustomer, setBookBalanceCustomer] = useState<any | null>(null);
 
   // Action status
   const [actionLoading, setActionLoading] = useState(false);
@@ -181,7 +185,7 @@ export default function NfcManager({
         });
         clearTimeout(timeoutId);
         if (res.ok) return res;
-      } catch {}
+      } catch { }
     }
     const primaryUrl = `${(apiBase || DEFAULT_EDGE_API_URL).replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
     return fetch(primaryUrl, options);
@@ -225,7 +229,7 @@ export default function NfcManager({
         if (Array.isArray(data)) setCustomersList(data);
         else if (data?.customers) setCustomersList(data.customers);
       }
-    } catch {}
+    } catch { }
   }, [resilientApiFetch]);
 
   // 3. Fetch Mess Groups
@@ -272,85 +276,84 @@ export default function NfcManager({
     loadMessGroups();
   }, [loadCardsData, loadCustomers, loadMessGroups]);
 
+  const handleHardwareTap = useCallback(async (tagId: string, preloadedCustomer?: any) => {
+    const cleanId = (tagId || '').trim().toUpperCase();
+    if (!cleanId) return;
+
+    const now = Date.now();
+    if (lastProcessedUidRef.current.tag === cleanId && (now - lastProcessedUidRef.current.time < 2500)) {
+      return;
+    }
+    lastProcessedUidRef.current = { tag: cleanId, time: now };
+
+    console.log(`📡 [NFC Manager Hub] Sunmi Hardware NFC Tap Received: ${cleanId}`);
+
+    if (preloadedCustomer) {
+      const resolvedType = preloadedCustomer.card_type || (preloadedCustomer.isMess ? 'MESS' : (preloadedCustomer.mess_id ? 'DUAL' : 'PERSONAL'));
+      setActiveScannedCard({
+        tag_id: cleanId,
+        card_type: resolvedType,
+        ...preloadedCustomer
+      });
+      setIsUnregisteredTap(false);
+      setRecentScansLog(prev => [
+        { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: preloadedCustomer.name, isNew: false },
+        ...prev.slice(0, 9)
+      ]);
+      return;
+    }
+
+    // Lookup details
+    try {
+      const res = await resilientApiFetch(`/api/customers/nfc/${encodeURIComponent(cleanId)}`, {
+        headers: getHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.customer) {
+          const resolvedType = data.customer.card_type || (data.customer.isMess ? 'MESS' : (data.customer.mess_id ? 'DUAL' : 'PERSONAL'));
+          setActiveScannedCard({
+            tag_id: cleanId,
+            card_type: resolvedType,
+            ...data.customer
+          });
+          setIsUnregisteredTap(false);
+
+          setRecentScansLog(prev => [
+            { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: data.customer.name, isNew: false },
+            ...prev.slice(0, 9)
+          ]);
+          return;
+        }
+      }
+    } catch { }
+
+    // Check if it's already in loaded cards list
+    const matched = cards.find(c => c.tag_id.toUpperCase() === cleanId || c.tag_id.replace(/:/g, '').toUpperCase() === cleanId.replace(/:/g, ''));
+    if (matched) {
+      setActiveScannedCard(matched);
+      setIsUnregisteredTap(false);
+      setRecentScansLog(prev => [
+        { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: matched.name, isNew: false },
+        ...prev.slice(0, 9)
+      ]);
+      return;
+    }
+
+    // If unresolved, trigger Unregistered Spotlight
+    setActiveScannedCard({ tag_id: cleanId });
+    setIsUnregisteredTap(true);
+    setAssignTagId(cleanId);
+    setRecentScansLog(prev => [
+      { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: 'Unregistered Card', isNew: true },
+      ...prev.slice(0, 9)
+    ]);
+  }, [cards, resilientApiFetch]);
+
   // 4. WebSocket & HTTP Bridge Listener for Sunmi Hardware NFC Taps
   useEffect(() => {
     let unmounted = false;
     let ws: WebSocket | null = null;
-    let pollInterval: any = null;
-
-    const handleHardwareTap = async (tagId: string, preloadedCustomer?: any) => {
-      const cleanId = (tagId || '').trim().toUpperCase();
-      if (!cleanId) return;
-
-      const now = Date.now();
-      if (lastProcessedUidRef.current.tag === cleanId && (now - lastProcessedUidRef.current.time < 2500)) {
-        return;
-      }
-      lastProcessedUidRef.current = { tag: cleanId, time: now };
-
-      console.log(`📡 [NFC Manager Hub] Sunmi Hardware NFC Tap Received: ${cleanId}`);
-
-      if (preloadedCustomer) {
-        const resolvedType = preloadedCustomer.card_type || (preloadedCustomer.isMess ? 'MESS' : (preloadedCustomer.mess_id ? 'DUAL' : 'PERSONAL'));
-        setActiveScannedCard({
-          tag_id: cleanId,
-          card_type: resolvedType,
-          ...preloadedCustomer
-        });
-        setIsUnregisteredTap(false);
-        setRecentScansLog(prev => [
-          { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: preloadedCustomer.name, isNew: false },
-          ...prev.slice(0, 9)
-        ]);
-        return;
-      }
-
-      // Lookup details
-      try {
-        const res = await resilientApiFetch(`/api/customers/nfc/${encodeURIComponent(cleanId)}`, {
-          headers: getHeaders()
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.customer) {
-            const resolvedType = data.customer.card_type || (data.customer.isMess ? 'MESS' : (data.customer.mess_id ? 'DUAL' : 'PERSONAL'));
-            setActiveScannedCard({
-              tag_id: cleanId,
-              card_type: resolvedType,
-              ...data.customer
-            });
-            setIsUnregisteredTap(false);
-
-            setRecentScansLog(prev => [
-              { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: data.customer.name, isNew: false },
-              ...prev.slice(0, 9)
-            ]);
-            return;
-          }
-        }
-      } catch {}
-
-      // Check if it's already in loaded cards list
-      const matched = cards.find(c => c.tag_id.toUpperCase() === cleanId || c.tag_id.replace(/:/g, '').toUpperCase() === cleanId.replace(/:/g, ''));
-      if (matched) {
-        setActiveScannedCard(matched);
-        setIsUnregisteredTap(false);
-        setRecentScansLog(prev => [
-          { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: matched.name, isNew: false },
-          ...prev.slice(0, 9)
-        ]);
-        return;
-      }
-
-      // If unresolved, trigger Unregistered Spotlight
-      setActiveScannedCard({ tag_id: cleanId });
-      setIsUnregisteredTap(true);
-      setAssignTagId(cleanId);
-      setRecentScansLog(prev => [
-        { id: String(Date.now()), tag_id: cleanId, timestamp: new Date().toLocaleTimeString(), partyName: 'Unregistered Card', isNew: true },
-        ...prev.slice(0, 9)
-      ]);
-    };
 
     const connectWebSocket = () => {
       if (unmounted) return;
@@ -360,7 +363,7 @@ export default function NfcManager({
           try {
             const u = new URL(apiBase.startsWith('http') ? apiBase : `http://${apiBase}`);
             if (u.hostname) bridgeHost = u.hostname;
-          } catch {}
+          } catch { }
         } else if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
           bridgeHost = window.location.hostname;
         }
@@ -417,15 +420,28 @@ export default function NfcManager({
 
     connectWebSocket();
 
-    // Cloud Edge Poller: Only polls when actively WAITING for a scan and tab is visible
+    return () => {
+      unmounted = true;
+      window.removeEventListener('sunmi-nfc-scan', handleSunmiDirectScan);
+      ws?.close();
+      wsRef.current = null;
+    };
+  }, [apiBase, cards, resilientApiFetch]);
+
+  // Cloud Edge Poller: ONLY active on laptops/desktops when scanStatus is WAITING
+  useEffect(() => {
+    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+    if (isNative || scanStatus !== 'WAITING') return;
+
+    let active = true;
     const pollRelay = async () => {
-      if (scanStatusRef.current !== 'WAITING' || (typeof document !== 'undefined' && document.hidden)) return;
+      if (!active || (typeof document !== 'undefined' && document.hidden)) return;
       try {
         const res = await resilientApiFetch('/api/nfc/latest', {
           headers: getHeaders(),
           signal: AbortSignal.timeout(2000)
         });
-        if (res.ok) {
+        if (res.ok && active) {
           const data = await res.json();
           const tag = data?.tag_id || data?.tagId || data?.latest?.tag_id || data?.latest?.tagId;
           const ts = Number(data?.timestamp || data?.latest?.timestamp || 0);
@@ -435,26 +451,23 @@ export default function NfcManager({
             setScanStatus('IDLE');
             await handleHardwareTap(tag, cust);
 
-            // Consume and clear on Cloud Edge so it is received once and never loops
+            // Clear after consuming
             resilientApiFetch('/api/nfc/latest/clear', {
               method: 'POST',
               headers: getHeaders(true)
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
-      } catch {}
+      } catch { }
     };
 
-    pollInterval = setInterval(pollRelay, 4000);
-
+    pollRelay();
+    const interval = setInterval(pollRelay, 4000);
     return () => {
-      unmounted = true;
-      clearInterval(pollInterval);
-      window.removeEventListener('sunmi-nfc-scan', handleSunmiDirectScan);
-      ws?.close();
-      wsRef.current = null;
+      active = false;
+      clearInterval(interval);
     };
-  }, [apiBase, cards, resilientApiFetch]);
+  }, [scanStatus, resilientApiFetch, handleHardwareTap]);
 
   // Handle Manual Simulator
   const handleSimulateTap = () => {
@@ -464,7 +477,7 @@ export default function NfcManager({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
       body: JSON.stringify({ tag_id: clean, terminalId: 'Laptop Simulator' })
-    }).catch(() => {});
+    }).catch(() => { });
     setSimulatedTagInput('');
   };
 
@@ -597,11 +610,15 @@ export default function NfcManager({
       setEditGroupName('');
       setEditGroupTagId('');
       setEditGroupMembers([]);
+      setEditGroupPreviousBalance('');
+      setEditGroupDescription('');
     } else {
       setSelectedMessGroupForEdit(group);
       setEditGroupName(group.group_name || '');
       setEditGroupTagId(group.assignedCard || group.cardTag || '');
       setEditGroupMembers(Array.isArray(group.members) ? group.members.map((m: any) => m.id) : []);
+      setEditGroupPreviousBalance('');
+      setEditGroupDescription('');
     }
     setMemberSearchQuery('');
     setShowMessRosterModal(true);
@@ -614,28 +631,59 @@ export default function NfcManager({
       showNotification('error', 'Group name is required.');
       return;
     }
+    const isNew = selectedMessGroupForEdit.id === 'new';
+    const cleanPrevBalance = editGroupPreviousBalance ? parseFloat(editGroupPreviousBalance) : 0;
+    if (cleanPrevBalance > 0 && editGroupMembers.length === 0) {
+      showNotification('error', 'Please select at least one room member to allocate the previous book balance.');
+      return;
+    }
+
     setActionLoading(true);
     try {
-      const isNew = selectedMessGroupForEdit.id === 'new';
-      const path = isNew 
+      const path = isNew
         ? '/api/nfc/mess-groups'
         : `/api/nfc/mess-groups/${selectedMessGroupForEdit.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
+      const payload: any = {
+        group_name: editGroupName.trim(),
+        member_ids: editGroupMembers,
+        tag_id: editGroupTagId.trim() || null
+      };
+
+      if (isNew && cleanPrevBalance > 0) {
+        payload.previousBalance = cleanPrevBalance;
+        if (editGroupDescription.trim()) {
+          payload.description = editGroupDescription.trim();
+        }
+      }
+
       const res = await resilientApiFetch(path, {
         method,
         headers: getHeaders(true),
-        body: JSON.stringify({
-          group_name: editGroupName.trim(),
-          member_ids: editGroupMembers,
-          tag_id: editGroupTagId.trim() || null
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data?.success) {
-        showNotification('success', isNew 
-          ? `Mess Group "${editGroupName}" created with ${editGroupMembers.length} workers!`
-          : `Mess Group "${data.messGroup?.group_name || editGroupName}" roster updated with ${editGroupMembers.length} members!`);
+        if (!isNew && cleanPrevBalance > 0) {
+          const balRes = await resilientApiFetch(`/api/nfc/mess-groups/${selectedMessGroupForEdit.id}/balance`, {
+            method: 'POST',
+            headers: getHeaders(true),
+            body: JSON.stringify({
+              previousBalance: cleanPrevBalance,
+              description: editGroupDescription.trim() || undefined,
+              member_ids: editGroupMembers
+            })
+          });
+          const balData = await balRes?.json().catch(() => ({}));
+          if (!balData?.success) {
+            throw new Error(balData?.error || 'Roster updated but failed to allocate previous book balance');
+          }
+        }
+
+        showNotification('success', isNew
+          ? `Mess Group "${editGroupName}" created with ${editGroupMembers.length} workers${cleanPrevBalance > 0 ? ` and BD ${cleanPrevBalance.toFixed(3)} opening debt balance` : ''}!`
+          : `Mess Group "${data.messGroup?.group_name || editGroupName}" updated${cleanPrevBalance > 0 ? ` & BD ${cleanPrevBalance.toFixed(3)} previous book balance allocated with zero drift` : ''}!`);
         setShowMessRosterModal(false);
         setSelectedMessGroupForEdit(null);
         await Promise.allSettled([loadMessGroups(), loadCardsData(), loadCustomers()]);
@@ -739,7 +787,7 @@ export default function NfcManager({
     // 1. Search Query filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(c => 
+      result = result.filter(c =>
         (c.tag_id || '').toLowerCase().includes(q) ||
         (c.name || '').toLowerCase().includes(q) ||
         (c.phone || '').toLowerCase().includes(q) ||
@@ -791,12 +839,12 @@ export default function NfcManager({
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      result = result.filter(g => 
+      result = result.filter(g =>
         (g.group_name || '').toLowerCase().includes(q) ||
         (g.assignedCard || '').toLowerCase().includes(q) ||
         (g.cardTag || '').toLowerCase().includes(q) ||
-        (Array.isArray(g.members) && g.members.some((m: any) => 
-          (m.name || '').toLowerCase().includes(q) || 
+        (Array.isArray(g.members) && g.members.some((m: any) =>
+          (m.name || '').toLowerCase().includes(q) ||
           (m.cpr && String(m.cpr).toLowerCase().includes(q)) ||
           (m.phone && String(m.phone).toLowerCase().includes(q))
         ))
@@ -829,11 +877,10 @@ export default function NfcManager({
     <div className="space-y-6 pb-12 animate-in fade-in duration-150">
       {/* Toast Notification */}
       {notificationMsg && (
-        <div className={`fixed top-4 right-8 z-50 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-sm font-bold border transition ${
-          notificationMsg.type === 'success' 
-            ? 'bg-emerald-600 text-white border-emerald-400' 
-            : 'bg-rose-600 text-white border-rose-400'
-        }`}>
+        <div className={`fixed top-4 right-8 z-50 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-sm font-bold border transition ${notificationMsg.type === 'success'
+          ? 'bg-emerald-600 text-white border-emerald-400'
+          : 'bg-rose-600 text-white border-rose-400'
+          }`}>
           {notificationMsg.type === 'success' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
           <span>{notificationMsg.text}</span>
         </div>
@@ -842,7 +889,7 @@ export default function NfcManager({
       {/* Header Banner & Live Hardware Antenna Link */}
       <div className="bg-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute right-0 top-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-        
+
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 relative z-10">
           <div>
             <div className="flex items-center gap-3">
@@ -870,8 +917,8 @@ export default function NfcManager({
             <div className="px-4 py-2.5 rounded-2xl border text-xs font-bold flex items-center gap-2.5 shadow-sm bg-emerald-950/80 border-emerald-500/50 text-emerald-300">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>
-                {isBridgeConnected 
-                  ? 'Sunmi POS Terminal Linked (Direct WS 0ms)' 
+                {isBridgeConnected
+                  ? 'Sunmi POS Terminal Linked (Direct WS 0ms)'
                   : 'Cloud Edge Relay Active (Listening for Sunmi & iPhone Taps)'}
               </span>
             </div>
@@ -916,8 +963,8 @@ export default function NfcManager({
             )}
 
             <p className="text-xs text-slate-400 font-medium">
-              {scanStatus === 'WAITING' 
-                ? 'Sunmi hardware transceiver is active. Screen locked until tap.' 
+              {scanStatus === 'WAITING'
+                ? 'Sunmi hardware transceiver is active. Screen locked until tap.'
                 : 'Zero battery drain: NFC antenna activates only on demand.'}
             </p>
           </div>
@@ -945,52 +992,49 @@ export default function NfcManager({
 
       {/* Active Card Spotlight (Appears whenever a card is tapped on Sunmi) */}
       {activeScannedCard && (
-        <div className={`p-6 rounded-3xl shadow-xl border-2 transition animate-in slide-in-from-top-4 duration-200 ${
-          isUnregisteredTap 
-            ? 'bg-amber-50/90 border-amber-500 text-amber-950' 
-            : activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess
+        <div className={`p-6 rounded-3xl shadow-xl border-2 transition animate-in slide-in-from-top-4 duration-200 ${isUnregisteredTap
+          ? 'bg-amber-50/90 border-amber-500 text-amber-950'
+          : activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess
             ? 'bg-indigo-50/90 border-indigo-500 text-indigo-950'
             : activeScannedCard.card_type === 'DUAL' || activeScannedCard.isDual
-            ? 'bg-purple-50/90 border-purple-500 text-purple-950'
-            : 'bg-emerald-50/90 border-emerald-500 text-slate-900'
-        }`}>
+              ? 'bg-purple-50/90 border-purple-500 text-purple-950'
+              : 'bg-emerald-50/90 border-emerald-500 text-slate-900'
+          }`}>
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div className="flex items-center gap-5">
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-white shrink-0 shadow-md ${
-                isUnregisteredTap 
-                  ? 'bg-amber-600' 
-                  : activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-white shrink-0 shadow-md ${isUnregisteredTap
+                ? 'bg-amber-600'
+                : activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess
                   ? 'bg-indigo-600'
                   : activeScannedCard.card_type === 'DUAL' || activeScannedCard.isDual
-                  ? 'bg-purple-600'
-                  : 'bg-emerald-600'
-              }`}>
+                    ? 'bg-purple-600'
+                    : 'bg-emerald-600'
+                }`}>
                 {isUnregisteredTap ? <AlertCircle size={30} /> : (activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess) ? <Users size={30} /> : <CreditCard size={30} />}
               </div>
 
               <div>
                 <div className="flex items-center gap-2">
-                  <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full ${
-                    isUnregisteredTap 
-                      ? 'bg-amber-200 text-amber-900 border border-amber-300' 
-                      : (activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess)
+                  <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full ${isUnregisteredTap
+                    ? 'bg-amber-200 text-amber-900 border border-amber-300'
+                    : (activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess)
                       ? 'bg-indigo-200 text-indigo-900 border border-indigo-300'
                       : (activeScannedCard.card_type === 'DUAL' || activeScannedCard.isDual)
-                      ? 'bg-purple-200 text-purple-900 border border-purple-300'
-                      : 'bg-emerald-200 text-emerald-900 border border-emerald-300'
-                  }`}>
-                    {isUnregisteredTap 
-                      ? '⚠️ Unregistered Card Tapped on Sunmi' 
+                        ? 'bg-purple-200 text-purple-900 border border-purple-300'
+                        : 'bg-emerald-200 text-emerald-900 border border-emerald-300'
+                    }`}>
+                    {isUnregisteredTap
+                      ? '⚠️ Unregistered Card Tapped on Sunmi'
                       : (activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess)
-                      ? '👥 Mess Group Card'
-                      : (activeScannedCard.card_type === 'DUAL' || activeScannedCard.isDual)
-                      ? '💳 Dual-Wallet Card'
-                      : '👤 Personal Customer Card'}
+                        ? '👥 Mess Group Card'
+                        : (activeScannedCard.card_type === 'DUAL' || activeScannedCard.isDual)
+                          ? '💳 Dual-Wallet Card'
+                          : '👤 Personal Customer Card'}
                   </span>
                   <span className="font-mono text-xs font-bold text-slate-600 flex items-center gap-1.5">
                     UID: {activeScannedCard.tag_id}
-                    <button 
-                      onClick={() => handleCopyTag(activeScannedCard.tag_id)} 
+                    <button
+                      onClick={() => handleCopyTag(activeScannedCard.tag_id)}
                       className="hover:text-slate-900 transition"
                       title="Copy UID"
                     >
@@ -1000,11 +1044,11 @@ export default function NfcManager({
                 </div>
 
                 <h2 className="text-2xl font-black tracking-tight mt-1">
-                  {isUnregisteredTap 
-                    ? 'New Unassigned NFC Card' 
+                  {isUnregisteredTap
+                    ? 'New Unassigned NFC Card'
                     : (activeScannedCard.card_type === 'MESS' || activeScannedCard.isMess)
-                    ? (activeScannedCard.group_name || activeScannedCard.name)
-                    : activeScannedCard.name}
+                      ? (activeScannedCard.group_name || activeScannedCard.name)
+                      : activeScannedCard.name}
                 </h2>
 
                 {!isUnregisteredTap && (
@@ -1082,6 +1126,26 @@ export default function NfcManager({
                     >
                       <ExternalLink size={15} />
                       <span>View Khata Profile</span>
+                    </button>
+                  )}
+
+                  {activeScannedCard.card_type !== 'MESS' && !activeScannedCard.isMess && (
+                    <button
+                      onClick={() => {
+                        setBookBalanceCustomer({
+                          id: activeScannedCard.customer_id || activeScannedCard.id,
+                          name: activeScannedCard.name,
+                          balance: activeScannedCard.balance,
+                          phone: activeScannedCard.phone,
+                          cardUid: activeScannedCard.tag_id,
+                          cpr: activeScannedCard.cpr
+                        });
+                      }}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-2 cursor-pointer"
+                      title="Add previous physical paper book balance"
+                    >
+                      <BookOpen size={15} />
+                      <span>+ Book Balance</span>
                     </button>
                   )}
 
@@ -1187,11 +1251,10 @@ export default function NfcManager({
       <div className="flex border-b border-slate-200 gap-4 mt-2">
         <button
           onClick={() => setActiveTab('CARDS')}
-          className={`pb-3 px-3 font-bold text-sm flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'CARDS'
-              ? 'border-emerald-600 text-emerald-800'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+          className={`pb-3 px-3 font-bold text-sm flex items-center gap-2 border-b-2 transition cursor-pointer ${activeTab === 'CARDS'
+            ? 'border-emerald-600 text-emerald-800'
+            : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
         >
           <CreditCard size={18} />
           <span>NFC Cards Directory ({cards.length})</span>
@@ -1199,11 +1262,10 @@ export default function NfcManager({
 
         <button
           onClick={() => setActiveTab('MESS_GROUPS')}
-          className={`pb-3 px-3 font-bold text-sm flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'MESS_GROUPS'
-              ? 'border-indigo-600 text-indigo-800'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+          className={`pb-3 px-3 font-bold text-sm flex items-center gap-2 border-b-2 transition cursor-pointer ${activeTab === 'MESS_GROUPS'
+            ? 'border-indigo-600 text-indigo-800'
+            : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
         >
           <Users size={18} />
           <span>Mess & Camp Groups Roster ({messGroupsList.length})</span>
@@ -1229,41 +1291,36 @@ export default function NfcManager({
           <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl overflow-x-auto text-xs font-bold">
             <button
               onClick={() => setTypeFilter('ALL')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
-                typeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${typeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                }`}
             >
               All Cards ({cards.length})
             </button>
             <button
               onClick={() => setTypeFilter('PERSONAL')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
-                typeFilter === 'PERSONAL' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${typeFilter === 'PERSONAL' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                }`}
             >
               Personal ({stats.personalCards})
             </button>
             <button
               onClick={() => setTypeFilter('DUAL')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
-                typeFilter === 'DUAL' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${typeFilter === 'DUAL' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                }`}
             >
               Dual Wallet ({stats.dualCards || 0})
             </button>
             <button
               onClick={() => setTypeFilter('MESS')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
-                typeFilter === 'MESS' ? 'bg-white text-indigo-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${typeFilter === 'MESS' ? 'bg-white text-indigo-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                }`}
             >
               Mess Groups ({stats.messCards})
             </button>
             <button
               onClick={() => setTypeFilter('DEBTORS')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
-                typeFilter === 'DEBTORS' ? 'bg-white text-rose-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${typeFilter === 'DEBTORS' ? 'bg-white text-rose-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                }`}
             >
               Debtors Only
             </button>
@@ -1371,7 +1428,15 @@ export default function NfcManager({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenMessRosterModal(group)}
+                            className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 border border-amber-200"
+                            title="Add Previous Book Balance (Physical Ledger Debt)"
+                          >
+                            <BookOpen size={13} className="text-amber-600" />
+                            <span>+ Book Balance</span>
+                          </button>
                           <button
                             onClick={() => handleOpenMessRosterModal(group)}
                             className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded-lg transition cursor-pointer"
@@ -1427,14 +1492,30 @@ export default function NfcManager({
                           <p className="text-xs text-amber-600 italic">No workers assigned to this group yet.</p>
                         ) : (
                           <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                            {memberList.slice(0, 5).map((m: any) => (
-                              <div key={m.id} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50">
-                                <span className="font-medium text-slate-800 line-clamp-1">{m.name}</span>
-                                <span className={`text-[11px] font-bold ${Number(m.messShare ?? m.balance ?? 0) > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                                  {Number(m.messShare ?? m.balance ?? 0).toFixed(3)} BHD
-                                </span>
-                              </div>
-                            ))}
+                            {memberList.slice(0, 5).map((m: any) => {
+                              const memberEqShare = Number(m.equalSplitShare || (totalDebt / Math.max(1, memberList.length)));
+                              const messDebt = Number(m.messShare ?? m.balance ?? 0);
+                              return (
+                                <div key={m.id} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <div className="flex flex-col min-w-0 pr-2">
+                                    <span className="font-bold text-slate-800 line-clamp-1">{m.name}</span>
+                                    {Number(m.personalBalance || 0) > 0 && (
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        Private: {Number(m.personalBalance).toFixed(3)} BHD
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col items-end shrink-0">
+                                    <span className={`text-[11px] font-black ${messDebt > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                                      {messDebt.toFixed(3)} BHD
+                                    </span>
+                                    <span className="text-[9px] font-bold text-indigo-600">
+                                      Equal: {memberEqShare.toFixed(3)} BHD
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
                             {memberList.length > 5 && (
                               <p className="text-[10px] text-center text-slate-400 font-bold">
                                 + {memberList.length - 5} more workers
@@ -1575,13 +1656,12 @@ export default function NfcManager({
 
                         {/* Card Type Badge */}
                         <td className="px-5 py-4">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                            card.card_type === 'DUAL'
-                              ? 'bg-purple-50 text-purple-800 border-purple-200'
-                              : isPersonal 
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-                                : 'bg-indigo-50 text-indigo-800 border-indigo-200'
-                          }`}>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${card.card_type === 'DUAL'
+                            ? 'bg-purple-50 text-purple-800 border-purple-200'
+                            : isPersonal
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                            }`}>
                             {card.card_type === 'DUAL' ? 'Dual Wallet' : isPersonal ? 'Personal' : 'Mess Group'}
                           </span>
                         </td>
@@ -1598,7 +1678,7 @@ export default function NfcManager({
                             )}
                             <span>{card.name}</span>
                             {(() => {
-                              const linkedMesses = messGroupsList.filter(g => 
+                              const linkedMesses = messGroupsList.filter(g =>
                                 g.id === card.mess_id || (card.customer_id && (g.members || []).some((m: any) => m.id === card.customer_id))
                               );
                               if (linkedMesses.length > 0 && card.card_type !== 'MESS') {
@@ -1739,6 +1819,25 @@ export default function NfcManager({
                               </button>
                             )}
 
+                            {card.card_type !== 'MESS' && card.customer_id && (
+                              <button
+                                onClick={() => {
+                                  setBookBalanceCustomer({
+                                    id: card.customer_id,
+                                    name: card.name,
+                                    balance: card.balance,
+                                    phone: card.phone,
+                                    cardUid: card.tag_id,
+                                    cpr: card.cpr
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-amber-50 text-amber-700 rounded-lg transition"
+                                title="Add Previous Book Balance (Paper Ledger)"
+                              >
+                                <BookOpen size={16} />
+                              </button>
+                            )}
+
                             <button
                               onClick={() => {
                                 setAssignTagId(card.tag_id);
@@ -1805,7 +1904,7 @@ export default function NfcManager({
 
       {/* Card Enrollment / Assignment Modal */}
       {showAssignModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-3">
@@ -1835,11 +1934,10 @@ export default function NfcManager({
                   <button
                     type="button"
                     onClick={scanStatus === 'WAITING' ? cancelRemoteScan : triggerRemoteScan}
-                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 cursor-pointer ${
-                      scanStatus === 'WAITING'
-                        ? 'bg-amber-100 border-amber-300 text-amber-800 animate-pulse'
-                        : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
-                    }`}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 cursor-pointer ${scanStatus === 'WAITING'
+                      ? 'bg-amber-100 border-amber-300 text-amber-800 animate-pulse'
+                      : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                      }`}
                   >
                     <Radio size={13} className={scanStatus === 'WAITING' ? 'animate-ping' : ''} />
                     <span>{scanStatus === 'WAITING' ? 'Waiting for Tap...' : 'Scan via Sunmi'}</span>
@@ -1859,9 +1957,8 @@ export default function NfcManager({
                 <button
                   type="button"
                   onClick={() => setAssignType('PERSONAL')}
-                  className={`flex-1 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-2 ${
-                    assignType === 'PERSONAL' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-2 ${assignType === 'PERSONAL' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
                 >
                   <User size={15} />
                   <span>Personal Customer</span>
@@ -1869,9 +1966,8 @@ export default function NfcManager({
                 <button
                   type="button"
                   onClick={() => setAssignType('MESS')}
-                  className={`flex-1 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-2 ${
-                    assignType === 'MESS' ? 'bg-white text-indigo-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-2 ${assignType === 'MESS' ? 'bg-white text-indigo-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
                 >
                   <Users size={15} />
                   <span>Mess / Camp Group</span>
@@ -2003,19 +2099,17 @@ export default function NfcManager({
                                   return next;
                                 });
                               }}
-                              className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
-                                isEnrolled
-                                  ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
-                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
-                              }`}
+                              className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${isEnrolled
+                                ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                                }`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <div
-                                  className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
-                                    isEnrolled
-                                      ? 'bg-purple-600 border-purple-600 text-white'
-                                      : 'border-slate-300 bg-white'
-                                  }`}
+                                  className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${isEnrolled
+                                    ? 'bg-purple-600 border-purple-600 text-white'
+                                    : 'border-slate-300 bg-white'
+                                    }`}
                                 >
                                   {isEnrolled && <Check size={12} strokeWidth={3} />}
                                 </div>
@@ -2162,7 +2256,7 @@ export default function NfcManager({
 
       {/* Mess Group Roster & Members Management Modal */}
       {showMessRosterModal && selectedMessGroupForEdit && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4 shrink-0">
               <div className="flex items-center gap-3">
@@ -2211,11 +2305,10 @@ export default function NfcManager({
                   <button
                     type="button"
                     onClick={scanStatus === 'WAITING' ? cancelRemoteScan : triggerRemoteScan}
-                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 cursor-pointer ${
-                      scanStatus === 'WAITING'
-                        ? 'bg-amber-100 border-amber-300 text-amber-800 animate-pulse'
-                        : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
-                    }`}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 cursor-pointer ${scanStatus === 'WAITING'
+                      ? 'bg-amber-100 border-amber-300 text-amber-800 animate-pulse'
+                      : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                      }`}
                   >
                     <Radio size={13} className={scanStatus === 'WAITING' ? 'animate-ping' : ''} />
                     <span>{scanStatus === 'WAITING' ? 'Waiting for Tap...' : 'Scan via Sunmi'}</span>
@@ -2228,6 +2321,74 @@ export default function NfcManager({
                   onChange={(e) => setEditGroupTagId(e.target.value)}
                   className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+              </div>
+
+              {/* Previous Book Balance Migration (Both New and Existing Mess Groups) */}
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BookOpen size={16} className="text-amber-600" />
+                    <label className="block text-xs font-black uppercase tracking-wider text-amber-900">
+                      {selectedMessGroupForEdit.id === 'new' ? 'Previous Book Balance (Physical Ledger Debt)' : '+ Add Previous Book Balance (Physical Ledger Debt)'}
+                    </label>
+                  </div>
+                  <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-200">
+                    Paper Book Migration
+                  </span>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-xs font-black text-amber-700 select-none">
+                      BD
+                    </span>
+                    <input
+                      type="number"
+                      step="0.005"
+                      min="0"
+                      placeholder="0.000 (e.g. 45.600)"
+                      value={editGroupPreviousBalance}
+                      onChange={(e) => setEditGroupPreviousBalance(e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 bg-white border border-amber-300 rounded-xl text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-slate-400 font-mono"
+                    />
+                  </div>
+                  {selectedMessGroupForEdit.id !== 'new' && (
+                    <p className="text-[11px] text-amber-700 mt-1 font-medium">
+                      Leave at 0.000 if not adding debt. If entered, it will be split equally with zero fils drift across selected members.
+                    </p>
+                  )}
+                </div>
+
+                {parseFloat(editGroupPreviousBalance) > 0 && (
+                  <div className="space-y-2">
+                    {editGroupMembers.length > 0 ? (
+                      <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs flex items-center justify-between text-emerald-800 font-bold">
+                        <span>⚖️ Zero-Drift Split:</span>
+                        <span className="font-mono font-black text-emerald-900">
+                          BD {parseFloat(editGroupPreviousBalance).toFixed(3)} ÷ {editGroupMembers.length} = BD {(parseFloat(editGroupPreviousBalance) / editGroupMembers.length).toFixed(3)} / member
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-xl text-xs text-amber-900 font-bold flex items-center gap-1.5">
+                        <span>⚠️</span>
+                        <span>Please select at least 1 room member below to allocate this opening book balance.</span>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">
+                        Opening Balance Note / Reference (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Migration from paper book page 14"
+                        value={editGroupDescription}
+                        onChange={(e) => setEditGroupDescription(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Worker Members Selector */}
@@ -2349,6 +2510,20 @@ export default function NfcManager({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Customer Book Balance Modal */}
+      {bookBalanceCustomer && (
+        <AddCustomerBookBalanceModal
+          customer={bookBalanceCustomer}
+          apiBase={apiBase}
+          onClose={() => setBookBalanceCustomer(null)}
+          onSuccess={(updatedCustomer) => {
+            setBookBalanceCustomer(null);
+            loadCardsData();
+            showNotification('success', `Added book balance to ${updatedCustomer.name || bookBalanceCustomer.name}`);
+          }}
+        />
       )}
     </div>
   );

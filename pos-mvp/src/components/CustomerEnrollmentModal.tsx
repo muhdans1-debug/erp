@@ -6,8 +6,16 @@ export interface CustomerEnrollmentModalProps {
   onClose: () => void;
   customersList: Customer[];
   onSelectCustomer: (customer: Customer) => void;
-  onCreateCustomer: (name: string, cardUid?: string, previousBalance?: number) => void;
-  onBindCard: (customerId: string, cardUid: string) => void;
+  onCreateCustomer: (
+    name: string,
+    cardUid?: string,
+    previousBalance?: number,
+    cardDepositAmount?: number,
+    cardType?: string,
+    paydayDayOfMonth?: number,
+    depositPaymentMode?: 'DEFERRED_PAYDAY' | 'CASH_UPFRONT'
+  ) => void;
+  onBindCard: (customerId: string, cardUid: string, depositAmount?: number) => void;
   lastDetectedUid: string | null;
   bindingCustomerId: string | null;
   setBindingCustomerId: (id: string | null) => void;
@@ -30,6 +38,10 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
 }) => {
   const [newCustName, setNewCustName] = useState('');
   const [newCustPrevBalance, setNewCustPrevBalance] = useState('');
+  const [cardType, setCardType] = useState<'PHYSICAL_NFC' | 'DIGITAL_PASS'>('PHYSICAL_NFC');
+  const [depositAmount, setDepositAmount] = useState('3.000');
+  const [depositPaymentMode, setDepositPaymentMode] = useState<'DEFERRED_PAYDAY' | 'CASH_UPFRONT'>('DEFERRED_PAYDAY');
+  const [paydayDay, setPaydayDay] = useState('28');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Auto-listen to NFC taps while modal is active
@@ -43,7 +55,11 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
       }
     };
     window.addEventListener('sunmi-nfc-scan', handleNfc);
-    return () => window.removeEventListener('sunmi-nfc-scan', handleNfc);
+    window.addEventListener('sunmi-nfc-broadcast', handleNfc);
+    return () => {
+      window.removeEventListener('sunmi-nfc-scan', handleNfc);
+      window.removeEventListener('sunmi-nfc-broadcast', handleNfc);
+    };
   }, [isOpen, setNewCustCardUid]);
 
   if (!isOpen) return null;
@@ -51,9 +67,23 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
   const handleCreate = () => {
     if (!newCustName.trim()) return;
     const prevBal = parseFloat(newCustPrevBalance);
-    onCreateCustomer(newCustName.trim(), newCustCardUid, !isNaN(prevBal) && prevBal > 0 ? prevBal : 0);
+    const depAmt = cardType === 'DIGITAL_PASS' ? 0 : (parseFloat(depositAmount) || 0);
+    const pDay = parseInt(paydayDay) || 28;
+    onCreateCustomer(
+      newCustName.trim(),
+      cardType === 'DIGITAL_PASS' ? undefined : (newCustCardUid || undefined),
+      !isNaN(prevBal) && prevBal > 0 ? prevBal : 0,
+      depAmt,
+      cardType,
+      pDay,
+      depositPaymentMode
+    );
     setNewCustName('');
     setNewCustPrevBalance('');
+    setDepositAmount('3.000');
+    setDepositPaymentMode('DEFERRED_PAYDAY');
+    setCardType('PHYSICAL_NFC');
+    setPaydayDay('28');
   };
 
   return (
@@ -61,9 +91,7 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: 'rgba(15,23,42,0.65)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
+        backgroundColor: 'rgba(15,23,42,0.75)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -101,47 +129,232 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
         <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
           {/* Add New Customer Form */}
           <div style={{ marginBottom: '20px' }}>
-            {newCustCardUid ? (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '8px 12px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '16px' }}>💳</span>
-                  <div>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#065f46' }}>NFC Card Attached (Ready to Link)</div>
-                    <div style={{ fontSize: '13px', fontFamily: 'monospace', fontWeight: 'bold', color: '#047857' }}>{newCustCardUid}</div>
-                  </div>
+            {/* Card Type Selector */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setCardType('PHYSICAL_NFC');
+                  if (depositAmount === '0.000') setDepositAmount('3.000');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: cardType === 'PHYSICAL_NFC' ? '2px solid #2563eb' : '1px solid #d1d5db',
+                  backgroundColor: cardType === 'PHYSICAL_NFC' ? '#eff6ff' : '#ffffff',
+                  color: cardType === 'PHYSICAL_NFC' ? '#1e40af' : '#4b5563',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>💳 Physical NFC Card</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCardType('DIGITAL_PASS');
+                  setDepositAmount('0.000');
+                  setNewCustCardUid('');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: cardType === 'DIGITAL_PASS' ? '2px solid #059669' : '1px solid #d1d5db',
+                  backgroundColor: cardType === 'DIGITAL_PASS' ? '#ecfdf5' : '#ffffff',
+                  color: cardType === 'DIGITAL_PASS' ? '#065f46' : '#4b5563',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>📱 Free Digital Pass (0 BD)</span>
+              </button>
+            </div>
+
+            {/* Editable Deposit & Payday Selector */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                  Card Deposit (BHD - Custodial Trust):
+                </label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <span style={{ position: 'absolute', left: '10px', fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>BD</span>
+                  <input
+                    type="number"
+                    step="0.500"
+                    min="0"
+                    disabled={cardType === 'DIGITAL_PASS'}
+                    placeholder="3.000"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px 8px 32px',
+                      borderRadius: '8px',
+                      border: '1px solid #d1d5db',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      color: cardType === 'DIGITAL_PASS' ? '#94a3b8' : '#047857',
+                      backgroundColor: cardType === 'DIGITAL_PASS' ? '#f1f5f9' : '#ffffff'
+                    }}
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setNewCustCardUid('')}
-                  style={{ fontSize: '11px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-                >
-                  Clear Card
-                </button>
               </div>
-            ) : (
-              <div style={{ backgroundColor: '#eff6ff', border: '1px dashed #93c5fd', borderRadius: '8px', padding: '6px 12px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#1e40af' }}>
-                <span>📶</span>
-                <span><strong>NFC Ready:</strong> Tap card on terminal to auto-attach to this new customer</span>
+
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                  Salary Payday (Day of Month):
+                </label>
+                <select
+                  value={paydayDay}
+                  onChange={(e) => setPaydayDay(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    color: '#334155',
+                    backgroundColor: '#ffffff'
+                  }}
+                >
+                  <option value="25">25th of month</option>
+                  <option value="26">26th of month</option>
+                  <option value="27">27th of month</option>
+                  <option value="28">28th of month (Standard)</option>
+                  <option value="29">29th of month</option>
+                  <option value="30">30th of month</option>
+                  <option value="1">1st of month</option>
+                  <option value="5">5th of month</option>
+                  <option value="10">10th of month</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Deposit Payment Timing: Deferred Payday vs Cash Upfront */}
+            {cardType === 'PHYSICAL_NFC' && (
+              <div style={{ marginBottom: '10px', backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#334155' }}>
+                    Card Deposit Payment Mode:
+                  </label>
+                  <span style={{ fontSize: '10px', color: '#64748b', fontStyle: 'italic' }}>
+                    {depositPaymentMode === 'DEFERRED_PAYDAY' ? 'Billed on First Payday' : 'Paid at Counter'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setDepositPaymentMode('DEFERRED_PAYDAY')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: depositPaymentMode === 'DEFERRED_PAYDAY' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      backgroundColor: depositPaymentMode === 'DEFERRED_PAYDAY' ? '#eff6ff' : '#ffffff',
+                      color: depositPaymentMode === 'DEFERRED_PAYDAY' ? '#1e40af' : '#475569',
+                      fontWeight: 'bold',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>🗓️</span>
+                      <span>Charge to Tab (Pay on Payday)</span>
+                    </div>
+                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#64748b', marginTop: '2px', paddingLeft: '18px' }}>
+                      Adds BD {(parseFloat(depositAmount) || 3.000).toFixed(3)} to starting balance
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDepositPaymentMode('CASH_UPFRONT')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: depositPaymentMode === 'CASH_UPFRONT' ? '2px solid #059669' : '1px solid #cbd5e1',
+                      backgroundColor: depositPaymentMode === 'CASH_UPFRONT' ? '#ecfdf5' : '#ffffff',
+                      color: depositPaymentMode === 'CASH_UPFRONT' ? '#065f46' : '#475569',
+                      fontWeight: 'bold',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>💵</span>
+                      <span>Cash Paid Now at Counter</span>
+                    </div>
+                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#64748b', marginTop: '2px', paddingLeft: '18px' }}>
+                      Held in trust; tab starts at BD 0.000
+                    </div>
+                  </button>
+                </div>
               </div>
             )}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-              <input
-                type="text"
-                placeholder="Card UID (auto-filled on tap, or type manually)"
-                value={newCustCardUid}
-                onChange={(e) => setNewCustCardUid(e.target.value.toUpperCase())}
-                style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '13px', fontFamily: 'monospace' }}
-              />
-              {lastDetectedUid && newCustCardUid !== lastDetectedUid && (
-                <button
-                  type="button"
-                  onClick={() => setNewCustCardUid(lastDetectedUid)}
-                  style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                >
-                  Use Last Tap ({lastDetectedUid})
-                </button>
-              )}
-            </div>
+
+            {cardType === 'PHYSICAL_NFC' && (
+              <>
+                {newCustCardUid ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '8px 12px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>💳</span>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#065f46' }}>NFC Card Attached (Ready to Link)</div>
+                        <div style={{ fontSize: '13px', fontFamily: 'monospace', fontWeight: 'bold', color: '#047857' }}>{newCustCardUid}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setNewCustCardUid('')}
+                      style={{ fontSize: '11px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      Clear Card
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ backgroundColor: '#eff6ff', border: '1px dashed #93c5fd', borderRadius: '8px', padding: '6px 12px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#1e40af' }}>
+                    <span>📶</span>
+                    <span><strong>NFC Ready:</strong> Tap card on terminal to auto-attach to this new customer</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <input
+                    type="text"
+                    placeholder="Card UID (auto-filled on tap, or type manually)"
+                    value={newCustCardUid}
+                    onChange={(e) => setNewCustCardUid(e.target.value.toUpperCase())}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '13px', fontFamily: 'monospace' }}
+                  />
+                  {lastDetectedUid && newCustCardUid !== lastDetectedUid && (
+                    <button
+                      type="button"
+                      onClick={() => setNewCustCardUid(lastDetectedUid)}
+                      style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      Use Last Tap ({lastDetectedUid})
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
               <input
                 type="text"
@@ -177,6 +390,11 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                 Add Customer
               </button>
             </div>
+            {cardType === 'PHYSICAL_NFC' && depositPaymentMode === 'DEFERRED_PAYDAY' && (parseFloat(depositAmount) || 0) > 0 && (
+              <div style={{ fontSize: '11px', color: '#1e40af', backgroundColor: '#eff6ff', padding: '6px 10px', borderRadius: '6px', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
+                🗓️ <strong>Payday Deposit Note:</strong> Card deposit of BD {(parseFloat(depositAmount) || 3.000).toFixed(3)} will be charged to the customer's tab and settled on their first payday ({paydayDay}th).
+              </div>
+            )}
             {newCustPrevBalance && parseFloat(newCustPrevBalance) > 0 && (
               <div style={{ fontSize: '11px', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '4px 8px', borderRadius: '6px', border: '1px solid #fecaca', marginBottom: '8px' }}>
                 📖 <strong>Opening Balance:</strong> BD {parseFloat(newCustPrevBalance).toFixed(3)} will be posted immediately as an initial debit to this customer's Khata ledger.
@@ -254,8 +472,14 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                   <div style={{ fontWeight: '600', fontSize: '16px', color: '#111827' }}>{c.name}</div>
                   <div style={{ fontSize: '13px', color: '#6b7280' }}>
                     Card UID: <strong style={{ color: c.cardUid ? '#1d4ed8' : '#9ca3af' }}>{c.cardUid || c.nfcCardId || 'None'}</strong>
+                    {c.card_type === 'DIGITAL_PASS' && (
+                      <span style={{ marginLeft: '6px', fontSize: '11px', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold' }}>Digital Pass</span>
+                    )}
                   </div>
-                  <div style={{ fontSize: '13px', color: '#059669', fontWeight: 'bold' }}>
+                  <div style={{ fontSize: '12px', color: '#047857', marginTop: '2px' }}>
+                    Deposit: <strong>{Number(c.card_deposit_amount || 0) > 0 || c.card_deposit_status === 'HELD' ? `BD ${Number(c.card_deposit_amount ?? 3).toFixed(3)} Held` : (c.card_type === 'DIGITAL_PASS' ? '0 BD (Free Pass)' : 'None')}</strong>
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#dc2626', fontWeight: 'bold' }}>
                     Khata Balance: BD {Number(c.currentBalance ?? c.balance ?? 0).toFixed(3)}
                   </div>
                 </div>
@@ -282,7 +506,7 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
 
                   {lastDetectedUid && (
                     <button
-                      onClick={() => onBindCard(c.id, lastDetectedUid)}
+                      onClick={() => onBindCard(c.id, lastDetectedUid, parseFloat(depositAmount) || 3.000)}
                       style={{
                         backgroundColor: '#059669',
                         color: '#ffffff',
@@ -293,7 +517,7 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                         fontWeight: 'bold',
                         cursor: 'pointer',
                       }}
-                      title={`Bind ${lastDetectedUid} to ${c.name}`}
+                      title={`Bind ${lastDetectedUid} to ${c.name} (Deposit: BD ${depositAmount})`}
                     >
                       Bind Last Read ({lastDetectedUid})
                     </button>

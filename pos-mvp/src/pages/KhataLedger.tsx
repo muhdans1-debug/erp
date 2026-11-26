@@ -273,7 +273,7 @@ export default function KhataLedger({ apiBase = 'http://localhost:3000' }: Khata
       {statementCustomer && (
         <div
           onClick={() => setStatementCustomer(null)}
-          className="fixed inset-0 bg-slate-900/65 z-50 flex items-center justify-center p-6 backdrop-blur-xs"
+          className="fixed inset-0 bg-slate-900/65 z-50 flex items-center justify-center p-6 "
         >
           <div
             onClick={(e) => e.stopPropagation()}

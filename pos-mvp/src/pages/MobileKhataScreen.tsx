@@ -23,6 +23,7 @@ import { useCartStore, calculateCartTotals } from '../store/cartStore';
 import { useNfcReader } from '../hooks/useNfcReader';
 import { generateNextInvoiceNumber } from '../utils/nbrInvoice';
 import { printFullReceipt } from '../utils/printer';
+import { safeUUID } from '../utils/idUtils';
 import { saveSaleOffline, getOfflineSales, markOfflineSalesSynced, saveOfflineKhataSettlement, markOfflineKhataSettlementSynced } from '../utils/nativeDb';
 import { lookupProductFast, fetchProductByBarcode, getCachedCatalog, reindexCatalog } from '../services/localDb';
 import { playThankYouVoice, playNfcChime } from '../utils/sound';
@@ -680,7 +681,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
       return;
     }
     setIsSettling(true);
-    const settleId = crypto.randomUUID();
+    const settleId = safeUUID();
     const tempReceiptNo = `KH-${Date.now().toString().slice(-6)}`;
     const curBal = Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0);
     const newBal = Number(Math.max(0, curBal - amountNum).toFixed(3));

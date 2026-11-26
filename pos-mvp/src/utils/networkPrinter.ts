@@ -188,7 +188,7 @@ export const dispatchSunmiPrintJob = async (
  */
 export const testSunmiNetworkPrint = async (targetTerminal?: string): Promise<boolean> => {
   const result = await dispatchSunmiPrintJob({
-    shopName: 'ASKAR SUPERMARKET',
+    shopName: 'LAYALI SUPERMARKET',
     shopAddress: 'Askar, Kingdom of Bahrain',
     shopPhone: 'Tel: +973 1700 0000',
     vatNumber: '200012345678901',

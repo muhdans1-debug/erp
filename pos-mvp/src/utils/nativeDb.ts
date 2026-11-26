@@ -368,6 +368,9 @@ export const saveOfflineKhataSettlement = async (
     paymentMethod?: string;
     reference?: string;
     receiptNo?: string;
+    paymentTarget?: string;
+    target?: string;
+    messId?: string | null;
     timestamp?: string;
   },
   providedDb?: SQLiteDBConnection | null

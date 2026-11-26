@@ -46,7 +46,7 @@ export default function LogWastageModal({ onClose, onSuccess, apiBase: propApiBa
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         
         <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">

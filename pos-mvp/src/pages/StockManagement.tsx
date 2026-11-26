@@ -23,6 +23,7 @@ import {
   Edit
 } from 'lucide-react';
 import AddProductModal from '../components/AddProductModal';
+import { safeUUID } from '../utils/idUtils';
 import { CLOUD_GATEWAY_URL } from '../utils/apiConfig';
 import POReviewModal from '../components/POReviewModal';
 import LogWastageModal from '../components/LogWastageModal';
@@ -484,7 +485,7 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
         });
 
         products.push({
-          id: rowObj.id || rowObj.barcode || crypto.randomUUID(),
+          id: rowObj.id || rowObj.barcode || safeUUID(),
           name: rowObj.name || rowObj.product || rowObj.title || 'Product',
           purchasePrice: parseFloat(rowObj.purchaseprice || rowObj.costprice || rowObj.cost || '0'),
           sellingPrice: parseFloat(rowObj.sellingprice || rowObj.price || '0'),
@@ -1235,7 +1236,7 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
 
       {/* Threshold / Product Rules Edit Modal */}
       {editingProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95">
             <div className="flex justify-between items-start mb-4 border-b pb-3">
               <div>
@@ -1390,7 +1391,7 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
 
       {/* Distributor Edit / Create Modal */}
       {(editingDistributor || showAddDistModal) && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95">
             <div className="flex justify-between items-start mb-4 border-b pb-3">
               <div>
@@ -1502,7 +1503,7 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
 
       {/* Bulk CSV Import Modal */}
       {showCsvModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95">
             <div className="flex justify-between items-start mb-4 border-b pb-3">
               <div>
@@ -1607,7 +1608,7 @@ export default function StockManagement({ apiBase: propApiBase, onBackToPos, ini
 
       {/* Discard & Snooze Purchase Order Confirmation Modal */}
       {poToDiscard && (
-        <div className="fixed inset-0 z-70 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-70 bg-slate-900/60 flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95">
             <div className="flex justify-between items-start mb-4 border-b pb-3">
               <div>

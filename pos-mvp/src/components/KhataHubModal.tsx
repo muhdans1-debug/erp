@@ -1,16 +1,22 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, User, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, MessageCircle, ArrowUpDown, Check, ShoppingCart, CreditCard, Users, Scale } from 'lucide-react';
-import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { X, User, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, ShieldCheck, MessageCircle, ArrowUpDown, Check, ShoppingCart, CreditCard, Users, Scale, Bell, BookOpen } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
+import { printKhataStatement, printKhataPaymentReceipt, printCardDepositReceipt, printCardDepositRefundVoucher, printCashAdvanceReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
 import { playThankYouVoice } from '../utils/sound';
 import { CustomerDisplay } from '../plugins/CustomerDisplay';
 import { db } from '../db';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { getManagerPin, verifyManagerPinAsync } from '../utils/authUtils';
-import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
-import { saveOfflineKhataSettlement, markOfflineKhataSettlementSynced } from '../utils/nativeDb';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL, getResilientApiCandidates } from '../utils/apiConfig';
+import { saveOfflineKhataSettlement } from '../utils/nativeDb';
+import { calculateProportionalMessAllocation } from '../utils/khataAllocation';
+import { triggerTestTransactionNotification } from '../utils/pushNotification';
 import { MessGroupsHubView } from './MessGroupsHubView';
 import { PersonalStatementView } from './PersonalStatementView';
+import { DepositAndSalfahWizard } from './DepositAndSalfahWizard';
+import { AddCustomerBookBalanceModal } from './AddCustomerBookBalanceModal';
+import { safeUUID } from '../utils/idUtils';
 
 interface Customer {
   id: string;
@@ -54,6 +60,16 @@ interface Customer {
   mess_ids?: string[];
   isMultiMess?: boolean;
   hasMessGroup?: boolean;
+  card_type?: string;
+  card_deposit_amount?: number;
+  depositAmount?: number;
+  card_deposit_status?: string;
+  card_deposit_receipt_no?: string;
+  card_deposit_date?: string;
+  payday_day_of_month?: number;
+  cash_advance_balance?: number;
+  depositStatus?: string;
+  depositInCredit?: number;
 }
 
 interface MessMemberData {
@@ -94,18 +110,29 @@ interface KhataHubModalProps {
 
 export default function KhataHubModal({
   onClose,
-  apiBase = 'http://localhost:3000',
+  apiBase = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : 'http://localhost:3000',
   onCustomerUpdated,
   onSelectCustomerForCart,
   lastScannedCardUid,
   showToast
 }: KhataHubModalProps) {
   const [activeTab, setActiveTab] = useState<'SETTLE' | 'STATEMENT' | 'GROUPS' | 'NEW'>('SETTLE');
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardCustomer, setWizardCustomer] = useState<Customer | null>(null);
+  const [wizardInitialMode, setWizardInitialMode] = useState<'SELECT' | 'DEPOSIT_COLLECT' | 'DEPOSIT_REFUND' | 'SALFAH_DISPENSE' | 'SALFAH_REPAY'>('SELECT');
+  const [bookBalanceCustomer, setBookBalanceCustomer] = useState<Customer | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
   const [targetCustomerForStatement, setTargetCustomerForStatement] = useState<any | null>(null);
   const [targetMessGroupId, setTargetMessGroupId] = useState<string | null>(null);
   // Unified single-pipeline state using parent-provided NFC card UID (eliminates duplicate listener collision)
   const [scannedUid, setScannedUid] = useState<string | null>(lastScannedCardUid || null);
-  const lastDetectedUid = lastScannedCardUid || scannedUid;
+  // Fresh scanned UID inside modal takes precedence over older prop
+  const lastDetectedUid = scannedUid || lastScannedCardUid;
   const clearScan = useCallback(() => setScannedUid(null), []);
 
   useEffect(() => {
@@ -114,13 +141,15 @@ export default function KhataHubModal({
     }
   }, [lastScannedCardUid]);
 
-  // Live NFC listener directly in KhataHubModal: Any card tap switches to Central Payment immediately
+  // Live NFC listener directly in KhataHubModal:
+  // Card tap captures UID and updates scannedUid so the active tab handles it natively.
+  // NEVER forcibly redirect tabs on card tap!
   useEffect(() => {
     const handleSunmiNfc = (e: any) => {
       const uid = e?.detail?.tag_id || e?.detail?.nfcId || (typeof e?.detail === 'string' ? e.detail : '');
       if (uid) {
-        setScannedUid(uid.trim().toUpperCase());
-        setActiveTab('SETTLE');
+        const cleanUid = uid.trim().toUpperCase();
+        setScannedUid(cleanUid);
       }
     };
     window.addEventListener('sunmi-nfc-scan', handleSunmiNfc);
@@ -132,12 +161,26 @@ export default function KhataHubModal({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header & Tabs */}
         <div className="bg-slate-50 border-b">
           <div className="flex justify-between items-center p-4">
-            <h3 className="text-2xl font-bold text-slate-800">Khata Hub</h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-2xl font-bold text-slate-800">Khata Hub</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setWizardInitialMode('SELECT');
+                  setIsWizardOpen(true);
+                }}
+                className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Guided Deposit & Salfah Touch Wizard"
+              >
+                <Banknote size={15} />
+                <span>⚡ Touch Wizard</span>
+              </button>
+            </div>
             <button
               onClick={onClose}
               className="p-3 bg-slate-200 hover:bg-slate-300 rounded-full active:scale-90 transition-transform cursor-pointer"
@@ -247,9 +290,50 @@ export default function KhataHubModal({
                 setTargetMessGroupId(messId);
                 setActiveTab('GROUPS');
               }}
+              onOpenWizard={(cust, wMode) => {
+                setWizardCustomer(cust);
+                setWizardInitialMode(wMode);
+                setIsWizardOpen(true);
+              }}
+              onOpenBookBalance={(cust) => setBookBalanceCustomer(cust)}
+              refreshTrigger={refreshTrigger}
             />
           )}
         </div>
+
+        {/* GUIDED DEPOSIT & SALFAH TOUCH WIZARD */}
+        {isWizardOpen && (
+          <DepositAndSalfahWizard
+            isOpen={isWizardOpen}
+            onClose={() => {
+              setIsWizardOpen(false);
+              setWizardCustomer(null);
+            }}
+            initialCustomer={wizardCustomer || targetCustomerForStatement}
+            initialMode={wizardInitialMode}
+            onCustomerUpdated={() => {
+              setRefreshTrigger((prev) => prev + 1);
+              onCustomerUpdated?.();
+            }}
+            showToast={showToast}
+          />
+        )}
+
+        {/* GUIDED ADD BOOK BALANCE MODAL */}
+        {bookBalanceCustomer && (
+          <AddCustomerBookBalanceModal
+            customer={bookBalanceCustomer}
+            apiBase={apiBase}
+            onClose={() => setBookBalanceCustomer(null)}
+            onSuccess={(updatedCustomer) => {
+              setBookBalanceCustomer(null);
+              setRefreshTrigger((prev) => prev + 1);
+              onCustomerUpdated?.();
+              showToast?.(`Added book balance to ${updatedCustomer.name || bookBalanceCustomer.name}`, 'success');
+            }}
+            showToast={showToast}
+          />
+        )}
       </div>
     </div>
   );
@@ -328,7 +412,7 @@ export function broadcastKhataPayment(
     }
   } else {
     CustomerDisplay.updateDisplay?.({
-      text: `ASKAR SUPERMARKET\nWELCOME!`
+      text: `LAYALI SUPERMARKET\nWELCOME!`
     }).catch(() => { });
   }
 }
@@ -358,7 +442,10 @@ function SettleBalanceView({
   initialTargetCustomer,
   onClearTargetCustomer,
   onOpenStatementTab,
-  onOpenMessGroupTab
+  onOpenMessGroupTab,
+  onOpenWizard,
+  onOpenBookBalance,
+  refreshTrigger
 }: {
   apiBase: string;
   onCustomerUpdated?: () => void;
@@ -372,15 +459,253 @@ function SettleBalanceView({
   onClearTargetCustomer?: () => void;
   onOpenStatementTab?: (customer: Customer) => void;
   onOpenMessGroupTab?: (messId: string) => void;
+  onOpenWizard?: (customer: Customer, mode: 'SELECT' | 'DEPOSIT_COLLECT' | 'DEPOSIT_REFUND' | 'SALFAH_DISPENSE' | 'SALFAH_REPAY') => void;
+  onOpenBookBalance?: (customer: Customer) => void;
+  refreshTrigger?: number;
 }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [visibleCustomerCount, setVisibleCustomerCount] = useState(30);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [alertSetupCustomer, setAlertSetupCustomer] = useState<Customer | null>(null);
   const [payAmount, setPayAmount] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isNfcLoading, setIsNfcLoading] = useState(false);
-  const [paymentTarget, setPaymentTarget] = useState<'TOTAL' | 'PERSONAL' | 'MESS' | 'MESS_GROUP'>('TOTAL');
+  const [paymentTarget, setPaymentTarget] = useState<'TOTAL' | 'PERSONAL' | 'MESS' | 'MESS_GROUP' | 'DEPOSIT' | 'CASH_ADVANCE'>('TOTAL');
   const [selectedPaymentMessId, setSelectedPaymentMessId] = useState<string | null>(null);
+  const [paydayDueFilter, setPaydayDueFilter] = useState<boolean>(false);
+
+  // Helper actions for Card Deposit & Payday Cash Advance (Salfah)
+  const handleRefundDeposit = async (customer: Customer) => {
+    const totalBal = getTotalBal(customer);
+    if (totalBal > 0.001) {
+      const msg = `❌ Cannot refund deposit: ${customer.name} owes BD ${totalBal.toFixed(3)}. All grocery debt must be fully cleared (BD 0.000) before refunding deposit.`;
+      showToast ? showToast(msg, 'error') : alert(msg);
+      return;
+    }
+
+    const depAmt = Number(customer.card_deposit_amount || 3);
+    const confirmed = confirm(
+      `💸 REFUND CARD DEPOSIT\n\nAre you sure you want to refund BD ${depAmt.toFixed(3)} in CASH to ${customer.name}?\n\n• Physical NFC card must be returned to cashier.\n• Cash drawer will open automatically.\n• A refund voucher will print.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`${apiBase}/api/customers/${customer.id}/deposit/refund`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos'
+        },
+        body: JSON.stringify({ reason: 'Card returned by customer' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        kickCashDrawer().catch(() => {});
+        printCardDepositRefundVoucher({
+          receiptNo: data.voucherNo || `REF-${Date.now().toString().slice(-6)}`,
+          customerName: customer.name,
+          customerPhone: customer.phone,
+          customerCpr: customer.cpr,
+          cardUid: customer.cardUid,
+          refundAmount: depAmt,
+          cashierName: 'Cashier 1'
+        }).catch(() => {});
+
+        showToast ? showToast(`✅ BD ${depAmt.toFixed(3)} deposit refunded in cash!`, 'success') : alert(`✅ Deposit refunded!`);
+        const updated = {
+          ...customer,
+          card_deposit_amount: 0,
+          card_deposit_status: 'REFUNDED',
+          cardUid: null
+        };
+        setSelectedCustomer(updated);
+        setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        onCustomerUpdated?.();
+      } else {
+        showToast ? showToast(`❌ ${data.error || 'Failed to refund deposit'}`, 'error') : alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast ? showToast('❌ Error processing deposit refund', 'error') : alert('Error processing refund');
+    }
+  };
+
+  const handleCollectDeposit = async (customer: Customer) => {
+    const input = prompt(`Enter deposit amount in BHD to collect from ${customer.name}:`, '3.000');
+    if (!input) return;
+    const amount = parseFloat(input);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid deposit amount.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiBase}/api/customers/${customer.id}/deposit/collect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos'
+        },
+        body: JSON.stringify({
+          depositAmount: amount,
+          cardUid: customer.cardUid || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        kickCashDrawer().catch(() => {});
+        printCardDepositReceipt({
+          receiptNo: data.receiptNo || `DEP-${Date.now().toString().slice(-6)}`,
+          customerName: customer.name,
+          customerPhone: customer.phone,
+          customerCpr: customer.cpr,
+          cardUid: customer.cardUid,
+          depositAmount: amount,
+          cashierName: 'Cashier 1'
+        }).catch(() => {});
+
+        showToast ? showToast(`✅ BD ${amount.toFixed(3)} card deposit collected!`, 'success') : alert(`✅ Deposit collected!`);
+        const updated = {
+          ...customer,
+          card_deposit_amount: amount,
+          card_deposit_status: 'HELD',
+          card_deposit_receipt_no: data.receiptNo
+        };
+        setSelectedCustomer(updated);
+        setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        onCustomerUpdated?.();
+      } else {
+        showToast ? showToast(`❌ ${data.error || 'Failed to collect deposit'}`, 'error') : alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast ? showToast('❌ Error collecting deposit', 'error') : alert('Error collecting deposit');
+    }
+  };
+
+  const handleChargeDepositToCredit = async (customer: Customer) => {
+    const input = prompt(`Charge card deposit to credit tab for ${customer.name} (BHD):\n\n• Added to credit debt balance\n• Collected automatically when customer settles debt`, '3.000');
+    if (!input) return;
+    const amount = parseFloat(input);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid deposit amount.');
+      return;
+    }
+
+    try {
+      const candidates = getResilientApiCandidates();
+      let success = false;
+      let lastErrMsg = '';
+
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/api/customers/${customer.id}/update`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-pos-client': 'store-pos'
+            },
+            body: JSON.stringify({
+              depositAction: 'CHARGE_CREDIT',
+              depositAmount: amount
+            }),
+            signal: AbortSignal.timeout(4000)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && (data.success || data.customer)) {
+            success = true;
+            showToast ? showToast(`✅ BD ${amount.toFixed(3)} deposit charged to credit tab!`, 'success') : alert(`✅ Deposit charged to credit!`);
+            const newBal = Number(customer.currentBalance ?? customer.balance ?? 0) + amount;
+            const updated = {
+              ...customer,
+              balance: newBal,
+              currentBalance: newBal,
+              card_deposit_amount: amount,
+              card_deposit_status: 'IN_CREDIT',
+              card_deposit_receipt_no: data.customer?.card_deposit_receipt_no || `DEP-${Date.now().toString().slice(-6)}`
+            };
+            setSelectedCustomer(updated);
+            setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+            onCustomerUpdated?.();
+            break;
+          } else if (data.error) {
+            lastErrMsg = data.error;
+          }
+        } catch {}
+      }
+
+      if (!success) {
+        showToast ? showToast(`❌ ${lastErrMsg || 'Failed to charge deposit to credit'}`, 'error') : alert('Failed to charge deposit');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast ? showToast('❌ Error charging deposit', 'error') : alert('Error charging deposit');
+    }
+  };
+
+  const handleOpenCashAdvance = async (customer: Customer) => {
+    const input = prompt(
+      `💵 PAYDAY CASH ADVANCE (SALFAH)\n\nEnter cash amount in BHD to dispense to ${customer.name} from till:\n(Repayable on next payday: ${customer.payday_day_of_month || 28}th)`,
+      '10.000'
+    );
+    if (!input) return;
+    const amount = parseFloat(input);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid amount.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiBase}/api/customers/${customer.id}/cash-advance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos'
+        },
+        body: JSON.stringify({
+          amount,
+          notes: `Emergency salary advance due on ${customer.payday_day_of_month || 28}th`
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        kickCashDrawer().catch(() => {});
+        printCashAdvanceReceipt({
+          receiptNo: data.receiptNo || `SAL-${Date.now().toString().slice(-6)}`,
+          customerName: customer.name,
+          customerPhone: customer.phone,
+          customerCpr: customer.cpr,
+          advanceAmount: amount,
+          newAdvanceBalance: data.newAdvanceBalance ?? ((Number(customer.cash_advance_balance || 0) + amount)),
+          paydayDueDay: customer.payday_day_of_month || 28,
+          cashierName: 'Cashier 1'
+        }).catch(() => {});
+
+        showToast ? showToast(`✅ Dispensed BD ${amount.toFixed(3)} Salfah from till!`, 'success') : alert('✅ Cash advance dispensed!');
+        const updated = {
+          ...customer,
+          cash_advance_balance: data.newAdvanceBalance ?? ((Number(customer.cash_advance_balance || 0) + amount))
+        };
+        setSelectedCustomer(updated);
+        setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        onCustomerUpdated?.();
+      } else {
+        showToast ? showToast(`❌ ${data.error || 'Failed to issue cash advance'}`, 'error') : alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast ? showToast('❌ Error issuing cash advance', 'error') : alert('Error issuing cash advance');
+    }
+  };
 
   // Helpers for multi-tier balances
   const getBal = (c: any) => Number(c?.currentBalance ?? c?.balance ?? 0);
@@ -422,14 +747,56 @@ function SettleBalanceView({
     }
     return 0;
   };
+  const getDepositInfo = (c: any) => {
+    const amt = Number(c?.card_deposit_amount ?? c?.depositAmount ?? 0);
+    const status = c?.card_deposit_status ?? c?.depositStatus ?? 'NONE';
+    const isInCredit = status === 'IN_CREDIT' || status === 'DEFERRED_CREDIT' || status === 'DEFERRED_PAYDAY';
+    const isHeld = status === 'HELD' || status === 'PAID' || status === 'CUSTODIAL';
+    return {
+      amount: amt,
+      status,
+      isInCredit,
+      isHeld,
+      badgeText: isInCredit
+        ? `IN CREDIT (DUE): BD ${amt.toFixed(3)}`
+        : isHeld
+        ? `HELD IN TRUST: BD ${amt.toFixed(3)}`
+        : 'NO DEPOSIT',
+      shortStatusText: isInCredit
+        ? 'IN CREDIT (DUE)'
+        : isHeld
+        ? 'HELD IN TRUST'
+        : 'NO DEPOSIT',
+      textColorClass: isInCredit
+        ? 'text-rose-700'
+        : isHeld
+        ? 'text-emerald-700'
+        : 'text-slate-500',
+      badgeClass: isInCredit
+        ? 'bg-rose-50 border-rose-200 text-rose-700'
+        : isHeld
+        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+        : 'bg-slate-100 border-slate-200 text-slate-500'
+    };
+  };
+
   const getPersonalBal = (c: any) => {
     if (!c) return 0;
+    const depInCredit = (c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY' || c.depositStatus === 'IN_CREDIT')
+      ? Number(c.card_deposit_amount || c.depositAmount || 0)
+      : 0;
     if (c.personalBalance !== undefined && c.personalBalance !== null) {
-      return Math.max(0, Number(c.personalBalance));
+      const p = Number(c.personalBalance);
+      const cur = Number(c.currentBalance ?? c.balance ?? 0);
+      const mess = getMessBal(c);
+      if (Math.abs(p - cur) < 0.001 && depInCredit > 0) {
+        return Math.max(0, Number((cur - mess - depInCredit).toFixed(3)));
+      }
+      return Math.max(0, p);
     }
     const total = Number(c.currentBalance ?? c.balance ?? 0);
     const mess = getMessBal(c);
-    return Math.max(0, Number((total - mess).toFixed(3)));
+    return Math.max(0, Number((total - mess - depInCredit).toFixed(3)));
   };
   const getTotalBal = (c: any) => {
     if (!c) return 0;
@@ -438,7 +805,10 @@ function SettleBalanceView({
     }
     const pBal = getPersonalBal(c);
     const mBal = getMessBal(c);
-    return Number((pBal + mBal).toFixed(3));
+    const depInCredit = (c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY' || c.depositStatus === 'IN_CREDIT')
+      ? Number(c.card_deposit_amount || c.depositAmount || 0)
+      : 0;
+    return Number((pBal + mBal + depInCredit).toFixed(3));
   };
 
   // New State for Edit/Archive Modal
@@ -592,24 +962,39 @@ function SettleBalanceView({
   // Fetch active customers for the Khata Hub
   const fetchKhataCustomers = async () => {
     try {
+      // 0. Instant local SQLite warm hydration: Cashier sees customers in < 5ms without network waiting
+      try {
+        const localRes = await db.execute('SELECT * FROM Customer WHERE is_active = 1 OR is_active IS NULL');
+        if (localRes?.rows && Array.isArray(localRes.rows) && localRes.rows.length > 0) {
+          const warmList = localRes.rows.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone || '',
+            cpr: c.cpr || '',
+            cardUid: c.cardUid || c.nfcCardId || null,
+            currentBalance: Number(c.currentBalance ?? c.balance ?? 0),
+            balance: Number(c.currentBalance ?? c.balance ?? 0),
+            personalBalance: Number(c.personalBalance ?? c.balance ?? 0),
+            creditLimit: Number(c.creditLimit || 30.0),
+            isActive: true,
+            is_active: 1
+          }));
+          setCustomers((prev) => (prev.length === 0 ? warmList : prev));
+        }
+      } catch {}
+
       let data: any = null;
       const headers = {
         'x-pos-client': 'store-pos',
         'x-manager-pin': getManagerPin()
       };
-      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
-      const candidates = [
-        targetBase,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000',
-        DEFAULT_EDGE_API_URL
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+      const candidates = getResilientApiCandidates();
 
       for (const url of candidates) {
         try {
           const res = await fetch(`${url}/khata/ledger?sort=${sortParam}`, {
             headers,
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(2000)
           });
           if (res.ok) {
             const json = await res.json();
@@ -626,7 +1011,7 @@ function SettleBalanceView({
           try {
             const res2 = await fetch(`${url}/api/customers`, {
               headers,
-              signal: AbortSignal.timeout(4000)
+              signal: AbortSignal.timeout(2000)
             });
             if (res2.ok) {
               const json = await res2.json();
@@ -645,7 +1030,7 @@ function SettleBalanceView({
         try {
           const mRes = await fetch(`${url}/api/nfc/mess-groups`, {
             headers,
-            signal: AbortSignal.timeout(3000)
+            signal: AbortSignal.timeout(2000)
           });
           if (mRes.ok) {
             const mData = await mRes.json();
@@ -778,6 +1163,11 @@ function SettleBalanceView({
       const combined = [...normalized, ...normalizedGroups];
       if (combined.length > 0) {
         setCustomers(combined);
+        setSelectedCustomer((prev) => {
+          if (!prev) return null;
+          const fresh = combined.find((c) => c.id === prev.id);
+          return fresh || prev;
+        });
       }
     } catch (err) {
       console.error('Failed to load customers', err);
@@ -786,13 +1176,16 @@ function SettleBalanceView({
 
   useEffect(() => {
     fetchKhataCustomers();
-  }, [apiBase, sortParam]);
+  }, [apiBase, sortParam, refreshTrigger]);
 
   // 📡 Real-Time CRDT WebSocket Listener: Adjust customer balances live across all registers
   useEffect(() => {
     let ws: WebSocket | null = null;
     try {
-      const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'askar-master.local';
+      const wsHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '';
+      if (!wsHost || wsHost === 'localhost' || wsHost.includes('workers.dev') || wsHost.includes('pages.dev')) {
+        return; // Standalone / Cloud mode: skip local LAN WS
+      }
       ws = new WebSocket(`ws://${wsHost}:3000/ws`);
 
       ws.onmessage = (event) => {
@@ -878,11 +1271,7 @@ function SettleBalanceView({
   const loadStatement = async (customerId: string, forceMessMode: boolean = false) => {
     setIsLoadingStatement(true);
     let loaded = false;
-    const candidates = [
-      apiBase && !apiBase.includes('localhost') ? apiBase : null,
-      getApiBaseUrl(),
-      DEFAULT_EDGE_API_URL
-    ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+    const candidates = getResilientApiCandidates();
 
     for (const url of candidates) {
       try {
@@ -949,7 +1338,7 @@ function SettleBalanceView({
     if (!activeMessGroup) return;
     const memberCount = Math.max(1, activeMessGroup.members?.length || 1);
     const equalShare = (activeMessGroup.totalBalance / memberCount).toFixed(3);
-    let msg = `*ASKAR SUPERMARKET - MESS EXPENSE STATEMENT*\n`;
+    let msg = `*LAYALI SUPERMARKET - MESS EXPENSE STATEMENT*\n`;
     msg += `👥 Mess Group: ${activeMessGroup.group_name}\n`;
     msg += `📊 Total Camp Debt: BHD ${activeMessGroup.totalBalance.toFixed(3)}\n`;
     msg += `⚖️ Equal Share: BHD ${equalShare} / member\n\n`;
@@ -1022,7 +1411,7 @@ function SettleBalanceView({
         runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
       }));
       printKhataStatement({
-        shopName: "ASKAR STORE - MESS STATEMENT",
+        shopName: "LAYALI STORE - MESS STATEMENT",
         customerName: activeMessGroup.group_name,
         statement: formattedStatement,
         currentBalance: activeMessGroup.totalBalance,
@@ -1058,7 +1447,7 @@ function SettleBalanceView({
       runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
     }));
     printKhataStatement({
-      shopName: "ASKAR STORE - KHATA STATEMENT",
+      shopName: "LAYALI STORE - KHATA STATEMENT",
       customerName: selectedCustomer.name,
       customerPhone: selectedCustomer.phone,
       customerCpr: selectedCustomer.cpr,
@@ -1099,57 +1488,48 @@ function SettleBalanceView({
       return;
     }
 
-    // 2. Multi-Endpoint Candidate Fallback (PC Server LAN IP, Edge API, Localhost)
+    // 2. High-speed single lookup via authoritative candidate endpoint
+    const primaryBase = getApiBaseUrl() || DEFAULT_EDGE_API_URL;
     const candidates = [
-      apiBase && !apiBase.includes('localhost') ? apiBase : null,
-      getApiBaseUrl(),
-      'http://192.168.8.7:3000',
-      'http://localhost:3000',
-      DEFAULT_EDGE_API_URL
+      primaryBase,
+      primaryBase !== DEFAULT_EDGE_API_URL ? DEFAULT_EDGE_API_URL : ''
     ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
 
     for (const base of candidates) {
       try {
-        for (const testUid of [cleanUid, cleanNoColon]) {
-          for (const path of ['/api/khata/nfc', '/api/customers/nfc']) {
-            const res = await fetch(`${base}${path}/${encodeURIComponent(testUid)}`, {
-              headers: { 'x-manager-pin': getManagerPin() },
-              signal: AbortSignal.timeout(3000)
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.success && data.customer) {
-                const cust = data.customer;
-                cust.currentBalance = Number(cust.currentBalance ?? cust.balance ?? 0);
-                cust.balance = cust.currentBalance;
+        const res = await fetch(`${base}/api/customers/by-card/${encodeURIComponent(cleanNoColon)}`, {
+          headers: { 'x-manager-pin': getManagerPin(), 'x-pos-client': 'store-pos' },
+          signal: AbortSignal.timeout(2000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const cust = data.customer || data;
+          if (cust && (cust.id || cust.name)) {
+            cust.currentBalance = Number(cust.currentBalance ?? cust.balance ?? 0);
+            cust.balance = cust.currentBalance;
 
-                let nfcMessShare = Number(cust.messShare || 0);
-                if (nfcMessShare === 0 && (cust.hasMessGroup || cust.mess_id)) {
-                  nfcMessShare = Number(cust.messGroup?.equalSplitShare ?? cust.messes?.[0]?.equalSplitShare ?? 0);
-                  if (nfcMessShare === 0 && cust.messGroup?.totalBalance && cust.messGroup?.memberCount) {
-                    nfcMessShare = Number((cust.messGroup.totalBalance / cust.messGroup.memberCount).toFixed(3));
-                  }
-                }
-                cust.messShare = nfcMessShare;
-                cust.personalBalance = cust.personalBalance !== undefined && Number(cust.messShare || 0) > 0
-                  ? Number(cust.personalBalance)
-                  : Number(Math.max(0, cust.currentBalance - nfcMessShare).toFixed(3));
-                cust.messGroupTotal = Number(cust.messGroupTotal ?? cust.messGroup?.totalBalance ?? 0);
-                cust.messMemberCount = Number(cust.messMemberCount ?? cust.messGroup?.memberCount ?? 1);
+            const nfcMessShare = Number(cust.messShare ?? 0);
+            cust.messShare = nfcMessShare;
+            cust.personalBalance = cust.personalBalance !== undefined
+              ? Number(cust.personalBalance)
+              : Number(Math.max(0, cust.currentBalance - nfcMessShare).toFixed(3));
+            cust.messGroupTotal = Number(cust.messGroupTotal ?? cust.messGroup?.totalBalance ?? 0);
+            cust.messMemberCount = Number(cust.messMemberCount ?? cust.messGroup?.memberCount ?? 1);
 
-                setSelectedCustomer(cust);
-                setPaymentTarget('TOTAL');
-                const bal = getTotalBal(cust);
-                setPayAmount(bal > 0 ? bal.toFixed(3) : '');
-                setViewMode('PAY');
-                if (showToast) {
-                  showToast(`💳 Khata Card Recognized: ${cust.name}`, 'success');
-                }
-                setIsNfcLoading(false);
-                return;
-              }
+            setSelectedCustomer(cust);
+            setPaymentTarget('TOTAL');
+            const bal = getTotalBal(cust);
+            setPayAmount(bal > 0 ? bal.toFixed(3) : '');
+            setViewMode('PAY');
+            if (showToast) {
+              showToast(`💳 Khata Card Recognized: ${cust.name}`, 'success');
             }
+            setIsNfcLoading(false);
+            return;
           }
+        } else if (res.status === 404) {
+          // Card explicitly not registered on server: stop querying redundant endpoints
+          break;
         }
       } catch { }
     }
@@ -1239,17 +1619,35 @@ function SettleBalanceView({
     const targetMessId = isMessGroupPayment
       ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? (selectedCustomer.isMessGroup ? selectedCustomer.id : null)))
       : (paymentTarget === 'MESS'
-        ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? null))
-        : (paymentTarget === 'TOTAL' && oldPersonal <= 0 && oldMess > 0
-          ? (selectedPaymentMessId || selectedCustomer.mess_id || (selectedCustomer.messes?.[0]?.id ?? null))
+        ? (selectedPaymentMessId || (selectedCustomer.messes && selectedCustomer.messes.length === 1 ? selectedCustomer.messes[0].id : null))
+        : (paymentTarget === 'TOTAL' && oldPersonal <= 0 && oldMess > 0 && selectedCustomer.messes && selectedCustomer.messes.length === 1
+          ? (selectedPaymentMessId || selectedCustomer.messes[0].id)
           : null));
 
     let newPersonal = oldPersonal;
     let newMess = oldMess;
+    let newCashAdvance = Number(selectedCustomer.cash_advance_balance || 0);
+    const depInCredit = (selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.depositStatus === 'IN_CREDIT')
+      ? Number(selectedCustomer.card_deposit_amount || 0)
+      : 0;
+
+    let newDepositStatus = selectedCustomer.card_deposit_status || selectedCustomer.depositStatus || 'NONE';
     let newTotal = Math.max(0, oldTotal - amountNum);
     let updatedMesses = selectedCustomer.messes;
 
-    if (isMessGroupPayment) {
+    if (paymentTarget === 'CASH_ADVANCE') {
+      newCashAdvance = Math.max(0, Number((newCashAdvance - amountNum).toFixed(3)));
+      newTotal = oldTotal;
+    } else if (paymentTarget === 'DEPOSIT') {
+      // 1. Personal grocery tab is 100% UNTOUCHED
+      newPersonal = oldPersonal;
+      // 2. Mess shares are 100% UNTOUCHED
+      newMess = oldMess;
+      // 3. Deposit transitions from IN_CREDIT to HELD
+      newDepositStatus = 'HELD';
+      // 4. New Total reflects cleared deposit liability
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+    } else if (isMessGroupPayment) {
       // Paying the full communal room debt:
       // 1. The customer's personal tab is 100% UNTOUCHED
       newPersonal = oldPersonal;
@@ -1257,8 +1655,8 @@ function SettleBalanceView({
       const paidMess = selectedCustomer.messes?.find((m: any) => m.id === targetMessId);
       const paidShare = paidMess ? Number(paidMess.memberShare ?? paidMess.myShare ?? 0) : oldMess;
       newMess = Math.max(0, Number((oldMess - paidShare).toFixed(3)));
-      // 3. The customer's new account balance is strictly their untouched personal balance + remaining other mess shares!
-      newTotal = Number((newPersonal + newMess).toFixed(3));
+      // 3. The customer's new account balance is strictly their untouched personal balance + remaining other mess shares + deposit!
+      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
       if (Array.isArray(selectedCustomer.messes)) {
         updatedMesses = selectedCustomer.messes.map((m: any) => {
           if (m.id === targetMessId) {
@@ -1268,20 +1666,58 @@ function SettleBalanceView({
         });
       }
     } else if (paymentTarget === 'PERSONAL') {
-      newPersonal = Math.max(0, oldPersonal - amountNum);
-      newTotal = Number((newPersonal + newMess).toFixed(3));
+      newPersonal = Math.max(0, Number((oldPersonal - amountNum).toFixed(3)));
+      newMess = oldMess; // 100% untouched
+      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
     } else if (paymentTarget === 'MESS') {
-      newMess = Math.max(0, oldMess - amountNum);
-      newTotal = Number((newPersonal + newMess).toFixed(3));
-    } else {
-      // Total settlement: clears personal first if any, then mess share
-      if (amountNum >= oldPersonal && oldPersonal > 0) {
-        newPersonal = 0;
-        newMess = Math.max(0, oldMess - (amountNum - oldPersonal));
-      } else {
-        newPersonal = Math.max(0, oldPersonal - amountNum);
+      newPersonal = oldPersonal; // 100% untouched
+      newMess = Math.max(0, Number((oldMess - amountNum).toFixed(3)));
+      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
+      if (Array.isArray(selectedCustomer.messes)) {
+        if (targetMessId && targetMessId !== 'ALL_MESSES') {
+          updatedMesses = selectedCustomer.messes.map((m: any) => {
+            if (m.id === targetMessId) {
+              const curShare = Number(m.memberShare ?? m.myShare ?? 0);
+              const remainingShare = Math.max(0, Number((curShare - amountNum).toFixed(3)));
+              return { ...m, memberShare: remainingShare, myShare: remainingShare };
+            }
+            return m;
+          });
+        } else {
+          const propRes = calculateProportionalMessAllocation(amountNum, selectedCustomer.messes);
+          updatedMesses = selectedCustomer.messes.map((m: any) => {
+            const rem = propRes.remainingDebt[m.id] !== undefined ? propRes.remainingDebt[m.id] : Math.max(0, Number(m.memberShare ?? m.myShare ?? 0));
+            return { ...m, memberShare: rem, myShare: rem };
+          });
+          if (propRes.surplusToPersonal > 0) {
+            newPersonal = Number((newPersonal - propRes.surplusToPersonal).toFixed(3));
+          }
+        }
       }
-      newTotal = Number((newPersonal + newMess).toFixed(3));
+    } else {
+      // Total settlement: clears personal first, then mess share, then card deposit
+      let rem = amountNum;
+      if (rem >= oldPersonal && oldPersonal > 0) {
+        newPersonal = 0;
+        rem = Number((rem - oldPersonal).toFixed(3));
+      } else {
+        newPersonal = Math.max(0, Number((oldPersonal - rem).toFixed(3)));
+        rem = 0;
+      }
+      if (rem > 0 && oldMess > 0) {
+        if (rem >= oldMess) {
+          newMess = 0;
+          rem = Number((rem - oldMess).toFixed(3));
+        } else {
+          newMess = Math.max(0, Number((oldMess - rem).toFixed(3)));
+          rem = 0;
+        }
+      }
+      if (rem >= depInCredit && depInCredit > 0) {
+        newDepositStatus = 'HELD';
+      }
+      const remainingDep = newDepositStatus === 'HELD' ? 0 : depInCredit;
+      newTotal = Number((newPersonal + newMess + remainingDep).toFixed(3));
     }
 
     const tempReceiptNo = `KH-${Date.now().toString().slice(-6)}`;
@@ -1291,6 +1727,10 @@ function SettleBalanceView({
       balance: newTotal,
       personalBalance: newPersonal,
       messShare: newMess,
+      card_deposit_status: newDepositStatus,
+      depositStatus: newDepositStatus,
+      depositInCredit: newDepositStatus === 'HELD' ? 0 : depInCredit,
+      cash_advance_balance: newCashAdvance,
       messes: updatedMesses,
       messGroupTotal: isMessGroupPayment ? 0 : selectedCustomer.messGroupTotal,
       mess_group_total: isMessGroupPayment ? 0 : selectedCustomer.mess_group_total
@@ -1307,7 +1747,11 @@ function SettleBalanceView({
       ? `Full Mess Group Total (${activeMessName})`
       : (paymentTarget === 'PERSONAL'
         ? 'Personal Tab'
-        : (paymentTarget === 'MESS' ? `Mess Share (${activeMessName})` : 'Total Account'));
+        : (paymentTarget === 'MESS' 
+          ? `Mess Share (${activeMessName})` 
+          : (paymentTarget === 'DEPOSIT'
+            ? 'Card Security Deposit'
+            : (paymentTarget === 'CASH_ADVANCE' ? 'Payday Cash Advance' : 'Total Account'))));
 
     const msg = `✅ Received BD ${amountNum.toFixed(3)} for ${targetDesc} via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}! New Total: BD ${newTotal.toFixed(3)}`;
     showToast ? showToast(msg, 'success') : alert(msg);
@@ -1341,69 +1785,13 @@ function SettleBalanceView({
       console.warn('Sunmi receipt print skipped or errored:', printErr);
     });
 
-    // 6. Non-blocking asynchronous persistence: local SQLite & durable offline queue with background network sync
+    // 6. Resilient settlement persistence: try online sync first; fallback to durable offline queue on network failure
     (async () => {
-      const settleId = crypto.randomUUID();
-      try {
-        if (!isMessGroupPayment) {
-          await db.execute({
-            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, runningBalance, timestamp, mess_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [
-              settleId,
-              selectedCustomer.id,
-              -amountNum,
-              'PAYMENT',
-              `${targetDesc} Payment (${tempReceiptNo})`,
-              newTotal,
-              new Date().toISOString(),
-              targetMessId
-            ]
-          });
-          await db.execute({
-            sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
-            args: [newTotal, selectedCustomer.id]
-          });
-        } else if (oldMess > 0) {
-          // If paying full mess room and this customer had positive mess share, credit their individual share locally
-          await db.execute({
-            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, runningBalance, timestamp, mess_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [
-              settleId,
-              selectedCustomer.id,
-              -oldMess,
-              'PAYMENT',
-              `${targetDesc} Payment (${tempReceiptNo})`,
-              newTotal,
-              new Date().toISOString(),
-              targetMessId
-            ]
-          });
-          await db.execute({
-            sql: `UPDATE Customer SET balance = ? WHERE id = ?`,
-            args: [newTotal, selectedCustomer.id]
-          });
-        }
-      } catch (localDbErr) {
-        console.warn('Local ledger write notice:', localDbErr);
-      }
-
-      // Queue into durable offline settlement ledger (SQLite / LocalStorage)
-      try {
-        await saveOfflineKhataSettlement({
-          id: settleId,
-          customerId: selectedCustomer.id,
-          amount: amountNum,
-          paymentMethod: method,
-          receiptNo: tempReceiptNo,
-          reference: tempReceiptNo,
-          timestamp: new Date().toISOString()
-        });
-      } catch (queueErr) {
-        console.warn('Offline settlement queue write notice:', queueErr);
-      }
+      const settleId = safeUUID();
+      const sanitizedMessId = targetMessId && targetMessId !== 'ALL_MESSES' ? targetMessId : null;
 
       try {
-        const settleEndpointId = (isMessGroupPayment && targetMessId) ? targetMessId : selectedCustomer.id;
+        const settleEndpointId = (isMessGroupPayment && sanitizedMessId) ? sanitizedMessId : selectedCustomer.id;
         const res = await fetch(`${apiBase}/api/customers/${settleEndpointId}/settle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1413,23 +1801,40 @@ function SettleBalanceView({
             paymentMethod: method,
             paymentTarget,
             target: paymentTarget,
-            messId: targetMessId,
-            mess_id: targetMessId,
+            messId: sanitizedMessId,
+            mess_id: sanitizedMessId,
             reference: `${targetDesc} Payment (${tempReceiptNo})`
           }),
           signal: AbortSignal.timeout(3000)
         });
         if (res.ok) {
           const data = await res.json();
-          // Mark settlement synced in offline queue
-          await markOfflineKhataSettlementSynced(settleId);
           if (data?.receiptNo) {
             broadcastKhataPayment(updated, amountNum, true, method, data.receiptNo);
           }
           fetchKhataCustomers();
+          return;
         }
+        // If HTTP error (e.g. 500/503), throw to enter offline fallback
+        throw new Error(`HTTP ${res.status}`);
       } catch (cloudErr) {
-        console.warn('Cloud sync error for settlement:', cloudErr);
+        console.warn('Network settlement failed, queueing to durable offline storage:', cloudErr);
+        try {
+          await saveOfflineKhataSettlement({
+            id: settleId,
+            customerId: selectedCustomer.id,
+            amount: amountNum,
+            paymentMethod: method,
+            receiptNo: tempReceiptNo,
+            reference: `${targetDesc} Payment (${tempReceiptNo})`,
+            paymentTarget,
+            target: paymentTarget,
+            messId: sanitizedMessId,
+            timestamp: new Date().toISOString()
+          });
+        } catch (queueErr) {
+          console.warn('Offline settlement queue write notice:', queueErr);
+        }
       }
     })();
   };
@@ -1478,24 +1883,37 @@ function SettleBalanceView({
     }
   }, [search, customers, selectedCustomer]);
 
-  const filtered = customers.filter(c => {
-    if (messOnlyFilter && !c.mess_id && !c.messName && !c.mess_name) return false;
-    const s = (search || '').toLowerCase().trim();
-    if (!s) return true;
-    const sNoColon = s.replace(/[:\-]/g, '');
-    const cUid = String(c.cardUid || (c as any).nfcCardId || '').toLowerCase();
-    const cUidNoColon = cUid.replace(/[:\-]/g, '');
+  const filtered = useMemo(() => {
+    return customers.filter(c => {
+      if (messOnlyFilter && !c.mess_id && !c.messName && !c.mess_name) return false;
+      if (paydayDueFilter) {
+        const todayDay = new Date().getDate();
+        const pDay = Number(c.payday_day_of_month || 28);
+        const isNearPayday = Math.abs(todayDay - pDay) <= 2 || (todayDay >= 27 && pDay >= 28) || Number(c.cash_advance_balance || 0) > 0;
+        if (!isNearPayday) return false;
+      }
+      const s = (debouncedSearch || '').toLowerCase().trim();
+      if (!s) return true;
+      const sNoColon = s.replace(/[:\-]/g, '');
+      const cUid = String(c.cardUid || (c as any).nfcCardId || '').toLowerCase();
+      const cUidNoColon = cUid.replace(/[:\-]/g, '');
 
-    return (
-      (c.name && c.name.toLowerCase().includes(s)) ||
-      (c.phone && c.phone.includes(s)) ||
-      (c.cpr && c.cpr.toLowerCase().includes(s)) ||
-      (c.batchNo && c.batchNo.toLowerCase().includes(s)) ||
-      (cUid && (cUid.includes(s) || (sNoColon && cUidNoColon.includes(sNoColon)))) ||
-      (c.messName && c.messName.toLowerCase().includes(s)) ||
-      (c.mess_name && c.mess_name.toLowerCase().includes(s))
-    );
-  });
+      return (
+        (c.name && c.name.toLowerCase().includes(s)) ||
+        (c.phone && c.phone.includes(s)) ||
+        (c.cpr && c.cpr.toLowerCase().includes(s)) ||
+        (c.batchNo && c.batchNo.toLowerCase().includes(s)) ||
+        (cUid && (cUid.includes(s) || (sNoColon && cUidNoColon.includes(sNoColon)))) ||
+        (c.messName && c.messName.toLowerCase().includes(s)) ||
+        (c.mess_name && c.mess_name.toLowerCase().includes(s))
+      );
+    });
+  }, [customers, messOnlyFilter, paydayDueFilter, debouncedSearch]);
+
+  const displayedCustomers = useMemo(() => {
+    if (debouncedSearch.trim()) return filtered;
+    return filtered.slice(0, visibleCustomerCount);
+  }, [filtered, debouncedSearch, visibleCustomerCount]);
 
   // If a customer is found (either manually or via NFC), show the Payment / Statement Flip Screen
   if (selectedCustomer) {
@@ -1610,6 +2028,87 @@ function SettleBalanceView({
                     </span>
                   )}
                 </div>
+
+                {/* Deposit Status & Actions & Salfah Advance Button */}
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  {selectedCustomer.card_type === 'DIGITAL_PASS' ? (
+                    <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5">
+                      <span>📱</span>
+                      <span>Free Digital Pass (0 BD Deposit)</span>
+                    </span>
+                  ) : (selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit) ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs bg-rose-50 text-rose-700 border border-rose-300 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider flex items-center gap-1.5" title="Deposit charged to credit tab - collected when customer settles debt">
+                        <CreditCard size={14} className="text-rose-600" />
+                        <span>IN CREDIT (DUE): BD {Number(selectedCustomer.card_deposit_amount || 3).toFixed(3)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCollectDeposit(selectedCustomer)}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title="Collect Deposit in Cash Now at Counter"
+                      >
+                        <span>💵 Collect Cash</span>
+                      </button>
+                    </div>
+                  ) : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD') ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider flex items-center gap-1.5" title="Deposit held in custodial trust">
+                        <ShieldCheck size={14} className="text-emerald-600" />
+                        <span>HELD IN TRUST: BD {Number(selectedCustomer.card_deposit_amount ?? 3).toFixed(3)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_REFUND') : handleRefundDeposit(selectedCustomer)}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title="Refund Card Deposit in Cash upon card return (Customer must have 0 debt)"
+                      >
+                        <span>💸 Refund Deposit</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">
+                        NO DEPOSIT
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleChargeDepositToCredit(selectedCustomer)}
+                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title="Charge Card Deposit to Credit Tab (Due when customer settles debt)"
+                      >
+                        <CreditCard size={13} />
+                        <span>+ Charge to Credit</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_COLLECT') : handleCollectDeposit(selectedCustomer)}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title="Collect Card Deposit in Cash"
+                      >
+                        <ShieldCheck size={13} />
+                        <span>💵 Collect Cash</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Cash Advance (Salfah) */}
+                  <button
+                    type="button"
+                    onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'SALFAH_DISPENSE') : handleOpenCashAdvance(selectedCustomer)}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                    title="Dispense emergency payday cash advance (Salfah) from till"
+                  >
+                    <Banknote size={13} />
+                    <span>💵 Cash Advance (Salfah)</span>
+                  </button>
+
+                  {selectedCustomer.payday_day_of_month && (
+                    <span className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1">
+                      <span>📅 Payday: {selectedCustomer.payday_day_of_month}th</span>
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Direct Statement Switchers */}
@@ -1641,11 +2140,20 @@ function SettleBalanceView({
                     <span>👥 {selectedCustomer.messName || 'Mess'} Statement</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => onOpenBookBalance?.(selectedCustomer)}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  title="Add previous physical paper book balance to this customer"
+                >
+                  <BookOpen size={14} />
+                  <span>📖 + Book Balance</span>
+                </button>
               </div>
             </div>
 
             {/* Financial Breakdown Cards with Full Mess Room Visibility */}
-            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-${Math.min(6, 2 + (selectedCustomer.messes?.length || (selectedCustomer.mess_id ? 2 : 1)))} gap-2.5 pt-1`}>
+            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-${Math.min(6, 3 + (selectedCustomer.messes?.length || (selectedCustomer.mess_id ? 2 : 1)))} gap-2.5 pt-1`}>
               {/* Personal Tab */}
               <div
                 onClick={() => {
@@ -1663,10 +2171,50 @@ function SettleBalanceView({
                   <User size={14} className="text-emerald-600" />
                 </div>
                 <div className="text-2xl font-black text-slate-800 mt-1">
-                  BD {getPersonalBal(selectedCustomer).toFixed(3)}
+                  BD {Math.max(0, getPersonalBal(selectedCustomer)).toFixed(3)}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">Private purchases</div>
               </div>
+
+              {/* Card Security Deposit (Independent Entity) */}
+              {(() => {
+                const depInfo = getDepositInfo(selectedCustomer);
+                const isSelected = paymentTarget === 'DEPOSIT';
+                return (
+                  <div
+                    onClick={() => {
+                      setPaymentTarget('DEPOSIT');
+                      setSelectedPaymentMessId(null);
+                      const targetAmt = depInfo.status === 'IN_CREDIT' ? depInfo.amount : (depInfo.amount || 3.0);
+                      setPayAmount(targetAmt.toFixed(3));
+                    }}
+                    className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-rose-50 border-rose-500 ring-2 ring-rose-200 shadow-xs'
+                        : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="text-xs text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
+                      <span>Card Deposit (تأمين)</span>
+                      <ShieldCheck size={14} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
+                    </div>
+                    <div className={`text-2xl font-black mt-1 ${
+                      depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                    }`}>
+                      BD {depInfo.amount.toFixed(3)}
+                    </div>
+                    <div className="text-[11px] font-black uppercase tracking-wider mt-0.5">
+                      {depInfo.status === 'IN_CREDIT' ? (
+                        <span className="text-rose-700">IN CREDIT (DUE)</span>
+                      ) : depInfo.status === 'HELD' ? (
+                        <span className="text-emerald-700">HELD IN TRUST</span>
+                      ) : (
+                        <span className="text-slate-400">NO DEPOSIT</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* My Mess Share */}
               {(selectedCustomer.mess_id || selectedCustomer.hasMessGroup || selectedCustomer.isMessGroup) && (
@@ -1686,7 +2234,7 @@ function SettleBalanceView({
                     <Users size={14} className="text-indigo-600 shrink-0" />
                   </div>
                   <div className="text-2xl font-black text-indigo-700 mt-1">
-                    BD {getMessBal(selectedCustomer).toFixed(3)}
+                    BD {Math.max(0, getMessBal(selectedCustomer)).toFixed(3)}
                   </div>
                   <div className="text-[11px] text-indigo-800 font-bold mt-1 truncate">
                     {selectedCustomer.messes && selectedCustomer.messes.length > 1
@@ -1699,33 +2247,70 @@ function SettleBalanceView({
               {/* Full Mess Room Balances (Prominently displaying separate room debt for EACH enrolled mess) */}
               {selectedCustomer.messes && selectedCustomer.messes.length > 0 ? (
                 selectedCustomer.messes.map((m: any) => {
-                  const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
-                  const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
-                  const mShare = Number(m.memberShare ?? m.myShare ?? 0);
+                  const isFullMessSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                  const isRoomShareSelected = paymentTarget === 'MESS' && selectedPaymentMessId === m.id;
+                  const gTotal = Math.max(0, Number(m.groupTotal ?? m.totalBalance ?? 0));
+                  const mShare = Math.max(0, Number(m.memberShare ?? m.myShare ?? 0));
                   const mName = m.group_name || m.name || 'Room Mess';
                   return (
                     <div
                       key={m.id}
-                      onClick={() => {
-                        setPaymentTarget('MESS_GROUP');
-                        setSelectedPaymentMessId(m.id);
-                        setPayAmount(Math.max(0, gTotal).toFixed(3));
-                      }}
-                      className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${isSelected
-                        ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 shadow-xs'
-                        : 'bg-purple-50/40 border-purple-200 hover:border-purple-300'
+                      className={`p-3 rounded-xl border-2 transition-all flex flex-col justify-between ${
+                        isFullMessSelected || isRoomShareSelected
+                          ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 shadow-xs'
+                          : 'bg-purple-50/40 border-purple-200 hover:border-purple-300'
                         }`}
                     >
-                      <div className="text-xs text-purple-700 font-bold uppercase tracking-wider flex items-center justify-between">
-                        <span className="truncate" title={mName}>Full Mess: {mName}</span>
-                        <Users size={14} className="text-purple-600 shrink-0" />
+                      <div>
+                        <div className="text-xs text-purple-700 font-bold uppercase tracking-wider flex items-center justify-between">
+                          <span className="truncate" title={mName}>Full Mess: {mName}</span>
+                          <Users size={14} className="text-purple-600 shrink-0" />
+                        </div>
+                        <div className="text-2xl font-black text-purple-800 mt-1">
+                          BD {gTotal.toFixed(3)}
+                        </div>
+                        <div className="text-[11px] text-purple-700 font-bold mt-1 flex items-center justify-between">
+                          <span className="truncate">My Share: BD {mShare.toFixed(3)}</span>
+                          <span className="shrink-0">{m.memberCount || 2} members</span>
+                        </div>
                       </div>
-                      <div className="text-2xl font-black text-purple-800 mt-1">
-                        BD {gTotal.toFixed(3)}
-                      </div>
-                      <div className="text-[11px] text-purple-700 font-bold mt-1 flex items-center justify-between">
-                        <span className="truncate">My Share: BD {mShare.toFixed(3)}</span>
-                        <span className="shrink-0">{m.memberCount || 2} members</span>
+
+                      {/* Explicit Action Buttons for this specific room */}
+                      <div className="mt-2.5 pt-2 border-t border-purple-200/60 flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPaymentTarget('MESS');
+                            setSelectedPaymentMessId(m.id);
+                            setPayAmount(mShare.toFixed(3));
+                          }}
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                            isRoomShareSelected
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                          }`}
+                          title={`Pay only this customer's share (${mShare.toFixed(3)} BHD) in ${mName}`}
+                        >
+                          Pay Share (BD {mShare.toFixed(3)})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPaymentTarget('MESS_GROUP');
+                            setSelectedPaymentMessId(m.id);
+                            setPayAmount(gTotal.toFixed(3));
+                          }}
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                            isFullMessSelected
+                              ? 'bg-purple-700 text-white shadow-xs'
+                              : 'bg-purple-200 text-purple-900 hover:bg-purple-300'
+                          }`}
+                          title={`Pay entire room communal debt (${gTotal.toFixed(3)} BHD) in ${mName}`}
+                        >
+                          Pay Room (BD {gTotal.toFixed(3)})
+                        </button>
                       </div>
                     </div>
                   );
@@ -1747,7 +2332,7 @@ function SettleBalanceView({
                     <Users size={14} className="text-purple-600 shrink-0" />
                   </div>
                   <div className="text-2xl font-black text-purple-800 mt-1">
-                    BD {getMessGroupTotal(selectedCustomer).toFixed(3)}
+                    BD {Math.max(0, getMessGroupTotal(selectedCustomer)).toFixed(3)}
                   </div>
                   <div className="text-[11px] text-purple-700 font-bold mt-1 flex items-center justify-between">
                     <span className="truncate">👥 {selectedCustomer.messName || 'Room'}</span>
@@ -1773,10 +2358,51 @@ function SettleBalanceView({
                   <CreditCard size={14} className="text-red-500" />
                 </div>
                 <div className={`text-2xl font-black mt-1 ${getTotalBal(selectedCustomer) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  BD {getTotalBal(selectedCustomer).toFixed(3)}
+                  BD {Math.max(0, getTotalBal(selectedCustomer)).toFixed(3)}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">Personal + Mess share</div>
               </div>
+
+              {/* Payday Cash Advance (Salfah) */}
+              {Number(selectedCustomer.cash_advance_balance || 0) > 0 && (
+                <div
+                  onClick={() => {
+                    setPaymentTarget('CASH_ADVANCE');
+                    setSelectedPaymentMessId(null);
+                    setPayAmount(Number(selectedCustomer.cash_advance_balance).toFixed(3));
+                  }}
+                  className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${paymentTarget === 'CASH_ADVANCE'
+                    ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-200 shadow-xs'
+                    : 'bg-amber-50/40 border-amber-200 hover:border-amber-300'
+                    }`}
+                >
+                  <div className="text-xs text-amber-800 font-bold uppercase tracking-wider flex items-center justify-between">
+                    <span>Payday Cash Advance</span>
+                    <Banknote size={14} className="text-amber-600" />
+                  </div>
+                  <div className="text-2xl font-black text-amber-900 mt-1">
+                    BD {Number(selectedCustomer.cash_advance_balance).toFixed(3)}
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[11px] text-amber-800 font-medium">
+                      Due: Payday ({selectedCustomer.payday_day_of_month || 28}th)
+                    </span>
+                    {onOpenWizard && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenWizard(selectedCustomer, 'SALFAH_REPAY');
+                        }}
+                        className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-[10px] rounded-md transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                        title="Touch Settle Payday Cash Advance"
+                      >
+                        <span>⚡ Repay Salfah</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1822,9 +2448,10 @@ function SettleBalanceView({
                       type="button"
                       onClick={() => {
                         setPaymentTarget('MESS');
+                        setSelectedPaymentMessId(null);
                         setPayAmount(Math.max(0, getMessBal(selectedCustomer)).toFixed(3));
                       }}
-                      className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'MESS'
+                      className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'MESS' && !selectedPaymentMessId
                         ? 'bg-indigo-600 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900 bg-white/60'
                         }`}
@@ -1835,26 +2462,46 @@ function SettleBalanceView({
                   )}
                   {selectedCustomer.messes && selectedCustomer.messes.length > 1 ? (
                     selectedCustomer.messes.map((m: any) => {
-                      const isSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
-                      const gTotal = Number(m.groupTotal ?? m.totalBalance ?? 0);
+                      const isFullSelected = paymentTarget === 'MESS_GROUP' && selectedPaymentMessId === m.id;
+                      const isShareSelected = paymentTarget === 'MESS' && selectedPaymentMessId === m.id;
+                      const gTotal = Math.max(0, Number(m.groupTotal ?? m.totalBalance ?? 0));
+                      const mShare = Math.max(0, Number(m.memberShare ?? m.myShare ?? 0));
                       const mName = m.group_name || m.name || 'Room';
                       return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => {
-                            setPaymentTarget('MESS_GROUP');
-                            setSelectedPaymentMessId(m.id);
-                            setPayAmount(Math.max(0, gTotal).toFixed(3));
-                          }}
-                          className={`flex-1 min-w-[150px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${isSelected
-                            ? 'bg-purple-700 text-white shadow-xs'
-                            : 'text-purple-700 hover:text-purple-900 bg-purple-50 border border-purple-200'
-                            }`}
-                        >
-                          <Users size={14} />
-                          <span>👥 Pay Full [{mName}] (BD {gTotal.toFixed(3)})</span>
-                        </button>
+                        <div key={m.id} className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPaymentTarget('MESS');
+                              setSelectedPaymentMessId(m.id);
+                              setPayAmount(mShare.toFixed(3));
+                            }}
+                            className={`py-2 px-2.5 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1 ${isShareSelected
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'text-indigo-700 hover:text-indigo-900 bg-indigo-50 border border-indigo-200'
+                              }`}
+                            title={`Pay ${selectedCustomer.name}'s share (${mShare.toFixed(3)} BHD) in ${mName}`}
+                          >
+                            <Users size={13} />
+                            <span>Share [{mName}] (BD {mShare.toFixed(3)})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPaymentTarget('MESS_GROUP');
+                              setSelectedPaymentMessId(m.id);
+                              setPayAmount(gTotal.toFixed(3));
+                            }}
+                            className={`py-2 px-2.5 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1 ${isFullSelected
+                              ? 'bg-purple-700 text-white shadow-xs'
+                              : 'text-purple-700 hover:text-purple-900 bg-purple-50 border border-purple-200'
+                              }`}
+                            title={`Pay communal debt of whole room (${gTotal.toFixed(3)} BHD) in ${mName}`}
+                          >
+                            <Users size={13} />
+                            <span>👥 Full [{mName}] (BD {gTotal.toFixed(3)})</span>
+                          </button>
+                        </div>
                       );
                     })
                   ) : (selectedCustomer.mess_id || selectedCustomer.hasMessGroup || selectedCustomer.isMessGroup) ? (
@@ -1871,9 +2518,27 @@ function SettleBalanceView({
                         }`}
                     >
                       <Users size={14} />
-                      <span>👥 Pay Full Mess (BD {getMessGroupTotal(selectedCustomer).toFixed(3)})</span>
+                      <span>👥 Pay Full Mess (BD {Math.max(0, getMessGroupTotal(selectedCustomer)).toFixed(3)})</span>
                     </button>
                   ) : null}
+                  {/* Payday Cash Advance Option */}
+                  {Number(selectedCustomer.cash_advance_balance || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentTarget('CASH_ADVANCE');
+                        setSelectedPaymentMessId(null);
+                        setPayAmount(Number(selectedCustomer.cash_advance_balance).toFixed(3));
+                      }}
+                      className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-lg font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${paymentTarget === 'CASH_ADVANCE'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-amber-800 hover:text-amber-950 bg-amber-50 border border-amber-300'
+                        }`}
+                    >
+                      <Banknote size={14} />
+                      <span>Salfah (BD {Number(selectedCustomer.cash_advance_balance).toFixed(3)})</span>
+                    </button>
+                  )}
                 </div>
                 {paymentTarget === 'MESS_GROUP' && (
                   <div className="mt-2 bg-purple-50 border border-purple-200 text-purple-900 rounded-xl p-2.5 text-xs flex items-center gap-2">
@@ -1882,13 +2547,21 @@ function SettleBalanceView({
                       {(() => {
                         const activeMess = selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId);
                         const name = activeMess ? (activeMess.group_name || activeMess.name) : (selectedCustomer.messName || 'Room');
-                        const bal = activeMess ? Number(activeMess.groupTotal ?? 0) : getMessGroupTotal(selectedCustomer);
+                        const bal = Math.max(0, activeMess ? Number(activeMess.groupTotal ?? 0) : getMessGroupTotal(selectedCustomer));
                         return (
                           <>
-                            <strong>Full Mess Room Settlement ({name}):</strong> Clears collective room debt of <strong>BD {bal.toFixed(3)}</strong> for all members. <strong>Personal tab (BD {getPersonalBal(selectedCustomer).toFixed(3)}) will NOT be deducted or affected.</strong>
+                            <strong>Full Mess Room Settlement ({name}):</strong> Clears collective room debt of <strong>BD {bal.toFixed(3)}</strong> for all members. <strong>Personal tab (BD {Math.max(0, getPersonalBal(selectedCustomer)).toFixed(3)}) will NOT be deducted or affected.</strong>
                           </>
                         );
                       })()}
+                    </span>
+                  </div>
+                )}
+                {paymentTarget === 'CASH_ADVANCE' && (
+                  <div className="mt-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-2.5 text-xs flex items-center gap-2">
+                    <Banknote size={16} className="text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Payday Cash Advance (سلفة نقدية):</strong> Collecting cash repayment for emergency advance issued on credit. <strong>Grocery debt is untouched.</strong>
                     </span>
                   </div>
                 )}
@@ -1897,12 +2570,18 @@ function SettleBalanceView({
               {/* Dynamic Quick Fill Buttons based on active target */}
               {(() => {
                 const activeBal = paymentTarget === 'PERSONAL'
-                  ? getPersonalBal(selectedCustomer)
+                  ? Math.max(0, getPersonalBal(selectedCustomer))
                   : (paymentTarget === 'MESS'
-                    ? getMessBal(selectedCustomer)
+                    ? (selectedPaymentMessId
+                        ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.memberShare ?? getMessBal(selectedCustomer)))
+                        : Math.max(0, getMessBal(selectedCustomer)))
                     : (paymentTarget === 'MESS_GROUP'
-                      ? getMessGroupTotal(selectedCustomer)
-                      : getTotalBal(selectedCustomer)));
+                      ? (selectedPaymentMessId
+                          ? Math.max(0, Number(selectedCustomer.messes?.find((m: any) => m.id === selectedPaymentMessId)?.groupTotal ?? getMessGroupTotal(selectedCustomer)))
+                          : Math.max(0, getMessGroupTotal(selectedCustomer)))
+                      : (paymentTarget === 'CASH_ADVANCE'
+                          ? Math.max(0, Number(selectedCustomer.cash_advance_balance || 0))
+                          : Math.max(0, getTotalBal(selectedCustomer)))));
 
                 return activeBal > 0 ? (
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1921,6 +2600,15 @@ function SettleBalanceView({
                         className="px-3 py-1.5 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg cursor-pointer active:scale-95 transition-all"
                       >
                         50% (BD {(activeBal / 2).toFixed(3)})
+                      </button>
+                    )}
+                    {activeBal > 0.100 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount((activeBal / 4).toFixed(3))}
+                        className="px-3 py-1.5 text-xs font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        25% (1/4) (BD {(activeBal / 4).toFixed(3)})
                       </button>
                     )}
                     {activeBal >= 5 && (
@@ -1957,6 +2645,38 @@ function SettleBalanceView({
                     className="w-full text-3xl font-black p-4 bg-white border-2 border-slate-300 rounded-xl focus:border-emerald-500 outline-none transition-all placeholder:text-slate-300"
                     placeholder="0.000"
                   />
+                  {paymentTarget === 'MESS' && !selectedPaymentMessId && selectedCustomer.messes && selectedCustomer.messes.length > 1 && parseFloat(payAmount || '0') > 0 && (() => {
+                    const parsedAmt = parseFloat(payAmount || '0');
+                    const allocRes = calculateProportionalMessAllocation(parsedAmt, selectedCustomer.messes);
+                    return (
+                      <div className="mt-2.5 p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs flex flex-col gap-1.5 shadow-xs">
+                        <div className="flex items-center justify-between font-bold text-indigo-900">
+                          <span className="flex items-center gap-1.5">
+                            <Scale size={14} className="text-indigo-600" />
+                            <span>Smart Proportional Split:</span>
+                          </span>
+                          {allocRes.surplusToPersonal > 0 && (
+                            <span className="text-emerald-700 font-mono bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                              +BD {allocRes.surplusToPersonal.toFixed(3)} to Personal Advance
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-0.5">
+                          {selectedCustomer.messes.map((m: any) => {
+                            const alloc = allocRes.allocations[m.id] || 0;
+                            const rem = allocRes.remainingDebt[m.id] !== undefined ? allocRes.remainingDebt[m.id] : Math.max(0, Number(m.memberShare ?? m.myShare ?? 0));
+                            return (
+                              <span key={m.id} className="bg-white px-2.5 py-1 rounded-lg border border-indigo-200 text-indigo-800 font-mono flex items-center gap-1.5 shadow-2xs">
+                                <span className="font-sans font-bold text-slate-700">{m.group_name || m.name}:</span>
+                                <span className="font-black text-rose-600">-{alloc.toFixed(3)} BD</span>
+                                <span className="text-[10px] text-slate-400">➔ rem: {rem.toFixed(3)}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="flex gap-3 items-end">
                   <button
@@ -2059,7 +2779,7 @@ function SettleBalanceView({
 
                       <a
                         href={`https://wa.me/?text=${encodeURIComponent(
-                          `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
+                          `📋 *LAYALI SUPERMARKET - MESS EXPENSE SPLIT*\n` +
                           `🏢 *Mess Group:* ${activeMessGroup.group_name}\n` +
                           `💰 *Total Camp Balance:* BD ${activeMessGroup.totalBalance.toFixed(3)}\n` +
                           `👥 *Members:* ${activeMessGroup.members.length}\n` +
@@ -2071,7 +2791,7 @@ function SettleBalanceView({
                             return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
                           }).join('\n') +
                           `\n----------------------------------------\n` +
-                          `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
+                          `Please settle your equal share at Layali Supermarket counter or via BenefitPay Fawri+. Thank you!`
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -2272,7 +2992,7 @@ function SettleBalanceView({
                               {m.phone && (
                                 <a
                                   href={`https://wa.me/${m.phone.replace(/[^0-9]/g, '').length === 8 ? `973${m.phone.replace(/[^0-9]/g, '')}` : m.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                    `Hello ${m.name}, your equal split share of ${activeMessGroup.group_name} at Askar Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${activeMessGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
+                                    `Hello ${m.name}, your equal split share of ${activeMessGroup.group_name} at Layali Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${activeMessGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
                                   )}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
@@ -2494,7 +3214,7 @@ function SettleBalanceView({
 
               {/* Print Receipt Strip for @media print */}
               <div className="print-receipt hidden">
-                <h2 style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold' }}>ASKAR STORE</h2>
+                <h2 style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold' }}>LAYALI STORE</h2>
                 <h3 style={{ textAlign: 'center', fontSize: '12px' }}>KHATA STATEMENT</h3>
                 <p style={{ textAlign: 'center', fontSize: '10px' }}>================================</p>
                 <p>Customer: {selectedCustomer.name}</p>
@@ -2620,6 +3340,17 @@ function SettleBalanceView({
               <Users size={13} />
               <span>Mess Groups</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setPaydayDueFilter(!paydayDueFilter)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${paydayDueFilter
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              title="Filter customers near/on payday or with open cash advances"
+            >
+              <span>🚨 Payday / Salfah</span>
+            </button>
             <ArrowUpDown size={14} className="text-slate-500 ml-1" />
             <select
               value={sortParam}
@@ -2636,7 +3367,7 @@ function SettleBalanceView({
 
         {/* Scrollable Customer List */}
         <div className="flex-1 overflow-y-auto scroll-zone space-y-3 max-h-[380px] pr-1">
-          {filtered.map((customer) => {
+          {displayedCustomers.map((customer) => {
             const personalBal = getPersonalBal(customer);
             const messBal = getMessBal(customer);
             const messGroupTotal = getMessGroupTotal(customer);
@@ -2673,6 +3404,33 @@ function SettleBalanceView({
                         📞 {customer.phone}
                       </span>
                     )}
+                    {customer.card_type === 'DIGITAL_PASS' ? (
+                      <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-bold">
+                        📱 Digital Pass
+                      </span>
+                    ) : (customer.card_deposit_status === 'IN_CREDIT' || customer.card_deposit_status === 'DEFERRED_CREDIT' || customer.card_deposit_status === 'DEFERRED_PAYDAY' || customer.depositInCredit) ? (
+                      <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider" title="Deposit charged to credit tab - due when customer settles debt">
+                        IN CREDIT (DUE): BD {Number(customer.card_deposit_amount || 3).toFixed(3)}
+                      </span>
+                    ) : (Number(customer.card_deposit_amount || 0) > 0 || customer.card_deposit_status === 'HELD') ? (
+                      <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider" title="Deposit paid and held in custodial trust">
+                        HELD IN TRUST: BD {Number(customer.card_deposit_amount ?? 3).toFixed(3)}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider">
+                        NO DEPOSIT
+                      </span>
+                    )}
+                    {Number(customer.cash_advance_balance || 0) > 0 && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-md font-black">
+                        💵 Salfah: BD {Number(customer.cash_advance_balance).toFixed(3)}
+                      </span>
+                    )}
+                    {customer.payday_day_of_month && (
+                      <span className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded font-mono">
+                        📅 Pay: {customer.payday_day_of_month}th
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -2683,10 +3441,11 @@ function SettleBalanceView({
                           const d = customer.phone.replace(/[^0-9]/g, '');
                           return d.length === 8 ? `973${d}` : d;
                         })()}?text=${encodeURIComponent(
-                          `*ASKAR SUPERMARKET - ACCOUNT STATEMENT / كشف حساب أسواق عسكر*\n` +
+                          `*LAYALI SUPERMARKET - ACCOUNT STATEMENT / كشف حساب أسواق ليالي*\n` +
                           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                           `👤 *Customer / العميل:* ${customer.name}\n` +
                           `• *Personal Tab / الحساب الشخصي:* BD ${personalBal.toFixed(3)}\n` +
+                          ((customer.card_deposit_status === 'IN_CREDIT' || customer.card_deposit_status === 'DEFERRED_CREDIT' || customer.card_deposit_status === 'DEFERRED_PAYDAY' || customer.depositInCredit) ? `• *Card Deposit (Due) / تأمين البطاقة:* BD ${Number(customer.card_deposit_amount || 3).toFixed(3)}\n` : '') +
                           (hasMess ? `• *Mess Room (${messName}) / نصيب الميس:* BD ${messBal.toFixed(3)}\n` : '') +
                           `💰 *Total Due / المبلغ الإجمالي المستحق:* *BHD ${totalBal.toFixed(3)}*\n\n` +
                           `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
@@ -2696,7 +3455,7 @@ function SettleBalanceView({
                           `• Beneficiary Name: *layali sbi*\n` +
                           `• IBAN: *BH77SBIN02740045310001*\n` +
                           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                          `Thank you for shopping with Askar Supermarket! / شكراً لتسوقكم معنا!`
+                          `Thank you for shopping with Layali Supermarket! / شكراً لتسوقكم معنا!`
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -2707,6 +3466,18 @@ function SettleBalanceView({
                         <MessageCircle size={16} className="fill-emerald-600/20" />
                       </a>
                     )}
+                    {/* Setup Customer Phone Alerts & QR Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAlertSetupCustomer(customer);
+                      }}
+                      title="Setup Instant Alerts on Customer Phone (QR & WhatsApp)"
+                      className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-300 active:scale-90 transition-transform cursor-pointer shadow-2xs"
+                    >
+                      <Bell size={16} />
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -2722,7 +3493,7 @@ function SettleBalanceView({
                 </div>
 
                 {/* Middle Row: Balances Breakdown */}
-                <div className={`grid grid-cols-1 ${hasMess ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200`}>
+                <div className={`grid grid-cols-1 ${hasMess ? 'sm:grid-cols-5' : 'sm:grid-cols-3'} gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200`}>
                   {/* Personal Balance */}
                   <div className="bg-white p-2 rounded-lg border border-slate-200">
                     <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider flex items-center gap-1">
@@ -2733,6 +3504,33 @@ function SettleBalanceView({
                       BD {personalBal.toFixed(3)}
                     </div>
                   </div>
+
+                  {/* Card Security Deposit Column */}
+                  {(() => {
+                    const depInfo = getDepositInfo(customer);
+                    return (
+                      <div className="bg-white p-2 rounded-lg border border-slate-200">
+                        <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider flex items-center gap-1">
+                          <ShieldCheck size={12} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
+                          <span>Card Deposit (تأمين)</span>
+                        </div>
+                        <div className={`text-base font-black mt-0.5 ${
+                          depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                        }`}>
+                          BD {depInfo.amount.toFixed(3)}
+                        </div>
+                        <div className="text-[9px] font-black uppercase tracking-wider">
+                          {depInfo.status === 'IN_CREDIT' ? (
+                            <span className="text-rose-700">IN CREDIT (DUE)</span>
+                          ) : depInfo.status === 'HELD' ? (
+                            <span className="text-emerald-700">HELD IN TRUST</span>
+                          ) : (
+                            <span className="text-slate-400">NO DEPOSIT</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* My Mess Share */}
                   {hasMess && (
@@ -2797,6 +3595,20 @@ function SettleBalanceView({
                       <span>📄 Personal Statement</span>
                     </button>
 
+                    {/* Add Book Balance to Existing Member */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenBookBalance?.(customer);
+                      }}
+                      className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-800 font-bold text-xs rounded-lg transition-all border border-amber-200 flex items-center gap-1 cursor-pointer"
+                      title="Add previous physical paper notebook balance to this customer"
+                    >
+                      <BookOpen size={14} />
+                      <span>📖 + Book Bal</span>
+                    </button>
+
                     {/* Direct to Mess Group Statement */}
                     {hasMess && (
                       <button
@@ -2821,6 +3633,43 @@ function SettleBalanceView({
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Direct Quick Action: Cash Advance (Salfah) */}
+                    {onOpenWizard && !customer.isMessGroup && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenWizard(customer, 'SALFAH_DISPENSE');
+                        }}
+                        className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-700 font-bold text-xs rounded-lg transition-all border border-indigo-200 flex items-center gap-1 cursor-pointer"
+                        title={`Dispense Cash Advance (Salfah) to ${customer.name}`}
+                      >
+                        <Banknote size={13} />
+                        <span>💵 Salfah</span>
+                      </button>
+                    )}
+
+                    {/* Direct Quick Action: Cash Collect / Deposit */}
+                    {onOpenWizard && !customer.isMessGroup && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const mode = (Number(customer.card_deposit_amount || 0) > 0 || customer.card_deposit_status === 'HELD')
+                            ? 'DEPOSIT_REFUND'
+                            : 'DEPOSIT_COLLECT';
+                          onOpenWizard(customer, mode);
+                        }}
+                        className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold text-xs rounded-lg transition-all border border-blue-200 flex items-center gap-1 cursor-pointer"
+                        title={(Number(customer.card_deposit_amount || 0) > 0 || customer.card_deposit_status === 'HELD')
+                          ? `Refund BD ${Number(customer.card_deposit_amount || 3).toFixed(3)} deposit for ${customer.name}`
+                          : `Collect Card Deposit for ${customer.name}`}
+                      >
+                        <ShieldCheck size={13} />
+                        <span>{(Number(customer.card_deposit_amount || 0) > 0 || customer.card_deposit_status === 'HELD') ? '💸 Refund' : '🛡️ Deposit'}</span>
+                      </button>
+                    )}
+
                     {/* Link to active cart */}
                     {onSelectCustomerForCart && (
                       <button
@@ -2858,6 +3707,17 @@ function SettleBalanceView({
               </div>
             );
           })}
+          {!debouncedSearch.trim() && filtered.length > displayedCustomers.length && (
+            <div className="pt-2 pb-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setVisibleCustomerCount((prev) => prev + 30)}
+                className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 active:scale-95 text-slate-800 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-1.5"
+              >
+                <span>Show More Customers ({filtered.length - displayedCustomers.length} remaining)</span>
+              </button>
+            </div>
+          )}
           {filtered.length === 0 && (
             <div className="text-center text-slate-400 py-10 font-bold">
               No customers found{search ? ` for "${search}"` : ''}.
@@ -2875,6 +3735,88 @@ function SettleBalanceView({
           apiBase={apiBase}
           showToast={showToast}
         />
+      )}
+
+      {/* Customer Alert Onboarding & QR Setup Modal */}
+      {alertSetupCustomer && (
+        <div className="fixed inset-0 z-[999999] bg-slate-950/85 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-6 text-white shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-white">Customer Phone Alerts</h3>
+                  <p className="text-xs text-slate-300 font-medium">{alertSetupCustomer.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAlertSetupCustomer(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* QR Code Container */}
+            <div className="bg-white p-5 rounded-2xl flex flex-col items-center justify-center shadow-lg">
+              <QRCodeSVG
+                value={`http://192.168.8.7:3000/tab/${alertSetupCustomer.id}?auth=true`}
+                size={170}
+                level="H"
+              />
+              <p className="text-slate-900 font-extrabold text-xs mt-3 text-center">
+                Scan with Customer Phone Camera
+              </p>
+              <p className="text-slate-500 text-[10px] text-center mt-0.5">
+                Opens live statement & enables real-time transaction notifications
+              </p>
+            </div>
+
+            {/* Direct Actions */}
+            <div className="space-y-2 pt-1">
+              <a
+                href={`https://wa.me/${(() => {
+                  const d = (alertSetupCustomer.phone || '').replace(/[^0-9]/g, '');
+                  return d.length === 8 ? `973${d}` : d;
+                })()}?text=${encodeURIComponent(
+                  `*LAYALI SUPERMARKET / أسواق ليالي*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `👤 *Hello ${alertSetupCustomer.name},*\n` +
+                  `Tap this link to open your live account statement and receive instant transaction alerts on your phone whenever purchases or payments are made:\n\n` +
+                  `📲 *Open Account & Activate Alerts:*\n` +
+                  `http://192.168.8.7:3000/tab/${alertSetupCustomer.id}?auth=true\n\n` +
+                  `Thank you for shopping with us!`
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md"
+              >
+                <MessageCircle size={16} />
+                <span>Send Setup Link via WhatsApp</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerTestTransactionNotification({
+                    customerId: alertSetupCustomer.id,
+                    customerName: alertSetupCustomer.name,
+                    amount: 2.500,
+                    txType: 'SALE'
+                  });
+                  if (showToast) showToast(`🔔 Sent test alert to ${alertSetupCustomer.name}!`, 'success');
+                }}
+                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md cursor-pointer"
+              >
+                <Bell size={16} />
+                <span>Send Instant Test Alert to Customer Phone</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
@@ -2902,7 +3844,10 @@ function NewCustomerView({
     batchNo: '',
     previousBalance: '',
     description: '',
-    cardUid: lastScannedCardUid || ''
+    cardUid: lastScannedCardUid || '',
+    cardType: 'PHYSICAL_NFC' as 'PHYSICAL_NFC' | 'DIGITAL_PASS',
+    depositAmount: '3.000',
+    paydayDayOfMonth: '28'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [messGroupsList, setMessGroupsList] = useState<any[]>([]);
@@ -2914,13 +3859,7 @@ function NewCustomerView({
 
   useEffect(() => {
     const fetchMessGroups = async () => {
-      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
-      const candidates = [
-        targetBase,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000',
-        DEFAULT_EDGE_API_URL
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+      const candidates = getResilientApiCandidates();
 
       for (const base of candidates) {
         try {
@@ -2967,6 +3906,8 @@ function NewCustomerView({
     }
   };
 
+  const lastToastTimeRef = useRef<number>(0);
+
   // Live Sunmi NFC Tap Handler: Catches global broadcasts in addition to props
   useEffect(() => {
     const handleSunmiNfc = (e: any) => {
@@ -2974,12 +3915,20 @@ function NewCustomerView({
       if (uid) {
         const clean = uid.trim().toUpperCase();
         setFormData(prev => ({ ...prev, cardUid: clean }));
-        showToast?.(`💳 NFC Card Linked: ${clean}`, 'success');
+        const now = Date.now();
+        if (now - lastToastTimeRef.current > 600) {
+          lastToastTimeRef.current = now;
+          showToast?.(`💳 NFC Card Linked: ${clean}`, 'success');
+        }
         checkCard(clean);
       }
     };
     window.addEventListener('sunmi-nfc-scan', handleSunmiNfc);
-    return () => window.removeEventListener('sunmi-nfc-scan', handleSunmiNfc);
+    window.addEventListener('sunmi-nfc-broadcast', handleSunmiNfc);
+    return () => {
+      window.removeEventListener('sunmi-nfc-scan', handleSunmiNfc);
+      window.removeEventListener('sunmi-nfc-broadcast', handleSunmiNfc);
+    };
   }, []);
 
   // Live NFC Tap Handler: When an NFC card touches the SUNMI antenna
@@ -2987,7 +3936,11 @@ function NewCustomerView({
     if (scannedCardUid) {
       const uid = scannedCardUid.trim().toUpperCase();
       setFormData(prev => ({ ...prev, cardUid: uid }));
-      showToast?.(`💳 NFC Card Linked: ${uid}`, 'success');
+      const now = Date.now();
+      if (now - lastToastTimeRef.current > 600) {
+        lastToastTimeRef.current = now;
+        showToast?.(`💳 NFC Card Linked: ${uid}`, 'success');
+      }
       checkCard(uid);
       clearScan?.();
     }
@@ -3024,23 +3977,22 @@ function NewCustomerView({
     try {
       const payload = {
         ...formData,
+        card_type: formData.cardType,
+        card_deposit_amount: formData.cardType === 'DIGITAL_PASS' ? 0 : (parseFloat(formData.depositAmount) || 0),
+        payday_day_of_month: parseInt(formData.paydayDayOfMonth) || 28,
+        cardUid: formData.cardType === 'DIGITAL_PASS' ? '' : (formData.cardUid || null),
         mess_ids: selectedMessGroupIds,
         mess_id: selectedMessGroupIds[0] || null
       };
 
-      const headers = {
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'x-pos-client': 'store-pos',
-        'x-manager-pin': getManagerPin()
+        'x-pos-client': 'store-pos'
       };
+      const mgrPin = getManagerPin();
+      if (mgrPin) headers['x-manager-pin'] = mgrPin;
 
-      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
-      const candidates = [
-        targetBase,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000',
-        DEFAULT_EDGE_API_URL
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+      const candidates = getResilientApiCandidates();
 
       let created = false;
       let lastError = '';
@@ -3072,9 +4024,23 @@ function NewCustomerView({
       if (created) {
         const msg = `✅ Khata Party "${formData.name.trim()}" added successfully!`;
         showToast ? showToast(msg, 'success') : alert(msg);
+        setFormData({
+          name: '',
+          phone: '',
+          cpr: '',
+          batchNo: '',
+          previousBalance: '',
+          description: '',
+          cardUid: '',
+          cardType: 'PHYSICAL_NFC',
+          depositAmount: '3.000',
+          paydayDayOfMonth: '28'
+        });
+        setSelectedMessGroupIds([]);
+        setCardStatus({ status: 'idle' });
         onCustomerCreated?.();
       } else {
-        alert(lastError || 'Failed to create customer.');
+        showToast ? showToast(`❌ ${lastError || 'Failed to create customer.'}`, 'error') : alert(lastError || 'Failed to create customer.');
       }
     } catch (error) {
       console.error(error);
@@ -3192,93 +4158,197 @@ function NewCustomerView({
           )}
         </div>
 
-        {/* SECTION 3: NFC Linking */}
+        {/* SECTION 3: Card Type, Security Deposit & Payday */}
         <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-slate-700 font-bold">NFC Khata Card (Touch to Tap)</label>
-            <span className="text-[11px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
-              Antenna Active
-            </span>
+          <h4 className="flex items-center gap-2 text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">
+            <CreditCard size={18} /> Card Type, Deposit & Payday
+          </h4>
+
+          {/* Card Type Buttons */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <button
+              type="button"
+              onClick={() => {
+                setFormData(prev => ({
+                  ...prev,
+                  cardType: 'PHYSICAL_NFC',
+                  depositAmount: prev.depositAmount === '0.000' ? '3.000' : prev.depositAmount
+                }));
+              }}
+              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                formData.cardType === 'PHYSICAL_NFC'
+                  ? 'bg-blue-50 border-blue-500 text-blue-900 shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <span>💳 Physical NFC Card</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFormData(prev => ({
+                  ...prev,
+                  cardType: 'DIGITAL_PASS',
+                  depositAmount: '0.000',
+                  cardUid: ''
+                }));
+                setCardStatus({ status: 'idle' });
+              }}
+              className={`p-3 rounded-xl border-2 font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                formData.cardType === 'DIGITAL_PASS'
+                  ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <span>📱 Free Digital Pass (0 BD)</span>
+            </button>
           </div>
 
-          {/* Active Card Pill / Conflict Warning / Tap Indicator */}
-          {formData.cardUid ? (
-            <div className={`p-3.5 rounded-xl border mb-3 flex items-center justify-between ${cardStatus.status === 'conflict'
-              ? 'bg-rose-50 border-rose-300 text-rose-900'
-              : 'bg-emerald-50 border-emerald-300 text-emerald-950'
-              }`}>
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl">💳</span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-sm">{formData.cardUid}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${cardStatus.status === 'conflict' ? 'bg-rose-200 text-rose-800' : 'bg-emerald-200 text-emerald-800'
-                      }`}>
-                      {cardStatus.status === 'conflict' ? 'Already in Use' : 'Card Verified'}
-                    </span>
-                  </div>
-                  {cardStatus.message && (
-                    <p className={`text-xs mt-0.5 font-medium ${cardStatus.status === 'conflict' ? 'text-rose-700 font-bold' : 'text-emerald-700'
-                      }`}>
-                      {cardStatus.message}
-                    </p>
-                  )}
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-slate-700 font-bold mb-1">
+                Card Deposit (BHD - Custodial Trust)
+              </label>
+              <div className="relative flex items-center">
+                <span className="absolute left-3.5 font-bold text-slate-500 text-sm">BD</span>
+                <input
+                  type="number"
+                  step="0.500"
+                  min="0"
+                  disabled={formData.cardType === 'DIGITAL_PASS'}
+                  name="depositAmount"
+                  value={formData.depositAmount}
+                  onChange={handleChange}
+                  className={`w-full text-lg p-3 pl-12 border-2 rounded-lg outline-none font-bold font-mono transition-colors ${
+                    formData.cardType === 'DIGITAL_PASS'
+                      ? 'bg-slate-100 border-slate-200 text-slate-400'
+                      : 'bg-white border-slate-300 focus:border-blue-500 text-emerald-700'
+                  }`}
+                  placeholder="3.000"
+                />
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setFormData(prev => ({ ...prev, cardUid: '' }));
-                  setCardStatus({ status: 'idle' });
-                }}
-                className="text-xs font-bold text-slate-500 hover:text-rose-600 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg active:scale-95 cursor-pointer shadow-xs transition-colors"
-              >
-                Clear / Retap
-              </button>
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                {formData.cardType === 'DIGITAL_PASS'
+                  ? 'Digital passes require 0 BD deposit.'
+                  : 'Default 3.000 BD. 100% refundable upon card return in good condition.'}
+              </p>
             </div>
-          ) : (
-            <div className="p-3.5 mb-3 bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl flex items-center justify-between text-blue-900">
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl animate-bounce">📶</span>
-                <div>
-                  <p className="text-xs font-bold text-blue-900">Hold customer NFC card near SUNMI reader</p>
-                  <p className="text-[11px] text-blue-600">The UID will be automatically captured and verified instantly</p>
-                </div>
+
+            <div>
+              <label className="block text-slate-700 font-bold mb-1">
+                Salary Payday (Day of Month)
+              </label>
+              <select
+                name="paydayDayOfMonth"
+                value={formData.paydayDayOfMonth}
+                onChange={(e) => setFormData(prev => ({ ...prev, paydayDayOfMonth: e.target.value }))}
+                className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-bold text-slate-800 transition-colors cursor-pointer"
+              >
+                <option value="25">25th of month</option>
+                <option value="26">26th of month</option>
+                <option value="27">27th of month</option>
+                <option value="28">28th of month (Standard)</option>
+                <option value="29">29th of month</option>
+                <option value="30">30th of month</option>
+                <option value="1">1st of month</option>
+                <option value="5">5th of month</option>
+                <option value="10">10th of month</option>
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                For payday cash advances (Salfah) and debt collection alerts.
+              </p>
+            </div>
+          </div>
+
+          {formData.cardType === 'PHYSICAL_NFC' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-slate-700 font-bold">NFC Khata Card (Touch to Tap)</label>
+                <span className="text-[11px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
+                  Antenna Active
+                </span>
               </div>
-              <span className="text-[10px] font-black uppercase tracking-wider bg-blue-200/80 text-blue-800 px-2 py-1 rounded">
-                0ms Ready
-              </span>
+
+              {/* Active Card Pill / Conflict Warning / Tap Indicator */}
+              {formData.cardUid ? (
+                <div className={`p-3.5 rounded-xl border mb-3 flex items-center justify-between ${cardStatus.status === 'conflict'
+                  ? 'bg-rose-50 border-rose-300 text-rose-900'
+                  : 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                  }`}>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">💳</span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-sm">{formData.cardUid}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${cardStatus.status === 'conflict' ? 'bg-rose-200 text-rose-800' : 'bg-emerald-200 text-emerald-800'
+                          }`}>
+                          {cardStatus.status === 'conflict' ? 'Already in Use' : 'Card Verified'}
+                        </span>
+                      </div>
+                      {cardStatus.message && (
+                        <p className={`text-xs mt-0.5 font-medium ${cardStatus.status === 'conflict' ? 'text-rose-700 font-bold' : 'text-emerald-700'
+                          }`}>
+                          {cardStatus.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData(prev => ({ ...prev, cardUid: '' }));
+                      setCardStatus({ status: 'idle' });
+                    }}
+                    className="text-xs font-bold text-slate-500 hover:text-rose-600 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg active:scale-95 cursor-pointer shadow-xs transition-colors"
+                  >
+                    Clear / Retap
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3.5 mb-3 bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl flex items-center justify-between text-blue-900">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl animate-bounce">📶</span>
+                    <div>
+                      <p className="text-xs font-bold text-blue-900">Hold customer NFC card near SUNMI reader</p>
+                      <p className="text-[11px] text-blue-600">The UID will be automatically captured and verified instantly</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-blue-200/80 text-blue-800 px-2 py-1 rounded">
+                    0ms Ready
+                  </span>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  name="cardUid"
+                  value={formData.cardUid}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase();
+                    setFormData(prev => ({ ...prev, cardUid: val }));
+                    checkCard(val);
+                  }}
+                  className="flex-1 text-base p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono"
+                  placeholder="Or type card UID manually (e.g. 04:8A:21:5A)..."
+                />
+                {lastScannedCardUid && formData.cardUid !== lastScannedCardUid && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const uid = lastScannedCardUid.trim().toUpperCase();
+                      setFormData(prev => ({ ...prev, cardUid: uid }));
+                      checkCard(uid);
+                    }}
+                    className="px-4 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 text-xs"
+                  >
+                    <CheckCircle2 size={16} /> Link Last ({lastScannedCardUid})
+                  </button>
+                )}
+              </div>
             </div>
           )}
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              name="cardUid"
-              value={formData.cardUid}
-              onChange={(e) => {
-                const val = e.target.value.toUpperCase();
-                setFormData(prev => ({ ...prev, cardUid: val }));
-                checkCard(val);
-              }}
-              className="flex-1 text-base p-3 bg-white border-2 border-slate-300 rounded-lg outline-none focus:border-blue-500 font-mono"
-              placeholder="Or type card UID manually (e.g. 04:8A:21:5A)..."
-            />
-            {lastScannedCardUid && formData.cardUid !== lastScannedCardUid && (
-              <button
-                type="button"
-                onClick={() => {
-                  const uid = lastScannedCardUid.trim().toUpperCase();
-                  setFormData(prev => ({ ...prev, cardUid: uid }));
-                  checkCard(uid);
-                }}
-                className="px-4 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold rounded-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 text-xs"
-              >
-                <CheckCircle2 size={16} /> Link Last ({lastScannedCardUid})
-              </button>
-            )}
-          </div>
         </div>
 
         {/* SECTION 4: Multi-Mess / Camp Accounts */}
@@ -3310,19 +4380,17 @@ function NewCustomerView({
                         isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id]
                       );
                     }}
-                    className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
-                      isEnrolled
-                        ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
-                    }`}
+                    className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${isEnrolled
+                      ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                      }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <div
-                        className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
-                          isEnrolled
-                            ? 'bg-purple-600 border-purple-600 text-white'
-                            : 'border-slate-300 bg-white'
-                        }`}
+                        className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${isEnrolled
+                          ? 'bg-purple-600 border-purple-600 text-white'
+                          : 'border-slate-300 bg-white'
+                          }`}
                       >
                         {isEnrolled && <Check size={12} strokeWidth={3} />}
                       </div>
@@ -3391,6 +4459,74 @@ function KhataEditModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Security Deposit State for Existing Customer
+  const [depositAmount, setDepositAmount] = useState<string>(() => String(customer.card_deposit_amount || customer.depositAmount || 3.0));
+  const [depositStatus, setDepositStatus] = useState<string>(() => String(customer.card_deposit_status || 'NONE'));
+  const [isProcessingDeposit, setIsProcessingDeposit] = useState(false);
+
+  const handleChargeDepositAction = async (action: 'CHARGE_CREDIT' | 'COLLECT_CASH' | 'REFUND') => {
+    const amt = parseFloat(depositAmount) || 3.0;
+    if (action === 'REFUND') {
+      const curBal = Number(customer.currentBalance ?? customer.balance ?? 0);
+      if (curBal > 0) {
+        alert(`❌ Cannot refund deposit: ${customer.name} owes BD ${curBal.toFixed(3)}. All grocery debt must be BD 0.000 first.`);
+        return;
+      }
+      if (!confirm(`💸 Are you sure you want to refund BD ${amt.toFixed(3)} deposit in CASH to ${customer.name}?`)) return;
+    } else if (action === 'CHARGE_CREDIT') {
+      if (!confirm(`💳 Charge BD ${amt.toFixed(3)} card deposit to ${customer.name}'s credit tab?\n\n• Added to their outstanding debt\n• Collected automatically when customer settles credit debt`)) return;
+    } else if (action === 'COLLECT_CASH') {
+      if (!confirm(`💵 Collect BD ${amt.toFixed(3)} card deposit in CASH at counter from ${customer.name}?`)) return;
+    }
+
+    setIsProcessingDeposit(true);
+    try {
+      const candidates = getResilientApiCandidates();
+      let ok = false;
+      let errStr = '';
+
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/api/customers/${customer.id}/update`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-pos-client': 'store-pos'
+            },
+            body: JSON.stringify({
+              depositAction: action,
+              depositAmount: amt
+            }),
+            signal: AbortSignal.timeout(4000)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && (data.success || data.customer)) {
+            ok = true;
+            const updatedCust = data.customer || {
+              ...customer,
+              card_deposit_amount: action === 'REFUND' ? 0 : amt,
+              card_deposit_status: action === 'CHARGE_CREDIT' ? 'IN_CREDIT' : (action === 'COLLECT_CASH' ? 'HELD' : 'REFUNDED')
+            };
+            setDepositStatus(updatedCust.card_deposit_status);
+            showToast ? showToast(`✅ Deposit updated: ${action}`, 'success') : alert(`✅ Deposit updated!`);
+            onSaved(updatedCust);
+            break;
+          } else if (data.error) {
+            errStr = data.error;
+          }
+        } catch {}
+      }
+
+      if (!ok) {
+        alert(`Failed: ${errStr || 'Unable to update deposit'}`);
+      }
+    } catch (e: any) {
+      alert(`Error updating deposit: ${e.message}`);
+    } finally {
+      setIsProcessingDeposit(false);
+    }
+  };
+
   useEffect(() => {
     if (customer) {
       setName(customer.name || '');
@@ -3443,6 +4579,10 @@ function KhataEditModal({
       return;
     }
 
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     setIsSaving(true);
     try {
       const payload = {
@@ -3455,19 +4595,25 @@ function KhataEditModal({
         mess_id: selectedMessGroupIds[0] || null,
       };
 
-      const headers = {
+      // Optimistic local SQLite update so customer record updates instantly
+      try {
+        await db.execute({
+          sql: `UPDATE Customer SET name = ?, phone = ?, cpr = ?, batchNo = ?, credit_limit = ? WHERE id = ?`,
+          args: [name.trim(), phone.trim() || null, cpr.trim() || null, batchNo.trim() || null, parseFloat(creditLimit) || 30.0, customer.id]
+        });
+      } catch (sqlErr) {
+        console.warn('Local SQLite update non-blocking:', sqlErr);
+      }
+
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'x-pos-client': 'store-pos',
-        'x-manager-pin': getManagerPin()
+        'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
       };
+      const mgrPin = getManagerPin();
+      if (mgrPin) headers['x-manager-pin'] = mgrPin;
 
-      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
-      const candidates = [
-        targetBase,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000',
-        DEFAULT_EDGE_API_URL
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+      const candidates = getResilientApiCandidates();
 
       let saved = false;
       let lastError = '';
@@ -3563,13 +4709,7 @@ function KhataEditModal({
 
     setIsDeleting(true);
     try {
-      const targetBase = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : getApiBaseUrl();
-      const candidates = [
-        targetBase,
-        'http://192.168.8.7:3000',
-        'http://localhost:3000',
-        DEFAULT_EDGE_API_URL
-      ].filter((v, i, a): v is string => Boolean(v) && a.indexOf(v) === i);
+      const candidates = getResilientApiCandidates();
 
       let success = false;
       let lastErrMsg = '';
@@ -3635,211 +4775,376 @@ function KhataEditModal({
     }
   };
 
+  // Global Escape & Hardware Back key listeners
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in">
-      <div className="bg-slate-100 rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col">
-        {/* Header */}
-        <div className="bg-white px-6 py-5 border-b border-slate-200 flex justify-between items-center">
-          <div>
-            <h2 className="text-2xl font-black text-slate-800">Edit Khata Payer</h2>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">Account ID: {customer.id.slice(0, 14)}...</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-full active:scale-95 transition-transform cursor-pointer"
-          >
-            <X size={22} className="text-slate-600" />
-          </button>
-        </div>
-
-        {/* Inputs with large touch targets */}
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-slate-700 font-bold text-sm mb-1">Customer Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Ali Ahmed"
-              className="w-full text-xl p-4 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 font-bold transition-all"
-            />
-          </div>
-
-          <div>
-            <label className="block text-slate-700 font-bold text-sm mb-1">Phone Number</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="e.g. 39991234"
-              className="w-full text-xl p-4 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all font-mono"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-700 font-bold text-sm mb-1">CPR / ID</label>
-              <input
-                type="text"
-                value={cpr}
-                onChange={(e) => setCpr(e.target.value)}
-                placeholder="Bahrain CPR"
-                className="w-full text-base p-3.5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-700 font-bold text-sm mb-1">Batch / Area</label>
-              <input
-                type="text"
-                value={batchNo}
-                onChange={(e) => setBatchNo(e.target.value)}
-                placeholder="Zone / Batch"
-                className="w-full text-base p-3.5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-slate-700 font-bold text-sm mb-1">
-              Hard Credit Limit (BHD)
-            </label>
-            <input
-              type="number"
-              step="1.0"
-              value={creditLimit}
-              onChange={(e) => setCreditLimit(e.target.value)}
-              placeholder="e.g. 30.000"
-              className="w-full text-lg p-3 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 font-mono transition-all font-bold"
-            />
-            <p className="text-xs text-slate-400 mt-1">POS freezes credit sales when unpaid debt exceeds this limit without Manager PIN.</p>
-          </div>
-
-          {/* Balance Alert Box */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center shadow-2xs">
-            <div>
-              <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Current Account Balance</span>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {Number(customer.currentBalance ?? customer.balance ?? 0) > 0
-                  ? 'Must be zero balance to archive'
-                  : 'Zero balance: eligible for archiving'}
-              </p>
-            </div>
-            <div className={`text-2xl font-black ${Number(customer.currentBalance ?? customer.balance ?? 0) > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-              BD {Number(customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}
-            </div>
-          </div>
-
-          {/* Communal Mess Accounts Membership */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-slate-700 font-bold text-sm">
-                Communal Mess / Camp Accounts
-              </label>
-              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                {selectedMessGroupIds.length} enrolled
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Check all communal mess groups this customer belongs to. Multiple memberships are supported.
-            </p>
-
-            {messGroupsList.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No mess groups available.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-200 rounded-xl bg-white">
-                {messGroupsList.map((g) => {
-                  const isEnrolled = selectedMessGroupIds.includes(g.id);
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedMessGroupIds((prev) =>
-                          isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id]
-                        );
-                      }}
-                      className={`p-2 rounded-xl border text-left transition flex items-center justify-between gap-2 cursor-pointer ${
-                        isEnrolled
-                          ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-xs'
-                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div
-                          className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${
-                            isEnrolled
-                              ? 'bg-purple-600 border-purple-600 text-white'
-                              : 'border-slate-300 bg-white'
-                          }`}
-                        >
-                          {isEnrolled && <Check size={12} strokeWidth={3} />}
-                        </div>
-                        <div className="truncate">
-                          <div className="text-xs truncate">{g.group_name}</div>
-                          <div className="text-[10px] text-slate-400 font-normal">
-                            {g.memberCount || 0} members
-                          </div>
-                        </div>
-                      </div>
-                      <Users size={13} className={isEnrolled ? 'text-purple-600 shrink-0' : 'text-slate-300 shrink-0'} />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Action Buttons: Emerald for saving, Red for deleting with Massive Touch Targets */}
-          <div className="flex justify-between items-center gap-4 pt-3">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[60] flex flex-col justify-start sm:justify-center items-center bg-black/80 p-2 sm:p-4 overflow-y-auto animate-in fade-in"
+    >
+      <div className="bg-slate-100 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-3xl lg:max-w-4xl max-h-[96vh] sm:max-h-[92vh] overflow-hidden border border-slate-300 flex flex-col my-auto">
+        {/* Header - Fixed & Compact with Dual-Action (Back & Quick Save) for Sunmi Screens */}
+        <div className="bg-white px-3 sm:px-5 py-2.5 sm:py-3 border-b border-slate-200 flex justify-between items-center shrink-0 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
-              onClick={handleDeleteClick}
-              disabled={isDeleting}
-              className="flex-1 min-h-[64px] bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-black text-xl rounded-2xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              onClick={onClose}
+              className="px-2.5 py-1.5 sm:px-3 sm:py-2 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-xs sm:text-sm rounded-xl active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 border border-slate-200 shadow-2xs"
+              title="Close and return"
             >
-              <Trash2 size={24} />
-              {isDeleting ? 'Archiving...' : 'Delete'}
+              <ArrowLeft size={18} />
+              <span>Back</span>
             </button>
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-black text-slate-800 truncate">Edit Khata Customer</h2>
+              <p className="text-[10px] sm:text-xs text-slate-500 font-mono truncate">ID: {customer.id.slice(0, 16)}...</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Quick Save in Header: immediately reachable even when keyboard covers bottom */}
             <button
               type="button"
               onClick={handleSave}
               disabled={isSaving || !name.trim()}
-              className="flex-1 min-h-[64px] bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-black text-xl rounded-2xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-3.5 sm:px-4 py-1.5 sm:py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Save Changes"
             >
-              <Save size={24} />
-              {isSaving ? 'Saving...' : 'Save Changes'}
+              <Save size={16} />
+              <span>{isSaving ? 'Saving...' : 'Save'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 sm:p-2 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-600 rounded-xl active:scale-95 transition-transform cursor-pointer shrink-0 border border-slate-200"
+              title="Close"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
 
+        {/* Scrollable Form Body - 2-Column Responsive Landscape Grid */}
+        <div className="p-3 sm:p-5 overflow-y-auto flex-1 overscroll-contain">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">
+            {/* LEFT COLUMN: Customer Personal & Contact Info */}
+            <div className="space-y-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs">
+              <div className="border-b border-slate-100 pb-2">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+                  <User size={14} className="text-emerald-600" />
+                  Account Details
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold text-xs sm:text-sm mb-1">Customer Name *</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Ali Ahmed"
+                  className="w-full text-base p-2.5 sm:p-3 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 font-bold transition-all shadow-2xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold text-xs sm:text-sm mb-1">Phone Number</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="e.g. 39991234"
+                  className="w-full text-sm sm:text-base p-2.5 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all font-mono shadow-2xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-bold text-xs mb-1">CPR / ID</label>
+                  <input
+                    type="text"
+                    value={cpr}
+                    onChange={(e) => setCpr(e.target.value)}
+                    placeholder="Bahrain CPR"
+                    className="w-full text-xs sm:text-sm p-2 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all font-mono shadow-2xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold text-xs mb-1">Batch / Area</label>
+                  <input
+                    type="text"
+                    value={batchNo}
+                    onChange={(e) => setBatchNo(e.target.value)}
+                    placeholder="Zone / Batch"
+                    className="w-full text-xs sm:text-sm p-2 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold text-xs sm:text-sm mb-1">
+                  Hard Credit Limit (BHD)
+                </label>
+                <input
+                  type="number"
+                  step="1.0"
+                  value={creditLimit}
+                  onChange={(e) => setCreditLimit(e.target.value)}
+                  placeholder="e.g. 30.000"
+                  className="w-full text-sm sm:text-base p-2 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 font-mono transition-all font-bold shadow-2xs"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">POS freezes sales when debt exceeds limit without Manager PIN.</p>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: Financial Standing & Communal Mess */}
+            <div className="space-y-3">
+              {/* Balance Card */}
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 flex justify-between items-center shadow-2xs">
+                <div>
+                  <span className="text-[11px] text-slate-500 font-black uppercase tracking-wider block">Current Balance</span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {Number(customer.currentBalance ?? customer.balance ?? 0) > 0
+                      ? 'Must be zero balance to archive/delete'
+                      : 'Zero balance: eligible for archive'}
+                  </p>
+                </div>
+                <div className={`text-xl sm:text-2xl font-black ${Number(customer.currentBalance ?? customer.balance ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  BD {Number(customer.currentBalance ?? customer.balance ?? 0).toFixed(3)}
+                </div>
+              </div>
+
+              {/* Communal Mess Accounts Membership */}
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 space-y-2 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <label className="block text-slate-700 font-bold text-xs sm:text-sm flex items-center gap-1.5">
+                    <Users size={14} className="text-purple-600" />
+                    Communal Mess / Camp Accounts
+                  </label>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                    {selectedMessGroupIds.length} enrolled
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Select communal mess rooms this customer belongs to:
+                </p>
+
+                {messGroupsList.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-2">No mess groups available.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto p-1 border border-slate-200 rounded-xl bg-slate-50 overscroll-contain">
+                    {messGroupsList.map((g) => {
+                      const isEnrolled = selectedMessGroupIds.includes(g.id);
+                      return (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedMessGroupIds((prev) =>
+                              isEnrolled ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                            );
+                          }}
+                          className={`p-2 rounded-xl border text-left transition flex items-center justify-between gap-1.5 cursor-pointer ${isEnrolled
+                            ? 'bg-purple-50 border-purple-400 text-purple-950 font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/70 font-medium'
+                            }`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div
+                              className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border ${isEnrolled
+                                ? 'bg-purple-600 border-purple-600 text-white'
+                                : 'border-slate-300 bg-white'
+                                }`}
+                            >
+                              {isEnrolled && <Check size={12} strokeWidth={3} />}
+                            </div>
+                            <div className="truncate">
+                              <div className="text-xs truncate">{g.group_name}</div>
+                              <div className="text-[9px] text-slate-400 font-normal">
+                                {g.memberCount || 0} members
+                              </div>
+                            </div>
+                          </div>
+                          <Users size={12} className={isEnrolled ? 'text-purple-600 shrink-0' : 'text-slate-300 shrink-0'} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* NFC Card info if exists */}
+              {customer.cardUid && (
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Bound NFC Card:</span>
+                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    💳 {customer.cardUid}
+                  </span>
+                </div>
+              )}
+
+              {/* Security Deposit Management for Existing Customer */}
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <label className="block text-slate-800 font-bold text-xs sm:text-sm flex items-center gap-1.5">
+                    <ShieldCheck size={16} className="text-emerald-600" />
+                    <span>Security Deposit Management</span>
+                  </label>
+                  {depositStatus === 'IN_CREDIT' || depositStatus === 'DEFERRED_CREDIT' || depositStatus === 'DEFERRED_PAYDAY' ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-300">
+                      IN CREDIT (DUE)
+                    </span>
+                  ) : depositStatus === 'HELD' ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-300">
+                      HELD IN TRUST
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200">
+                      NO DEPOSIT
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-slate-600 font-bold text-xs mb-1">Deposit Amount (BHD)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    disabled={isProcessingDeposit}
+                    className="w-full text-sm p-2 bg-slate-50 focus:bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-emerald-500 font-mono font-bold"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Standard physical NFC card deposit is BD 3.000.</p>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isProcessingDeposit || depositStatus === 'HELD'}
+                    onClick={() => handleChargeDepositAction('CHARGE_CREDIT')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer transition active:scale-95 ${
+                      depositStatus === 'IN_CREDIT'
+                        ? 'bg-amber-100 border-amber-400 text-amber-950 font-black'
+                        : 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900'
+                    }`}
+                    title="Charge deposit to customer credit tab. Collected when customer pays credit debt."
+                  >
+                    <div className="flex items-center gap-1">
+                      <CreditCard size={14} className="text-amber-700" />
+                      <span>+ Charge to Credit</span>
+                    </div>
+                    <span className="text-[9px] text-amber-700 font-normal">Collect with tab payment</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isProcessingDeposit || depositStatus === 'HELD'}
+                    onClick={() => handleChargeDepositAction('COLLECT_CASH')}
+                    className="p-2.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer transition active:scale-95"
+                    title="Collect deposit in cash now at counter"
+                  >
+                    <div className="flex items-center gap-1">
+                      <ShieldCheck size={14} className="text-emerald-700" />
+                      <span>💵 Collect in Cash</span>
+                    </div>
+                    <span className="text-[9px] text-emerald-700 font-normal">Paid upfront at till</span>
+                  </button>
+                </div>
+
+                {depositStatus === 'HELD' && (
+                  <button
+                    type="button"
+                    disabled={isProcessingDeposit || Number(customer.currentBalance ?? customer.balance ?? 0) > 0}
+                    onClick={() => handleChargeDepositAction('REFUND')}
+                    className={`w-full p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                      Number(customer.currentBalance ?? customer.balance ?? 0) > 0
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                        : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-300 cursor-pointer active:scale-95'
+                    }`}
+                    title={Number(customer.currentBalance ?? customer.balance ?? 0) > 0 ? 'Debt must be 0 to refund deposit' : 'Refund deposit upon card return'}
+                  >
+                    <span>💸 Refund Deposit in Cash</span>
+                    {Number(customer.currentBalance ?? customer.balance ?? 0) > 0 && (
+                      <span className="text-[9px] text-slate-400 font-normal">(Blocked: owes debt)</span>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sticky Action Footer: ALWAYS visible & accessible with 3 clear choices */}
+        <div className="p-2.5 sm:p-3 bg-white border-t border-slate-200 flex items-center gap-2 sm:gap-3 shrink-0 shadow-lg">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 min-h-[44px] sm:min-h-[48px] bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-xs sm:text-sm rounded-xl active:scale-95 transition-all border border-slate-300 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+          >
+            <ArrowLeft size={16} />
+            <span>Cancel</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={isDeleting}
+            className="flex-1 min-h-[44px] sm:min-h-[48px] bg-red-50 hover:bg-red-100 active:bg-red-200 border border-red-300 text-red-700 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <Trash2 size={16} />
+            <span>{isDeleting ? 'Archiving...' : 'Delete'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving || !name.trim()}
+            className="flex-[2] min-h-[44px] sm:min-h-[48px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-sm sm:text-base rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <Save size={18} />
+            <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+          </button>
+        </div>
+
         {/* Manager PIN Modal (9999) */}
         {showPinModal && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="bg-white rounded-3xl p-6 shadow-2xl w-full max-w-sm text-center border-2 border-red-300">
-              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-inner">
-                <ShieldAlert size={32} />
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-2 sm:p-4 animate-in fade-in">
+            <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-2xl w-full max-w-sm text-center border-2 border-red-300 max-h-[95dvh] overflow-y-auto">
+              <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-2.5 shadow-inner">
+                <ShieldAlert size={28} />
               </div>
-              <h4 className="text-2xl font-black text-slate-800">Manager Authorization</h4>
-              <p className="text-xs text-slate-500 mt-1 mb-4 leading-relaxed">
+              <h4 className="text-xl sm:text-2xl font-black text-slate-800">Manager Authorization</h4>
+              <p className="text-xs text-slate-500 mt-1 mb-3 leading-relaxed">
                 Enter Manager PIN to authorize soft-deletion of account <strong>{customer.name}</strong>.
               </p>
 
               {/* Masked PIN Display */}
-              <div className="bg-slate-100 border-2 border-slate-300 rounded-2xl py-3 px-4 mb-3">
-                <div className="text-3xl font-mono tracking-widest text-slate-900 font-black min-h-[36px] flex items-center justify-center">
-                  {pinInput ? '•'.repeat(pinInput.length) : <span className="text-slate-400 text-lg tracking-normal">Enter 4-Digit PIN</span>}
+              <div className="bg-slate-100 border-2 border-slate-300 rounded-2xl py-2.5 px-4 mb-2.5">
+                <div className="text-2xl sm:text-3xl font-mono tracking-widest text-slate-900 font-black min-h-[32px] flex items-center justify-center">
+                  {pinInput ? '•'.repeat(pinInput.length) : <span className="text-slate-400 text-base tracking-normal">Enter 4-Digit PIN</span>}
                 </div>
               </div>
 
               {pinError && (
-                <div className="text-red-600 text-sm font-bold mb-3 bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
+                <div className="text-red-600 text-xs sm:text-sm font-bold mb-2.5 bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
                   {pinError}
                 </div>
               )}
 
               {/* SUNMI Touch Numpad (Massive Touch Targets) */}
-              <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="grid grid-cols-3 gap-2 mb-3">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => (
                   <button
                     key={k}
@@ -3860,7 +5165,7 @@ function KhataEditModal({
                         }
                       }
                     }}
-                    className="h-14 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-black text-xl rounded-xl active:scale-90 transition-transform cursor-pointer border border-slate-200 shadow-2xs"
+                    className="h-12 sm:h-14 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-black text-xl rounded-xl active:scale-90 transition-transform cursor-pointer border border-slate-200 shadow-2xs"
                   >
                     {k}
                   </button>
@@ -3871,14 +5176,14 @@ function KhataEditModal({
                 <button
                   type="button"
                   onClick={() => setShowPinModal(false)}
-                  className="flex-1 py-3.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-base"
+                  className="flex-1 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-sm sm:text-base min-h-[48px]"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={() => handleVerifyPinAndDelete(pinInput)}
-                  className="flex-1 py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-base shadow-sm"
+                  className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-sm sm:text-base shadow-sm min-h-[48px]"
                 >
                   Confirm Delete
                 </button>

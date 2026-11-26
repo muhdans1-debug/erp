@@ -20,8 +20,8 @@ export const mapDbRowToProduct = (row: any): Product => {
     };
   }
 
-  const price = Number(row.price ?? row.sellingPrice ?? 0);
-  const unitCost = Number(row.unitCost ?? row.purchasePrice ?? 0);
+  const price = Math.max(0, Math.abs(Number(row.price ?? row.sellingPrice ?? 0)));
+  const unitCost = Math.max(0, Math.abs(Number(row.unitCost ?? row.purchasePrice ?? 0)));
   const vatRate = Number(row.vatRate ?? row.taxRate ?? 0);
   const isScale = Boolean(
     row.isScaleItem ??

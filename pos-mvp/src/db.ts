@@ -2,7 +2,7 @@
 // Supports both Node.js (local.db file replica) and Browser (Local Sunmi Chip Bridge + 0ms Cache + Turso Sync)
 
 import { createClient } from '@libsql/client';
-import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from './utils/apiConfig';
+import { getApiBaseUrl, DEFAULT_EDGE_API_URL, DEFAULT_EDGE_HOST } from './utils/apiConfig';
 
 export interface DbExecuteResult {
   columns?: string[];
@@ -201,15 +201,15 @@ export const db: LibsqlDatabase = {
     }
 
     const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
-    const host = (isBrowser && window.location.hostname) || (isAndroid ? '192.168.8.7' : 'localhost');
+    const host = (isBrowser && window.location.hostname) || (isAndroid ? DEFAULT_EDGE_HOST : 'localhost');
     const masterBase = customBase || (isBrowser && getApiBaseUrl()) || DEFAULT_EDGE_API_URL;
     const endpoints = [
-      masterBase,
       DEFAULT_EDGE_API_URL,
-      'http://192.168.8.7:3000',
+      masterBase,
       `http://${host}:3000`, 
       'http://localhost:3000', 
-      'http://127.0.0.1:3000'
+      'http://127.0.0.1:3000',
+      'http://192.168.8.7:3000'
     ].filter((v, i, a) => Boolean(v) && !v?.includes('192.168.8.20') && a.indexOf(v) === i);
 
     for (const base of endpoints) {

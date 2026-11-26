@@ -18,7 +18,10 @@ import {
   Zap,
   Scale,
   ChevronDown,
-  Receipt
+  Receipt,
+  Bell,
+  BellOff,
+  BookOpen
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement } from '../utils/printer';
@@ -26,6 +29,15 @@ import { playThankYouVoice } from '../utils/sound';
 import { generateBenefitPayPayload, getStoredBenefitPayConfig } from '../utils/benefitPay';
 import { getApiBaseUrl } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
+import { AddCustomerBookBalanceModal } from '../components/AddCustomerBookBalanceModal';
+import {
+  initPushNotifications,
+  requestNotificationPermission,
+  getNotificationPermissionStatus,
+  showTransactionNotification,
+  triggerTestTransactionNotification,
+  subscribeCustomerToWebPush
+} from '../utils/pushNotification';
 
 interface LedgerEntry {
   id: string;
@@ -73,8 +85,21 @@ interface MessGroupData {
   messLedger?: LedgerEntry[];
 }
 
+interface DepositData {
+  amount: number;
+  status: string;
+  isDeferred: boolean;
+  isPaid: boolean;
+  isNone: boolean;
+}
+
 interface WalletBreakdown {
   personal: number;
+  deposit?: {
+    amount: number;
+    status: string;
+    isDeferred: boolean;
+  };
   messes: {
     id: string;
     name: string;
@@ -98,6 +123,8 @@ interface CustomerData {
   mess_name?: string | null;
   isMessGroup?: boolean;
   description?: string | null;
+  card_deposit_amount?: number | null;
+  card_deposit_status?: string | null;
 }
 
 interface CustomerStatementPageProps {
@@ -113,17 +140,21 @@ export default function CustomerStatementPage({
   const [customerId] = useState<string>(() => {
     if (initialCustomerId) return initialCustomerId;
     if (typeof window !== 'undefined') {
-      const searchId = new URLSearchParams(window.location.search).get('id');
+      const searchId = new URLSearchParams(window.location.search).get('id') || new URLSearchParams(window.location.search).get('customerId');
       if (searchId) {
         localStorage.setItem('last_khata_customer_id', searchId);
         return searchId;
       }
       const pathParts = window.location.pathname.split('/');
-      const tabIdx = pathParts.indexOf('tab');
-      if (tabIdx !== -1 && pathParts[tabIdx + 1]) {
-        const pathId = pathParts[tabIdx + 1];
-        localStorage.setItem('last_khata_customer_id', pathId);
-        return pathId;
+      for (const prefix of ['tab', 'customer', 'khata', 'statement']) {
+        const idx = pathParts.indexOf(prefix);
+        if (idx !== -1 && pathParts[idx + 1]) {
+          const pathId = pathParts[idx + 1].split('?')[0].split('#')[0];
+          if (pathId) {
+            localStorage.setItem('last_khata_customer_id', pathId);
+            return pathId;
+          }
+        }
       }
       const savedId = localStorage.getItem('last_khata_customer_id');
       if (savedId) return savedId;
@@ -161,7 +192,7 @@ export default function CustomerStatementPage({
   // Dynamic API Base Resolver (Supports Cloudflare Edge, tunnels, custom domains)
   const resolveApiBase = (): string => {
     if (typeof window === 'undefined') return apiBase || getApiBaseUrl();
-    
+
     // 1. Explicit override saved in query param (?tunnel= or ?api=)
     const urlApi = new URLSearchParams(window.location.search).get('api') || new URLSearchParams(window.location.search).get('tunnel');
     if (urlApi) {
@@ -226,8 +257,51 @@ export default function CustomerStatementPage({
   const [messGroup, setMessGroup] = useState<MessGroupData | null>(null);
   const [messes, setMesses] = useState<MessGroupData[]>([]);
   const [wallets, setWallets] = useState<WalletBreakdown | null>(null);
+  const [deposit, setDeposit] = useState<DepositData | null>(null);
   const [currentBalance, setCurrentBalance] = useState<number>(0);
   const [flashCampaign, setFlashCampaign] = useState<any | null>(null);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
+
+  // Push notification permission & WebSocket live transaction listener
+  useEffect(() => {
+    initPushNotifications().catch(() => { });
+    const perm = getNotificationPermissionStatus();
+    setNotifPermission(perm);
+    if (perm === 'granted') {
+      subscribeCustomerToWebPush(customerId, customer?.name).catch(() => { });
+    }
+
+    const handleTxNotification = (e: any) => {
+      const payload = e?.detail;
+      if (!payload) return;
+
+      // Filter: if targeted to this customer or if it's general
+      const isTargeted = !payload.customerId || payload.customerId === customerId || (customer && payload.customerName === customer.name);
+      if (isTargeted) {
+        showTransactionNotification(payload).catch(() => { });
+        // Refresh statement ledger automatically
+        fetchStatement();
+      }
+    };
+
+    window.addEventListener('pwa-transaction-notification', handleTxNotification);
+    return () => window.removeEventListener('pwa-transaction-notification', handleTxNotification);
+  }, [customerId, customer?.name]);
+
+  const handleEnableNotifications = async () => {
+    const res = await requestNotificationPermission();
+    setNotifPermission(res);
+    if (res === 'granted') {
+      subscribeCustomerToWebPush(customerId, customer?.name).catch(() => { });
+      showTransactionNotification({
+        txType: 'SALE',
+        title: 'Notifications Activated 🔔',
+        message: 'You will receive real-time alerts on your phone whenever purchases or payments are recorded on your account.',
+        amount: 0,
+        formattedAmount: 'Active'
+      });
+    }
+  };
 
   // View state & tabs
   const [activeTab, setActiveTab] = useState<'PERSONAL' | 'MESS'>('PERSONAL');
@@ -262,6 +336,7 @@ export default function CustomerStatementPage({
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [customPayAmount, setCustomPayAmount] = useState<string>('');
   const [isSubmittingPay, setIsSubmittingPay] = useState(false);
+  const [showBookBalanceModal, setShowBookBalanceModal] = useState<boolean>(false);
   const [paymentSuccessToast, setPaymentSuccessToast] = useState<{
     show: boolean;
     amount: number;
@@ -351,6 +426,21 @@ export default function CustomerStatementPage({
       setMesses(data.messes || (data.messGroup ? [data.messGroup] : []));
       setWallets(data.wallets || null);
 
+      const rawDeposit = data.deposit || data.wallets?.deposit || data.customer;
+      const depStatus = String(rawDeposit?.status || data.customer?.card_deposit_status || 'NONE').toUpperCase();
+      const depAmt = Number(rawDeposit?.amount ?? data.customer?.card_deposit_amount ?? 0);
+      const isDeferred = depStatus === 'IN_CREDIT' || depStatus === 'DEFERRED_CREDIT' || depStatus === 'DEFERRED_PAYDAY' || Boolean(rawDeposit?.inCredit) || Boolean(data.customer?.depositInCredit);
+      const isPaid = depStatus === 'HELD' || (depAmt > 0 && !isDeferred);
+      const isNone = !isDeferred && !isPaid;
+
+      setDeposit({
+        amount: depAmt,
+        status: depStatus,
+        isDeferred,
+        isPaid,
+        isNone
+      });
+
       // Auto-switch to MESS tab if requested by param, mess ID, or isMessStatement
       if (typeof window !== 'undefined') {
         const tabParam = new URLSearchParams(window.location.search).get('tab');
@@ -369,7 +459,7 @@ export default function CustomerStatementPage({
             setFlashCampaign(fcData.campaign);
           }
         }
-      } catch {}
+      } catch { }
 
       if (data.messGroup && !messGroup) {
         // Customer has a mess group available
@@ -388,8 +478,8 @@ export default function CustomerStatementPage({
     if (!messGroup || !messGroup.id) return;
     const targetMessId = messGroup.id;
     const groupName = messGroup.group_name || 'Camp Mess';
-    const memberCount = messGroup.members?.length || 1;
-    const eqShare = (messGroup.equalSplitShare || (messGroup.totalBalance / Math.max(1, memberCount))).toFixed(3);
+    const memberCount = Math.max(1, Number(messGroup.members?.length || messGroup.memberCount || 1));
+    const eqShare = (messGroup.equalSplitShare || (Number(messGroup.totalBalance || 0) / memberCount)).toFixed(3);
 
     const confirmed = window.confirm(
       `⚖️ Split Camp Debt Equally Across All Cards?\n\n` +
@@ -404,7 +494,8 @@ export default function CustomerStatementPage({
 
     setIsRebalancingMess(true);
     try {
-      const res = await fetch(`${apiBase}/api/khata/mess/${encodeURIComponent(targetMessId)}/rebalance`, {
+      const resolvedBase = resolveApiBase();
+      const res = await fetch(`${resolvedBase}/api/khata/mess/${encodeURIComponent(targetMessId)}/rebalance`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -650,9 +741,9 @@ export default function CustomerStatementPage({
               <Store className="w-7 h-7 text-slate-950 stroke-[2.5]" />
             </div>
             <div className="flex items-center gap-1.5 justify-center">
-              <h2 className="text-lg font-black text-white">Askar Supermarket</h2>
+              <h2 className="text-lg font-black text-white">Layali Supermarket</h2>
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                أسواق عسكر
+                أسواق ليالي
               </span>
             </div>
             <p className="text-[11px] text-slate-400">Authenticated Khata Financial Portal</p>
@@ -715,15 +806,30 @@ export default function CustomerStatementPage({
             </button>
           </form>
 
-          {/* Security Device Trust Disclaimer */}
-          <div className="pt-2 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
-            <p className="flex items-center justify-center gap-1 text-slate-400 font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Device Trust: Saves token to phone for 90 days</span>
-            </p>
-            <p className="text-[10px] text-slate-400">
-              Receipt QR codes are encrypted; random scans cannot access debt details.
-            </p>
+          {/* Test Alert Directly from Lock Screen */}
+          <div className="pt-2 border-t border-slate-800 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => triggerTestTransactionNotification({
+                title: '🔔 Customer Alert Test',
+                message: 'Phone notifications are working properly on this device!'
+              })}
+              className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold text-xs rounded-xl active:scale-95 transition-all flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Test Phone Alert Chime 🔔</span>
+            </button>
+
+            <div className="text-[11px] text-slate-400 space-y-1">
+              <p className="flex items-center justify-center gap-1 text-slate-300 font-semibold">
+                <span>Default PIN: </span>
+                <span className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-emerald-400">0000</span>
+              </p>
+              <p className="flex items-center justify-center gap-1 text-slate-400 font-medium">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Device Trust: Saves token to phone for 90 days</span>
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -740,7 +846,7 @@ export default function CustomerStatementPage({
           </div>
         </div>
         <h2 className="text-lg font-black text-white">Loading Khata Ledger...</h2>
-        <p className="text-xs text-slate-400 mt-1">Connecting to Askar Supermarket Cloud</p>
+        <p className="text-xs text-slate-400 mt-1">Connecting to Layali Supermarket Cloud</p>
       </div>
     );
   }
@@ -770,7 +876,7 @@ export default function CustomerStatementPage({
       {/* ──────────────────────────────────────────────────────────────────────────
           TOP STORE BRANDING & VERIFIED BADGE HEADER
           ────────────────────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3.5">
+      <header className="sticky top-0 z-40 bg-slate-900/90 border-b border-slate-800 px-4 py-3.5">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950/50">
@@ -778,9 +884,9 @@ export default function CustomerStatementPage({
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h1 className="text-base font-black text-white tracking-tight">Askar Supermarket</h1>
+                <h1 className="text-base font-black text-white tracking-tight">Layali Supermarket</h1>
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  أسواق عسكر
+                  أسواق ليالي
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 flex items-center gap-1">
@@ -792,12 +898,32 @@ export default function CustomerStatementPage({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
+              onClick={handleEnableNotifications}
+              title={notifPermission === 'granted' ? 'Push Notifications Active' : 'Enable Push Notifications on Phone'}
+              className={`p-2 rounded-xl transition-all cursor-pointer ${notifPermission === 'granted'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                }`}
+            >
+              {notifPermission === 'granted' ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
               onClick={handlePrintStatement}
               title="Print 58mm Thermal Statement Slip on Sunmi"
               className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Print Slip</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBookBalanceModal(true)}
+              title="Add previous physical paper book balance"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">+ Book Bal</span>
             </button>
             <button
               onClick={() => fetchStatement()}
@@ -829,6 +955,69 @@ export default function CustomerStatementPage({
           MAIN CONTENT CONTAINER (MOBILE CENTERED)
           ────────────────────────────────────────────────────────────────────────── */}
       <main className="max-w-md mx-auto p-4 space-y-4">
+        {/* CUSTOMER PHONE PUSH NOTIFICATION & LIVE ALERTS SETUP */}
+        <div className={`rounded-3xl p-5 shadow-2xl border flex flex-col gap-3.5 animate-in fade-in transition-all ${notifPermission === 'granted'
+          ? 'bg-gradient-to-br from-emerald-950/90 via-slate-900 to-teal-950/90 border-emerald-500/50 shadow-emerald-950/50'
+          : 'bg-gradient-to-br from-blue-950/90 via-slate-900 to-indigo-950/90 border-blue-500/50 shadow-blue-950/50'
+          }`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ${notifPermission === 'granted'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                : 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                }`}>
+                <Bell className="w-6 h-6 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-black text-white tracking-tight">
+                    Customer Real-Time Alerts 🔔
+                  </h3>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    LIVE POS
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-1 font-medium">
+                  {customer?.name ? `Active for: ${customer.name}` : 'Instant alerts for every purchase and debt payment'}
+                </p>
+                <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                  <span>Balance: <strong className="text-white">BD {Number(currentBalance || 0).toFixed(3)}</strong></span>
+                  <span>•</span>
+                  <span>Audio Chime: <strong className="text-emerald-400">ON 🔊</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 pt-2 border-t border-slate-700/60">
+            {notifPermission === 'default' && (
+              <button
+                type="button"
+                onClick={handleEnableNotifications}
+                className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Bell className="w-4 h-4" />
+                <span>Turn On Phone Push</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => triggerTestTransactionNotification({
+                customerId: customerId,
+                customerName: customer?.name || 'Customer Account',
+                amount: 2.500,
+                formattedAmount: '2.500 BHD',
+                txType: 'SALE'
+              })}
+              className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+              title="Test real-time alert with sound & vibration on this phone"
+            >
+              <span>🧪 Test Alert on My Phone</span>
+            </button>
+          </div>
+        </div>
+
         {/* FLASH RECOVERY SETTLEMENT INCENTIVE BANNER */}
         {flashCampaign?.isActive && Number(currentBalance || 0) > 0 && (
           <div className="bg-gradient-to-r from-amber-950/90 via-amber-900/80 to-orange-950/90 border border-amber-500/50 rounded-2xl p-4 shadow-xl relative overflow-hidden animate-in fade-in slide-in-from-top-2">
@@ -904,7 +1093,24 @@ export default function CustomerStatementPage({
                   </span>
                 )}
               </div>
-              <h2 className="text-xl font-black text-white">{customer.name}</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-xl font-black text-white">{customer.name}</h2>
+                {deposit && (
+                  deposit.isDeferred ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-md">
+                      IN CREDIT (DUE): BD {deposit.amount.toFixed(3)}
+                    </span>
+                  ) : deposit.isPaid ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-md">
+                      HELD IN TRUST: BD {deposit.amount.toFixed(3)}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-md">
+                      NO DEPOSIT
+                    </span>
+                  )
+                )}
+              </div>
               <p className="text-xs text-slate-400 font-mono mt-0.5">
                 {customer.phone || customer.cpr || 'Account: ' + customer.id.slice(0, 12)}
               </p>
@@ -941,11 +1147,10 @@ export default function CustomerStatementPage({
               {isMessView ? `Camp Mess Total Outstanding (${messGroup?.group_name || 'Camp Mess'})` : `Personal Outstanding Balance (${customer?.name || 'Account'})`}
             </span>
             <span
-              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
-                displayOutstanding > 0
-                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-              }`}
+              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${displayOutstanding > 0
+                ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                }`}
             >
               {displayOutstanding > 0 ? (isMessView ? 'Camp Group Debt' : 'Balance Due') : 'Account Cleared'}
             </span>
@@ -953,9 +1158,8 @@ export default function CustomerStatementPage({
 
           <div className="flex items-baseline gap-2 mb-2">
             <span
-              className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${
-                displayOutstanding > 0 ? 'text-rose-400' : 'text-emerald-400'
-              }`}
+              className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${displayOutstanding > 0 ? 'text-rose-400' : 'text-emerald-400'
+                }`}
             >
               BD {displayOutstanding.toFixed(3)}
             </span>
@@ -980,13 +1184,12 @@ export default function CustomerStatementPage({
             </div>
             <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
               <div
-                className={`h-full transition-all duration-500 rounded-full ${
-                  displayUsagePercent >= 90
-                    ? 'bg-rose-500'
-                    : displayUsagePercent >= 70
+                className={`h-full transition-all duration-500 rounded-full ${displayUsagePercent >= 90
+                  ? 'bg-rose-500'
+                  : displayUsagePercent >= 70
                     ? 'bg-amber-500'
                     : 'bg-emerald-500'
-                }`}
+                  }`}
                 style={{ width: `${displayUsagePercent}%` }}
               />
             </div>
@@ -1004,7 +1207,7 @@ export default function CustomerStatementPage({
           <div className="mt-5 pt-4 border-t border-slate-800/80">
             <button
               onClick={() => {
-                const targetPay = isMessView 
+                const targetPay = isMessView
                   ? (messEqualShare > 0 ? messEqualShare.toFixed(3) : '5.000')
                   : (displayOutstanding > 0 ? displayOutstanding.toFixed(3) : '5.000');
                 setCustomPayAmount(targetPay);
@@ -1029,7 +1232,7 @@ export default function CustomerStatementPage({
         {/* ──────────────────────────────────────────────────────────────────────────
             SUB-LEDGER WALLET ATTRIBUTION PANEL (MULTI-MESS / PERSONAL BREAKDOWN)
             ────────────────────────────────────────────────────────────────────────── */}
-        {wallets && (wallets.messes?.length > 0 || wallets.personal > 0) && (
+        {wallets && (wallets.messes?.length > 0 || wallets.personal > 0 || (deposit && deposit.amount > 0)) && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
@@ -1041,14 +1244,14 @@ export default function CustomerStatementPage({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
               {/* Personal Tab */}
               <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-bold text-slate-200 flex items-center gap-1">
                     <span>👤</span> Personal Tab (حساب شخصي)
                   </p>
-                  <p className="text-[10px] text-slate-400">Direct top-ups & snacks</p>
+                  <p className="text-[10px] text-slate-400">Direct purchases & snacks</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-black font-mono text-emerald-400">
@@ -1056,6 +1259,32 @@ export default function CustomerStatementPage({
                   </p>
                 </div>
               </div>
+
+              {/* Card Security Deposit */}
+              {deposit && (
+                <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                      <span>🛡️</span> Card Deposit (تأمين البطاقة)
+                    </p>
+                    <p className="text-[10px] font-black uppercase tracking-wider">
+                      {deposit.isDeferred ? (
+                        <span className="text-rose-400">IN CREDIT (DUE)</span>
+                      ) : deposit.isPaid ? (
+                        <span className="text-emerald-400">HELD IN TRUST</span>
+                      ) : (
+                        <span className="text-slate-400">NO DEPOSIT</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className={`text-sm font-black font-mono ${deposit.isDeferred ? 'text-rose-400' : deposit.isPaid ? 'text-emerald-400' : 'text-slate-400'
+                      }`}>
+                      BD {Number(deposit.amount || 0).toFixed(3)}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Mess Groups */}
               {wallets.messes.map((w) => (
@@ -1089,11 +1318,10 @@ export default function CustomerStatementPage({
                 setActiveTab('PERSONAL');
                 setSelectedMemberFilter(null);
               }}
-              className={`flex-1 min-w-[120px] py-2 rounded-xl text-xs font-black transition-all ${
-                activeTab === 'PERSONAL'
-                  ? 'bg-emerald-600 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
+              className={`flex-1 min-w-[120px] py-2 rounded-xl text-xs font-black transition-all ${activeTab === 'PERSONAL'
+                ? 'bg-emerald-600 text-slate-950 shadow-md'
+                : 'text-slate-400 hover:text-white'
+                }`}
             >
               My Statement (حسابي)
             </button>
@@ -1104,11 +1332,10 @@ export default function CustomerStatementPage({
                   setMessGroup(m);
                   setActiveTab('MESS');
                 }}
-                className={`flex-1 min-w-[140px] py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                  activeTab === 'MESS' && messGroup?.id === m.id
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                className={`flex-1 min-w-[140px] py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${activeTab === 'MESS' && messGroup?.id === m.id
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+                  }`}
               >
                 <Users className="w-3.5 h-3.5" />
                 <span className="truncate">{m.group_name}</span>
@@ -1166,7 +1393,7 @@ export default function CustomerStatementPage({
 
                   <a
                     href={`https://wa.me/?text=${encodeURIComponent(
-                      `📋 *ASKAR SUPERMARKET - MESS EXPENSE SPLIT*\n` +
+                      `📋 *LAYALI SUPERMARKET - MESS EXPENSE SPLIT*\n` +
                       `🏢 *Mess Group:* ${messGroup.group_name}\n` +
                       `💰 *Total Camp Balance:* BD ${messGroup.totalBalance.toFixed(3)}\n` +
                       `👥 *Room Members:* ${messGroup.members.length}\n` +
@@ -1178,7 +1405,7 @@ export default function CustomerStatementPage({
                         return `• *${m.name}*:\n  ⚖️ Equal Split Due: *BD ${mEq}*\n  🛒 Card Purchases: BD ${Number(m.currentBalance || 0).toFixed(3)} (${m.spendPercentage || 0}%)`;
                       }).join('\n') +
                       `\n----------------------------------------\n` +
-                      `Please settle your equal share at Askar Supermarket counter or via BenefitPay Fawri+. Thank you!`
+                      `Please settle your equal share at Layali Supermarket counter or via BenefitPay Fawri+. Thank you!`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1270,20 +1497,18 @@ export default function CustomerStatementPage({
                       onClick={() =>
                         setSelectedMemberFilter(isSelected ? null : member.id)
                       }
-                      className={`cursor-pointer border rounded-2xl p-4 transition-all flex flex-col justify-between ${
-                        isSelected
-                          ? 'bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-900 border-emerald-400 shadow-lg ring-2 ring-emerald-400/40'
-                          : 'bg-gradient-to-br from-slate-900/95 via-indigo-950/70 to-slate-900/95 border-slate-800 hover:border-emerald-500/60 hover:shadow-md'
-                      }`}
+                      className={`cursor-pointer border rounded-2xl p-4 transition-all flex flex-col justify-between ${isSelected
+                        ? 'bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-900 border-emerald-400 shadow-lg ring-2 ring-emerald-400/40'
+                        : 'bg-gradient-to-br from-slate-900/95 via-indigo-950/70 to-slate-900/95 border-slate-800 hover:border-emerald-500/60 hover:shadow-md'
+                        }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2.5">
                           <div
-                            className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${
-                              isMe
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                            }`}
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${isMe
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                              }`}
                           >
                             <CreditCard className="w-4 h-4" />
                           </div>
@@ -1305,19 +1530,18 @@ export default function CustomerStatementPage({
                         </div>
 
                         <span
-                          className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
-                            Math.abs(diff) <= 0.001
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                              : diff > 0
-                              ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
-                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                          }`}
+                          className={`text-[9px] font-black px-2 py-0.5 rounded-md border shrink-0 ${Math.abs(diff) <= 0.001
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : diff > 0
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                            }`}
                         >
                           {Math.abs(diff) <= 0.001
                             ? 'Balanced'
                             : diff > 0
-                            ? `+BD ${diff.toFixed(3)} Paid`
-                            : `-BD ${Math.abs(diff).toFixed(3)} Due`}
+                              ? `+BD ${diff.toFixed(3)} Over Split`
+                              : `-BD ${Math.abs(diff).toFixed(3)} Under Split`}
                         </span>
                       </div>
 
@@ -1385,7 +1609,7 @@ export default function CustomerStatementPage({
                         {member.phone && (
                           <a
                             href={`https://wa.me/${member.phone.replace(/[^0-9]/g, '').length === 8 ? `973${member.phone.replace(/[^0-9]/g, '')}` : member.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                              `Hello ${member.name}, your equal split share of ${messGroup.group_name} at Askar Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${messGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
+                              `Hello ${member.name}, your equal split share of ${messGroup.group_name} at Layali Supermarket is BHD ${memberEqShare.toFixed(3)} (Card purchases: BHD ${cardBalance.toFixed(3)}). Total camp debt is BHD ${messGroup.totalBalance.toFixed(3)}. Please arrange settlement soon.`
                             )}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -1421,31 +1645,28 @@ export default function CustomerStatementPage({
             <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-0.5 text-[11px] font-bold">
               <button
                 onClick={() => setTypeFilter('ALL')}
-                className={`px-2 py-1 rounded-lg transition-all ${
-                  typeFilter === 'ALL'
-                    ? 'bg-slate-800 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                className={`px-2 py-1 rounded-lg transition-all ${typeFilter === 'ALL'
+                  ? 'bg-slate-800 text-white'
+                  : 'text-slate-400 hover:text-white'
+                  }`}
               >
                 All
               </button>
               <button
                 onClick={() => setTypeFilter('CHARGES')}
-                className={`px-2 py-1 rounded-lg transition-all ${
-                  typeFilter === 'CHARGES'
-                    ? 'bg-slate-800 text-rose-300'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                className={`px-2 py-1 rounded-lg transition-all ${typeFilter === 'CHARGES'
+                  ? 'bg-slate-800 text-rose-300'
+                  : 'text-slate-400 hover:text-white'
+                  }`}
               >
                 Groceries
               </button>
               <button
                 onClick={() => setTypeFilter('PAYMENTS')}
-                className={`px-2 py-1 rounded-lg transition-all ${
-                  typeFilter === 'PAYMENTS'
-                    ? 'bg-slate-800 text-emerald-300'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                className={`px-2 py-1 rounded-lg transition-all ${typeFilter === 'PAYMENTS'
+                  ? 'bg-slate-800 text-emerald-300'
+                  : 'text-slate-400 hover:text-white'
+                  }`}
               >
                 Payments
               </button>
@@ -1481,11 +1702,10 @@ export default function CustomerStatementPage({
                   <button
                     type="button"
                     onClick={() => setQuickRange('TODAY')}
-                    className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
-                      startDate && startDate === endDate && startDate === new Date().toISOString().slice(0, 10)
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                    }`}
+                    className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${startDate && startDate === endDate && startDate === new Date().toISOString().slice(0, 10)
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                      }`}
                   >
                     Today
                   </button>
@@ -1568,19 +1788,18 @@ export default function CustomerStatementPage({
                     key={entry.id}
                     className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden transition-all shadow-xs"
                   >
-                    <div 
+                    <div
                       onClick={() => toggleExpandEntry(entry)}
                       className="p-3.5 flex items-center justify-between cursor-pointer select-none active:bg-slate-850"
                     >
                       <div className="flex items-center gap-3 min-w-0 pr-2">
                         <div
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                            isPayment
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : isWriteOff
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isPayment
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : isWriteOff
                               ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
                               : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                          }`}
+                            }`}
                         >
                           {isPayment ? (
                             <ArrowDownLeft className="w-5 h-5" />
@@ -1612,6 +1831,21 @@ export default function CustomerStatementPage({
                                 👤 Shopper: {entry.memberName}
                               </span>
                             )}
+                            {entry.type === 'DEPOSIT_DEFERRED' && (
+                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                CARD DEPOSIT (DUE)
+                              </span>
+                            )}
+                            {entry.type === 'DEPOSIT_COLLECTED' && (
+                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                DEPOSIT COLLECTED (HELD)
+                              </span>
+                            )}
+                            {entry.type === 'DEPOSIT_REFUND' && (
+                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                DEPOSIT REFUNDED
+                              </span>
+                            )}
                           </div>
                           <p className="text-[11px] text-slate-400 mt-0.5">
                             {entry.formattedDate} • {entry.formattedTime}
@@ -1622,13 +1856,12 @@ export default function CustomerStatementPage({
                       <div className="text-right shrink-0 flex items-center gap-2">
                         <div>
                           <p
-                            className={`text-sm font-black font-mono ${
-                              isPayment
-                                ? 'text-emerald-400'
-                                : isWriteOff
+                            className={`text-sm font-black font-mono ${isPayment
+                              ? 'text-emerald-400'
+                              : isWriteOff
                                 ? 'text-purple-400'
                                 : 'text-rose-400'
-                            }`}
+                              }`}
                           >
                             {isPayment ? '-' : '+'}BD {entry.amount.toFixed(3)}
                           </p>
@@ -1748,7 +1981,7 @@ export default function CustomerStatementPage({
 
         {/* FOOTER AUDIT NOTE */}
         <footer className="text-center pt-4 pb-8 space-y-1 text-[11px] text-slate-400">
-          <p>Askar Supermarket Enterprise Cloud • Continuous Ledger Audit</p>
+          <p>Layali Supermarket Enterprise Cloud • Continuous Ledger Audit</p>
           <p className="font-mono text-[10px]">
             Encrypted Edge Ledger • Synced with Bahrain Fawri+ Payment Gateway
           </p>
@@ -1759,7 +1992,7 @@ export default function CustomerStatementPage({
           BENEFITPAY INSTANT SETTLEMENT MODAL SHEET
           ────────────────────────────────────────────────────────────────────────── */}
       {isPayModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-slate-900 border-t sm:border border-slate-800 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4 animate-in slide-in-from-bottom-6 duration-200">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -1792,33 +2025,30 @@ export default function CustomerStatementPage({
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount(messEqualShare.toFixed(3))}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === messEqualShare.toFixed(3)
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === messEqualShare.toFixed(3)
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       My Share (BD {messEqualShare.toFixed(3)})
                     </button>
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount(messTotalBalance.toFixed(3))}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === messTotalBalance.toFixed(3)
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === messTotalBalance.toFixed(3)
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       Camp Full (BD {messTotalBalance.toFixed(3)})
                     </button>
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount('10.000')}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === '10.000'
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === '10.000'
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       BD 10.000
                     </button>
@@ -1828,33 +2058,30 @@ export default function CustomerStatementPage({
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount(displayOutstanding.toFixed(3))}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === displayOutstanding.toFixed(3)
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === displayOutstanding.toFixed(3)
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       Full (BD {displayOutstanding.toFixed(3)})
                     </button>
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount('10.000')}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === '10.000'
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === '10.000'
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       BD 10.000
                     </button>
                     <button
                       type="button"
                       onClick={() => setCustomPayAmount('5.000')}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        customPayAmount === '5.000'
-                          ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                      }`}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all ${customPayAmount === '5.000'
+                        ? 'bg-emerald-600 text-slate-950 border-emerald-400 shadow-md font-black'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        }`}
                     >
                       BD 5.000
                     </button>
@@ -1897,7 +2124,7 @@ export default function CustomerStatementPage({
               </div>
               <div className="text-center">
                 <p className="text-[11px] font-bold text-white">
-                  {getStoredBenefitPayConfig().merchantName || 'ASKAR SUPERMARKET'}
+                  {getStoredBenefitPayConfig().merchantName || 'LAYALI SUPERMARKET'}
                 </p>
                 <p className="text-[10px] font-mono text-emerald-400">
                   {getStoredBenefitPayConfig().accountType === 'MOBILE_FAWRI'
@@ -1942,6 +2169,26 @@ export default function CustomerStatementPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Customer Book Balance Modal */}
+      {showBookBalanceModal && customer && (
+        <AddCustomerBookBalanceModal
+          customer={{
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone || undefined,
+            cpr: customer.cpr || undefined,
+            balance: Number(currentBalance || 0),
+            currentBalance: Number(currentBalance || 0)
+          }}
+          apiBase={apiBase}
+          onClose={() => setShowBookBalanceModal(false)}
+          onSuccess={() => {
+            setShowBookBalanceModal(false);
+            fetchStatement();
+          }}
+        />
       )}
     </div>
   );

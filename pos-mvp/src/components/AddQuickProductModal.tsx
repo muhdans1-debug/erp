@@ -98,7 +98,11 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
             const timer = setTimeout(() => controller.abort(), 2500);
             await fetch(`${url.replace(/\/$/, '')}/api/quick-products/update`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-pos-client': 'store-pos',
+                'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
+              },
               signal: controller.signal,
               body: JSON.stringify({
                 id: product.id,
@@ -124,7 +128,7 @@ export const AddQuickProductModal: React.FC<AddQuickProductModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-start justify-center pt-4 pb-24 px-4 overflow-y-auto animate-in fade-in duration-150"
+      className="fixed inset-0 bg-slate-950/80 z-[9999] flex items-start justify-center pt-4 pb-24 px-4 overflow-y-auto animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div 

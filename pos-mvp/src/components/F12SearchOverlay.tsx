@@ -76,9 +76,9 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
           return [...extra, ...catalog];
         }
       }
-    } catch {}
+    } catch { }
     return catalog;
-  }, [catalog, isOpen]);
+  }, [catalog]);
 
   const filteredCatalog = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
@@ -139,7 +139,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
             // Cloudflare rate limit reached; abort candidate loop to avoid network congestion
             break;
           }
-        } catch {}
+        } catch { }
       }
     }, 400);
 
@@ -158,7 +158,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex flex-col items-center justify-start p-4 md:p-8 animate-in fade-in duration-150"
+      className="fixed inset-0 bg-slate-950/80 z-[9999] flex flex-col items-center justify-start p-4 md:p-8 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
@@ -220,9 +220,8 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
                     onClose();
                     onSelectItem(prod);
                   }}
-                  className={`p-4 hover:bg-blue-50/70 transition-colors cursor-pointer flex justify-between items-center group ${
-                    isOutOfStock ? 'opacity-60 bg-slate-50' : ''
-                  }`}
+                  className={`p-4 hover:bg-blue-50/70 transition-colors cursor-pointer flex justify-between items-center group ${isOutOfStock ? 'opacity-60 bg-slate-50' : ''
+                    }`}
                 >
                   <div className="flex-1 min-w-0 pr-4">
                     <div className="flex items-center gap-2">

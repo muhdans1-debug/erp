@@ -65,7 +65,7 @@ export default function CashOutModal({ onClose, apiBase: propApiBase, onExpenseR
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100 flex flex-col">
         {/* Header */}
         <div className="bg-red-50 p-4 flex justify-between items-center border-b border-red-100">

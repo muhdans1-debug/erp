@@ -113,7 +113,7 @@ export default function SyncTrafficLight({
       {/* DISASTER RECOVERY & OFFLINE CONTROL MODAL                      */}
       {/* ------------------------------------------------------------- */}
       {showModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
             {/* Modal Header */}
             <div className={`p-4 flex items-center justify-between text-white ${status === 'ONLINE' ? 'bg-slate-900' : status === 'OFFLINE_WARNING' ? 'bg-amber-700' : 'bg-slate-900'

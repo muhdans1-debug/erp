@@ -4,6 +4,7 @@ import { db } from '../db';
 import { mapDbRowToProduct } from '../services/productMapper';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL, CLOUD_GATEWAY_URL, LAN_SERVER_URL } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
+import { safeUUID } from '../utils/idUtils';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -170,8 +171,8 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
     }
 
     const existing = existingProduct || detectedByBarcode || detectedByName;
-    const targetId = (existing ? existing.id : (formData.id || crypto.randomUUID())).trim();
-    const cleanBarcode = (formData.id || (existing ? existing.barcode : targetId) || crypto.randomUUID()).trim();
+    const targetId = (existing ? existing.id : (formData.id || safeUUID())).trim();
+    const cleanBarcode = (formData.id || (existing ? existing.barcode : targetId) || safeUUID()).trim();
     const costPrice = parseFloat(formData.unitCost) || 0;
     const salePrice = parseFloat(formData.sellingPrice) || 0;
     const vat = parseFloat(formData.vatRate) || 10.0;
@@ -231,7 +232,8 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
           headers: {
             'Content-Type': 'application/json',
             'x-manager-pin': getManagerPin(),
-            'x-pos-client': 'store-pos'
+            'x-pos-client': 'store-pos',
+            'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06'
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(3500)
@@ -263,7 +265,7 @@ export default function AddProductModal({ onClose, onSuccess, apiBase = 'http://
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[90vh] flex flex-col">
         
         <div className="bg-slate-950 p-5 border-b border-slate-800 flex justify-between items-center text-white">

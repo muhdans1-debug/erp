@@ -68,7 +68,7 @@ function CartTableComponent({ onPriceOverrideClick, onWeightEditClick, onAdjustQ
       {items.map((item, index) => {
         const qty = item.quantity ?? item.qty ?? 1;
         const isNegative = qty < 0;
-        const unitPrice = item.sellingPrice ?? item.price ?? 0;
+        const unitPrice = Math.max(0, Number(item.sellingPrice ?? item.price ?? 0));
         const lineTotal = unitPrice * qty;
         const isLatest = index === 0;
 

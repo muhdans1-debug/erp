@@ -170,7 +170,7 @@ export default function CorporateSponsorDashboard({
       {/* ──────────────────────────────────────────────────────────────────────────
           TOP B2B CORPORATE HEADER
           ────────────────────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-6 py-4">
+      <header className="sticky top-0 z-40 bg-slate-900/90 border-b border-slate-800 px-6 py-4">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-950/60">

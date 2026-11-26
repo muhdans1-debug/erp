@@ -101,7 +101,7 @@ export default function CommandPalette({ onNavigate, apiBase: propApiBase }: Com
       
       {/* Blurred Backdrop */}
       <div 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm cursor-pointer"
+        className="absolute inset-0 bg-slate-900/60 cursor-pointer"
         onClick={() => setIsOpen(false)}
       />
 
@@ -117,7 +117,7 @@ export default function CommandPalette({ onNavigate, apiBase: propApiBase }: Com
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Search Askar inventory, Khata accounts, or suppliers..."
+            placeholder="Search Layali inventory, Khata accounts, or suppliers..."
             className="w-full bg-transparent text-xl font-medium text-slate-800 outline-none placeholder:text-slate-400"
           />
           <div className="flex items-center gap-1 bg-slate-200/70 text-slate-600 px-2.5 py-1 rounded text-xs font-bold shrink-0">

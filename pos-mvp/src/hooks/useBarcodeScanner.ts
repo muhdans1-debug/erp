@@ -22,7 +22,7 @@ export const useBarcodeScanner = (onScan: (barcode: string) => void) => {
       const isInputActive =
         activeEl &&
         (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) ||
-          activeEl.getAttribute('contenteditable') === 'true');
+          activeEl?.getAttribute?.('contenteditable') === 'true');
 
       if (isInputActive) {
         return;

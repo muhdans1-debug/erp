@@ -58,7 +58,7 @@ export default function SupervisorTillPanel({
         openingCash: opening,
         expectedDrawerCash: opening + cashSales,
         transactionCount: 28,
-        shopName: 'Askar Supermarket',
+        shopName: 'Layali Supermarket',
         vatNumber: '200012345678901'
       });
       showToast('🖨️ Shift Z-Report printed to Sunmi 58mm printer!');
@@ -204,7 +204,7 @@ export default function SupervisorTillPanel({
 
         {/* Footer: Lock Terminal */}
         <div className="mt-8 pt-6 border-t border-slate-800 flex items-center justify-between">
-          <span className="text-xs text-slate-500">Askar Supermarket OS • Sunmi D2 Mini</span>
+          <span className="text-xs text-slate-500">Layali Supermarket OS • Sunmi D2 Mini</span>
           <button
             onClick={onLockTerminal}
             className="px-4 py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-xl text-xs font-bold border border-red-500/30 transition flex items-center gap-1.5 cursor-pointer"

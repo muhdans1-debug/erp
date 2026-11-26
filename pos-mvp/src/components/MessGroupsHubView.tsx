@@ -19,7 +19,9 @@ import {
   ShoppingCart,
   Receipt,
   FileText,
-  Layers
+  Layers,
+  Plus,
+  BookOpen
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
@@ -97,6 +99,90 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
   const [isSubmittingSettle, setIsSubmittingSettle] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
 
+  // Create New Mess Group Modal State
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [newGroupPreviousBalance, setNewGroupPreviousBalance] = useState<string>('');
+  const [newGroupDescription, setNewGroupDescription] = useState<string>('');
+  const [newGroupTagId, setNewGroupTagId] = useState<string>('');
+  const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+  const [customerDirectory, setCustomerDirectory] = useState<any[]>([]);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState<string>('');
+  const [isSubmittingCreate, setIsSubmittingCreate] = useState<boolean>(false);
+
+  // Add Previous Book Balance to Existing Mess Group Modal State
+  const [balanceModalGroup, setBalanceModalGroup] = useState<MessGroupItem | null>(null);
+  const [addBalanceAmount, setAddBalanceAmount] = useState<string>('');
+  const [addBalanceDescription, setAddBalanceDescription] = useState<string>('');
+  const [isSubmittingBalance, setIsSubmittingBalance] = useState<boolean>(false);
+
+  const handleOpenAddBalanceModal = (group: MessGroupItem) => {
+    setBalanceModalGroup(group);
+    setAddBalanceAmount('');
+    setAddBalanceDescription('');
+  };
+
+  const handleAddBalanceSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!balanceModalGroup) return;
+
+    const amt = parseFloat(addBalanceAmount);
+    if (isNaN(amt) || amt <= 0) {
+      alert('Please enter a valid previous book balance greater than BD 0.000.');
+      return;
+    }
+
+    if (!balanceModalGroup.members || balanceModalGroup.members.length === 0) {
+      alert('This mess group has 0 enrolled members. Please add members first before allocating previous debt.');
+      return;
+    }
+
+    setIsSubmittingBalance(true);
+    try {
+      const payload = {
+        previousBalance: amt,
+        description: addBalanceDescription.trim() || undefined,
+        member_ids: balanceModalGroup.members.map((m: MessMemberItem) => m.id)
+      };
+
+      const mgrPin = getManagerPin();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos'
+      };
+      if (mgrPin) headers['x-manager-pin'] = mgrPin;
+
+      const res = await fetchFromCandidates(`/api/nfc/mess-groups/${balanceModalGroup.id}/balance`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res || !res.ok) {
+        const errData = await res?.json().catch(() => ({}));
+        throw new Error(errData?.error || 'Failed to post mess opening balance');
+      }
+
+      const data = await res.json();
+      if (data && data.success) {
+        showToast?.(
+          `Posted BD ${amt.toFixed(3)} previous book balance across ${balanceModalGroup.members.length} members with zero drift!`,
+          'success'
+        );
+        setBalanceModalGroup(null);
+        await loadGroups();
+        onCustomerUpdated?.();
+      } else {
+        throw new Error(data?.error || 'Failed to post mess opening balance');
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error posting mess previous balance: ${err?.message || err}`);
+    } finally {
+      setIsSubmittingBalance(false);
+    }
+  };
+
   // Multi-endpoint fetch helper
   const fetchFromCandidates = useCallback(async (path: string, options: RequestInit = {}): Promise<Response | null> => {
     const candidates = [
@@ -116,7 +202,7 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
           signal: AbortSignal.timeout(3500)
         });
         if (res.ok) return res;
-      } catch {}
+      } catch { }
     }
     return null;
   }, [apiBase]);
@@ -268,7 +354,7 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
     setIsPrinting(true);
     try {
       await printKhataStatement({
-        shopName: "ASKAR SUPERMARKET",
+        shopName: "LAYALI SUPERMARKET",
         customerName: group.group_name,
         statement: group.messLedger || [],
         currentBalance: group.totalBalance,
@@ -303,7 +389,7 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
     const memberCount = Math.max(1, group.members?.length || 1);
     const eqShare = Number(group.equalSplitShare || (group.totalBalance / memberCount)).toFixed(3);
 
-    let msg = `*ASKAR SUPERMARKET - ROOM MESS STATEMENT*\n`;
+    let msg = `*LAYALI SUPERMARKET - ROOM MESS STATEMENT*\n`;
     msg += `👥 *Room / Mess Group:* ${group.group_name}\n`;
     msg += `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n`;
     msg += `--------------------------------\n`;
@@ -370,14 +456,14 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
       if (res && res.ok) {
         // 1. Kick cash drawer if physical cash
         if (settleMethod === 'CASH') {
-          kickCashDrawer().catch(() => {});
+          kickCashDrawer().catch(() => { });
         }
         // 2. Play voice announcement
         playThankYouVoice('KHATA_PAYMENT');
 
         // 3. Print thermal receipt slip (fire-and-forget)
         printKhataPaymentReceipt({
-          shopName: "ASKAR SUPERMARKET",
+          shopName: "LAYALI SUPERMARKET",
           customerName: `${settlingMember.name} (${selectedGroup.group_name} Mess)`,
           amountPaid: amountNum,
           previousBalance: Number(selectedGroup.totalBalance),
@@ -385,7 +471,7 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
           paymentMethod: settleMethod,
           receiptNo: `MS-${Date.now().toString().slice(-6)}`,
           timestamp: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(() => { });
 
         const successMsg = `✅ Received BD ${amountNum.toFixed(3)} for ${settlingMember.name}'s share in ${selectedGroup.group_name}!`;
         if (showToast) showToast(successMsg, 'success');
@@ -403,6 +489,93 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
       alert(`Network error recording payment: ${err?.message || err}`);
     } finally {
       setIsSubmittingSettle(false);
+    }
+  };
+
+  // Open Create Mess Group Modal
+  const handleOpenCreateGroupModal = async () => {
+    setNewGroupName('');
+    setNewGroupPreviousBalance('');
+    setNewGroupDescription('');
+    setNewGroupTagId('');
+    setNewGroupMembers([]);
+    setCustomerSearchQuery('');
+    setShowCreateGroupModal(true);
+
+    try {
+      const res = await fetchFromCandidates('/khata/ledger?sort=alpha');
+      if (res && res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data?.customers || []);
+        setCustomerDirectory(list);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load customers for mess creation:', err);
+    }
+  };
+
+  // Submit Create Mess Group
+  const handleCreateMessGroupSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) {
+      if (showToast) showToast('Mess Group name is required', 'error');
+      return;
+    }
+
+    const prevBal = parseFloat(newGroupPreviousBalance) || 0;
+    if (prevBal > 0 && newGroupMembers.length === 0) {
+      if (showToast) showToast('Please select at least 1 room member to allocate the opening balance', 'error');
+      return;
+    }
+
+    setIsSubmittingCreate(true);
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-manager-pin': getManagerPin()
+      };
+
+      const payload: any = {
+        group_name: newGroupName.trim(),
+        member_ids: newGroupMembers,
+        tag_id: newGroupTagId.trim() || null
+      };
+
+      if (prevBal > 0) {
+        payload.previousBalance = prevBal;
+        if (newGroupDescription.trim()) {
+          payload.description = newGroupDescription.trim();
+        }
+      }
+
+      const res = await fetchFromCandidates('/api/nfc/mess-groups', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res || !res.ok) {
+        const errData = await res?.json().catch(() => null);
+        throw new Error(errData?.error || 'Failed to create mess group');
+      }
+
+      const data = await res.json();
+      if (data?.success) {
+        if (showToast) {
+          showToast(`Mess Group "${newGroupName.trim()}" created successfully with ${newGroupMembers.length} members${prevBal > 0 ? ` and BD ${prevBal.toFixed(3)} opening balance` : ''}!`, 'success');
+        }
+        setShowCreateGroupModal(false);
+        await loadGroups();
+        if (onCustomerUpdated) onCustomerUpdated();
+      } else {
+        throw new Error(data?.error || 'Failed to create mess group');
+      }
+    } catch (err: any) {
+      console.error('Error creating mess group:', err);
+      if (showToast) showToast(err.message || 'Error creating mess group', 'error');
+    } finally {
+      setIsSubmittingCreate(false);
     }
   };
 
@@ -589,6 +762,13 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
 
             <div className="flex items-center gap-2 shrink-0">
               <button
+                onClick={handleOpenCreateGroupModal}
+                className="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer flex items-center gap-2 font-black text-sm"
+              >
+                <Plus size={16} />
+                <span>New Mess Group</span>
+              </button>
+              <button
                 onClick={loadGroups}
                 disabled={isLoading}
                 className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 active:scale-95 transition-transform cursor-pointer flex items-center gap-1.5 font-bold text-sm"
@@ -700,8 +880,8 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Equal Split Badge & Personal Credit Separation Note */}
-                      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      {/* Equal Split Badge & Personal Credit Separation Note & Add Balance Button */}
+                      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
                         <div className="bg-indigo-50 border border-indigo-200/60 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
                           <Scale size={13} className="text-indigo-600 shrink-0" />
                           <span className="text-xs font-bold text-indigo-900">
@@ -709,10 +889,24 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                           </span>
                         </div>
 
-                        <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-md">
-                          <Lock size={10} className="text-slate-400" />
-                          <span>Personal tabs separate</span>
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenAddBalanceModal(group);
+                            }}
+                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1 cursor-pointer active:scale-95"
+                            title="Add / Migrate Previous Paper Book Balance to this Room Group"
+                          >
+                            <BookOpen size={12} />
+                            <span>+ Add Book Balance</span>
+                          </button>
+                          <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-md">
+                            <Lock size={10} className="text-slate-400" />
+                            <span>Personal tabs separate</span>
+                          </span>
+                        </div>
                       </div>
 
                       {/* Member Avatars / Names Preview */}
@@ -876,6 +1070,16 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                 <MessageCircle size={15} />
                 <span>WhatsApp Summary</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddBalanceModal(selectedGroup)}
+                className="px-3.5 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer shadow-xs"
+                title="Add Previous Paper Book Balance to this room group"
+              >
+                <BookOpen size={15} />
+                <span>+ Add Book Balance</span>
+              </button>
             </div>
           </div>
 
@@ -1020,11 +1224,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                                 setActiveShopperFilter(null);
                                 document.getElementById('mess-ledger-section')?.scrollIntoView({ behavior: 'smooth' });
                               }}
-                              className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1 ${
-                                activeMemberFilter === member.id
-                                  ? 'bg-indigo-600 text-white shadow-xs'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                              }`}
+                              className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1 ${activeMemberFilter === member.id
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                }`}
                               title={`Filter all transactions for ${member.name}`}
                             >
                               <Receipt size={12} />
@@ -1100,11 +1303,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setTxnDisplayMode('ALL_SPLITS')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                    txnDisplayMode === 'ALL_SPLITS'
-                      ? 'bg-white text-indigo-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${txnDisplayMode === 'ALL_SPLITS'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   <Layers size={13} />
                   <span>All Member Splits ({ledgerEntries.length})</span>
@@ -1112,11 +1314,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setTxnDisplayMode('GROUPED_ORDERS')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                    txnDisplayMode === 'GROUPED_ORDERS'
-                      ? 'bg-white text-indigo-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${txnDisplayMode === 'GROUPED_ORDERS'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   <FileText size={13} />
                   <span>Grouped by Invoice ({groupedOrders.length})</span>
@@ -1154,11 +1355,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                     setActiveMemberFilter(null);
                     setActiveShopperFilter(null);
                   }}
-                  className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 ${
-                    activeMemberFilter === null && activeShopperFilter === null
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 ${activeMemberFilter === null && activeShopperFilter === null
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                 >
                   All Members
                 </button>
@@ -1173,11 +1373,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                         setActiveMemberFilter(isSelected ? null : m.id);
                         setActiveShopperFilter(null);
                       }}
-                      className={`px-2 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 flex items-center gap-1 ${
-                        isSelected
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                      }`}
+                      className={`px-2 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 flex items-center gap-1 ${isSelected
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
                     >
                       <span>{m.name}</span>
                       <span className={`text-[10px] px-1 rounded-full ${isSelected ? 'bg-indigo-800 text-white' : 'bg-slate-200 text-slate-600'}`}>
@@ -1266,9 +1465,8 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                             {tx.invoiceNo || 'INV-MESS'}
                           </span>
                           <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-black tracking-wide ${
-                              isPayment ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'
-                            }`}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-black tracking-wide ${isPayment ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'
+                              }`}
                           >
                             {isPayment ? 'PAYMENT' : 'GROCERY SPLIT'}
                           </span>
@@ -1295,9 +1493,8 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
 
                       <div className="text-right shrink-0 pl-3">
                         <span
-                          className={`text-base font-black ${
-                            isPayment ? 'text-emerald-600' : 'text-slate-900'
-                          }`}
+                          className={`text-base font-black ${isPayment ? 'text-emerald-600' : 'text-slate-900'
+                            }`}
                         >
                           {isPayment ? '-' : '+'}BD {Number(tx.amount || 0).toFixed(3)}
                         </span>
@@ -1372,7 +1569,7 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
 
       {/* MODAL: INDIVIDUAL MEMBER SHARE SETTLEMENT */}
       {settlingMember && selectedGroup && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-slate-200">
             <div className="bg-indigo-600 text-white p-4 flex items-center justify-between">
               <div>
@@ -1436,11 +1633,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setSettleMethod('CASH')}
-                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                      settleMethod === 'CASH'
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${settleMethod === 'CASH'
+                      ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
                   >
                     <Banknote size={16} />
                     <span>💵 Cash</span>
@@ -1448,11 +1644,10 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setSettleMethod('BENEFIT_PAY')}
-                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                      settleMethod === 'BENEFIT_PAY'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                    className={`p-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${settleMethod === 'BENEFIT_PAY'
+                      ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
                   >
                     <CreditCard size={16} />
                     <span>📱 BenefitPay</span>
@@ -1483,6 +1678,384 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                   <span>Confirm Settlement</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL: CREATE NEW MESS GROUP (WITH PREVIOUS BOOK BALANCE MIGRATION) */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/30 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
+                  <Users size={20} />
+                </div>
+                <div>
+                  <h3 className="font-black text-lg text-white">Create New Mess Group</h3>
+                  <p className="text-xs text-indigo-200">Enroll room/camp communal account & migrate paper book debts</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCreateGroupModal(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl cursor-pointer hover:bg-white/10"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-slate-900">
+              {/* Group Name */}
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1">
+                  Mess / Room / Camp Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Camp 4 Room 12 Mess, Villa 3, Block 202"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Physical Tag (Optional) */}
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1">
+                  Shared Physical NFC Tag UID (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 04:8A:21:5A:F1:48:80 (Leave blank if none)"
+                  value={newGroupTagId}
+                  onChange={(e) => setNewGroupTagId(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Previous Book Balance Section */}
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BookOpen size={16} className="text-amber-600" />
+                    <label className="block text-xs font-black uppercase tracking-wider text-amber-900">
+                      Previous Book Balance (Physical Ledger Debt)
+                    </label>
+                  </div>
+                  <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-200">
+                    Paper Book Migration
+                  </span>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-xs font-black text-amber-700 select-none">
+                      BD
+                    </span>
+                    <input
+                      type="number"
+                      step="0.005"
+                      min="0"
+                      placeholder="0.000 (e.g. 45.600)"
+                      value={newGroupPreviousBalance}
+                      onChange={(e) => setNewGroupPreviousBalance(e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 bg-white border border-amber-300 rounded-xl text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-slate-400 font-mono"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Enter the existing room balance from your paper ledger book. It will be split with zero-fils drift across enrolled members.
+                  </p>
+                </div>
+
+                {parseFloat(newGroupPreviousBalance) > 0 && (
+                  <div className="space-y-2">
+                    {newGroupMembers.length > 0 ? (
+                      <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs flex items-center justify-between text-emerald-800 font-bold">
+                        <span>⚖️ Zero-Drift Split:</span>
+                        <span className="font-mono font-black text-emerald-900">
+                          BD {parseFloat(newGroupPreviousBalance).toFixed(3)} ÷ {newGroupMembers.length} = BD {(parseFloat(newGroupPreviousBalance) / newGroupMembers.length).toFixed(3)} / member
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-xl text-xs text-amber-900 font-bold flex items-center gap-1.5">
+                        <span>⚠️</span>
+                        <span>Please select at least 1 room member below to allocate this opening book balance.</span>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">
+                        Opening Balance Note / Reference (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Migration from notebook page 14"
+                        value={newGroupDescription}
+                        onChange={(e) => setNewGroupDescription(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Room Members Selector */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-black uppercase tracking-wider text-slate-700">
+                    Room Members ({newGroupMembers.length} Selected)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const q = customerSearchQuery.trim().toLowerCase();
+                        const filtered = customerDirectory.filter((c: any) =>
+                          !q ||
+                          (c.name || '').toLowerCase().includes(q) ||
+                          (c.cpr && c.cpr.includes(q)) ||
+                          (c.phone && c.phone.includes(q))
+                        );
+                        const newIds = Array.from(new Set([...newGroupMembers, ...filtered.map((c: any) => c.id)]));
+                        setNewGroupMembers(newIds);
+                      }}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                    >
+                      Select All Filtered
+                    </button>
+                    {newGroupMembers.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewGroupMembers([])}
+                        className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="relative mb-2">
+                  <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search workers by name, phone, or CPR..."
+                    value={customerSearchQuery}
+                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
+                  {customerDirectory.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400">Loading customer directory...</div>
+                  ) : (
+                    customerDirectory
+                      .filter((c: any) => {
+                        if (!customerSearchQuery.trim()) return true;
+                        const q = customerSearchQuery.toLowerCase();
+                        return (
+                          (c.name || '').toLowerCase().includes(q) ||
+                          (c.cpr && c.cpr.includes(q)) ||
+                          (c.phone && c.phone.includes(q))
+                        );
+                      })
+                      .map((c: any) => {
+                        const isSelected = newGroupMembers.includes(c.id);
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={() => {
+                              if (isSelected) {
+                                setNewGroupMembers(prev => prev.filter(id => id !== c.id));
+                              } else {
+                                setNewGroupMembers(prev => [...prev, c.id]);
+                              }
+                            }}
+                            className={`p-2.5 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50/80' : 'hover:bg-slate-50'
+                              }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className={`w-4 h-4 rounded flex items-center justify-center border transition ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                                }`}>
+                                {isSelected && <CheckCircle2 size={12} />}
+                              </div>
+                              <div className="truncate">
+                                <p className="text-xs font-black text-slate-800 truncate">{c.name}</p>
+                                <p className="text-[10px] text-slate-400">
+                                  {c.phone || c.cpr ? `📞 ${c.phone || 'No phone'} | CPR: ${c.cpr || '-'}` : 'Worker'}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="text-[11px] font-mono font-bold text-slate-500">
+                              BD {Number(c.balance || c.currentBalance || 0).toFixed(3)}
+                            </span>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowCreateGroupModal(false)}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateMessGroupSubmit}
+                disabled={isSubmittingCreate || !newGroupName.trim()}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm cursor-pointer active:scale-95 transition-all"
+              >
+                {isSubmittingCreate && <RefreshCw size={14} className="animate-spin" />}
+                <span>Create Mess Group & Post Balance</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD PREVIOUS BOOK BALANCE TO EXISTING MESS GROUP */}
+      {balanceModalGroup && (
+        <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92dvh] animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-amber-900 to-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/30 border border-amber-400/30 flex items-center justify-center text-amber-300">
+                  <BookOpen size={20} />
+                </div>
+                <div>
+                  <h3 className="font-black text-lg text-white">Add Previous Book Balance</h3>
+                  <p className="text-xs text-amber-200">{balanceModalGroup.group_name} • Physical Ledger Migration</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBalanceModalGroup(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl cursor-pointer hover:bg-white/10"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain text-slate-900">
+              {/* Group Snapshot Card */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Current Mess Debt</span>
+                  <p className="text-xl font-black text-slate-900 mt-0.5">BD {Number(balanceModalGroup.totalBalance || 0).toFixed(3)}</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Enrolled Members</span>
+                  <p className="text-xl font-black text-indigo-700 mt-0.5">{balanceModalGroup.members.length} Workers</p>
+                </div>
+              </div>
+
+              {/* Amount to Add */}
+              <div className="p-4 bg-amber-50/70 border-2 border-amber-300 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black uppercase tracking-wider text-amber-900">
+                    Previous Book Balance to Add (BD) *
+                  </label>
+                  <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-200">
+                    Paper Book Migration
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <span className="absolute left-3.5 top-3 text-sm font-black text-amber-700 select-none">
+                    BD
+                  </span>
+                  <input
+                    type="number"
+                    step="0.005"
+                    min="0"
+                    placeholder="0.000 (e.g. 45.600)"
+                    value={addBalanceAmount}
+                    onChange={(e) => setAddBalanceAmount(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-white border-2 border-amber-400 rounded-xl text-lg font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-slate-400 font-mono"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Enter the balance owed from your physical paper book. It will be split with zero-fils drift across all {balanceModalGroup.members.length} members.
+                </p>
+
+                {parseFloat(addBalanceAmount) > 0 && balanceModalGroup.members.length > 0 && (
+                  <div className="mt-2 p-2.5 bg-emerald-50 border border-emerald-300 rounded-xl text-xs flex items-center justify-between text-emerald-900 font-bold">
+                    <span>⚖️ Zero-Drift Split:</span>
+                    <span className="font-mono font-black text-emerald-900">
+                      BD {parseFloat(addBalanceAmount).toFixed(3)} ÷ {balanceModalGroup.members.length} = BD {(parseFloat(addBalanceAmount) / balanceModalGroup.members.length).toFixed(3)} / member
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Note / Reference */}
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1">
+                  Reference Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Migration from paper book page 14"
+                  value={addBalanceDescription}
+                  onChange={(e) => setAddBalanceDescription(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Members who will receive this balance */}
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-2">
+                  Receiving Members ({balanceModalGroup.members.length})
+                </label>
+                <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
+                  {balanceModalGroup.members.map((m: MessMemberItem) => (
+                    <div key={m.id} className="p-2.5 flex items-center justify-between text-xs">
+                      <div className="truncate pr-2">
+                        <span className="font-bold text-slate-800">{m.name}</span>
+                        {m.phone && <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({m.phone})</span>}
+                      </div>
+                      {parseFloat(addBalanceAmount) > 0 && (
+                        <span className="text-emerald-700 font-mono font-bold shrink-0">
+                          +BD {(parseFloat(addBalanceAmount) / balanceModalGroup.members.length).toFixed(3)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Sticky Action Footer */}
+            <div className="p-3 sm:p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setBalanceModalGroup(null)}
+                className="flex-1 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm font-bold cursor-pointer active:scale-95 transition-all min-h-[48px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddBalanceSubmit}
+                disabled={isSubmittingBalance || !parseFloat(addBalanceAmount) || parseFloat(addBalanceAmount) <= 0}
+                className="flex-[2] py-3 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:opacity-50 text-white rounded-xl text-sm font-black flex items-center justify-center gap-2 shadow-md cursor-pointer active:scale-95 transition-all min-h-[48px]"
+              >
+                {isSubmittingBalance ? <RefreshCw size={16} className="animate-spin" /> : <BookOpen size={18} />}
+                <span>{isSubmittingBalance ? 'Posting Balance...' : 'Post Book Balance to Room'}</span>
+              </button>
             </div>
           </div>
         </div>

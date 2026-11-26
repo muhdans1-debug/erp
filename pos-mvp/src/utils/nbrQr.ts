@@ -22,7 +22,7 @@ export interface NbrInvoiceQrParams {
  * Generates the raw TLV Base64 payload required by Bahrain NBR tax regulations.
  */
 export function generateNbrTlvBase64(params: NbrInvoiceQrParams): string {
-  const seller = (params.sellerName || 'ASKAR SUPERMARKET').trim();
+  const seller = (params.sellerName || 'LAYALI SUPERMARKET').trim();
   const vatNo = (params.vatNumber || '200012345678901').trim();
   const isoDate = getRegionalIsoString(params.timestamp);
   const totalStr = Number(params.total || 0).toFixed(3);

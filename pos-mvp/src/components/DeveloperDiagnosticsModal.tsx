@@ -44,7 +44,7 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200">
         <div className="flex justify-between items-center pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
@@ -275,7 +275,7 @@ export const DeveloperDiagnosticsModal: React.FC<DeveloperDiagnosticsModalProps>
         </div>
 
         <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
-          <span>Shortcut: Double-click Askar POS or press Ctrl+Shift+D</span>
+          <span>Shortcut: Double-click Layali or press Ctrl+Shift+D</span>
           <button
             type="button"
             onClick={onClose}

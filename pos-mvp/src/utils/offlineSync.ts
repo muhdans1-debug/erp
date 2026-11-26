@@ -189,7 +189,11 @@ export const syncOfflineKhataSettlements = async (nativeDb?: any): Promise<{ pro
                 body: JSON.stringify({
                   amount: Number(payload.amount),
                   paymentMethod: payload.paymentMethod || 'CASH',
-                  reference: payload.reference || payload.receiptNo
+                  reference: payload.reference || payload.receiptNo,
+                  paymentTarget: payload.paymentTarget || payload.target,
+                  target: payload.target || payload.paymentTarget,
+                  messId: (payload.messId && payload.messId !== 'ALL_MESSES') ? payload.messId : null,
+                  mess_id: (payload.mess_id && payload.mess_id !== 'ALL_MESSES') ? payload.mess_id : null
                 }),
                 signal: AbortSignal.timeout(5000)
               });
@@ -205,7 +209,11 @@ export const syncOfflineKhataSettlements = async (nativeDb?: any): Promise<{ pro
                     customerId,
                     amount: Number(payload.amount),
                     paymentMethod: payload.paymentMethod || 'CASH',
-                    reference: payload.reference || payload.receiptNo
+                    reference: payload.reference || payload.receiptNo,
+                    paymentTarget: payload.paymentTarget || payload.target,
+                    target: payload.target || payload.paymentTarget,
+                    messId: (payload.messId && payload.messId !== 'ALL_MESSES') ? payload.messId : null,
+                    mess_id: (payload.mess_id && payload.mess_id !== 'ALL_MESSES') ? payload.mess_id : null
                   }),
                   signal: AbortSignal.timeout(5000)
                 });
@@ -267,7 +275,11 @@ export const syncOfflineKhataSettlements = async (nativeDb?: any): Promise<{ pro
               body: JSON.stringify({
                 amount: Number(item.amount),
                 paymentMethod: item.paymentMethod || 'CASH',
-                reference: item.reference || item.receiptNo
+                reference: item.reference || item.receiptNo,
+                paymentTarget: item.paymentTarget || item.target,
+                target: item.target || item.paymentTarget,
+                messId: (item.messId && item.messId !== 'ALL_MESSES') ? item.messId : null,
+                mess_id: (item.mess_id && item.mess_id !== 'ALL_MESSES') ? item.mess_id : null
               }),
               signal: AbortSignal.timeout(5000)
             });
@@ -283,7 +295,11 @@ export const syncOfflineKhataSettlements = async (nativeDb?: any): Promise<{ pro
                   customerId,
                   amount: Number(item.amount),
                   paymentMethod: item.paymentMethod || 'CASH',
-                  reference: item.reference || item.receiptNo
+                  reference: item.reference || item.receiptNo,
+                  paymentTarget: item.paymentTarget || item.target,
+                  target: item.target || item.paymentTarget,
+                  messId: (item.messId && item.messId !== 'ALL_MESSES') ? item.messId : null,
+                  mess_id: (item.mess_id && item.mess_id !== 'ALL_MESSES') ? item.mess_id : null
                 }),
                 signal: AbortSignal.timeout(5000)
               });

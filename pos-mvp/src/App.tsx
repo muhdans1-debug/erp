@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import LoginScreen from './pages/LoginScreen';
 import CheckoutScreen from './pages/CheckoutScreen';
 import StartShiftModal from './components/StartShiftModal';
-import CustomerDisplayPage from './pages/CustomerDisplayPage';
-import CustomerStatementPage from './pages/CustomerStatementPage';
-import CorporateSponsorDashboard from './pages/CorporateSponsorDashboard';
-import F100Pim from './F100Pim';
-import MobileKhataScreen from './pages/MobileKhataScreen';
-import MobileTapPad from './pages/MobileTapPad';
-import ProducePriceCommander from './pages/ProducePriceCommander';
+
+// --- LAZY LOAD NON-CHECKOUT SPECIALIZED FLEET PORTALS ---
+const CustomerDisplayPage = lazy(() => import('./pages/CustomerDisplayPage'));
+const CustomerStatementPage = lazy(() => import('./pages/CustomerStatementPage'));
+const CorporateSponsorDashboard = lazy(() => import('./pages/CorporateSponsorDashboard'));
+const F100Pim = lazy(() => import('./F100Pim'));
+const MobileKhataScreen = lazy(() => import('./pages/MobileKhataScreen'));
+const MobileTapPad = lazy(() => import('./pages/MobileTapPad'));
+const ProducePriceCommander = lazy(() => import('./pages/ProducePriceCommander'));
 import { useDisasterRecovery } from './hooks/useDisasterRecovery';
 import { useNetworkSync } from './hooks/useNetworkSync';
 import { initOTA } from './utils/otaUpdater';
@@ -23,6 +25,8 @@ import { getApiBaseUrl, getServerIp, DEFAULT_EDGE_API_URL } from './utils/apiCon
 import { syncClockWithMasterServer, updateClockOffsetFromHeartbeat } from './utils/time';
 import { useBarcodeWedge } from './hooks/useBarcodeWedge';
 import { setManagerSessionPin, clearManagerSessionPin } from './utils/authUtils';
+import { initPushNotifications, requestNotificationPermission, getNotificationPermissionStatus, showTransactionNotification, triggerTestTransactionNotification } from './utils/pushNotification';
+import { Bell, X as CloseIcon } from 'lucide-react';
 
 const CustomerDisplay = registerPlugin<any>('CustomerDisplay');
 
@@ -48,14 +52,16 @@ export default function App() {
     new URLSearchParams(window.location.search).get('view') === 'checkout'
   );
 
-  // Target Customer Self-Service Statement Portal (/tab/:id, /statement, /khata, ?view=statement)
+  // Target Customer Self-Service Statement Portal (/tab/:id, /customer/:id, /statement, /khata, ?view=statement)
   // Dedicated statement host: khata.askar.com
   const isStatementRoute = typeof window !== 'undefined' && !isExplicitPos && (
     window.location.pathname.startsWith('/tab') ||
+    window.location.pathname.startsWith('/customer') ||
     window.location.pathname === '/statement' ||
     window.location.pathname === '/khata' ||
     window.location.pathname.startsWith('/khata/') ||
     new URLSearchParams(window.location.search).get('view') === 'statement' ||
+    new URLSearchParams(window.location.search).get('view') === 'customer' ||
     new URLSearchParams(window.location.search).has('khata') ||
     (window.location.hostname === 'khata.askar.com')
   );
@@ -200,10 +206,10 @@ export default function App() {
             const t3 = (data.registers || []).find((r: any) => r.terminalId === 'T3');
             const now = Date.now();
             const isT3BusyOnOtherDevice = Boolean(
-              t3 && 
-              t3.isOnline && 
-              t3.clientUuid && 
-              t3.clientUuid !== myClientUuid && 
+              t3 &&
+              t3.isOnline &&
+              t3.clientUuid &&
+              t3.clientUuid !== myClientUuid &&
               (now - (t3.lastSeen || 0) < 40000)
             );
             const currentStored = localStorage.getItem('terminal_id');
@@ -248,7 +254,11 @@ export default function App() {
 
   const statementCustomerId = typeof window !== 'undefined'
     ? (new URLSearchParams(window.location.search).get('id') ||
-       (window.location.pathname.startsWith('/tab/') ? window.location.pathname.replace('/tab/', '').split('/')[0] : null))
+      new URLSearchParams(window.location.search).get('customerId') ||
+      (window.location.pathname.startsWith('/tab/') ? window.location.pathname.replace('/tab/', '').split('/')[0].split('?')[0] : null) ||
+      (window.location.pathname.startsWith('/customer/') ? window.location.pathname.replace('/customer/', '').split('/')[0].split('?')[0] : null) ||
+      (window.location.pathname.startsWith('/khata/') ? window.location.pathname.replace('/khata/', '').split('/')[0].split('?')[0] : null) ||
+      (window.location.pathname.startsWith('/statement/') ? window.location.pathname.replace('/statement/', '').split('/')[0].split('?')[0] : null))
     : null;
 
   // If booted on Manager Laptop port (5175) or explicitly requested via query parameter
@@ -285,6 +295,7 @@ export default function App() {
   // Initialize Capgo Over-The-Air (OTA) updater for silent remote hot-swaps
   useEffect(() => {
     initOTA();
+    initPushNotifications().catch(() => { });
   }, []);
 
   // ⚡ Native Android SQLite Initialization (immunizes offline transactions against browser cache evictions)
@@ -309,8 +320,8 @@ export default function App() {
 
     return () => {
       try {
-        KeepAwake.allowSleep().catch(() => {});
-      } catch {}
+        KeepAwake.allowSleep().catch(() => { });
+      } catch { }
     };
   }, []);
 
@@ -319,11 +330,11 @@ export default function App() {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
     if (isNative) {
       if (typeof Printer !== 'undefined') {
-        Printer.initPrinter?.().catch(() => {});
+        Printer.initPrinter?.().catch(() => { });
       }
       if (!isCustomerDisplayRoute) {
         try {
-          CustomerDisplay.openUrl({ url: 'http://localhost/customer.html' }).catch(() => {});
+          CustomerDisplay.openUrl({ url: 'http://localhost/customer.html' }).catch(() => { });
         } catch (e) {
           console.warn('CustomerDisplay openUrl error', e);
         }
@@ -337,22 +348,355 @@ export default function App() {
   const [managerScanLocked, setManagerScanLocked] = useState(false);
   const [managerScanMessage, setManagerScanMessage] = useState("");
 
+  // Universal Floating Push Notification Banner & Live Transaction Popups
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [showGlobalNotifBanner, setShowGlobalNotifBanner] = useState(true);
+  const [liveTxAlert, setLiveTxAlert] = useState<{
+    id?: string;
+    txType: 'SALE' | 'KHATA_PAYMENT' | 'KHATA_CHARGE' | 'REFUND' | 'EXPENSE';
+    title: string;
+    message: string;
+    amount: number;
+    formattedAmount?: string;
+    reference?: string;
+    invoiceNo?: string;
+    paymentMethod?: string;
+    customerId?: string | null;
+    customerName?: string | null;
+    timestamp?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    initPushNotifications().catch(() => { });
+    const perm = getNotificationPermissionStatus();
+    setNotifPermission(perm);
+    setShowGlobalNotifBanner(true);
+
+    const handleIncomingTx = (e: any) => {
+      const data = e.detail;
+      if (data) {
+        setLiveTxAlert(data);
+      }
+    };
+    window.addEventListener('pwa-transaction-notification', handleIncomingTx);
+    return () => {
+      window.removeEventListener('pwa-transaction-notification', handleIncomingTx);
+    };
+  }, []);
+
+  // Auto-dismiss the live popup alert after 9 seconds
+  useEffect(() => {
+    if (!liveTxAlert) return;
+    const t = setTimeout(() => {
+      setLiveTxAlert(null);
+    }, 9000);
+    return () => clearTimeout(t);
+  }, [liveTxAlert]);
+
+  const handleEnableGlobalPush = async () => {
+    const res = await requestNotificationPermission();
+    setNotifPermission(res);
+    if (res === 'granted') {
+      showToast('🔔 Phone Notifications Activated!');
+      showTransactionNotification({
+        txType: 'SALE',
+        title: 'Askar POS Alerts Activated 🔔',
+        message: 'This phone will now receive real-time alerts for every transaction.',
+        amount: 0,
+        formattedAmount: 'Ready'
+      });
+    } else {
+      showToast('⚠️ Notifications blocked in browser settings');
+    }
+  };
+
+  const handleDismissGlobalNotif = () => {
+    setShowGlobalNotifBanner(false);
+  };
+
+  const renderLiveTransactionAlertModal = () => {
+    if (!liveTxAlert) return null;
+
+    // Filter for customer statement portal so customer only receives alerts for their own account
+    if (isStatementRoute && statementCustomerId && liveTxAlert.customerId && liveTxAlert.customerId !== statementCustomerId) {
+      return null;
+    }
+
+    const isPositive = liveTxAlert.txType === 'SALE' || liveTxAlert.txType === 'KHATA_PAYMENT';
+    const isCharge = liveTxAlert.txType === 'KHATA_CHARGE';
+
+    const bgGradient = isPositive
+      ? 'linear-gradient(135deg, #064e3b 0%, #022c22 100%)'
+      : isCharge
+        ? 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)'
+        : 'linear-gradient(135deg, #881337 0%, #450a0a 100%)';
+
+    const borderColor = isPositive ? '#10b981' : isCharge ? '#3b82f6' : '#f43f5e';
+    const glowColor = isPositive ? 'rgba(16, 185, 129, 0.45)' : isCharge ? 'rgba(59, 130, 246, 0.45)' : 'rgba(244, 63, 94, 0.45)';
+
+    return (
+      <div
+        role="alert"
+        style={{
+          position: 'fixed',
+          top: '16px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 'calc(100% - 24px)',
+          maxWidth: '460px',
+          zIndex: 99999999,
+          background: bgGradient,
+          border: `2px solid ${borderColor}`,
+          borderRadius: '20px',
+          padding: '16px 18px',
+          boxShadow: `0 25px 50px -12px rgba(0, 0, 0, 0.9), 0 0 25px ${glowColor}`,
+          color: '#ffffff',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div
+              style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '14px',
+                background: isPositive ? 'rgba(16, 185, 129, 0.25)' : isCharge ? 'rgba(59, 130, 246, 0.25)' : 'rgba(244, 63, 94, 0.25)',
+                border: `1.5px solid ${borderColor}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px',
+                flexShrink: 0
+              }}
+            >
+              {isPositive ? '💰' : isCharge ? '💳' : '💸'}
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: '900',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: borderColor,
+                    color: '#ffffff'
+                  }}
+                >
+                  {liveTxAlert.txType.replace('_', ' ')}
+                </span>
+                <span style={{ fontSize: '11px', color: '#cbd5e1' }}>
+                  {liveTxAlert.paymentMethod ? `via ${liveTxAlert.paymentMethod}` : ''}
+                </span>
+              </div>
+              <div style={{ fontSize: '24px', fontWeight: '900', letterSpacing: '-0.5px', marginTop: '4px', color: '#ffffff' }}>
+                {liveTxAlert.formattedAmount || `${liveTxAlert.amount.toFixed(3)} BHD`}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLiveTxAlert(null)}
+            style={{
+              background: 'rgba(255, 255, 255, 0.15)',
+              border: 'none',
+              borderRadius: '999px',
+              width: '28px',
+              height: '28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#ffffff',
+              cursor: 'pointer',
+              fontWeight: 'bold'
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '12px', display: 'flex', justifyContent: 'space-between', color: '#e2e8f0' }}>
+          <div>
+            {liveTxAlert.customerName && <span>👤 <strong>{liveTxAlert.customerName}</strong></span>}
+            {liveTxAlert.invoiceNo && <span style={{ marginLeft: liveTxAlert.customerName ? '8px' : '0' }}>Inv: #{liveTxAlert.invoiceNo}</span>}
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: '11px' }}>
+            {liveTxAlert.timestamp ? new Date(liveTxAlert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderGlobalNotifBanner = () => {
+    return (
+      <>
+        {renderLiveTransactionAlertModal()}
+        {!showGlobalNotifBanner ? (
+          <button
+            type="button"
+            onClick={() => setShowGlobalNotifBanner(true)}
+            style={{
+              position: 'fixed',
+              bottom: '16px',
+              right: '16px',
+              zIndex: 9999999,
+              background: '#0f172a',
+              border: '1.5px solid #3b82f6',
+              borderRadius: '999px',
+              padding: '8px 14px',
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
+              color: '#93c5fd',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+          >
+            <Bell size={14} />
+            <span>Alerts Live</span>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+          </button>
+        ) : (
+          <div
+            style={{
+              position: 'fixed',
+              top: '12px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 'calc(100% - 24px)',
+              maxWidth: '480px',
+              zIndex: 9999999,
+              background: notifPermission === 'granted'
+                ? 'linear-gradient(135deg, #064e3b 0%, #0f172a 100%)'
+                : 'linear-gradient(135deg, #1e3a8a 0%, #1e1b4b 100%)',
+              border: `1.5px solid ${notifPermission === 'granted' ? '#10b981' : '#3b82f6'}`,
+              borderRadius: '18px',
+              padding: '10px 14px',
+              boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              color: '#ffffff',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '12px',
+                  background: notifPermission === 'granted' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(59, 130, 246, 0.25)',
+                  border: `1px solid ${notifPermission === 'granted' ? '#34d399' : '#60a5fa'}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: notifPermission === 'granted' ? '#6ee7b7' : '#93c5fd',
+                  flexShrink: 0
+                }}
+              >
+                <Bell size={18} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '13px', fontWeight: '800', letterSpacing: '-0.2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {notifPermission === 'granted' ? 'Phone Push Alerts Active 🔔' : 'Instant Transaction Alerts 🔔'}
+                </div>
+                <div style={{ fontSize: '11px', color: '#bfdbfe', opacity: 0.9, lineHeight: '1.2' }}>
+                  {notifPermission === 'granted' ? 'All sales & payments sync to this phone' : 'Live audio & visual popups on this screen'}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+              {notifPermission === 'default' && (
+                <button
+                  type="button"
+                  onClick={handleEnableGlobalPush}
+                  style={{
+                    background: '#2563eb',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '6px 12px',
+                    color: '#ffffff',
+                    fontSize: '12px',
+                    fontWeight: '800',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.5)'
+                  }}
+                >
+                  Enable
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => triggerTestTransactionNotification()}
+                style={{
+                  background: '#059669',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '6px 12px',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(5, 150, 105, 0.4)'
+                }}
+              >
+                Test Alert
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissGlobalNotif}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '6px',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const lastRelayedNfcTagRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
+
   const broadcastNfcScan = (nfcId: string, customerData?: any) => {
     const cleanId = (nfcId || '').trim().toUpperCase();
     if (!cleanId) return;
+
+    // Debounce: prevent duplicate relays within 2.5 seconds per card
+    const now = Date.now();
+    if (lastRelayedNfcTagRef.current.id === cleanId && (now - lastRelayedNfcTagRef.current.time) < 2500) {
+      return;
+    }
+    lastRelayedNfcTagRef.current = { id: cleanId, time: now };
+
     try {
       playNfcChime();
-    } catch {}
-    const candidateBases = [apiBase, DEFAULT_EDGE_API_URL].filter(
-      (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i
-    );
-    for (const base of candidateBases) {
-      fetch(`${base}/api/nfc/relay`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
-        body: JSON.stringify({ tag_id: cleanId, id: cleanId, terminalId: 'Sunmi POS', customer: customerData || null })
-      }).catch(() => {});
-    }
+    } catch { }
+
+    // Single authoritative relay destination (no duplicate concurrent POSTs)
+    const targetBase = apiBase || DEFAULT_EDGE_API_URL;
+    fetch(`${targetBase}/api/nfc/relay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
+      body: JSON.stringify({ tag_id: cleanId, id: cleanId, terminalId: 'Sunmi POS', customer: customerData || null }),
+      signal: AbortSignal.timeout(3000)
+    }).catch(() => { });
   };
 
   const latestCartRef = useRef<any>({ items: [], total: 0, customer: null, activeCartId: '1' });
@@ -408,7 +752,7 @@ export default function App() {
         } else if (rawCmd.includes('::')) {
           const [name, jsonStr] = rawCmd.split('::');
           cmdName = name;
-          try { payload = JSON.parse(jsonStr); } catch {}
+          try { payload = JSON.parse(jsonStr); } catch { }
         } else {
           cmdName = rawCmd;
         }
@@ -476,11 +820,11 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', 'x-pos-client': 'store-pos' },
         body: JSON.stringify(cartPayload)
       })
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.commands) processRemoteCommands(data.commands);
-      })
-      .catch(() => {});
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.commands) processRemoteCommands(data.commands);
+        })
+        .catch(() => { });
     }
   };
 
@@ -523,36 +867,36 @@ export default function App() {
           body: JSON.stringify(heartbeatPayload),
           signal: AbortSignal.timeout(3000)
         })
-        .then(res => res.json())
-        .then(data => {
-          if (data?.serverEpoch) updateClockOffsetFromHeartbeat(data.serverEpoch);
-          if (data && data.commands) processRemoteCommands(data.commands);
-          // Collision Guard: If this desktop is T3 but another device claimed T3, step to T4
-          const isNativePlatform = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
-          const isMobileDevice = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-          if (data?.registers && typeof window !== 'undefined' && !isMobileDevice && !isNativePlatform) {
-            const currentTerm = localStorage.getItem('terminal_id');
-            if (currentTerm === 'T3' && myClientUuid) {
-              const t3 = (data.registers || []).find((r: any) => r.terminalId === 'T3');
-              const now = Date.now();
-              if (t3 && t3.isOnline && t3.clientUuid && t3.clientUuid !== myClientUuid && (now - (t3.lastSeen || 0) < 40000)) {
-                console.log(`⚡ [Fleet Collision Detected] Re-assigning to Counter 4 (Desktop 2).`);
-                localStorage.setItem('terminal_id', 'T4');
-                localStorage.setItem('REGISTER_PREFIX', 'T4');
-                window.dispatchEvent(new CustomEvent('terminal-switched', { detail: { terminalId: 'T4' } }));
+          .then(res => res.json())
+          .then(data => {
+            if (data?.serverEpoch) updateClockOffsetFromHeartbeat(data.serverEpoch);
+            if (data && data.commands) processRemoteCommands(data.commands);
+            // Collision Guard: If this desktop is T3 but another device claimed T3, step to T4
+            const isNativePlatform = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+            const isMobileDevice = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+            if (data?.registers && typeof window !== 'undefined' && !isMobileDevice && !isNativePlatform) {
+              const currentTerm = localStorage.getItem('terminal_id');
+              if (currentTerm === 'T3' && myClientUuid) {
+                const t3 = (data.registers || []).find((r: any) => r.terminalId === 'T3');
+                const now = Date.now();
+                if (t3 && t3.isOnline && t3.clientUuid && t3.clientUuid !== myClientUuid && (now - (t3.lastSeen || 0) < 40000)) {
+                  console.log(`⚡ [Fleet Collision Detected] Re-assigning to Counter 4 (Desktop 2).`);
+                  localStorage.setItem('terminal_id', 'T4');
+                  localStorage.setItem('REGISTER_PREFIX', 'T4');
+                  window.dispatchEvent(new CustomEvent('terminal-switched', { detail: { terminalId: 'T4' } }));
+                }
               }
             }
-          }
-        })
-        .catch(() => {});
+          })
+          .catch(() => { });
       }
     };
 
     sendAutonomousHeartbeat();
-    syncClockWithMasterServer().catch(() => {});
+    syncClockWithMasterServer().catch(() => { });
     const interval = setInterval(sendAutonomousHeartbeat, 15000);
     const clockSyncInterval = setInterval(() => {
-      syncClockWithMasterServer().catch(() => {});
+      syncClockWithMasterServer().catch(() => { });
     }, 60000);
 
     const handleTerminalSwitched = () => {
@@ -630,7 +974,7 @@ export default function App() {
         printNativeSunmiReceipt(payload)
           .then((printed) => {
             if (printed && (payload.paymentMode === 'CASH' || payload.paymentMethod === 'CASH')) {
-              openCashDrawer(payload.changeDue || 0).catch(() => {});
+              openCashDrawer(payload.changeDue || 0).catch(() => { });
             }
           })
           .catch((err) => console.warn('Remote print error:', err));
@@ -645,7 +989,7 @@ export default function App() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ jobId: payload.jobId })
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       }
@@ -752,55 +1096,88 @@ export default function App() {
 
   // --- VIEW 0D: IPHONE 16 PRO MOBILE TAP PAD & RELAY STATION (/tap) ---
   if (isTapPadRoute) {
-    return <MobileTapPad />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Tap Pad...</div>}>
+        {renderGlobalNotifBanner()}
+        <MobileTapPad />
+      </Suspense>
+    );
   }
 
   // --- VIEW 0E: DAILY FRESH PRODUCE & VEGGIE COMMANDER (/produce, /veggies, /price-change) ---
   if (isPriceChangeRoute) {
-    return <ProducePriceCommander apiBase={apiBase} initialMode="60s" />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Price Commander...</div>}>
+        {renderGlobalNotifBanner()}
+        <ProducePriceCommander apiBase={apiBase} initialMode="60s" />
+      </Suspense>
+    );
   }
   if (isProduceRoute) {
-    return <ProducePriceCommander apiBase={apiBase} initialMode="catalog" />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Produce Commander...</div>}>
+        {renderGlobalNotifBanner()}
+        <ProducePriceCommander apiBase={apiBase} initialMode="catalog" />
+      </Suspense>
+    );
   }
 
   // --- VIEW 0C: FEITIAN F100 TERMINAL 02 (PIM vs MOBILE KHATA POS) ---
   if (isF100Device) {
     if (f100Mode === 'pim') {
       return (
-        <F100Pim
-          onSwitchToPos={() => {
-            setF100Mode('pos');
-            try { localStorage.setItem('f100_active_mode', 'pos'); } catch {}
-          }}
-        />
+        <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading F100 PIM...</div>}>
+          {renderGlobalNotifBanner()}
+          <F100Pim
+            onSwitchToPos={() => {
+              setF100Mode('pos');
+              try { localStorage.setItem('f100_active_mode', 'pos'); } catch { }
+            }}
+          />
+        </Suspense>
       );
     }
     return (
-      <MobileKhataScreen
-        onSwitchToPim={() => {
-          setF100Mode('pim');
-          try { localStorage.setItem('f100_active_mode', 'pim'); } catch {}
-        }}
-      />
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Khata POS...</div>}>
+        {renderGlobalNotifBanner()}
+        <MobileKhataScreen
+          onSwitchToPim={() => {
+            setF100Mode('pim');
+            try { localStorage.setItem('f100_active_mode', 'pim'); } catch { }
+          }}
+        />
+      </Suspense>
     );
   }
 
   if (isCustomerDisplayRoute) {
     return (
-      <div className="w-full h-full min-h-screen bg-slate-900 overflow-hidden flex flex-col">
-        <CustomerDisplayPage />
-      </div>
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Display...</div>}>
+        <div className="w-full h-full min-h-screen bg-slate-900 overflow-hidden flex flex-col">
+          <CustomerDisplayPage />
+        </div>
+      </Suspense>
     );
   }
 
   // --- VIEW 0: INTERACTIVE CUSTOMER KHATA & FINANCIAL PORTAL ---
   if (isStatementRoute) {
-    return <CustomerStatementPage customerId={statementCustomerId} apiBase={apiBase} />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading Khata...</div>}>
+        {renderGlobalNotifBanner()}
+        <CustomerStatementPage customerId={statementCustomerId} apiBase={apiBase} />
+      </Suspense>
+    );
   }
 
   // --- VIEW 0B: CORPORATE SPONSOR B2B FLEET DASHBOARD (/sponsor) ---
   if (isSponsorRoute) {
-    return <CorporateSponsorDashboard apiBase={apiBase} />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-bold">Loading B2B Portal...</div>}>
+        {renderGlobalNotifBanner()}
+        <CorporateSponsorDashboard apiBase={apiBase} />
+      </Suspense>
+    );
   }
 
   // --- VIEW 3: THE ASKAR BACK-OFFICE MANAGER SUITE (When explicitly accessing manager port / route) ---
@@ -839,7 +1216,7 @@ export default function App() {
   const renderManagerScanOverlay = () => {
     if (!managerScanLocked) return null;
     return (
-      <div className="fixed inset-0 z-[999999] bg-slate-950/92 backdrop-blur-md flex flex-col items-center justify-center p-6 text-white text-center">
+      <div className="fixed inset-0 z-[999999] bg-slate-950/92 flex flex-col items-center justify-center p-6 text-white text-center">
         <div className="relative mb-6">
           <div className="w-24 h-24 rounded-full bg-blue-600/20 flex items-center justify-center animate-ping absolute inset-0" />
           <div className="w-24 h-24 rounded-full bg-blue-600/30 flex items-center justify-center border-2 border-blue-400 relative shadow-2xl">
@@ -866,6 +1243,7 @@ export default function App() {
   if (userRole === 'NONE') {
     return (
       <>
+        {renderGlobalNotifBanner()}
         {renderManagerScanOverlay()}
         <LoginScreen onLogin={handleLogin} apiBase={apiBase} />
       </>
@@ -876,6 +1254,7 @@ export default function App() {
   if (userRole === 'CASHIER' || userRole === 'MANAGER') {
     return (
       <div className="h-screen w-full relative bg-slate-900 overflow-hidden">
+        {renderGlobalNotifBanner()}
         {renderManagerScanOverlay()}
         {activeLock && (
           <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[9999] bg-amber-600 text-white px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 border border-amber-400 font-bold text-xs">

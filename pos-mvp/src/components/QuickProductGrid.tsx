@@ -68,9 +68,9 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
             key={prod.id}
             type="button"
             onClick={() => onProductClick(prod)}
-            className={`min-h-[85px] p-3 rounded-2xl flex flex-col justify-between border cursor-pointer active:scale-95 transition-all shadow-xs text-left relative ${
+            className={`min-h-[85px] p-3 rounded-2xl flex flex-col justify-between border cursor-pointer active:opacity-85 shadow-xs text-left relative ${
               isSelectedForSwap
-                ? 'border-2 border-blue-600 ring-4 ring-blue-400 bg-blue-100 text-blue-950 shadow-lg scale-102 animate-pulse'
+                ? 'border-2 border-blue-600 ring-4 ring-blue-400 bg-blue-100 text-blue-950 shadow-lg scale-102 '
                 : isEditMode
                 ? 'border-2 border-dashed border-amber-500 ring-2 ring-amber-300/60 bg-amber-50/80 hover:bg-amber-100 text-amber-950 shadow-md'
                 : isOutOfStock
@@ -81,7 +81,7 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
             {isEditMode && (
               <span className={`absolute -top-2 -right-1.5 px-2 py-0.5 text-white text-[9px] rounded-full font-black uppercase shadow-xs tracking-wider border border-white ${
                 isSelectedForSwap
-                  ? 'bg-blue-600 animate-bounce'
+                  ? 'bg-blue-600 '
                   : isPositionSwapActive
                   ? (swapSourceProduct ? 'bg-emerald-600' : 'bg-blue-600')
                   : 'bg-amber-600'
@@ -94,9 +94,16 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
               </span>
             )}
             <div className="flex items-center justify-between gap-1 w-full">
-              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md uppercase tracking-wider ${theme.badge}`}>
-                {theme.label}
-              </span>
+              <div className="flex items-center gap-1 overflow-hidden">
+                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md uppercase tracking-wider ${theme.badge}`}>
+                  {theme.label}
+                </span>
+                {(prod.plu_code || (prod as any).pluCode || (catalogItem?.plu_code)) && (
+                  <span className="text-[10px] font-black font-mono px-1.5 py-0.2 rounded-md bg-blue-600 text-white shadow-xs shrink-0">
+                    #{prod.plu_code || (prod as any).pluCode || (catalogItem?.plu_code)}
+                  </span>
+                )}
+              </div>
               {isOutOfStock ? (
                 <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white tracking-wider">
                   OUT OF STOCK
@@ -141,7 +148,7 @@ export const QuickProductGrid = React.memo<QuickProductGridProps>(({
         <button
           type="button"
           onClick={onAddQuickProduct}
-          className="min-h-[85px] p-3 rounded-2xl flex flex-col items-center justify-center border-2 border-dashed border-blue-400 bg-blue-50/60 hover:bg-blue-100/80 text-blue-700 cursor-pointer active:scale-95 transition-all shadow-xs"
+          className="min-h-[85px] p-3 rounded-2xl flex flex-col items-center justify-center border-2 border-dashed border-blue-400 bg-blue-50/60 hover:bg-blue-100/80 text-blue-700 cursor-pointer active:opacity-85 shadow-xs"
         >
           <Plus size={22} className="stroke-[3] mb-0.5" />
           <span className="text-xs font-bold">Add Item to Grid</span>

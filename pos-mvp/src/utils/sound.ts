@@ -356,7 +356,7 @@ export function playThankYouVoice(
           console.warn('Studio audio playback blocked, using TTS fallback:', playErr);
           const fallback = type === 'KHATA_PAYMENT'
             ? 'Thank you! Payment received.'
-            : (type === 'ASKAR' ? 'Thank you for shopping at Askar. Have a great day!' : 'Thank you! Have a great day.');
+            : (type === 'ASKAR' ? 'Thank you for shopping at Layali. Have a great day!' : 'Thank you! Have a great day.');
           speakWithTts(fallback);
         });
       }, 140);
@@ -369,7 +369,7 @@ export function playThankYouVoice(
   // 4. Fallback to Web Speech Synthesis if audio tag unavailable
   const fallback = type === 'KHATA_PAYMENT'
     ? 'Thank you! Payment received.'
-    : (type === 'ASKAR' ? 'Thank you for shopping at Askar. Have a great day!' : 'Thank you! Have a great day.');
+    : (type === 'ASKAR' ? 'Thank you for shopping at Layali. Have a great day!' : 'Thank you! Have a great day.');
   setTimeout(() => speakWithTts(fallback), 140);
 }
 

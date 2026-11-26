@@ -144,7 +144,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
 
     // 2. Fetch full historical bills from DB/API in background
     setLoading(true);
-    fetchRecentSalesFromDb({ limit: 500, forceRefresh: true })
+    fetchRecentSalesFromDb({ limit: 30, forceRefresh: true })
       .then((dbSales) => {
         if (Array.isArray(dbSales) && dbSales.length > 0) {
           setSales(dbSales);
@@ -192,7 +192,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
     if (preset === 'ALL') {
       setLoading(true);
       try {
-        const fetched = await fetchRecentSalesFromDb({ limit: 500, forceRefresh: true });
+        const fetched = await fetchRecentSalesFromDb({ limit: 30, forceRefresh: true });
         if (fetched && fetched.length > 0) {
           setSales(fetched);
         }
@@ -249,9 +249,8 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
       if (dateFilter === 'TODAY') targetDate = todayKey;
       else if (dateFilter === 'YESTERDAY') targetDate = yesterdayKey;
       else if (dateFilter === 'CUSTOM' && customDate) targetDate = customDate;
-      // If dateFilter === 'ALL', targetDate is undefined, fetching full history
 
-      const freshSales = await fetchRecentSalesFromDb({ date: targetDate, limit: 500, forceRefresh: true });
+      const freshSales = await fetchRecentSalesFromDb({ date: targetDate, limit: 30, forceRefresh: true });
       if (freshSales && freshSales.length > 0) {
         setSales(freshSales);
         showToast(`✅ Loaded ${freshSales.length} bills`);
@@ -260,6 +259,30 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
       }
     } catch {
       showToast('❌ Refresh failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Pagination: Load more historical bills on demand
+  const handleLoadMore = async () => {
+    setLoading(true);
+    try {
+      const nextLimit = sales.length + 30;
+      let targetDate: string | undefined;
+      if (dateFilter === 'TODAY') targetDate = todayKey;
+      else if (dateFilter === 'YESTERDAY') targetDate = yesterdayKey;
+      else if (dateFilter === 'CUSTOM' && customDate) targetDate = customDate;
+
+      const more = await fetchRecentSalesFromDb({ date: targetDate, limit: nextLimit, forceRefresh: true });
+      if (more && more.length > 0) {
+        setSales(more);
+        showToast(`✅ Loaded ${more.length} bills`);
+      } else {
+        showToast('ℹ️ No more bills available');
+      }
+    } catch {
+      showToast('❌ Failed to load more bills');
     } finally {
       setLoading(false);
     }
@@ -384,7 +407,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
   const mostRecent = sales[0] || null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-2 sm:p-4 animate-in fade-in duration-150">
       <div className="w-full max-w-5xl h-[94vh] flex flex-col bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
         
         {/* Top Header Bar */}
@@ -636,7 +659,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
               </div>
             ) : (
               groupedSales.map((group) => {
-                const isCollapsed = Boolean(collapsedDays[group.dateKey]);
+                const isCollapsed = collapsedDays[group.dateKey] !== undefined ? collapsedDays[group.dateKey] : !group.header.isToday;
 
                 return (
                   <div key={group.dateKey} className="space-y-2.5">
@@ -794,6 +817,19 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                 );
               })
             )}
+
+            {sales.length >= 25 && !loading && (
+              <div className="pt-2 pb-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="px-6 py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-white font-bold text-xs rounded-xl border border-neutral-700 flex items-center gap-2 cursor-pointer transition-all shadow"
+                >
+                  <ChevronDown className="w-4 h-4 text-green-400" />
+                  <span>Load More Bills (عرض المزيد من الفواتير)</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right Pane: Thermal Slip Live Preview */}
@@ -820,7 +856,7 @@ export const PreviousBillsModal: React.FC<PreviousBillsModalProps> = ({ isOpen, 
                 <div className="w-full max-w-[320px] bg-white text-black p-3 rounded shadow-2xl font-mono text-xs select-text">
                   
                   {/* Shop Compact Header */}
-                  <div className="text-center font-bold text-xs">ASKAR SUPERMARKET أسواق عسكر</div>
+                  <div className="text-center font-bold text-xs">LAYALI SUPERMARKET أسواق ليالي</div>
                   <div className="text-center text-[10px] text-gray-700">CR: 790614189 | VAT: 200012345678901</div>
                   <div className="text-center text-[10px] text-gray-700">Tel: +973 33843855</div>
                   

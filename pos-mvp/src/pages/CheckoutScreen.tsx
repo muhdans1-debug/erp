@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, TrendingUp, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell, Activity } from 'lucide-react';
+import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
 import { openCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
@@ -4334,91 +4334,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   >
                     <Lock size={16} className="text-amber-400 shrink-0" />
                     <span className="text-xs font-bold">Close Shift</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* GROUP 4: BACK-OFFICE & REPORTS (PIN PROTECTED) */}
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
-                  <span>Manager & Analytics</span>
-                  <span className="text-rose-400 font-mono text-[9px]">PIN PROTECTED</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {/* FINANCIALS & P&L */}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setShowHamburgerMenu(false);
-                      const inputPin = window.prompt('🔒 Enter Manager PIN to view Financials & P&L Statement:');
-                      if (!inputPin) return;
-                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
-                      if (!auth.authorized) {
-                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
-                        return;
-                      }
-                      setEmergencyUnlocked(true);
-                      setViewMode('pnl');
-                    }}
-                    className="p-2.5 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/50 rounded-xl transition cursor-pointer text-left flex items-center gap-2 text-emerald-200"
-                  >
-                    <TrendingUp size={16} className="text-emerald-400 shrink-0" />
-                    <span className="text-xs font-bold">Financials</span>
-                  </button>
-
-                  {/* ALL TRANSACTIONS */}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setShowHamburgerMenu(false);
-                      const inputPin = window.prompt('🔒 Enter Manager PIN to view Full Transaction History:');
-                      if (!inputPin) return;
-                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
-                      if (!auth.authorized) {
-                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
-                        return;
-                      }
-                      setEmergencyUnlocked(true);
-                      setViewMode('master');
-                    }}
-                    className="p-2.5 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/50 rounded-xl transition cursor-pointer text-left flex items-center gap-2 text-indigo-200"
-                  >
-                    <FileText size={16} className="text-indigo-400 shrink-0" />
-                    <span className="text-xs font-bold">All Orders</span>
-                  </button>
-
-                  {/* DOWNTIME & HEALTH ANALYTICS GRAPHS */}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setShowHamburgerMenu(false);
-                      const inputPin = window.prompt('🔒 Enter Manager PIN to view System Health & Downtime Analytics:');
-                      if (!inputPin) return;
-                      const auth = await verifyManagerPinAsync(inputPin.trim(), apiBase);
-                      if (!auth.authorized) {
-                        showToast(auth.error || '❌ Invalid Manager PIN', 'error');
-                        return;
-                      }
-                      const adminUrl = typeof window !== 'undefined'
-                        ? `${window.location.origin}/admin/?tab=health_analytics&pin=${encodeURIComponent(inputPin.trim())}`
-                        : '/admin/?tab=health_analytics';
-                      window.open(adminUrl, '_blank');
-                    }}
-                    className="col-span-2 p-2.5 bg-blue-950/40 hover:bg-blue-900/60 border border-blue-800/50 rounded-xl transition cursor-pointer text-left flex items-center justify-between text-blue-200"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Activity size={16} className="text-blue-400 shrink-0" />
-                      <div>
-                        <div className="text-xs font-bold text-white flex items-center gap-2">
-                          <span>Store Downtime & Reliability Graphs</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            LIVE
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-400">P50/P95/P99 latency, outage forensics & MTTR</div>
-                      </div>
-                    </div>
-                    <span className="text-xs text-blue-400 font-mono">↗</span>
                   </button>
                 </div>
               </div>

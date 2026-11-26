@@ -80,29 +80,32 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
     return catalog;
   }, [catalog]);
 
+  // Pre-indexed search index for instant single-pass matching with zero string conversions
+  const searchIndex = useMemo(() => {
+    return effectiveCatalog.map((p) => ({
+      product: p,
+      term: `${p.name} ${p.barcode || ''} ${p.id}`.toLowerCase()
+    }));
+  }, [effectiveCatalog]);
+
   const filteredCatalog = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    if (!q) return effectiveCatalog.slice(0, 30);
+    if (!q) return effectiveCatalog.slice(0, 16);
     const matches: Product[] = [];
-    for (let i = 0; i < effectiveCatalog.length; i++) {
-      const product = effectiveCatalog[i];
-      if (
-        product.name.toLowerCase().includes(q) ||
-        (product.barcode && product.barcode.toLowerCase().includes(q)) ||
-        product.id.toLowerCase().includes(q)
-      ) {
-        matches.push(product);
-        if (matches.length >= 40) break; // Instant cap to prevent DOM thrashing
+    for (let i = 0; i < searchIndex.length; i++) {
+      if (searchIndex[i].term.includes(q)) {
+        matches.push(searchIndex[i].product);
+        if (matches.length >= 16) break; // Perfect fit for Sunmi 1280x800 display without DOM lag
       }
     }
     return matches;
-  }, [effectiveCatalog, deferredQuery]);
+  }, [searchIndex, deferredQuery, effectiveCatalog]);
 
-  // Live Server Fallback Search: Only query server if local matches are scarce (< 3) and user paused typing
+  // Live Server Fallback Search: Only query server if local matches are zero and user paused typing (800ms)
   useEffect(() => {
     const q = searchQuery.trim();
-    if (!q || q.length < 2 || filteredCatalog.length >= 5) {
-      // Local matches already found products; zero network requests needed
+    if (!q || q.length < 3 || filteredCatalog.length > 0) {
+      // Local matches already found products; zero network requests needed while typing
       setServerResults([]);
       return;
     }
@@ -122,7 +125,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
             const data = await res.json();
             const list = Array.isArray(data) ? data : (data.products || data.data || []);
             if (Array.isArray(list) && list.length > 0) {
-              setServerResults(list.slice(0, 30).map((p: any) => ({
+              setServerResults(list.slice(0, 16).map((p: any) => ({
                 id: p.id,
                 name: p.name,
                 price: Number(p.sellingPrice ?? p.price ?? 0),
@@ -136,12 +139,11 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
               break;
             }
           } else if (res.status === 429) {
-            // Cloudflare rate limit reached; abort candidate loop to avoid network congestion
             break;
           }
         } catch { }
       }
-    }, 400);
+    }, 800);
 
     return () => clearTimeout(timer);
   }, [searchQuery, apiBase, filteredCatalog.length]);
@@ -151,7 +153,7 @@ export const F12SearchOverlay: React.FC<F12SearchOverlayProps> = ({
     const localMatches = filteredCatalog;
     const localIds = new Set(localMatches.map((p) => p.id));
     const extraServerMatches = serverResults.filter((p) => !localIds.has(p.id));
-    return [...localMatches, ...extraServerMatches].slice(0, 50);
+    return [...localMatches, ...extraServerMatches].slice(0, 16);
   }, [filteredCatalog, serverResults]);
 
   if (!isOpen) return null;

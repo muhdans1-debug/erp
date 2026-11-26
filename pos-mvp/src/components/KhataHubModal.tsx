@@ -471,7 +471,7 @@ function SettleBalanceView({
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
-    }, 150);
+    }, 200);
     return () => clearTimeout(timer);
   }, [search]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -1911,7 +1911,8 @@ function SettleBalanceView({
   }, [customers, messOnlyFilter, paydayDueFilter, debouncedSearch]);
 
   const displayedCustomers = useMemo(() => {
-    if (debouncedSearch.trim()) return filtered;
+    // Hard-cap search results to 15 cards on low-power devices to avoid DOM thrashing
+    if (debouncedSearch.trim()) return filtered.slice(0, 15);
     return filtered.slice(0, visibleCustomerCount);
   }, [filtered, debouncedSearch, visibleCustomerCount]);
 
@@ -3707,7 +3708,7 @@ function SettleBalanceView({
               </div>
             );
           })}
-          {!debouncedSearch.trim() && filtered.length > displayedCustomers.length && (
+          {filtered.length > displayedCustomers.length && (
             <div className="pt-2 pb-4 flex justify-center">
               <button
                 type="button"

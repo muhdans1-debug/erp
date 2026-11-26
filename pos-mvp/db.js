@@ -74,8 +74,13 @@ if (url && isWellFormedJwt && process.env.ENABLE_TURSO_REPLICA === 'true') {
 }
 
 export const client = createClient(clientConfig);
-// Immediately set SQLite busy timeout to 10s to eliminate SQLITE_BUSY lockouts under concurrent traffic
+// Immediately set SQLite turbo pragmas to eliminate lockouts and minimize fsync latency
 client.execute('PRAGMA busy_timeout = 10000;').catch(() => { });
+client.execute('PRAGMA journal_mode = WAL;').catch(() => { });
+client.execute('PRAGMA synchronous = NORMAL;').catch(() => { });
+client.execute('PRAGMA mmap_size = 268435456;').catch(() => { });
+client.execute('PRAGMA cache_size = -64000;').catch(() => { });
+client.execute('PRAGMA temp_store = MEMORY;').catch(() => { });
 
 /**
  * Resilient HTTPS fetch adapter for LibSQL client on Windows.
@@ -455,7 +460,11 @@ export async function initDatabase() {
     await client.execute('PRAGMA busy_timeout = 10000;');
     await client.execute('PRAGMA foreign_keys = ON;');
     await client.execute('PRAGMA journal_mode = WAL;');
-    console.log('🔒 [LibSQL] PRAGMA busy_timeout = 10000, foreign_keys = ON & WAL mode activated.');
+    await client.execute('PRAGMA synchronous = NORMAL;');
+    await client.execute('PRAGMA mmap_size = 268435456;');
+    await client.execute('PRAGMA cache_size = -64000;');
+    await client.execute('PRAGMA temp_store = MEMORY;');
+    console.log('🔒 [LibSQL] PRAGMA Turbo Engine activated (WAL, synchronous=NORMAL, mmap=256MB, cache=64MB, temp_store=MEMORY).');
   } catch (pragmaErr) {
     console.warn('⚠️ [LibSQL] PRAGMA setup notice:', pragmaErr.message);
   }

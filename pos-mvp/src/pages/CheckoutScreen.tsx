@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, useDeferredValue } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
@@ -3016,31 +3016,50 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     }
   };
 
-  // Computed live product match for upper buffer bar (zero blind typing)
-  const matchedBufferPreview = useMemo(() => {
-    const clean = searchQuery.trim();
-    if (!clean || clean.length < 1) return null;
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  // O(1) Pre-indexed lookup maps for instant 0ms buffer preview and scan resolution
+  const lookupMaps = useMemo(() => {
+    const pluMap = new Map<string, any>();
+    const barcodeMap = new Map<string, any>();
+
     if (produceItems && produceItems.length > 0) {
-      const matchProduce = produceItems.find(
-        (pi) => pi.code && pi.code.trim().toLowerCase() === clean.toLowerCase()
-      );
-      if (matchProduce) {
-        return `${matchProduce.icon || '🍅'} ${matchProduce.name} (${matchProduce.pricePerKg.toFixed(3)} BD/KG)`;
+      for (let i = 0; i < produceItems.length; i++) {
+        const pi = produceItems[i];
+        if (pi.code) pluMap.set(pi.code.trim().toLowerCase(), pi);
+        if (pi.barcode) barcodeMap.set(pi.barcode.trim().toLowerCase(), pi);
       }
     }
+
     if (catalog && catalog.length > 0) {
-      const cat = catalog.find(
-        (c) =>
-          (c.plu_code && String(c.plu_code).trim().toLowerCase() === clean.toLowerCase()) ||
-          ((c as any).pluCode && String((c as any).pluCode).trim().toLowerCase() === clean.toLowerCase()) ||
-          (c.barcode && c.barcode.toLowerCase() === clean.toLowerCase())
-      );
-      if (cat) {
-        return `📦 ${cat.name} (${(cat.price ?? (cat as any).sellingPrice ?? 0).toFixed(3)} BD)`;
+      for (let i = 0; i < catalog.length; i++) {
+        const c = catalog[i];
+        const plu = c.plu_code || (c as any).pluCode;
+        if (plu) pluMap.set(String(plu).trim().toLowerCase(), c);
+        if (c.barcode) barcodeMap.set(String(c.barcode).trim().toLowerCase(), c);
       }
+    }
+
+    return { pluMap, barcodeMap };
+  }, [produceItems, catalog]);
+
+  // Computed live product match for upper buffer bar (O(1) Hashmap - zero blind typing)
+  const matchedBufferPreview = useMemo(() => {
+    const clean = deferredSearchQuery.trim().toLowerCase();
+    if (!clean || clean.length < 1) return null;
+
+    const produce = lookupMaps.pluMap.get(clean);
+    if (produce && produce.pricePerKg !== undefined) {
+      return `${produce.icon || '🍅'} ${produce.name} (${Number(produce.pricePerKg).toFixed(3)} BD/KG)`;
+    }
+
+    const item = lookupMaps.pluMap.get(clean) || lookupMaps.barcodeMap.get(clean);
+    if (item) {
+      const price = Number(item.sellingPrice ?? item.price ?? 0);
+      return `📦 ${item.name} (${price.toFixed(3)} BD)`;
     }
     return null;
-  }, [searchQuery, produceItems, catalog]);
+  }, [deferredSearchQuery, lookupMaps]);
 
   const handleBufferDigit = useCallback((d: string) => {
     setSearchQuery((prev) => prev + d);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -118,6 +118,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
 
   // Numpad input string (used for code in State 1 & 2; weight in State 3)
   const [typedCode, setTypedCode] = useState<string>('');
+  const deferredTypedCode = useDeferredValue(typedCode);
   const [selectedItem, setSelectedItem] = useState<OmniItem | null>(initialItem || null);
   const [weightInput, setWeightInput] = useState<string>('0');
 
@@ -156,7 +157,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
     if (activeCategory !== 'ALL') {
       list = list.filter((item) => (item.category || 'PRODUCE').toUpperCase() === activeCategory);
     }
-    const query = typedCode.trim().toLowerCase();
+    const query = deferredTypedCode.trim().toLowerCase();
     if (!query) {
       // State 1: All items (popular items first)
       return [...list].sort((a, b) => (b.isPopular ? 1 : 0) - (a.isPopular ? 1 : 0));
@@ -169,7 +170,7 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
       const matchBarcode = item.barcode ? item.barcode.toLowerCase().includes(query) : false;
       return matchCode || matchName || matchNameAr || matchBarcode;
     });
-  }, [items, typedCode, activeCategory]);
+  }, [items, deferredTypedCode, activeCategory]);
 
   // Exact code match
   const exactMatch = useMemo(() => {

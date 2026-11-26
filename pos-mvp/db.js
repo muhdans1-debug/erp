@@ -6,6 +6,7 @@
 import { createClient } from '@libsql/client';
 import path from 'path';
 import fs from 'fs';
+import https from 'https';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,7 +37,7 @@ for (const envFilePath of envCandidatePaths) {
           }
         }
       }
-    } catch {}
+    } catch { }
   }
 }
 
@@ -74,17 +75,107 @@ if (url && isWellFormedJwt && process.env.ENABLE_TURSO_REPLICA === 'true') {
 
 export const client = createClient(clientConfig);
 // Immediately set SQLite busy timeout to 10s to eliminate SQLITE_BUSY lockouts under concurrent traffic
-client.execute('PRAGMA busy_timeout = 10000;').catch(() => {});
+client.execute('PRAGMA busy_timeout = 10000;').catch(() => { });
+
+/**
+ * Resilient HTTPS fetch adapter for LibSQL client on Windows.
+ * Explicitly provides SNI (servername) to prevent AWS ALB/Turso TLS handshake resets.
+ */
+export async function resilientHttpsFetch(input, init = {}) {
+  let urlStr = typeof input === 'string' ? input : (input?.url || '');
+  let method = init.method || input?.method || 'GET';
+  let headers = {};
+  if (input?.headers) {
+    if (typeof input.headers.forEach === 'function') {
+      input.headers.forEach((v, k) => { headers[k] = v; });
+    } else {
+      headers = { ...input.headers };
+    }
+  }
+  if (init.headers) {
+    headers = { ...headers, ...init.headers };
+  }
+  let body = init.body;
+  if (body === undefined && input && typeof input.text === 'function') {
+    body = await input.text();
+  }
+
+  let bodyBuffer = null;
+  if (body !== undefined && body !== null) {
+    bodyBuffer = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+    headers['content-length'] = Buffer.byteLength(bodyBuffer);
+  }
+
+  const maxRetries = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const u = new URL(urlStr);
+        const req = https.request({
+          hostname: u.hostname,
+          port: u.port || 443,
+          path: u.pathname + u.search,
+          method,
+          servername: u.hostname,
+          headers: {
+            ...headers,
+            'host': u.hostname,
+            'user-agent': '@libsql/client-resilient',
+            'connection': 'close'
+          },
+          timeout: 30000
+        }, (res) => {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.on('end', () => {
+            const bodyText = Buffer.concat(chunks).toString();
+            resolve({
+              ok: res.statusCode >= 200 && res.statusCode < 300,
+              status: res.statusCode,
+              statusText: res.statusMessage,
+              headers: new Headers(res.headers),
+              text: async () => bodyText,
+              json: async () => JSON.parse(bodyText)
+            });
+          });
+        });
+
+        req.on('timeout', () => {
+          req.destroy(new Error('HTTPS request timed out after 30s'));
+        });
+        req.on('error', reject);
+
+        if (bodyBuffer) {
+          req.write(bodyBuffer);
+        }
+        req.end();
+      });
+
+      return response;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 200 * attempt));
+      }
+    }
+  }
+
+  throw lastErr;
+}
 
 // 2. Direct Cloud Client for background non-blocking mirroring & cloud health
 export let tursoCloudClient = null;
 if (url && authToken) {
   try {
+    const cloudHttpsUrl = url.replace(/^libsql:\/\//, 'https://');
     tursoCloudClient = createClient({
-      url,
-      authToken
+      url: cloudHttpsUrl,
+      authToken,
+      fetch: resilientHttpsFetch
     });
-    console.log("☁️ [Turso] Direct Cloud client initialized for background syncing & remote queries.");
+    console.log("☁️ [Turso] Direct Cloud client initialized with resilient HTTPS SNI adapter.");
   } catch (cloudErr) {
     console.warn("⚠️ [Turso] Could not initialize direct cloud client:", cloudErr.message);
   }
@@ -262,10 +353,10 @@ function createModelHelper(clientInstance, tableName) {
           const condKeys = Object.keys(conditions).filter(k => conditions[k] !== undefined);
           const whereClause = condKeys.length > 0
             ? condKeys.map(k => {
-                validateIdentifier(k);
-                args.push(formatArg(conditions[k]));
-                return `"${k}" = ?`;
-              }).join(' AND ')
+              validateIdentifier(k);
+              args.push(formatArg(conditions[k]));
+              return `"${k}" = ?`;
+            }).join(' AND ')
             : '1=1';
           return await clientInstance.execute({
             sql: `UPDATE "${tableName}" SET ${setClause} WHERE ${whereClause}`,
@@ -277,10 +368,10 @@ function createModelHelper(clientInstance, tableName) {
           const args = [];
           const whereClause = condKeys.length > 0
             ? condKeys.map(k => {
-                validateIdentifier(k);
-                args.push(formatArg(conditions[k]));
-                return `"${k}" = ?`;
-              }).join(' AND ')
+              validateIdentifier(k);
+              args.push(formatArg(conditions[k]));
+              return `"${k}" = ?`;
+            }).join(' AND ')
             : '1=1';
           return await clientInstance.execute({
             sql: `DELETE FROM "${tableName}" WHERE ${whereClause}`,
@@ -347,7 +438,7 @@ db.transaction = async (callbackOrMode = 'write') => {
       await tx.commit();
       return result;
     } catch (err) {
-      await tx.rollback().catch(() => {});
+      await tx.rollback().catch(() => { });
       throw err;
     }
   } else {
@@ -359,13 +450,7 @@ db.transaction = async (callbackOrMode = 'write') => {
 
 // Auto-run schema initialization
 export async function initDatabase() {
-  const isReplica = Boolean(clientConfig.syncUrl);
-  
-  if (isReplica) {
-    return;
-  }
-
-  // Pure standalone local SQLite mode (only when running without Turso cloud credentials)
+  // Pure standalone local SQLite mode / replica safety checks
   try {
     await client.execute('PRAGMA busy_timeout = 10000;');
     await client.execute('PRAGMA foreign_keys = ON;');
@@ -375,14 +460,17 @@ export async function initDatabase() {
     console.warn('⚠️ [LibSQL] PRAGMA setup notice:', pragmaErr.message);
   }
 
-  const schemaPath = path.resolve(__dirname, 'schema.sql');
-  if (fs.existsSync(schemaPath)) {
-    try {
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      await client.executeMultiple(schemaSql);
-      console.log('✅ [LibSQL] Embedded database schema verified on local.db');
-    } catch (err) {
-      console.warn('⚠️ [LibSQL] Schema verification warning:', err.message);
+  const isReplica = Boolean(clientConfig.syncUrl);
+  if (!isReplica) {
+    const schemaPath = path.resolve(__dirname, 'schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      try {
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        await client.executeMultiple(schemaSql);
+        console.log('✅ [LibSQL] Embedded database schema verified on local.db');
+      } catch (err) {
+        console.warn('⚠️ [LibSQL] Schema verification warning:', err.message);
+      }
     }
   }
 
@@ -398,6 +486,10 @@ export async function initDatabase() {
       await client.execute("ALTER TABLE Product ADD COLUMN image_url TEXT");
       console.log('✅ [Migration] Added missing image_url column to Product');
     }
+    if (!colNames.has('image_url_thumb')) {
+      await client.execute("ALTER TABLE Product ADD COLUMN image_url_thumb TEXT");
+      console.log('✅ [Migration] Added missing image_url_thumb column to Product');
+    }
     if (!colNames.has('is_weighed_item')) {
       await client.execute("ALTER TABLE Product ADD COLUMN is_weighed_item INTEGER DEFAULT 0");
       console.log('✅ [Migration] Added missing is_weighed_item column to Product');
@@ -408,6 +500,38 @@ export async function initDatabase() {
     await client.execute("CREATE INDEX IF NOT EXISTS idx_product_distributorId ON Product(distributorId);");
     console.log('✅ [Indexes] Product search indexes verified (barcode, name, distributorId).');
 
+    // Schema migrations for Customer table (Card Deposit & Payday Cash Advance)
+    const custInfo = await client.execute('PRAGMA table_info(Customer)');
+    const custCols = new Set((custInfo.rows || []).map(r => r.name));
+    if (!custCols.has('card_deposit_amount')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN card_deposit_amount REAL DEFAULT 0.000");
+      console.log('✅ [Migration] Added card_deposit_amount to Customer');
+    }
+    if (!custCols.has('card_deposit_status')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN card_deposit_status TEXT DEFAULT 'NONE'");
+      console.log('✅ [Migration] Added card_deposit_status to Customer');
+    }
+    if (!custCols.has('card_deposit_receipt_no')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN card_deposit_receipt_no TEXT");
+      console.log('✅ [Migration] Added card_deposit_receipt_no to Customer');
+    }
+    if (!custCols.has('card_deposit_date')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN card_deposit_date TEXT");
+      console.log('✅ [Migration] Added card_deposit_date to Customer');
+    }
+    if (!custCols.has('card_type')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN card_type TEXT DEFAULT 'PHYSICAL_NFC'");
+      console.log('✅ [Migration] Added card_type to Customer');
+    }
+    if (!custCols.has('payday_day_of_month')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN payday_day_of_month INTEGER DEFAULT 28");
+      console.log('✅ [Migration] Added payday_day_of_month to Customer');
+    }
+    if (!custCols.has('cash_advance_balance')) {
+      await client.execute("ALTER TABLE Customer ADD COLUMN cash_advance_balance REAL DEFAULT 0.000");
+      console.log('✅ [Migration] Added cash_advance_balance to Customer');
+    }
+
     // Ensure DeletedProduct tombstone table exists
     await client.execute(`CREATE TABLE IF NOT EXISTS DeletedProduct (
       id TEXT PRIMARY KEY,
@@ -416,6 +540,108 @@ export async function initDatabase() {
       name TEXT,
       deletedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Retail & Operational Analytics Tables
+    await client.execute(`CREATE TABLE IF NOT EXISTS CheckoutVelocityLog (
+      id TEXT PRIMARY KEY,
+      shiftId TEXT,
+      cashierId TEXT,
+      cashierName TEXT,
+      terminalId TEXT,
+      invoiceNo TEXT,
+      itemCount INTEGER,
+      totalAmount REAL,
+      scanDurationSec INTEGER,
+      tenderDurationSec INTEGER,
+      tenderType TEXT,
+      itemsPerMinute REAL,
+      hadVoidItems INTEGER DEFAULT 0,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    await client.execute(`CREATE TABLE IF NOT EXISTS DrawerActuationLog (
+      id TEXT PRIMARY KEY,
+      shiftId TEXT,
+      cashierId TEXT,
+      cashierName TEXT,
+      terminalId TEXT,
+      reason TEXT,
+      authorizedBy TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    await client.execute(`CREATE TABLE IF NOT EXISTS PostTenderVoidAlert (
+      id TEXT PRIMARY KEY,
+      saleId TEXT,
+      invoiceNo TEXT,
+      totalAmount REAL,
+      paymentType TEXT,
+      cashierId TEXT,
+      cashierName TEXT,
+      saleCreatedAt DATETIME,
+      voidedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      timeDeltaSeconds INTEGER,
+      reason TEXT,
+      status TEXT DEFAULT 'FLAGGED'
+    )`);
+
+    // Time-Travel Mutation CDC & Surgical Rollback Table
+    await client.execute(`CREATE TABLE IF NOT EXISTS SystemMutationSnapshot (
+      snapshotId TEXT PRIMARY KEY,
+      entityType TEXT NOT NULL,
+      entityId TEXT NOT NULL,
+      mutationType TEXT NOT NULL,
+      beforeState TEXT NOT NULL,
+      afterState TEXT NOT NULL,
+      authorPin TEXT NOT NULL,
+      notes TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      isReverted INTEGER DEFAULT 0,
+      revertedAt DATETIME
+    )`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_snapshot_entity ON SystemMutationSnapshot(entityType, entityId);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_snapshot_created ON SystemMutationSnapshot(createdAt);`);
+
+    // System Health & Downtime Analytics Tables
+    await client.execute(`CREATE TABLE IF NOT EXISTS SystemHourlyHealth (
+      id TEXT PRIMARY KEY,
+      hourTimestamp DATETIME NOT NULL,
+      hourLabel TEXT NOT NULL,
+      totalTransactions INTEGER DEFAULT 0,
+      totalScans INTEGER DEFAULT 0,
+      totalItemsRung INTEGER DEFAULT 0,
+      totalSalesBhd REAL DEFAULT 0.0,
+      p50LatencyMs REAL DEFAULT 0.0,
+      p95LatencyMs REAL DEFAULT 0.0,
+      p99LatencyMs REAL DEFAULT 0.0,
+      avgSqliteLockMs REAL DEFAULT 0.0,
+      maxSqliteLockMs REAL DEFAULT 0.0,
+      walSizeKb REAL DEFAULT 0.0,
+      cloudSyncLatencyMs REAL DEFAULT 0.0,
+      errorCount INTEGER DEFAULT 0,
+      downtimeSeconds INTEGER DEFAULT 0,
+      uptimePercentage REAL DEFAULT 100.0,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_hourly_health_ts ON SystemHourlyHealth(hourTimestamp);`);
+
+    await client.execute(`CREATE TABLE IF NOT EXISTS SystemDowntimeIncident (
+      id TEXT PRIMARY KEY,
+      startTime DATETIME NOT NULL,
+      endTime DATETIME,
+      durationSeconds INTEGER,
+      component TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      triggerSource TEXT NOT NULL,
+      rootCauseReason TEXT NOT NULL,
+      technicalDetails TEXT,
+      autoHealed INTEGER DEFAULT 1,
+      recoveryAction TEXT,
+      salesImpactSummary TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_incident_start ON SystemDowntimeIncident(startTime);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_incident_comp ON SystemDowntimeIncident(component);`);
   } catch (migErr) {
     console.warn('⚠️ [Migration] Column check notice:', migErr.message);
   }

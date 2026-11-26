@@ -34,6 +34,7 @@ export const mapDbRowToProduct = (row: any): Product => {
     ? String(row.plu_code).trim()
     : ((row.pluCode !== undefined && row.pluCode !== null && String(row.pluCode).trim() !== '') ? String(row.pluCode).trim() : null);
   const img = row.image_url || row.imageUrl || null;
+  const imgThumb = row.image_url_thumb || row.imageUrlThumb || null;
   const arName = row.name_ar || row.nameAr || undefined;
 
   return {
@@ -46,6 +47,8 @@ export const mapDbRowToProduct = (row: any): Product => {
     pluCode: plu,
     image_url: img,
     imageUrl: img,
+    image_url_thumb: imgThumb,
+    imageUrlThumb: imgThumb,
     price,
     sellingPrice: price,
     unitCost,

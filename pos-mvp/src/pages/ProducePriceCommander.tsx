@@ -16,10 +16,12 @@ import {
   Image as ImageIcon,
   Hash,
   Edit3,
-  Camera
+  Camera,
+  Upload
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
+import { encodeDualAssets, type DualEncodedImage } from '../utils/imageEncoder';
 
 export interface ProduceItem {
   id: string;
@@ -28,6 +30,7 @@ export interface ProduceItem {
   barcode: string;
   plu_code?: string | null;
   image_url?: string | null;
+  image_url_thumb?: string | null;
   sellingPrice: number;
   purchasePrice: number;
   unitCost: number;
@@ -48,6 +51,7 @@ export interface ProduceItem {
   draftWastageKg?: string;
   draftPluCode?: string;
   draftImageUrl?: string;
+  draftImageUrlThumb?: string;
   draftNameAr?: string;
   isModified?: boolean;
 }
@@ -122,6 +126,8 @@ export default function ProducePriceCommander({
   // Produce Photo Manager Modal State
   const [photoModalItem, setPhotoModalItem] = useState<ProduceItem | null>(null);
   const [inputImageUrl, setInputImageUrl] = useState<string>('');
+  const [dualEncoding, setDualEncoding] = useState<DualEncodedImage | null>(null);
+  const [isEncoding, setIsEncoding] = useState<boolean>(false);
   const [isSavingPhoto, setIsSavingPhoto] = useState<boolean>(false);
 
   // Remove Produce Item Modal State
@@ -396,14 +402,64 @@ export default function ProducePriceCommander({
   const openPhotoModal = (item: ProduceItem) => {
     setPhotoModalItem(item);
     setInputImageUrl(item.image_url || '');
+    setDualEncoding(null);
+  };
+
+  const handlePhotoFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsEncoding(true);
+    try {
+      const encoded = await encodeDualAssets(file);
+      setDualEncoding(encoded);
+      setInputImageUrl(encoded.masterBase64);
+    } catch (err: any) {
+      showToast(`Image processing error: ${err.message}`, 'error');
+    } finally {
+      setIsEncoding(false);
+    }
   };
 
   const handleSavePhotoModal = async () => {
     if (!photoModalItem) return;
-    const cleanUrl = inputImageUrl.trim();
 
     setIsSavingPhoto(true);
     try {
+      if (dualEncoding) {
+        // 1. Dual-Asset Upload: HD Master JPEG + Micro 80x80 WebP (Sunmi 0ms)
+        const res = await fetch(`${apiBase}/api/products/upload-dual-photo`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-manager-pin': getManagerPin(),
+            'x-pos-client': 'pim-admin'
+          },
+          body: JSON.stringify({
+            id: photoModalItem.id,
+            barcode: photoModalItem.barcode,
+            masterBase64: dualEncoding.masterBase64,
+            thumbBase64: dualEncoding.thumbBase64
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setItems((prev) =>
+            prev.map((i) =>
+              i.id === photoModalItem.id
+                ? { ...i, image_url: data.imageUrl, image_url_thumb: data.imageUrlThumb }
+                : i
+            )
+          );
+          showToast(`✅ Dual-Asset saved (Master HD + Sunmi 80x80 WebP) for ${photoModalItem.name}!`, 'success');
+          setPhotoModalItem(null);
+          setDualEncoding(null);
+          return;
+        }
+      }
+
+      // 2. Standard URL Update Fallback
+      const cleanUrl = inputImageUrl.trim();
       const res = await fetch(`${apiBase}/api/products/produce/update-item`, {
         method: 'POST',
         headers: {
@@ -1421,6 +1477,71 @@ export default function ProducePriceCommander({
                     Photo will appear on Sunmi D2mini Omni-Pad & Web POS registers.
                   </p>
                 </div>
+              </div>
+
+              {/* Dual-Asset Direct Camera & Upload Zone */}
+              <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Camera size={14} /> Dual-Asset Camera & Storage
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-300/80 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800">
+                    Sunmi 80x80 WebP (0ms) + Cloud HD
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mb-3">
+                  Snap with camera or upload a file. The system automatically encodes an HD JPEG for large screens and an ultra-fast 80x80 WebP (~2 KB) for the Sunmi D2 Mini.
+                </p>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl cursor-pointer transition-all shadow-md">
+                    <Camera size={16} />
+                    <span>Take Photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoFileSelect}
+                      disabled={isEncoding}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 font-bold text-xs rounded-xl cursor-pointer transition-all border border-slate-700">
+                    <Upload size={16} />
+                    <span>Upload File</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoFileSelect}
+                      disabled={isEncoding}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {isEncoding && (
+                  <div className="mt-3 flex items-center justify-center gap-2 text-xs font-mono text-emerald-400">
+                    <span className="animate-spin">⚙️</span>
+                    Encoding Dual-Asset (HD Master + 80x80 WebP)...
+                  </div>
+                )}
+
+                {dualEncoding && (
+                  <div className="mt-3 p-2.5 bg-slate-900/90 rounded-xl border border-emerald-500/40 text-[11px] font-mono flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-400 font-bold">⚡ Ready:</span>
+                      <span className="text-slate-300">
+                        HD {dualEncoding.masterSizeKb} KB
+                      </span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-emerald-400 font-bold">
+                        Sunmi WebP {dualEncoding.thumbSizeKb} KB (80x80)
+                      </span>
+                    </div>
+                    <span className="text-emerald-400 text-xs">✓ Optimized</span>
+                  </div>
+                )}
               </div>
 
               <div>

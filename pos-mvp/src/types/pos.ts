@@ -10,6 +10,8 @@ export interface Product {
   pluCode?: string | null;
   image_url?: string | null;
   imageUrl?: string | null;
+  image_url_thumb?: string | null;
+  imageUrlThumb?: string | null;
   price: number;        // REPLACES sellingPrice
   sellingPrice?: number;
   unitCost: number;     // REPLACES purchasePrice

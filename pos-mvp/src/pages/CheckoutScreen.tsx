@@ -619,6 +619,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 pricePerKg: Number(p.sellingPrice || p.price || 0),
                 icon: getProduceIcon(p.name),
                 imageUrl: p.image_url || p.imageUrl || null,
+                imageUrlThumb: p.image_url_thumb || p.imageUrlThumb || null,
                 barcode: p.barcode,
                 productId: p.id,
                 category: p.category || 'PRODUCE',
@@ -684,6 +685,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
         pricePerKg: Number(p.sellingPrice || p.price || 0),
         icon: getProduceIcon(p.name),
         imageUrl: p.image_url || p.imageUrl || null,
+        imageUrlThumb: p.image_url_thumb || p.imageUrlThumb || null,
         barcode: p.barcode,
         productId: p.id,
         category: p.category || 'PRODUCE',
@@ -1528,12 +1530,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                 const newSellingPrice = Number(upd.sellingPrice ?? p.pricePerKg);
                 const pluVal = upd.plu_code !== undefined ? (upd.plu_code ? String(upd.plu_code).trim() : p.code) : p.code;
                 const imgVal = upd.image_url !== undefined ? upd.image_url : p.imageUrl;
+                const imgThumbVal = upd.image_url_thumb !== undefined ? upd.image_url_thumb : (upd.imageUrlThumb !== undefined ? upd.imageUrlThumb : (p as any).imageUrlThumb);
                 const arNameVal = upd.name_ar !== undefined ? upd.name_ar : p.nameAr;
                 return {
                   ...p,
                   pricePerKg: newSellingPrice,
                   code: pluVal,
                   imageUrl: imgVal,
+                  imageUrlThumb: imgThumbVal,
                   nameAr: arNameVal
                 };
               });

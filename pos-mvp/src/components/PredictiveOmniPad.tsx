@@ -24,6 +24,7 @@ export interface OmniItem {
   isPopular?: boolean;
   productId?: string;
   imageUrl?: string | null;
+  imageUrlThumb?: string | null;
 }
 
 export interface PredictiveOmniPadProps {
@@ -552,11 +553,11 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
                           </span>
                         </div>
 
-                        {/* Giant Photo / Emoji Icon */}
+                        {/* Giant Photo / Emoji Icon (Prioritizes 80x80 Micro WebP for 0ms Sunmi Render) */}
                         <div className="w-16 h-16 md:w-20 md:h-20 my-1 flex items-center justify-center transform group-hover:scale-110 transition-transform">
-                          {item.imageUrl ? (
+                          {(item.imageUrlThumb || item.imageUrl) ? (
                             <img
-                              src={item.imageUrl}
+                              src={item.imageUrlThumb || item.imageUrl || ''}
                               alt={item.name}
                               className="w-full h-full object-cover rounded-2xl shadow-md border border-neutral-700/60"
                               onError={(e) => {
@@ -615,9 +616,9 @@ export const PredictiveOmniPad: React.FC<PredictiveOmniPadProps> = ({
               <div className="bg-neutral-900 border-2 border-green-500/80 rounded-3xl p-4 md:p-6 flex items-center justify-between shadow-2xl">
                 <div className="flex items-center gap-4">
                   <div className="w-20 h-20 md:w-24 md:h-24 bg-black/80 border border-neutral-800 rounded-2xl flex items-center justify-center text-6xl md:text-7xl shrink-0 shadow-inner overflow-hidden">
-                    {selectedItem.imageUrl ? (
+                    {(selectedItem.imageUrlThumb || selectedItem.imageUrl) ? (
                       <img
-                        src={selectedItem.imageUrl}
+                        src={selectedItem.imageUrlThumb || selectedItem.imageUrl || ''}
                         alt={selectedItem.name}
                         className="w-full h-full object-cover rounded-2xl"
                         onError={(e) => {

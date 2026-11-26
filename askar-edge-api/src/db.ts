@@ -8,6 +8,7 @@ export interface Env {
   ENVIRONMENT?: string;
   DEFAULT_TENANT_ID?: string;
   DEFAULT_STORE_ID?: string;
+  PRODUCE_BUCKET?: R2Bucket;
   MANAGER_PIN?: string;
   DEV_SECRET?: string;
   MANAGER_SECRET?: string;

@@ -3,8 +3,9 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import { db, dataDir } from '../db.js';
-import { managerAuth, isManagerAuthorized } from '../middleware/auth.js';
+import { managerAuth, isManagerAuthorized, posOrManagerAuth, isPosOrStaffAuthorized } from '../middleware/auth.js';
 import { mirrorProductToCloud, mirrorProductTombstoneToCloud } from '../services/cloudSync.js';
+import { l1ProductCache } from '../services/l1ProductCache.js';
 
 export default async function productRoutes(fastify, options) {
   const uploadsStaticDir = path.join(process.cwd(), 'public', 'uploads');
@@ -76,7 +77,7 @@ export default async function productRoutes(fastify, options) {
             sql: `UPDATE Product SET image_url = ?, updatedAt = CURRENT_TIMESTAMP WHERE barcode = ? OR id = ?`,
             args: [publicUrl, cleanBarcode, cleanBarcode]
           });
-        } catch {}
+        } catch { }
       }
 
       return { success: true, url: publicUrl, fileName };
@@ -86,11 +87,96 @@ export default async function productRoutes(fastify, options) {
     }
   });
 
-  // 2. Catalog listing routes
-  fastify.get('/products', async () => {
-    return await db.orm.Product.all();
+  // 1b. Dual-Asset Photo Upload Endpoint: Master HD JPEG + Micro 80x80 WebP (Offline & R2 Ready)
+  fastify.post('/api/products/upload-dual-photo', { preHandler: posOrManagerAuth }, async (request, reply) => {
+    try {
+      const body = request.body || {};
+      const rawBarcode = String(body.barcode || body.id || '').trim();
+      const rawId = String(body.id || body.barcode || '').trim();
+      const cleanBarcode = rawBarcode.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+      if (!cleanBarcode && !rawId) {
+        return reply.status(400).send({ error: 'Valid Barcode, Product ID, or PLU required' });
+      }
+
+      const productUploadsDir = path.resolve(uploadsStaticDir, 'products');
+      if (!fs.existsSync(productUploadsDir)) {
+        fs.mkdirSync(productUploadsDir, { recursive: true });
+      }
+
+      const timestamp = Date.now();
+      let fullUrl = null;
+      let thumbUrl = null;
+
+      // 1. Process Master High-Res JPEG
+      if (body.masterBase64) {
+        const fullFileName = `prod_${cleanBarcode}_${timestamp}_full.jpg`;
+        const fullFilePath = path.resolve(productUploadsDir, fullFileName);
+        if (fullFilePath.startsWith(productUploadsDir)) {
+          const cleanB64 = body.masterBase64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '');
+          fs.writeFileSync(fullFilePath, Buffer.from(cleanB64, 'base64'));
+          fullUrl = `/uploads/products/${fullFileName}`;
+        }
+      }
+
+      // 2. Process Micro 80x80 WebP Thumbnail for Sunmi POS
+      if (body.thumbBase64) {
+        const thumbFileName = `prod_${cleanBarcode}_${timestamp}_thumb.webp`;
+        const thumbFilePath = path.resolve(productUploadsDir, thumbFileName);
+        if (thumbFilePath.startsWith(productUploadsDir)) {
+          const cleanB64 = body.thumbBase64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '');
+          fs.writeFileSync(thumbFilePath, Buffer.from(cleanB64, 'base64'));
+          thumbUrl = `/uploads/products/${thumbFileName}`;
+        }
+      }
+
+      // 3. Update Local SQLite Database
+      const sets = ['updatedAt = CURRENT_TIMESTAMP'];
+      const args = [];
+      if (fullUrl) { sets.push('image_url = ?'); args.push(fullUrl); }
+      if (thumbUrl) { sets.push('image_url_thumb = ?'); args.push(thumbUrl); }
+      args.push(cleanBarcode, rawId, cleanBarcode);
+
+      await db.execute({
+        sql: `UPDATE Product SET ${sets.join(', ')} WHERE barcode = ? OR id = ? OR plu_code = ?`,
+        args
+      });
+
+      // 4. Background Sync to Cloudflare Edge API (R2) if configured
+      const cloudflareEdgeUrl = process.env.CLOUDFLARE_EDGE_URL || 'https://askar-edge-api.layali-askar-pos.workers.dev';
+      if (cloudflareEdgeUrl && (body.masterBase64 || body.thumbBase64)) {
+        setTimeout(async () => {
+          try {
+            await fetch(`${cloudflareEdgeUrl}/api/images/upload`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-manager-pin': '1234',
+                'x-pos-client': 'store-pos'
+              },
+              body: JSON.stringify({
+                barcode: cleanBarcode,
+                masterBase64: body.masterBase64,
+                thumbBase64: body.thumbBase64
+              }),
+              signal: AbortSignal.timeout(5000)
+            });
+          } catch {}
+        }, 100);
+      }
+
+      return {
+        success: true,
+        imageUrl: fullUrl,
+        imageUrlThumb: thumbUrl,
+        barcode: cleanBarcode
+      };
+    } catch (err) {
+      fastify.log.error('Dual photo upload error:', err);
+      return reply.status(500).send({ error: 'Dual upload failed', message: err.message });
+    }
   });
 
+  // 2. Catalog listing routes
   fastify.get('/api/products', async () => {
     const [products, distributors] = await Promise.all([
       db.orm.Product.all(),
@@ -103,79 +189,39 @@ export default async function productRoutes(fastify, options) {
     }));
   });
 
-  // 3. Quick Products Grid
+  // 3. Quick Products Grid - 100% Explicit Choice (Zero Auto-Fill)
   fastify.get('/api/quick-products', async () => {
     try {
       const allProducts = await db.orm.Product.all();
       const config = loadQuickConfig();
       const removedSet = new Set((config.removedIds || []).map(String));
+      const overrides = config.overrides || {};
 
-      // NEW: Offload the 7-day velocity calculation entirely to SQLite
-      const salesCountByProduct = {};
-      try {
-        const velocityRes = await db.execute({
-          sql: `SELECT i.productId, SUM(i.quantity) as totalQty
-                FROM SaleItem i
-                JOIN Sale s ON i.saleId = s.id
-                WHERE s.createdAt >= datetime('now', '-7 days')
-                  AND (s.status IS NULL OR s.status NOT IN ('VOIDED', 'CANCELLED'))
-                GROUP BY i.productId`,
-          args: []
-        });
-        (velocityRes.rows || []).forEach(row => {
-          salesCountByProduct[row.productId] = Number(row.totalQty || 0);
-        });
-      } catch (e) {
-        console.warn('Velocity query warning:', e?.message);
+      const productMap = new Map();
+      allProducts.forEach(p => {
+        if (p.id) productMap.set(String(p.id), p);
+        if (p.barcode) productMap.set(String(p.barcode), p);
+      });
+
+      const explicitQuickProducts = [];
+      const seenIds = new Set();
+
+      for (const [key, override] of Object.entries(overrides)) {
+        if (override && override.isQuickProduct === true && !removedSet.has(String(key))) {
+          const prod = productMap.get(String(key));
+          if (prod && !seenIds.has(String(prod.id))) {
+            seenIds.add(String(prod.id));
+            explicitQuickProducts.push({
+              ...prod,
+              category: override.category || prod.category || 'ESSENTIALS',
+              quickColor: override.quickColor || null,
+              isQuickProduct: true,
+            });
+          }
+        }
       }
 
-      const categorize = (prod) => {
-        const name = (prod.name || '').toLowerCase();
-        if (name.includes('mutton') || name.includes('beef') || name.includes('meat') || name.includes('chicken')) {
-          return 'MEAT';
-        }
-        if (name.includes('bread') || name.includes('khubz') || name.includes('samoli') || name.includes('croissant') || name.includes('bun')) {
-          return 'BAKERY';
-        }
-        if (name.includes('milk') || name.includes('laban') || name.includes('feta') || name.includes('cheese') || name.includes('butter') || name.includes('dairy') || name.includes('yogurt')) {
-          return 'DAIRY';
-        }
-        if (name.includes('tomato') || name.includes('cucumber') || name.includes('banana') || name.includes('onion') || name.includes('potato') || name.includes('mint') || name.includes('parsley') || name.includes('lemon') || name.includes('orange') || name.includes('apple')) {
-          return 'PRODUCE';
-        }
-        return 'ESSENTIALS';
-      };
-
-      const eligibleProducts = allProducts.filter((p) => {
-        if (removedSet.has(String(p.id)) || (p.barcode && removedSet.has(String(p.barcode)))) {
-          return false;
-        }
-        const override = config.overrides ? (config.overrides[p.id] || (p.barcode ? config.overrides[p.barcode] : null)) : null;
-        if (override?.isQuickProduct === false) {
-          return false;
-        }
-        return true;
-      });
-
-      const scored = eligibleProducts.map((p) => {
-        const override = config.overrides ? (config.overrides[p.id] || (p.barcode ? config.overrides[p.barcode] : null)) : null;
-        const recentQty = salesCountByProduct[p.id] || 0;
-        const isNonBarcoded = !p.barcode || p.barcode.trim() === '';
-        const isScale = p.isScaleItem || (p.barcode && (p.barcode.startsWith('20') || p.barcode.startsWith('001')));
-        const isExplicitQuick = override?.isQuickProduct === true;
-        const priorityBonus = (isExplicitQuick ? 5000 : 0) + (isNonBarcoded ? 60 : (isScale ? 30 : 0));
-        return {
-          ...p,
-          category: override?.category || categorize(p),
-          quickColor: override?.quickColor || null,
-          isQuickProduct: true,
-          score: recentQty * 2 + priorityBonus,
-        };
-      });
-
-      // Explicit pinned items come first, then top velocity products up to 60 slots
-      scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, 60);
+      return explicitQuickProducts;
     } catch (err) {
       fastify.log.error(err);
       return [];
@@ -183,9 +229,9 @@ export default async function productRoutes(fastify, options) {
   });
 
   fastify.post('/api/quick-products/update', async (request, reply) => {
-    const auth = await isManagerAuthorized(request);
+    const auth = await isPosOrStaffAuthorized(request);
     if (!auth.authorized) {
-      return reply.status(401).send({ error: 'Manager authorization required to modify quick products' });
+      return reply.status(401).send({ error: 'Manager or POS terminal authorization required to modify quick products' });
     }
     const { id, barcode, category, quickColor, isQuickProduct } = request.body || {};
     if (!id && !barcode) {
@@ -224,8 +270,8 @@ export default async function productRoutes(fastify, options) {
           'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
         },
         body: JSON.stringify({ id, barcode, category, quickColor, isQuickProduct })
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
 
     return { success: true, message: 'Quick product updated successfully', config: config.overrides[targetId] };
   });
@@ -266,8 +312,8 @@ export default async function productRoutes(fastify, options) {
           'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
         },
         body: JSON.stringify({ oldId, newId, category, quickColor })
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
 
     return { success: true, message: `Swapped ${oldId} with ${newId}` };
   });
@@ -302,8 +348,8 @@ export default async function productRoutes(fastify, options) {
           'x-pos-key': process.env.POS_AUTH_SECRET || process.env.DEV_SECRET || ''
         },
         body: JSON.stringify({ id, barcode })
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
 
     return { success: true, message: `Removed ${targetId} from quick products` };
   });
@@ -387,6 +433,12 @@ export default async function productRoutes(fastify, options) {
     const clean = String(barcode || '').trim().toLowerCase();
     if (!clean) return reply.status(400).send({ error: 'Barcode is required' });
 
+    // 0. L1 RAM Product Cache Fast Path (< 0.1ms lookup)
+    const cached = l1ProductCache.lookup(clean);
+    if (cached) {
+      return cached;
+    }
+
     const prodRes = await db.execute({
       sql: `SELECT * FROM Product WHERE LOWER(barcode) = ? OR LOWER(id) = ? LIMIT 1`,
       args: [clean, clean]
@@ -402,7 +454,9 @@ export default async function productRoutes(fastify, options) {
       });
       dist = distRes.rows?.[0] || null;
     }
-    return { ...found, distributor: dist };
+    const fullProd = { ...found, distributor: dist };
+    l1ProductCache.set(fullProd);
+    return fullProd;
   });
 
   let isBulkUpsertLocked = false;
@@ -482,273 +536,274 @@ export default async function productRoutes(fastify, options) {
 
   // 6. Feitian F100 PIM Native Push Sync Endpoint (Secured with Manager Auth & Path Traversal Guards)
   fastify.post('/api/sync/pim-push', { preHandler: managerAuth }, async (request, reply) => {
-  const { batch } = request.body || {};
-  if (!Array.isArray(batch) || batch.length === 0) {
-    return reply.status(400).send({ error: 'No batch items provided' });
-  }
+    const { batch } = request.body || {};
+    if (!Array.isArray(batch) || batch.length === 0) {
+      return reply.status(400).send({ error: 'No batch items provided' });
+    }
 
-  const allDistributors = await db.orm.Distributor.all();
-  const distByName = new Map(allDistributors.map(d => [d.name.toLowerCase().trim(), d]));
-  const defaultDist = allDistributors[0]?.id || 'dist_local';
+    const allDistributors = await db.orm.Distributor.all();
+    const distByName = new Map(allDistributors.map(d => [d.name.toLowerCase().trim(), d]));
+    const defaultDist = allDistributors[0]?.id || 'dist_local';
 
-  // Ensure public uploads directory exists for photos
-  const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'products');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
+    // Ensure public uploads directory exists for photos
+    const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'products');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
 
-  const syncedLocalIds = [];
-  let processedCount = 0;
+    const syncedLocalIds = [];
+    let processedCount = 0;
 
-  try {
-    await db.transaction(async (tx) => {
-      for (const item of batch) {
-        const localId = item.local_id || item.id;
-        const cleanBarcode = item.barcode ? String(item.barcode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : '';
-        const data = item.data || item;
-        const rawImage = item.image || data.image;
+    try {
+      await db.transaction(async (tx) => {
+        for (const item of batch) {
+          const localId = item.local_id || item.id;
+          const cleanBarcode = item.barcode ? String(item.barcode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : '';
+          const data = item.data || item;
+          const rawImage = item.image || data.image;
 
-        let imagePath = null;
-        if (rawImage && typeof rawImage === 'string') {
-          if (rawImage.startsWith('/uploads/') || rawImage.startsWith('http://') || rawImage.startsWith('https://')) {
-            imagePath = rawImage;
-          } else if (rawImage.startsWith('data:image/')) {
-            try {
-              const matches = rawImage.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
-              if (matches) {
-                const rawMime = matches[1].toLowerCase();
-                const allowedMimes = ['jpg', 'jpeg', 'png', 'webp'];
-                if (allowedMimes.includes(rawMime)) {
-                  const ext = rawMime === 'jpeg' ? 'jpg' : rawMime;
-                  const fileName = `f100_${cleanBarcode || Date.now()}_${Math.random().toString(36).substring(2, 6)}.${ext}`;
-                  const filePath = path.resolve(uploadsDir, fileName);
-                  if (filePath.startsWith(uploadsDir)) {
-                    fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
-                    imagePath = `/uploads/products/${fileName}`;
+          let imagePath = null;
+          if (rawImage && typeof rawImage === 'string') {
+            if (rawImage.startsWith('/uploads/') || rawImage.startsWith('http://') || rawImage.startsWith('https://')) {
+              imagePath = rawImage;
+            } else if (rawImage.startsWith('data:image/')) {
+              try {
+                const matches = rawImage.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+                if (matches) {
+                  const rawMime = matches[1].toLowerCase();
+                  const allowedMimes = ['jpg', 'jpeg', 'png', 'webp'];
+                  if (allowedMimes.includes(rawMime)) {
+                    const ext = rawMime === 'jpeg' ? 'jpg' : rawMime;
+                    const fileName = `f100_${cleanBarcode || Date.now()}_${Math.random().toString(36).substring(2, 6)}.${ext}`;
+                    const filePath = path.resolve(uploadsDir, fileName);
+                    if (filePath.startsWith(uploadsDir)) {
+                      fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
+                      imagePath = `/uploads/products/${fileName}`;
+                    }
                   }
                 }
+              } catch (imgErr) {
+                fastify.log.warn('Could not save F100 product image:', imgErr);
               }
-            } catch (imgErr) {
-              fastify.log.warn('Could not save F100 product image:', imgErr);
             }
           }
-        }
 
-        // Find existing product by barcode first, then by ID
-        let existing = null;
-        if (cleanBarcode) {
-          existing = await tx.orm.Product.where({ barcode: cleanBarcode }).all().first();
-        }
-        if (!existing && data.id) {
-          existing = await tx.orm.Product.where({ id: data.id }).all().first();
-        }
+          // Find existing product by barcode first, then by ID
+          let existing = null;
+          if (cleanBarcode) {
+            existing = await tx.orm.Product.where({ barcode: cleanBarcode }).all().first();
+          }
+          if (!existing && data.id) {
+            existing = await tx.orm.Product.where({ id: data.id }).all().first();
+          }
 
-        // Resolve distributor
-        let distId = data.distributorId;
-        if (!distId && data.supplierName) {
-          const matched = distByName.get(String(data.supplierName).toLowerCase().trim());
-          if (matched) distId = matched.id;
-        }
-        if (!distId) distId = defaultDist;
+          // Resolve distributor
+          let distId = data.distributorId;
+          if (!distId && data.supplierName) {
+            const matched = distByName.get(String(data.supplierName).toLowerCase().trim());
+            if (matched) distId = matched.id;
+          }
+          if (!distId) distId = defaultDist;
 
-        const costVal = Number(data.purchasePrice ?? data.unitCost ?? 0);
-        const sellVal = Number(data.sellingPrice ?? data.price ?? (costVal > 0 ? Number((costVal * 1.3).toFixed(3)) : 1.0));
-        const intakeQty = Number(data.intakeQty ?? 1);
-        const stockMode = data.stockMode || 'ADD'; // ADD = additive, SET = cycle count override
+          const costVal = Number(data.purchasePrice ?? data.unitCost ?? 0);
+          const sellVal = Number(data.sellingPrice ?? data.price ?? (costVal > 0 ? Number((costVal * 1.3).toFixed(3)) : 1.0));
+          const intakeQty = Number(data.intakeQty ?? 1);
+          const stockMode = data.stockMode || 'ADD'; // ADD = additive, SET = cycle count override
 
-        const finalVatRate = data.vatRate !== undefined ? Number(data.vatRate) : 10.0;
-        const finalTaxRate = finalVatRate / 100.0;
+          const finalVatRate = data.vatRate !== undefined ? Number(data.vatRate) : 10.0;
+          const finalTaxRate = finalVatRate / 100.0;
 
-        const isWeighedVal = (data.is_weighed_item === true || data.is_weighed_item === 1 || data.is_weighed_item === 'true') ? 1 : 0;
+          const isWeighedVal = (data.is_weighed_item === true || data.is_weighed_item === 1 || data.is_weighed_item === 'true') ? 1 : 0;
 
-        if (existing) {
-          // Calculate updated stock based on intake mode
-          const currentStock = Number(existing.stockQuantity) || 0;
-          const updatedStock = stockMode === 'ADD' ? currentStock + intakeQty : intakeQty;
+          if (existing) {
+            // Calculate updated stock based on intake mode
+            const currentStock = Number(existing.stockQuantity) || 0;
+            const updatedStock = stockMode === 'ADD' ? currentStock + intakeQty : intakeQty;
 
-          const updateRecord = {
-            name: data.name?.trim() || existing.name,
-            purchasePrice: costVal > 0 ? costVal : existing.purchasePrice,
-            unitCost: costVal > 0 ? costVal : existing.unitCost,
-            sellingPrice: sellVal > 0 ? sellVal : existing.sellingPrice,
-            stockQuantity: updatedStock,
-            category: data.category ? String(data.category).toUpperCase() : (existing.category || 'GROCERY'),
-            minThreshold: Number(data.minThreshold ?? existing.minThreshold ?? 20),
-            maxThreshold: Number(data.maxThreshold ?? existing.maxThreshold ?? 100),
-            distributorId: distId,
-            supplierName: data.supplierName || existing.supplierName || 'Local Distributor',
-            supplierEmail: data.supplierEmail || existing.supplierEmail || 'supplier@askar.bh',
-            vatRate: finalVatRate,
-            taxRate: finalTaxRate,
-            is_weighed_item: isWeighedVal,
-            updatedAt: new Date()
-          };
-          if (imagePath) updateRecord.image_url = imagePath;
+            const updateRecord = {
+              name: data.name?.trim() || existing.name,
+              purchasePrice: costVal > 0 ? costVal : existing.purchasePrice,
+              unitCost: costVal > 0 ? costVal : existing.unitCost,
+              sellingPrice: sellVal > 0 ? sellVal : existing.sellingPrice,
+              stockQuantity: updatedStock,
+              category: data.category ? String(data.category).toUpperCase() : (existing.category || 'GROCERY'),
+              minThreshold: Number(data.minThreshold ?? existing.minThreshold ?? 20),
+              maxThreshold: Number(data.maxThreshold ?? existing.maxThreshold ?? 100),
+              distributorId: distId,
+              supplierName: data.supplierName || existing.supplierName || 'Local Distributor',
+              supplierEmail: data.supplierEmail || existing.supplierEmail || 'supplier@askar.bh',
+              vatRate: finalVatRate,
+              taxRate: finalTaxRate,
+              is_weighed_item: isWeighedVal,
+              updatedAt: new Date()
+            };
+            if (imagePath) updateRecord.image_url = imagePath;
 
-          await db.orm.Product.where({ id: existing.id }).update(updateRecord);
+            await db.orm.Product.where({ id: existing.id }).update(updateRecord);
 
-          // Log Stock Intake Audit Movement
-          try {
-            await db.orm.StockMovement.create({
-              id: crypto.randomUUID(),
-              productId: existing.id,
-              quantityChange: stockMode === 'ADD' ? intakeQty : (intakeQty - currentStock),
-              newStockLevel: updatedStock,
-              movementType: 'IN_DELIVERY',
-              reason: data.reason || 'F100 Handheld Stock Intake',
-              changedBy: data.changedBy || 'F100 Warehouse Staff',
-              createdAt: new Date(),
-              tenantId: 'tenant_askar_01'
-            });
-          } catch { }
-
-          // Mirror to Turso if active
-          try {
-            await db.execute({
-              sql: `UPDATE Product SET name = ?, purchasePrice = ?, unitCost = ?, sellingPrice = ?, stockQuantity = ?, minThreshold = ?, maxThreshold = ?, supplierName = ?, supplierEmail = ?, distributorId = ?, vatRate = ?, taxRate = ?, is_weighed_item = ?, updatedAt = ? WHERE id = ?`,
-              args: [
-                updateRecord.name,
-                updateRecord.purchasePrice,
-                updateRecord.unitCost,
-                updateRecord.sellingPrice,
-                updateRecord.stockQuantity,
-                updateRecord.minThreshold,
-                updateRecord.maxThreshold,
-                updateRecord.supplierName,
-                updateRecord.supplierEmail,
-                updateRecord.distributorId,
-                updateRecord.vatRate,
-                updateRecord.taxRate,
-                isWeighedVal,
-                updateRecord.updatedAt.toISOString(),
-                existing.id
-              ]
-            });
-          } catch { }
-
-        } else {
-          // Brand New Product Creation
-          const newId = data.id || `f100_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          const initialStock = stockMode === 'ADD' ? intakeQty : intakeQty;
-
-          const createRecord = {
-            id: newId,
-            name: data.name?.trim() || `Item ${cleanBarcode || 'Bulk'}`,
-            purchasePrice: costVal,
-            unitCost: costVal,
-            sellingPrice: sellVal,
-            stockQuantity: initialStock,
-            category: data.category ? String(data.category).toUpperCase() : 'GROCERY',
-            minThreshold: Number(data.minThreshold ?? 20),
-            maxThreshold: Number(data.maxThreshold ?? 100),
-            distributorId: distId,
-            supplierName: data.supplierName || 'Local Distributor',
-            supplierEmail: data.supplierEmail || 'supplier@askar.bh',
-            barcode: cleanBarcode || null,
-            vatRate: finalVatRate,
-            taxRate: finalTaxRate,
-            is_weighed_item: isWeighedVal,
-            tenantId: 'tenant_askar_01',
-            updatedAt: new Date()
-          };
-          if (imagePath) createRecord.image_url = imagePath;
-
-          await db.orm.Product.create(createRecord);
-
-          // Save category if provided
-          if (data.category) {
+            // Log Stock Intake Audit Movement
             try {
-              const config = loadQuickConfig();
-              config.overrides = config.overrides || {};
-              config.overrides[newId] = {
-                isQuickProduct: true,
-                category: String(data.category).toUpperCase()
-              };
-              saveQuickConfig(config);
+              await db.orm.StockMovement.create({
+                id: crypto.randomUUID(),
+                productId: existing.id,
+                quantityChange: stockMode === 'ADD' ? intakeQty : (intakeQty - currentStock),
+                newStockLevel: updatedStock,
+                movementType: 'IN_DELIVERY',
+                reason: data.reason || 'F100 Handheld Stock Intake',
+                changedBy: data.changedBy || 'F100 Warehouse Staff',
+                createdAt: new Date(),
+                tenantId: 'tenant_askar_01'
+              });
+            } catch { }
+
+            // Mirror to Turso if active
+            try {
+              await db.execute({
+                sql: `UPDATE Product SET name = ?, purchasePrice = ?, unitCost = ?, sellingPrice = ?, stockQuantity = ?, minThreshold = ?, maxThreshold = ?, supplierName = ?, supplierEmail = ?, distributorId = ?, vatRate = ?, taxRate = ?, is_weighed_item = ?, updatedAt = ? WHERE id = ?`,
+                args: [
+                  updateRecord.name,
+                  updateRecord.purchasePrice,
+                  updateRecord.unitCost,
+                  updateRecord.sellingPrice,
+                  updateRecord.stockQuantity,
+                  updateRecord.minThreshold,
+                  updateRecord.maxThreshold,
+                  updateRecord.supplierName,
+                  updateRecord.supplierEmail,
+                  updateRecord.distributorId,
+                  updateRecord.vatRate,
+                  updateRecord.taxRate,
+                  isWeighedVal,
+                  updateRecord.updatedAt.toISOString(),
+                  existing.id
+                ]
+              });
+            } catch { }
+
+          } else {
+            // Brand New Product Creation
+            const newId = data.id || `f100_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const initialStock = stockMode === 'ADD' ? intakeQty : intakeQty;
+
+            const createRecord = {
+              id: newId,
+              name: data.name?.trim() || `Item ${cleanBarcode || 'Bulk'}`,
+              purchasePrice: costVal,
+              unitCost: costVal,
+              sellingPrice: sellVal,
+              stockQuantity: initialStock,
+              category: data.category ? String(data.category).toUpperCase() : 'GROCERY',
+              minThreshold: Number(data.minThreshold ?? 20),
+              maxThreshold: Number(data.maxThreshold ?? 100),
+              distributorId: distId,
+              supplierName: data.supplierName || 'Local Distributor',
+              supplierEmail: data.supplierEmail || 'supplier@askar.bh',
+              barcode: cleanBarcode || null,
+              vatRate: finalVatRate,
+              taxRate: finalTaxRate,
+              is_weighed_item: isWeighedVal,
+              tenantId: 'tenant_askar_01',
+              updatedAt: new Date()
+            };
+            if (imagePath) createRecord.image_url = imagePath;
+
+            await db.orm.Product.create(createRecord);
+
+            // Save quick product override only if explicitly requested
+            if (data.isQuickProduct === true) {
+              try {
+                const config = loadQuickConfig();
+                config.overrides = config.overrides || {};
+                config.overrides[newId] = {
+                  isQuickProduct: true,
+                  category: String(data.category || 'ESSENTIALS').toUpperCase(),
+                  quickColor: data.quickColor || null
+                };
+                saveQuickConfig(config);
+              } catch { }
+            }
+
+            // Initial Stock Movement
+            try {
+              await db.orm.StockMovement.create({
+                id: crypto.randomUUID(),
+                productId: newId,
+                quantityChange: initialStock,
+                newStockLevel: initialStock,
+                movementType: 'IN_DELIVERY',
+                reason: data.reason || 'F100 Initial Catalog Intake',
+                changedBy: data.changedBy || 'F100 Warehouse Staff',
+                createdAt: new Date(),
+                tenantId: 'tenant_askar_01'
+              });
+            } catch { }
+
+            // Initial Price History
+            try {
+              await db.orm.ProductPriceHistory.create({
+                id: crypto.randomUUID(),
+                productId: newId,
+                productName: createRecord.name,
+                oldPrice: sellVal,
+                newPrice: sellVal,
+                oldCost: costVal,
+                newCost: costVal,
+                changeReason: 'F100 Handheld Onboarding',
+                changedBy: data.changedBy || 'F100 Warehouse Staff',
+                createdAt: new Date(),
+                tenantId: 'tenant_askar_01'
+              });
+            } catch { }
+
+            // Mirror to Turso if active
+            try {
+              await db.execute({
+                sql: `INSERT OR REPLACE INTO Product (id, tenantId, name, purchasePrice, unitCost, sellingPrice, stockQuantity, minThreshold, maxThreshold, supplierName, supplierEmail, distributorId, vatRate, taxRate, barcode, is_weighed_item, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                args: [
+                  createRecord.id,
+                  createRecord.tenantId,
+                  createRecord.name,
+                  createRecord.purchasePrice,
+                  createRecord.unitCost,
+                  createRecord.sellingPrice,
+                  createRecord.stockQuantity,
+                  createRecord.minThreshold,
+                  createRecord.maxThreshold,
+                  createRecord.supplierName,
+                  createRecord.supplierEmail,
+                  createRecord.distributorId,
+                  createRecord.vatRate,
+                  createRecord.taxRate,
+                  createRecord.barcode,
+                  isWeighedVal,
+                  createRecord.updatedAt.toISOString()
+                ]
+              });
             } catch { }
           }
 
-          // Initial Stock Movement
-          try {
-            await db.orm.StockMovement.create({
-              id: crypto.randomUUID(),
-              productId: newId,
-              quantityChange: initialStock,
-              newStockLevel: initialStock,
-              movementType: 'IN_DELIVERY',
-              reason: data.reason || 'F100 Initial Catalog Intake',
-              changedBy: data.changedBy || 'F100 Warehouse Staff',
-              createdAt: new Date(),
-              tenantId: 'tenant_askar_01'
-            });
-          } catch { }
-
-          // Initial Price History
-          try {
-            await db.orm.ProductPriceHistory.create({
-              id: crypto.randomUUID(),
-              productId: newId,
-              productName: createRecord.name,
-              oldPrice: sellVal,
-              newPrice: sellVal,
-              oldCost: costVal,
-              newCost: costVal,
-              changeReason: 'F100 Handheld Onboarding',
-              changedBy: data.changedBy || 'F100 Warehouse Staff',
-              createdAt: new Date(),
-              tenantId: 'tenant_askar_01'
-            });
-          } catch { }
-
-          // Mirror to Turso if active
-          try {
-            await db.execute({
-              sql: `INSERT OR REPLACE INTO Product (id, tenantId, name, purchasePrice, unitCost, sellingPrice, stockQuantity, minThreshold, maxThreshold, supplierName, supplierEmail, distributorId, vatRate, taxRate, barcode, is_weighed_item, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              args: [
-                createRecord.id,
-                createRecord.tenantId,
-                createRecord.name,
-                createRecord.purchasePrice,
-                createRecord.unitCost,
-                createRecord.sellingPrice,
-                createRecord.stockQuantity,
-                createRecord.minThreshold,
-                createRecord.maxThreshold,
-                createRecord.supplierName,
-                createRecord.supplierEmail,
-                createRecord.distributorId,
-                createRecord.vatRate,
-                createRecord.taxRate,
-                createRecord.barcode,
-                isWeighedVal,
-                createRecord.updatedAt.toISOString()
-              ]
-            });
-          } catch { }
+          if (localId !== undefined && localId !== null) {
+            syncedLocalIds.push(localId);
+          }
+          processedCount++;
         }
+      });
 
-        if (localId !== undefined && localId !== null) {
-          syncedLocalIds.push(localId);
-        }
-        processedCount++;
-      }
-    });
-
-    fastify.log.info(`[F100 PIM Sync] Successfully ingested ${processedCount} products from F100 terminal.`);
-    return {
-      success: true,
-      processedCount,
-      syncedIds: syncedLocalIds
-    };
-  } catch (error) {
-    fastify.log.error('F100 PIM Sync Batch Failed:', error);
-    return reply.status(500).send({
-      success: false,
-      error: 'Sync transaction failed',
-      details: error.message
-    });
-  }
-});
+      fastify.log.info(`[F100 PIM Sync] Successfully ingested ${processedCount} products from F100 terminal.`);
+      return {
+        success: true,
+        processedCount,
+        syncedIds: syncedLocalIds
+      };
+    } catch (error) {
+      fastify.log.error('F100 PIM Sync Batch Failed:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Sync transaction failed',
+        details: error.message
+      });
+    }
+  });
 
   // 7. Thresholds and Supplier Details (Secured with Manager Auth)
   fastify.put('/api/products/:id/thresholds', { preHandler: managerAuth }, async (request, reply) => {
@@ -839,6 +894,7 @@ export default async function productRoutes(fastify, options) {
   // 8. Create Product Handler
   const handleCreateProduct = async (request, reply) => {
     try {
+      const body = request.body || {};
       const {
         id,
         name,
@@ -854,8 +910,11 @@ export default async function productRoutes(fastify, options) {
         supplierEmail,
         vatRate,
         is_weighed_item,
-        category
-      } = request.body || {};
+        category,
+        plu_code,
+        name_ar,
+        image_url
+      } = body;
 
       if (!name || !name.trim()) {
         return reply.status(400).send({ success: false, error: 'Product name is required' });
@@ -921,13 +980,14 @@ export default async function productRoutes(fastify, options) {
 
       await db.orm.Product.create(newProd);
 
-      if (category) {
+      if (body.isQuickProduct === true) {
         try {
           const config = loadQuickConfig();
           config.overrides = config.overrides || {};
           config.overrides[prodId] = {
             isQuickProduct: true,
-            category: String(category).toUpperCase()
+            category: String(category || 'ESSENTIALS').toUpperCase(),
+            quickColor: body.quickColor || null
           };
           saveQuickConfig(config);
         } catch (err) {
@@ -949,7 +1009,7 @@ export default async function productRoutes(fastify, options) {
       }
 
       // Asynchronous non-blocking mirror to Turso Cloud (Zero-SPOF)
-      mirrorProductToCloud(newProd).catch(() => {});
+      mirrorProductToCloud(newProd).catch(() => { });
 
       try {
         await db.orm.ProductPriceHistory.create({
@@ -965,7 +1025,7 @@ export default async function productRoutes(fastify, options) {
           createdAt: new Date(),
           tenantId: 'tenant_askar_01'
         });
-      } catch (e) {}
+      } catch (e) { }
 
       return {
         success: true,
@@ -983,8 +1043,7 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.post('/api/products', { preHandler: managerAuth }, handleCreateProduct);
-  fastify.post('/products', { preHandler: managerAuth }, handleCreateProduct);
+  fastify.post('/api/products', { preHandler: posOrManagerAuth }, handleCreateProduct);
 
   // 9. Barcode Binding (Secured with Manager Auth)
   fastify.post('/api/products/:id/bind-barcode', { preHandler: managerAuth }, async (request, reply) => {
@@ -1141,7 +1200,7 @@ export default async function productRoutes(fastify, options) {
 
       // Asynchronous non-blocking mirror to Turso Cloud (Zero-SPOF)
       if (updated) {
-        mirrorProductToCloud(updated).catch(() => {});
+        mirrorProductToCloud(updated).catch(() => { });
       }
 
       const marginPct = updated.sellingPrice > 0
@@ -1165,12 +1224,10 @@ export default async function productRoutes(fastify, options) {
     }
   };
 
-  fastify.put('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.patch('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/api/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/api/products/:id/update', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.put('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
-  fastify.post('/products/:id', { preHandler: managerAuth }, handleUpdateProduct);
+  fastify.put('/api/products/:id', { preHandler: posOrManagerAuth }, handleUpdateProduct);
+  fastify.patch('/api/products/:id', { preHandler: posOrManagerAuth }, handleUpdateProduct);
+  fastify.post('/api/products/:id', { preHandler: posOrManagerAuth }, handleUpdateProduct);
+  fastify.post('/api/products/:id/update', { preHandler: posOrManagerAuth }, handleUpdateProduct);
 
   // 10b. Delete Product Handler (Guaranteed 100% Deletable with Tombstone Sync)
   const handleDeleteProduct = async (request, reply) => {
@@ -1186,7 +1243,7 @@ export default async function productRoutes(fastify, options) {
                 VALUES (?, ?, 'tenant_askar_01', 'Deleted Item', CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET deletedAt = CURRENT_TIMESTAMP`,
           args: [id, id]
-        }).catch(() => {});
+        }).catch(() => { });
         return reply.status(200).send({ success: true, message: 'Product already deleted', deletedId: id });
       }
 
@@ -1201,19 +1258,19 @@ export default async function productRoutes(fastify, options) {
               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
               ON CONFLICT(id) DO UPDATE SET deletedAt = CURRENT_TIMESTAMP`,
         args: [realId, barcode, tenantId, name]
-      }).catch(() => {});
+      }).catch(() => { });
 
       // 2. Cascade delete dependent child records
-      await db.execute({ sql: `DELETE FROM QuickProduct WHERE productId = ? OR productId = ? OR id = ?`, args: [realId, barcode || realId, `qp_${realId}`] }).catch(() => {});
-      await db.execute({ sql: `DELETE FROM StoreInventory WHERE productId = ? OR productId = ?`, args: [realId, barcode || realId] }).catch(() => {});
-      await db.execute({ sql: `DELETE FROM ProductPriceHistory WHERE productId = ?`, args: [realId] }).catch(() => {});
+      await db.execute({ sql: `DELETE FROM QuickProduct WHERE productId = ? OR productId = ? OR id = ?`, args: [realId, barcode || realId, `qp_${realId}`] }).catch(() => { });
+      await db.execute({ sql: `DELETE FROM StoreInventory WHERE productId = ? OR productId = ?`, args: [realId, barcode || realId] }).catch(() => { });
+      await db.execute({ sql: `DELETE FROM ProductPriceHistory WHERE productId = ?`, args: [realId] }).catch(() => { });
 
       // 3. Delete from Product table
       await db.execute({
         sql: `DELETE FROM Product WHERE id = ? OR barcode = ?`,
         args: [realId, realId]
       });
-      await db.orm.Product.where({ id: realId }).delete().catch(() => {});
+      await db.orm.Product.where({ id: realId }).delete().catch(() => { });
 
       // 4. Cleanup quick config and mark removed
       try {
@@ -1254,7 +1311,7 @@ export default async function productRoutes(fastify, options) {
       }
 
       // Asynchronous non-blocking mirror of tombstone to Turso Cloud
-      mirrorProductTombstoneToCloud(realId, barcode, name).catch(() => {});
+      mirrorProductTombstoneToCloud(realId, barcode, name).catch(() => { });
 
       fastify.log.info(`[Catalog] Deleted product ${realId} (${name})`);
       return {
@@ -1297,21 +1354,21 @@ export default async function productRoutes(fastify, options) {
                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                   ON CONFLICT(id) DO UPDATE SET deletedAt = CURRENT_TIMESTAMP`,
             args: [realId, barcode, tenantId, name]
-          }).catch(() => {});
+          }).catch(() => { });
 
-          mirrorProductTombstoneToCloud(realId, barcode, name).catch(() => {});
+          mirrorProductTombstoneToCloud(realId, barcode, name).catch(() => { });
 
           // 2. Cascade delete dependent child records
-          await db.execute({ sql: `DELETE FROM QuickProduct WHERE productId = ? OR productId = ? OR id = ?`, args: [realId, barcode || realId, `qp_${realId}`] }).catch(() => {});
-          await db.execute({ sql: `DELETE FROM StoreInventory WHERE productId = ? OR productId = ?`, args: [realId, barcode || realId] }).catch(() => {});
-          await db.execute({ sql: `DELETE FROM ProductPriceHistory WHERE productId = ?`, args: [realId] }).catch(() => {});
+          await db.execute({ sql: `DELETE FROM QuickProduct WHERE productId = ? OR productId = ? OR id = ?`, args: [realId, barcode || realId, `qp_${realId}`] }).catch(() => { });
+          await db.execute({ sql: `DELETE FROM StoreInventory WHERE productId = ? OR productId = ?`, args: [realId, barcode || realId] }).catch(() => { });
+          await db.execute({ sql: `DELETE FROM ProductPriceHistory WHERE productId = ?`, args: [realId] }).catch(() => { });
 
           // 3. Delete from Product
           await db.execute({
             sql: `DELETE FROM Product WHERE id = ? OR barcode = ?`,
             args: [realId, realId]
           });
-          await db.orm.Product.where({ id: realId }).delete().catch(() => {});
+          await db.orm.Product.where({ id: realId }).delete().catch(() => { });
 
           // 4. Update Quick Config
           delete config.overrides[realId];
@@ -1359,11 +1416,8 @@ export default async function productRoutes(fastify, options) {
   };
 
   fastify.delete('/api/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.delete('/products/:id', { preHandler: managerAuth }, handleDeleteProduct);
   fastify.post('/api/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
-  fastify.post('/products/:id/delete', { preHandler: managerAuth }, handleDeleteProduct);
   fastify.post('/api/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
-  fastify.post('/products/bulk-delete', { preHandler: managerAuth }, handleBulkDeleteProducts);
 
   // 11. Bulk Update & Price Hike (Protected by managerAuth)
   fastify.post('/api/products/bulk-update', { preHandler: managerAuth }, async (request, reply) => {
@@ -1549,7 +1603,7 @@ export default async function productRoutes(fastify, options) {
     try {
       const res = await db.execute(`
         SELECT 
-          p.id, p.name, p.name_ar, p.barcode, p.plu_code, p.image_url,
+          p.id, p.name, p.name_ar, p.barcode, p.plu_code, p.image_url, p.image_url_thumb,
           COALESCE(p.sellingPrice, 0.0) as sellingPrice,
           COALESCE(p.purchasePrice, p.unitCost, 0.0) as purchasePrice,
           COALESCE(p.unitCost, p.purchasePrice, 0.0) as unitCost,
@@ -1604,6 +1658,8 @@ export default async function productRoutes(fastify, options) {
           pluCode: row.plu_code ? String(row.plu_code) : null,
           image_url: row.image_url || null,
           imageUrl: row.image_url || null,
+          image_url_thumb: row.image_url_thumb || null,
+          imageUrlThumb: row.image_url_thumb || null,
           sellingPrice: sell,
           purchasePrice: cost,
           unitCost: cost,
@@ -1643,8 +1699,8 @@ export default async function productRoutes(fastify, options) {
         const newSell = Number(item.sellingPrice || 0);
         const newCost = Number(item.purchasePrice !== undefined ? item.purchasePrice : (item.unitCost || 0));
         if (isNaN(newSell) || newSell < 0 || isNaN(newCost) || newCost < 0) {
-          return reply.code(400).send({ 
-            error: `Invalid price for product "${item.name || pid}": selling price (BD ${item.sellingPrice}) and cost cannot be negative.` 
+          return reply.code(400).send({
+            error: `Invalid price for product "${item.name || pid}": selling price (BD ${item.sellingPrice}) and cost cannot be negative.`
           });
         }
         const oldSell = Number(item.oldPrice || item.previousPrice || newSell);
@@ -1682,7 +1738,7 @@ export default async function productRoutes(fastify, options) {
               createdAt: new Date(),
               tenantId: 'tenant_askar_01'
             });
-          } catch {}
+          } catch { }
         }
       }
 
@@ -1747,7 +1803,7 @@ export default async function productRoutes(fastify, options) {
         await db.execute({
           sql: `DELETE FROM QuickProduct WHERE productId = ? OR id = ?`,
           args: [id, `qp_${id}`]
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       // Broadcast update
@@ -1833,7 +1889,7 @@ export default async function productRoutes(fastify, options) {
                   sortOrder = excluded.sortOrder,
                   updatedAt = CURRENT_TIMESTAMP`,
           args: [`qp_${id}`, id, parseInt(pluCode, 10) || 50]
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       await client.execute({

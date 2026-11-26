@@ -7,6 +7,12 @@
     "enabled": true
   },
   "upload_source_maps": true,
+  "r2_buckets": [
+    {
+      "binding": "PRODUCE_BUCKET",
+      "bucket_name": "askar-produce-images"
+    }
+  ],
   "vars": {
     "ENVIRONMENT": "production",
     "DEFAULT_TENANT_ID": "tenant_askar_01",

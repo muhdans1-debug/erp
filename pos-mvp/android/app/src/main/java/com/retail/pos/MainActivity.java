@@ -16,6 +16,27 @@ import com.getcapacitor.PluginHandle;
 
 public class MainActivity extends BridgeActivity {
 
+    static {
+        // Enforce Chromium GPU Rasterization & Hardware Acceleration command-line flags
+        try {
+            String[] flagPaths = {
+                "/data/local/tmp/webview-command-line",
+                "/data/local/tmp/chrome-command-line"
+            };
+            for (String path : flagPaths) {
+                java.io.File file = new java.io.File(path);
+                if (!file.exists() || file.length() < 10) {
+                    java.io.FileWriter fw = new java.io.FileWriter(file);
+                    fw.write("_ --enable-gpu-rasterization --force-gpu-rasterization --ignore-gpu-blocklist --enable-zero-copy\n");
+                    fw.close();
+                    file.setReadable(true, false);
+                    file.setWritable(true, false);
+                    file.setExecutable(true, false);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
     private long lastNfcScanTime = 0;
     private String lastNfcTag = "";
 
@@ -53,9 +74,18 @@ public class MainActivity extends BridgeActivity {
             webView.post(() -> {
                 String escaped = code.replace("\\", "\\\\").replace("'", "\\'");
                 // Pure numeric codes (e.g. EAN-13, EAN-8, UPC) are retail grocery barcodes, NEVER NFC tags.
-                // Only treat as NFC card if delimited (contains ':' or '-') or hex containing letter A-F.
-                boolean isHexNfc = (code.contains(":") || code.contains("-"))
-                        || (code.matches("(?i)^[0-9A-F]{8,32}$") && code.matches(".*[a-zA-Z].*"));
+                // URLs (http/https), /tab/ links, and prefixed barcodes (KHATA:, INV-, CUST-) are retail barcodes/passes, NEVER NFC tags.
+                boolean isUrlOrBarcode = code.startsWith("http://") || code.startsWith("https://")
+                        || code.contains("/") || code.contains("?") || code.contains("=")
+                        || code.toUpperCase().startsWith("KHATA:") || code.toUpperCase().startsWith("INV-")
+                        || code.toUpperCase().startsWith("REF-") || code.toUpperCase().startsWith("CN-")
+                        || code.toUpperCase().startsWith("CUST-");
+
+                // Only treat as NFC card if it is NOT a URL/path and matches a strict hex NFC UID pattern.
+                boolean isHexNfc = !isUrlOrBarcode && (
+                        (code.matches("(?i)^([0-9A-F]{2}[:\\-]){3,9}[0-9A-F]{2}$"))
+                        || (code.matches("(?i)^[0-9A-F]{8,32}$") && code.matches(".*[a-zA-Z].*"))
+                );
                 if (isHexNfc) {
                     String nfcId = code.replace(":", "").replace("-", "").toUpperCase();
                     if (isDuplicateNfcScan(nfcId)) {
@@ -65,8 +95,7 @@ public class MainActivity extends BridgeActivity {
                     android.util.Log.i("MainActivity", "📡 Dispatching Sunmi NFC Scan Event: " + nfcId);
                     relayTagToCloudAsync(nfcId);
                     webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: '" + nfcId + "', tag_id: '" + escaped + "' } }));" +
-                        "window.dispatchEvent(new CustomEvent('sunmiBarcodeScan', { detail: { barcode: '" + escaped + "' } }));",
+                        "window.dispatchEvent(new CustomEvent('sunmi-nfc-scan', { detail: { nfcId: '" + nfcId + "', tag_id: '" + escaped + "' } }));",
                         null
                     );
                 } else {
@@ -116,10 +145,15 @@ public class MainActivity extends BridgeActivity {
 
         // Hardware-accelerated Sunmi POS performance tuning & DevTools inspection
         try {
+            getWindow().setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            );
             WebView.setWebContentsDebuggingEnabled(true);
             WebView webView = getBridge().getWebView();
             if (webView != null) {
                 webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
                 WebSettings settings = webView.getSettings();
                 settings.setRenderPriority(WebSettings.RenderPriority.HIGH);
@@ -229,7 +263,7 @@ public class MainActivity extends BridgeActivity {
                     return;
                 }
                 android.util.Log.i("MainActivity", "⚡ Native NFC Intent Discovered Tag: " + tagUid);
-                relayTagToCloudAsync(tagUid);
+                // Dispatch directly to WebView; centralized relay is coordinated cleanly in the Web layer if needed
                 WebView webView = getBridge() != null ? getBridge().getWebView() : null;
                 if (webView != null) {
                     webView.post(() -> {

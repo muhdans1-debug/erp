@@ -25,8 +25,8 @@ echo [1/3] Activating Windows 24/7 Keep-Awake Retail Power Profile...
 powercfg /change standby-timeout-ac 0 >nul 2>nul
 powercfg /change monitor-timeout-ac 0 >nul 2>nul
 
-echo [2/3] Launching Master Fastify POS Server (Port 3000)...
-start "Askar POS Master Server" /min cmd /c "node pos-mvp/server.js"
+echo [2/3] Launching Autonomous Watchdog & Master Fastify POS Server (Port 3000)...
+start "Askar POS Autonomous Watchdog" /min cmd /c "node pos-mvp/services/watchdogDaemon.js"
 
 echo Waiting for server to initialize...
 timeout /t 3 /nobreak >nul
@@ -36,7 +36,7 @@ set CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
 if not exist %CHROME_PATH% set CHROME_PATH="C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
 
 if exist %CHROME_PATH% (
-    start "" %CHROME_PATH% --app=http://localhost:3000 --start-maximized
+    start "" %CHROME_PATH% --app=http://localhost:3000 --start-maximized --enable-gpu-rasterization --force-gpu-rasterization --ignore-gpu-blocklist --enable-zero-copy
 ) else (
     start http://localhost:3000
 )

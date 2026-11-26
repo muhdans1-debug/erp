@@ -106,6 +106,7 @@ interface KhataHubModalProps {
   onSelectCustomerForCart?: (customer: Customer) => void;
   lastScannedCardUid?: string | null;
   showToast?: (message: string, type?: 'success' | 'info' | 'error') => void;
+  initialCustomers?: Customer[];
 }
 
 export default function KhataHubModal({
@@ -114,6 +115,7 @@ export default function KhataHubModal({
   onCustomerUpdated,
   onSelectCustomerForCart,
   lastScannedCardUid,
+  initialCustomers,
   showToast
 }: KhataHubModalProps) {
   const [activeTab, setActiveTab] = useState<'SETTLE' | 'STATEMENT' | 'GROUPS' | 'NEW'>('SETTLE');
@@ -273,6 +275,7 @@ export default function KhataHubModal({
           ) : (
             <SettleBalanceView
               apiBase={apiBase}
+              initialCustomers={initialCustomers}
               onCustomerUpdated={onCustomerUpdated}
               onSelectCustomerForCart={onSelectCustomerForCart}
               onClose={onClose}
@@ -445,7 +448,8 @@ function SettleBalanceView({
   onOpenMessGroupTab,
   onOpenWizard,
   onOpenBookBalance,
-  refreshTrigger
+  refreshTrigger,
+  initialCustomers
 }: {
   apiBase: string;
   onCustomerUpdated?: () => void;
@@ -462,11 +466,18 @@ function SettleBalanceView({
   onOpenWizard?: (customer: Customer, mode: 'SELECT' | 'DEPOSIT_COLLECT' | 'DEPOSIT_REFUND' | 'SALFAH_DISPENSE' | 'SALFAH_REPAY') => void;
   onOpenBookBalance?: (customer: Customer) => void;
   refreshTrigger?: number;
+  initialCustomers?: Customer[];
 }) {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>(() => (initialCustomers && initialCustomers.length > 0 ? initialCustomers : []));
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [visibleCustomerCount, setVisibleCustomerCount] = useState(30);
+  const [visibleCustomerCount, setVisibleCustomerCount] = useState(15);
+
+  useEffect(() => {
+    if (initialCustomers && initialCustomers.length > 0) {
+      setCustomers((prev) => (prev.length === 0 ? initialCustomers : prev));
+    }
+  }, [initialCustomers]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -984,34 +995,50 @@ function SettleBalanceView({
       } catch {}
 
       let data: any = null;
+      let messGroupsList: any[] = [];
       const headers = {
         'x-pos-client': 'store-pos',
         'x-manager-pin': getManagerPin()
       };
-      const candidates = getResilientApiCandidates();
+      const rawCandidates = getResilientApiCandidates();
+      const primaryCandidate = (apiBase && !apiBase.includes('askar-khata-pwa.vercel.app')) ? apiBase : rawCandidates[0];
+      const candidates = [primaryCandidate, ...rawCandidates.filter(c => c !== primaryCandidate)];
 
+      // 1. Parallel fetch for Ledger and Mess Groups (zero sequential waiting)
       for (const url of candidates) {
         try {
-          const res = await fetch(`${url}/khata/ledger?sort=${sortParam}`, {
-            headers,
-            signal: AbortSignal.timeout(2000)
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (json && (json.customers || Array.isArray(json))) {
-              data = json;
-              break;
-            }
+          const [ledgerOutcome, messOutcome] = await Promise.allSettled([
+            fetch(`${url}/khata/ledger?sort=${sortParam}`, {
+              headers,
+              signal: AbortSignal.timeout(1800)
+            }).then(async (r) => (r.ok ? await r.json() : null)),
+            fetch(`${url}/api/nfc/mess-groups`, {
+              headers,
+              signal: AbortSignal.timeout(1800)
+            }).then(async (r) => (r.ok ? await r.json() : null))
+          ]);
+
+          const ledgerJson = ledgerOutcome.status === 'fulfilled' ? ledgerOutcome.value : null;
+          const messJson = messOutcome.status === 'fulfilled' ? messOutcome.value : null;
+
+          if (ledgerJson && (ledgerJson.customers || Array.isArray(ledgerJson))) {
+            data = ledgerJson;
           }
+          if (messJson?.messGroups && Array.isArray(messJson.messGroups)) {
+            messGroupsList = messJson.messGroups;
+          }
+
+          if (data) break; // Successfully loaded from primary endpoint!
         } catch { }
       }
 
+      // 2. Fast fallback to /api/customers if ledger was empty
       if (!data || (!data.customers && !Array.isArray(data))) {
         for (const url of candidates) {
           try {
             const res2 = await fetch(`${url}/api/customers`, {
               headers,
-              signal: AbortSignal.timeout(2000)
+              signal: AbortSignal.timeout(1500)
             });
             if (res2.ok) {
               const json = await res2.json();
@@ -1022,24 +1049,6 @@ function SettleBalanceView({
             }
           } catch { }
         }
-      }
-
-      // Fetch Mess Groups so Central Payment can display room totals & settle full room debt
-      let messGroupsList: any[] = [];
-      for (const url of candidates) {
-        try {
-          const mRes = await fetch(`${url}/api/nfc/mess-groups`, {
-            headers,
-            signal: AbortSignal.timeout(2000)
-          });
-          if (mRes.ok) {
-            const mData = await mRes.json();
-            if (mData?.messGroups && Array.isArray(mData.messGroups)) {
-              messGroupsList = mData.messGroups;
-              break;
-            }
-          }
-        } catch { }
       }
 
       const messGroupMap = new Map<string, any>();

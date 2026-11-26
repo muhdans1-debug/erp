@@ -1704,6 +1704,14 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     loadCustomers();
   }, [apiBase]);
 
+  // Eagerly pre-load KhataHubModal chunk in background idle time so opening is 0.0ms instant
+  useEffect(() => {
+    const idleTimer = setTimeout(() => {
+      import('../components/KhataHubModal').catch(() => {});
+    }, 1200);
+    return () => clearTimeout(idleTimer);
+  }, []);
+
   // Check Outbox Sync Status
   const [syncInfo, setSyncInfo] = useState<{ pendingCount: number; syncedCount: number } | null>(null);
 
@@ -5386,6 +5394,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             onClose={() => setShowKhataHub(false)}
             apiBase={apiBase}
             lastScannedCardUid={lastDetectedUid}
+            initialCustomers={customersList}
             onCustomerUpdated={() => {
               loadCustomers();
             }}

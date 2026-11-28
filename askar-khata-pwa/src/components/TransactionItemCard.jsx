@@ -38,7 +38,9 @@ export default function TransactionItemCard({
                      (tx.type || '').toUpperCase().includes('PAY') || 
                      amt < 0);
   const isOpeningBalance = !isDepositTx && (tx.type || '').toUpperCase().includes('OPENING');
-  const isMessSplit = !isDepositTx && Boolean(
+  const isDepartureAbsorption = tx.type === 'MESS_REALLOCATION' || (tx.reference || '').includes('Departure Share');
+  const isDepartureOffset = tx.type === 'MESS_DEPARTURE_OFFSET' || (tx.reference || '').includes('Departure Clearance');
+  const isMessSplit = !isDepositTx && !isDepartureAbsorption && !isDepartureOffset && Boolean(
     tx.subledger_type === 'MESS_SHARE' ||
     tx.mess_id || 
     tx.is_mess_split ||
@@ -146,6 +148,8 @@ export default function TransactionItemCard({
 
   // Determine Primary Title
   const getDisplayTitle = () => {
+    if (isDepartureAbsorption) return lang === 'ar' ? 'تحمل نصيب المغادرة • سكن' : `Roommate Departure Share • ${messRoomName || 'Mess'}`;
+    if (isDepartureOffset) return lang === 'ar' ? 'مخالصة مغادرة السكن' : `Mess Departure Clearance • ${messRoomName || 'Mess'}`;
     if (isDepositTx) return lang === 'ar' ? 'تأمين البطاقة الذكية' : 'Card Security Deposit';
     if (isMessSplit) return `Mess Split • ${messRoomName || 'Room Share'}`;
     if (isCreditTx) {
@@ -215,6 +219,14 @@ export default function TransactionItemCard({
                     Deposited
                   </span>
                 )
+              ) : isDepartureAbsorption ? (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                  <Users className="w-2.5 h-2.5" /> Roommate Departure
+                </span>
+              ) : isDepartureOffset ? (
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                  <CheckCircle2 className="w-2.5 h-2.5" /> Departed & Cleared
+                </span>
               ) : isMessSplit ? (
                 <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
                   <Users className="w-2.5 h-2.5" /> {messRoomName || 'Room Mess'}

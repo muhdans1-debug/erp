@@ -21,7 +21,8 @@ import {
   FileText,
   Layers,
   Plus,
-  BookOpen
+  BookOpen,
+  LogOut
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { printKhataStatement, printKhataPaymentReceipt } from '../utils/printer';
@@ -98,6 +99,12 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
   const [settleMethod, setSettleMethod] = useState<'CASH' | 'BENEFIT_PAY'>('CASH');
   const [isSubmittingSettle, setIsSubmittingSettle] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
+
+  // Mid-Month Member Departure State
+  const [departingMember, setDepartingMember] = useState<MessMemberItem | null>(null);
+  const [departureStrategy, setDepartureStrategy] = useState<'ABSORB_BY_ROOMMATES' | 'CONVERT_TO_PERSONAL' | 'SETTLE_ON_DEPARTURE'>('ABSORB_BY_ROOMMATES');
+  const [departureSettleMethod, setDepartureSettleMethod] = useState<'CASH' | 'BENEFIT_PAY'>('CASH');
+  const [isSubmittingDeparture, setIsSubmittingDeparture] = useState<boolean>(false);
 
   // Create New Mess Group Modal State
   const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false);
@@ -491,6 +498,71 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
       alert(`Network error recording payment: ${err?.message || err}`);
     } finally {
       setIsSubmittingSettle(false);
+    }
+  };
+
+  // Open Mid-Month Member Departure Modal
+  const handleOpenDepartureModal = (member: MessMemberItem, _group?: MessGroupItem) => {
+    setDepartingMember(member);
+    setDepartureStrategy('ABSORB_BY_ROOMMATES');
+    setDepartureSettleMethod('CASH');
+  };
+
+  // Submit Mid-Month Member Departure & Reallocation
+  const handleConfirmDeparture = async () => {
+    if (!departingMember || !selectedGroup) return;
+    setIsSubmittingDeparture(true);
+
+    try {
+      const res = await fetchFromCandidates(`/api/khata/mess/${encodeURIComponent(selectedGroup.id)}/members/${encodeURIComponent(departingMember.id)}/depart`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'store-pos',
+          'x-manager-pin': getManagerPin()
+        },
+        body: JSON.stringify({
+          strategy: departureStrategy,
+          settleMethod: departureSettleMethod
+        })
+      });
+
+      if (res && res.ok) {
+        const data = await res.json();
+        
+        if (departureStrategy === 'SETTLE_ON_DEPARTURE' && departureSettleMethod === 'CASH') {
+          kickCashDrawer().catch(() => {});
+        }
+        playThankYouVoice('KHATA_PAYMENT');
+
+        const memberUnpaid = Number(departingMember.equalSplitShare || (selectedGroup.totalBalance / Math.max(1, selectedGroup.members.length)) || 0);
+
+        // Print thermal receipt slip
+        printKhataPaymentReceipt({
+          shopName: "LAYALI SUPERMARKET",
+          customerName: `${departingMember.name} (Departed ${selectedGroup.group_name})`,
+          amountPaid: departureStrategy === 'SETTLE_ON_DEPARTURE' ? memberUnpaid : 0,
+          previousBalance: memberUnpaid,
+          newBalance: 0,
+          paymentMethod: departureStrategy === 'SETTLE_ON_DEPARTURE' ? departureSettleMethod : (departureStrategy === 'ABSORB_BY_ROOMMATES' ? 'ABSORBED' : 'PERSONAL_TRANSFER'),
+          receiptNo: `DEP-${Date.now().toString().slice(-6)}`,
+          timestamp: new Date().toISOString()
+        }).catch(() => {});
+
+        const msg = data.message || `✅ ${departingMember.name} departed from ${selectedGroup.group_name}!`;
+        if (showToast) showToast(msg, 'success');
+        onCustomerUpdated?.();
+
+        setDepartingMember(null);
+        await loadGroups();
+      } else {
+        const errData = await res?.json().catch(() => ({}));
+        alert(errData?.error || 'Failed to process member departure');
+      }
+    } catch (err: any) {
+      alert(`Network error processing departure: ${err?.message || err}`);
+    } finally {
+      setIsSubmittingDeparture(false);
     }
   };
 
@@ -1244,6 +1316,15 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                               <Banknote size={12} />
                               <span>Pay Share</span>
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDepartureModal(member, selectedGroup)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-bold text-[11px] active:scale-95 transition-transform cursor-pointer shadow-2xs flex items-center gap-1"
+                              title="Member leaving flat/mess mid-month"
+                            >
+                              <LogOut size={12} />
+                              <span>Exit Mess</span>
+                            </button>
                             {onSelectCustomerForCart && (
                               <button
                                 type="button"
@@ -1680,6 +1761,203 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
                   <span>Confirm Settlement</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MEMBER DEPARTURE RESOLUTION */}
+      {departingMember && selectedGroup && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/75 p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col border border-slate-200">
+            {/* Header */}
+            <div className="bg-rose-600 text-white p-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase font-bold text-rose-200 tracking-wider">Mid-Month Mess Departure</p>
+                <h4 className="text-xl font-black">{departingMember.name}</h4>
+                <p className="text-xs text-rose-100">{selectedGroup.group_name} Room Mess</p>
+              </div>
+              <button
+                onClick={() => setDepartingMember(null)}
+                className="p-2 text-rose-200 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* Financial Snapshot */}
+              {(() => {
+                const memberShare = Number(departingMember.equalSplitShare || (selectedGroup.totalBalance / Math.max(1, selectedGroup.members.length)) || 0);
+                const personalDebt = Number(departingMember.personalBalance || 0);
+                const remainingCount = Math.max(0, selectedGroup.members.length - 1);
+                const sharePerRemaining = remainingCount > 0 ? (memberShare / remainingCount) : 0;
+
+                return (
+                  <>
+                    <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-1.5 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600 font-semibold">Unpaid Mess Share to Resolve:</span>
+                        <span className="font-black text-rose-700 text-sm">BD {memberShare.toFixed(3)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-500">
+                        <span>Personal Private Tab (Not shared):</span>
+                        <span className="font-bold text-slate-700">BD {personalDebt.toFixed(3)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-500 pt-1 border-t border-slate-200">
+                        <span>Remaining Active Roommates:</span>
+                        <span className="font-bold text-slate-800">{remainingCount} members</span>
+                      </div>
+                    </div>
+
+                    {/* Resolution Strategy Selector */}
+                    <div className="space-y-2.5">
+                      <label className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                        Select Departure Settlement Action:
+                      </label>
+
+                      {/* Option 1: Absorb by Roommates */}
+                      <label
+                        className={`p-3.5 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
+                          departureStrategy === 'ABSORB_BY_ROOMMATES'
+                            ? 'border-indigo-600 bg-indigo-50/60'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="departureStrategy"
+                          checked={departureStrategy === 'ABSORB_BY_ROOMMATES'}
+                          onChange={() => setDepartureStrategy('ABSORB_BY_ROOMMATES')}
+                          className="mt-1"
+                        />
+                        <div className="text-xs flex-1">
+                          <p className="font-black text-slate-900 flex items-center justify-between">
+                            <span>👥 Split & Absorb Equally by Roommates</span>
+                            {remainingCount > 0 && (
+                              <span className="text-indigo-700 font-black">+BD {sharePerRemaining.toFixed(3)} / member</span>
+                            )}
+                          </p>
+                          <p className="text-slate-600 text-[11px] mt-0.5">
+                            {remainingCount > 0
+                              ? `Each of the ${remainingCount} remaining roommates absorbs BD ${sharePerRemaining.toFixed(3)}. Transparent audit note placed in their PWA statement.`
+                              : 'No other roommates exist in this mess group to absorb the balance.'}
+                          </p>
+                        </div>
+                      </label>
+
+                      {/* Option 2: Settle on Departure */}
+                      <label
+                        className={`p-3.5 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
+                          departureStrategy === 'SETTLE_ON_DEPARTURE'
+                            ? 'border-emerald-600 bg-emerald-50/60'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="departureStrategy"
+                          checked={departureStrategy === 'SETTLE_ON_DEPARTURE'}
+                          onChange={() => setDepartureStrategy('SETTLE_ON_DEPARTURE')}
+                          className="mt-1"
+                        />
+                        <div className="text-xs flex-1">
+                          <p className="font-black text-slate-900 flex items-center justify-between">
+                            <span>💵 Settle Now on Departure (Paid in Full)</span>
+                            <span className="text-emerald-700 font-black">BD {memberShare.toFixed(3)}</span>
+                          </p>
+                          <p className="text-slate-600 text-[11px] mt-0.5">
+                            Customer pays BD {memberShare.toFixed(3)} at the counter. Roommates absorb BD 0.000. Clean exit.
+                          </p>
+                          {departureStrategy === 'SETTLE_ON_DEPARTURE' && (
+                            <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-emerald-200">
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); setDepartureSettleMethod('CASH'); }}
+                                className={`py-1.5 px-3 rounded-lg border font-bold text-[11px] flex items-center justify-center gap-1 ${
+                                  departureSettleMethod === 'CASH'
+                                    ? 'border-emerald-600 bg-emerald-600 text-white'
+                                    : 'border-slate-300 bg-white text-slate-700'
+                                }`}
+                              >
+                                <Banknote size={13} />
+                                <span>Cash</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); setDepartureSettleMethod('BENEFIT_PAY'); }}
+                                className={`py-1.5 px-3 rounded-lg border font-bold text-[11px] flex items-center justify-center gap-1 ${
+                                  departureSettleMethod === 'BENEFIT_PAY'
+                                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                                    : 'border-slate-300 bg-white text-slate-700'
+                                }`}
+                              >
+                                <CreditCard size={13} />
+                                <span>BenefitPay</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+
+                      {/* Option 3: Convert to Personal Tab */}
+                      <label
+                        className={`p-3.5 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
+                          departureStrategy === 'CONVERT_TO_PERSONAL'
+                            ? 'border-amber-600 bg-amber-50/60'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="departureStrategy"
+                          checked={departureStrategy === 'CONVERT_TO_PERSONAL'}
+                          onChange={() => setDepartureStrategy('CONVERT_TO_PERSONAL')}
+                          className="mt-1"
+                        />
+                        <div className="text-xs flex-1">
+                          <p className="font-black text-slate-900 flex items-center justify-between">
+                            <span>👤 Transfer to Member's Personal Tab</span>
+                            <span className="text-amber-700 font-black">BD {memberShare.toFixed(3)}</span>
+                          </p>
+                          <p className="text-slate-600 text-[11px] mt-0.5">
+                            Customer leaves room but remains an individual customer of the store. Mess share converts to private tab. Roommates absorb BD 0.000.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="pt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDepartingMember(null)}
+                        className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmDeparture}
+                        disabled={isSubmittingDeparture || (departureStrategy === 'ABSORB_BY_ROOMMATES' && remainingCount === 0 && memberShare > 0)}
+                        className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black text-sm cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isSubmittingDeparture ? (
+                          <>
+                            <RefreshCw size={16} className="animate-spin" />
+                            <span>Processing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <LogOut size={16} />
+                            <span>Confirm Departure</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

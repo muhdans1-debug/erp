@@ -3549,6 +3549,211 @@ khataRouter.post('/mess/:id/rebalance', requirePosOrManagerAuth, async (c) => {
   }
 });
 
+/**
+ * Handle Mid-Month Mess Member Departure & Debt Reallocation
+ */
+const handleEdgeMessMemberDeparture = async (c: any) => {
+  const db = getDb(c.env);
+  const messId = String(c.req.param('id') || '');
+  const memberId = String(c.req.param('memberId') || '');
+  const tenantId = c.get('tenantId') || c.env.DEFAULT_TENANT_ID || 'tenant_askar_01';
+
+  const body = await c.req.json().catch(() => ({}));
+  const strategy = body.strategy || 'ABSORB_BY_ROOMMATES'; // 'ABSORB_BY_ROOMMATES' | 'CONVERT_TO_PERSONAL' | 'SETTLE_ON_DEPARTURE'
+  const settleMethod = body.settleMethod || 'CASH';
+
+  if (!messId || !memberId) {
+    return c.json({ error: 'Mess ID and Member ID are required' }, 400);
+  }
+
+  try {
+    const messGroup = await fetchMessGroupDetails(db, messId);
+    if (!messGroup) {
+      return c.json({ error: 'Mess group not found' }, 404);
+    }
+
+    const custRes = await db.execute({
+      sql: `SELECT id, name, phone, cpr, balance FROM Customer WHERE id = ?`,
+      args: [memberId]
+    });
+    const departingCust: any = custRes.rows?.[0];
+    if (!departingCust) {
+      return c.json({ error: 'Departing customer not found' }, 404);
+    }
+
+    const shareRes = await db.execute({
+      sql: `SELECT ROUND(COALESCE(SUM(amount), 0), 3) as messShare
+            FROM KhataLedger
+            WHERE customerId = ? AND mess_id = ?`,
+      args: [memberId, messId]
+    });
+    const rawShare = Number((shareRes.rows?.[0] as any)?.messShare || 0);
+    const unpaidShare = Math.max(0, Number(rawShare.toFixed(3)));
+
+    const remRes = await db.execute({
+      sql: `SELECT DISTINCT c.id, c.name, c.phone, c.cpr
+            FROM Customer c
+            JOIN MessMember mm ON c.id = mm.customer_id
+            WHERE mm.mess_id = ? AND mm.is_active = 1 AND c.id != ?`,
+      args: [messId, memberId]
+    });
+    const remainingMembers = remRes.rows || [];
+
+    const nowIso = new Date().toISOString();
+    const statements: any[] = [];
+    let allocations: { member: any; amount: number }[] = [];
+
+    if (strategy === 'ABSORB_BY_ROOMMATES') {
+      if (unpaidShare > 0) {
+        if (remainingMembers.length === 0) {
+          return c.json({
+            error: 'Cannot absorb debt by roommates: No other active members remain in this mess group. Choose Settle on Departure or Convert to Personal Tab.',
+            unpaidShare
+          }, 400);
+        }
+
+        const totalFils = Math.round(unpaidShare * 1000);
+        const baseFils = Math.floor(totalFils / remainingMembers.length);
+        const remainderFils = totalFils % remainingMembers.length;
+
+        allocations = remainingMembers.map((m: any, idx: number) => {
+          const memberFils = baseFils + (idx < remainderFils ? 1 : 0);
+          return {
+            member: m,
+            amount: Number((memberFils / 1000).toFixed(3))
+          };
+        });
+
+        const offsetTxId = `dep_off_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const offsetRef = `Mess Departure Clearance: Absorbed by ${remainingMembers.length} roommates (${messGroup.group_name})`;
+        statements.push({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type
+          ) VALUES (?, ?, ?, ?, 'MESS_DEPARTURE_OFFSET', ?, 
+            (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?), 
+            'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+          args: [offsetTxId, tenantId, memberId, -unpaidShare, offsetRef, unpaidShare, memberId, nowIso, nowIso, messId]
+        });
+
+        for (const alloc of allocations) {
+          const allocTxId = `dep_abs_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const allocRef = `Roommate Departure Share: Absorbed 1/${remainingMembers.length} of ${departingCust.name} (${alloc.amount.toFixed(3)} BD) from ${messGroup.group_name}`;
+          statements.push({
+            sql: `INSERT INTO KhataLedger (
+              id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type
+            ) VALUES (?, ?, ?, ?, 'MESS_REALLOCATION', ?, 
+              (SELECT ROUND(COALESCE(SUM(amount), 0) + ?, 3) FROM KhataLedger WHERE customerId = ?), 
+              'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+            args: [allocTxId, tenantId, alloc.member.id, alloc.amount, allocRef, alloc.amount, alloc.member.id, nowIso, nowIso, messId]
+          });
+        }
+      }
+    } else if (strategy === 'CONVERT_TO_PERSONAL') {
+      if (unpaidShare > 0) {
+        const offsetTxId = `dep_off_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const offsetRef = `Mess Departure: Transferred to Personal Tab (${messGroup.group_name})`;
+        statements.push({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type
+          ) VALUES (?, ?, ?, ?, 'MESS_DEPARTURE_OFFSET', ?, 
+            (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?), 
+            'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+          args: [offsetTxId, tenantId, memberId, -unpaidShare, offsetRef, unpaidShare, memberId, nowIso, nowIso, messId]
+        });
+
+        const persTxId = `dep_per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const persRef = `Transferred Mess Debt from ${messGroup.group_name} on Departure`;
+        statements.push({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type
+          ) VALUES (?, ?, ?, ?, 'ADJUSTMENT', ?, 
+            (SELECT ROUND(COALESCE(SUM(amount), 0) + ?, 3) FROM KhataLedger WHERE customerId = ?), 
+            'SYNCED', ?, ?, NULL, 'PERSONAL')`,
+          args: [persTxId, tenantId, memberId, unpaidShare, persRef, unpaidShare, memberId, nowIso, nowIso]
+        });
+      }
+    } else if (strategy === 'SETTLE_ON_DEPARTURE') {
+      if (unpaidShare > 0) {
+        const payTxId = `dep_pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const payRef = `Mess Departure Settlement (${settleMethod}): ${messGroup.group_name}`;
+        statements.push({
+          sql: `INSERT INTO KhataLedger (
+            id, tenantId, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, mess_id, subledger_type
+          ) VALUES (?, ?, ?, ?, 'PAYMENT', ?, 
+            (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?), 
+            'SYNCED', ?, ?, ?, 'MESS_SHARE')`,
+          args: [payTxId, tenantId, memberId, -unpaidShare, payRef, unpaidShare, memberId, nowIso, nowIso, messId]
+        });
+      }
+    }
+
+    statements.push({
+      sql: `UPDATE MessMember SET is_active = 0 WHERE mess_id = ? AND customer_id = ?`,
+      args: [messId, memberId]
+    });
+
+    statements.push({
+      sql: `UPDATE Customer 
+            SET mess_id = (SELECT mess_id FROM MessMember WHERE customer_id = ? AND is_active = 1 LIMIT 1),
+                updatedAt = datetime('now')
+            WHERE id = ? AND mess_id = ?`,
+      args: [memberId, memberId, messId]
+    });
+
+    statements.push({
+      sql: `UPDATE Customer 
+            SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+                updatedAt = datetime('now')
+            WHERE id = ?`,
+      args: [memberId, memberId]
+    });
+
+    for (const alloc of allocations) {
+      statements.push({
+        sql: `UPDATE Customer 
+              SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+                  updatedAt = datetime('now')
+              WHERE id = ?`,
+        args: [alloc.member.id, alloc.member.id]
+      });
+    }
+
+    if (statements.length > 0) {
+      await db.batch(statements, 'write');
+    }
+
+    const updatedMessGroup = await fetchMessGroupDetails(db, messId);
+
+    return c.json({
+      success: true,
+      strategy,
+      departingMember: {
+        id: departingCust.id,
+        name: departingCust.name,
+        clearedMessShare: unpaidShare
+      },
+      remainingMembersCount: remainingMembers.length,
+      allocations: allocations.map(a => ({
+        customerId: a.member.id,
+        name: a.member.name,
+        absorbedAmount: a.amount
+      })),
+      messGroup: updatedMessGroup,
+      message: strategy === 'ABSORB_BY_ROOMMATES'
+        ? `✅ ${departingCust.name} departed ${messGroup.group_name}. Unpaid share of BD ${unpaidShare.toFixed(3)} absorbed equally across ${remainingMembers.length} active roommates.`
+        : (strategy === 'CONVERT_TO_PERSONAL'
+          ? `✅ ${departingCust.name} departed ${messGroup.group_name}. Unpaid share of BD ${unpaidShare.toFixed(3)} converted to personal tab.`
+          : `✅ ${departingCust.name} departed ${messGroup.group_name} after settling BD ${unpaidShare.toFixed(3)} in full.`)
+    });
+  } catch (err: any) {
+    return c.json({ error: 'Failed to process member departure', details: err?.message }, 500);
+  }
+};
+
+khataRouter.post('/mess/:id/members/:memberId/depart', requirePosOrManagerAuth, handleEdgeMessMemberDeparture);
+khataRouter.post('/mess-groups/:id/members/:memberId/depart', requirePosOrManagerAuth, handleEdgeMessMemberDeparture);
+khataRouter.post('/nfc/mess-groups/:id/members/:memberId/depart', requirePosOrManagerAuth, handleEdgeMessMemberDeparture);
+
 const BENEFIT_PAY_CONFIG = {
   mobile: '+973 33843855',
   accountName: 'layali sbi',

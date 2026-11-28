@@ -432,8 +432,19 @@ export default function PaymentModal({
 
       // Print full NBR VAT receipt via printer utility / Web Worker (if auto-print enabled)
       if (autoPrint) {
-        const custBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+        const hasMess = Boolean((customer as any)?.hasMessGroup || ((customer as any)?.messes && (customer as any)?.messes.length > 0));
+        let custPrevBal = 0;
+        if ((customer as any)?.personalBalance !== undefined && (customer as any)?.personalBalance !== null) {
+          custPrevBal = Number((customer as any).personalBalance);
+        } else if (hasMess && Array.isArray((customer as any)?.messes)) {
+          const mDebt = (customer as any).messes.reduce((s: number, m: any) => s + Number(m.memberShare ?? m.myShare ?? 0), 0);
+          custPrevBal = Math.max(0, Number((Number((customer as any).balance || 0) - mDebt).toFixed(3)));
+        } else {
+          custPrevBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+        }
         const isKhataSale = (finalMethod as string) === 'KHATA' || (finalMethod as string) === 'CREDIT' || (finalMethod as string) === 'CREDIT_PERSONAL';
+        const finalBal = Number((custPrevBal + totalAmount).toFixed(3));
+
         printFullReceipt({
           invoiceNo: finalReceiptData.invoiceNo,
           items: (cart || []) as any,
@@ -447,8 +458,11 @@ export default function PaymentModal({
           customerCardUid: customer?.cardUid || undefined,
           customerId: customer?.id || undefined,
           customerUuid: customer?.id || undefined,
-          previousBalance: isKhataSale ? custBal : undefined,
-          newBalance: isKhataSale ? custBal + totalAmount : (custBal > 0 ? custBal : undefined),
+          previousBalance: isKhataSale ? custPrevBal : undefined,
+          newBalance: isKhataSale ? finalBal : undefined,
+          personalBalance: isKhataSale ? finalBal : undefined,
+          messBalance: (customer as any)?.messShare !== undefined ? Number((customer as any).messShare) : undefined,
+          hasMessGroup: hasMess,
           cashierName: 'Register 01',
           transactionRef: finalRef,
         }).catch(() => { });
@@ -587,9 +601,20 @@ export default function PaymentModal({
   // Trigger thermal receipt print via hardware printer on Sunmi or isolated iframe on browser
   const handlePrintReceipt = async () => {
     try {
-      const custBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+      const hasMess = Boolean((customer as any)?.hasMessGroup || ((customer as any)?.messes && (customer as any)?.messes.length > 0));
+      let custPrevBal = 0;
+      if ((customer as any)?.personalBalance !== undefined && (customer as any)?.personalBalance !== null) {
+        custPrevBal = Number((customer as any).personalBalance);
+      } else if (hasMess && Array.isArray((customer as any)?.messes)) {
+        const mDebt = (customer as any).messes.reduce((s: number, m: any) => s + Number(m.memberShare ?? m.myShare ?? 0), 0);
+        custPrevBal = Math.max(0, Number((Number((customer as any).balance || 0) - mDebt).toFixed(3)));
+      } else {
+        custPrevBal = Number((customer as any)?.balance ?? (customer as any)?.currentBalance ?? 0);
+      }
       const payMethodStr = String(completedSale?.paymentMethod || selectedMethod);
       const isKhataSale = payMethodStr === 'KHATA' || payMethodStr === 'CREDIT' || payMethodStr === 'CREDIT_PERSONAL';
+      const finalBal = Number((custPrevBal + totalAmount).toFixed(3));
+
       await printFullReceipt({
         invoiceNo: completedSale?.invoiceNo || activeInvoiceNo,
         items: cart.map((i) => ({
@@ -608,8 +633,11 @@ export default function PaymentModal({
         customerCardUid: customer?.cardUid || undefined,
         customerId: customer?.id || undefined,
         customerUuid: customer?.id || undefined,
-        previousBalance: isKhataSale ? custBal : undefined,
-        newBalance: isKhataSale ? custBal + totalAmount : (custBal > 0 ? custBal : undefined),
+        previousBalance: isKhataSale ? custPrevBal : undefined,
+        newBalance: isKhataSale ? finalBal : undefined,
+        personalBalance: isKhataSale ? finalBal : undefined,
+        messBalance: (customer as any)?.messShare !== undefined ? Number((customer as any).messShare) : undefined,
+        hasMessGroup: hasMess,
       });
     } catch (e) {
       console.warn('Direct printer dispatch notice:', e);

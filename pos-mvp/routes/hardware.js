@@ -2,68 +2,88 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { db } from '../db.js';
 import { getAllCustomersWithBalances, getCustomerWithBalanceById, fetchMessGroupDetails, syncCustomerMessMemberships } from './khata.js';
-import { verifyManagerPin, isManagerAuthorized } from '../middleware/auth.js';
-import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud, mirrorMessCardToCloud, mirrorMessGroupTombstoneToCloud } from '../services/cloudSync.js';
+import { verifyManagerPin, isManagerAuthorized, isPosOrStaffAuthorized } from '../middleware/auth.js';
+import { mirrorMessGroupToCloud, mirrorMessGroupRosterToCloud, mirrorMessCardToCloud, mirrorMessGroupTombstoneToCloud, mirrorLedgerEntryToCloud, recordOutboxEvent } from '../services/cloudSync.js';
 
 // Helper to resolve an NFC tag UID to either a DUAL (Personal + Mess), PERSONAL customer, or generic MESS group
 const resolveNfcTagDetails = async (uid) => {
   if (!uid || typeof uid !== 'string') return null;
-  const cleanUid = uid.trim().toUpperCase().replace(/^#+|#+$/g, '');
-  const cleanNoColon = cleanUid.replace(/[:\-]/g, '');
-
-  // Strict physical transponder validation: only hex characters and minimum 4-digit UID length
-  if (cleanNoColon.length < 4 || !/^[0-9A-F]+$/.test(cleanNoColon)) {
-    return null;
+  let cleanInput = uid.trim();
+  // Strip URL or KHATA: prefixes if scanned from phone QR code
+  if (cleanInput.includes('/tab/')) {
+    cleanInput = cleanInput.split('/tab/')[1].split('?')[0].split('/')[0];
+  } else if (cleanInput.toUpperCase().startsWith('KHATA:')) {
+    cleanInput = cleanInput.slice(6).trim();
   }
+  cleanInput = cleanInput.replace(/^#+|#+$/g, '');
+
+  let customer = null;
+
+  // 0. Direct UUID, ID, CPR or phone lookup (Digital Khata Pass scan)
+  try {
+    const directRes = await db.execute({
+      sql: `SELECT id FROM Customer 
+            WHERE id = ? OR phone = ? OR access_token = ? OR cpr = ?
+            LIMIT 1`,
+      args: [cleanInput, cleanInput, cleanInput, cleanInput]
+    });
+    if (directRes.rows?.[0]?.id) {
+      customer = await getCustomerWithBalanceById(directRes.rows[0].id);
+    }
+  } catch (err) {
+    console.warn('Direct customer pass lookup note:', err?.message);
+  }
+
+  const cleanUid = cleanInput.toUpperCase();
+  const cleanNoColon = cleanUid.replace(/[:\-]/g, '');
 
   let nfcCard = null;
 
   // 1. Try local LibSQL replica (Exact match only - wildcards rejected to prevent identity confusion)
-  try {
-    const res = await db.execute({
-      sql: `
-        SELECT tag_id, card_type, customer_id, mess_id 
-        FROM NfcCard 
-        WHERE UPPER(tag_id) = ? 
-           OR REPLACE(UPPER(tag_id), ':', '') = ?
-        LIMIT 1
-      `,
-      args: [cleanUid, cleanNoColon]
-    });
-    if (res.rows && res.rows.length > 0) {
-      nfcCard = res.rows[0];
-    }
-  } catch (err) {
-    console.warn('NfcCard check note:', err?.message);
-  }
-
-  // NEW: Targeted NFC Customer Lookup
-  let customer = null;
-
-  if (nfcCard && nfcCard.customer_id) {
-    customer = await getCustomerWithBalanceById(nfcCard.customer_id);
-  }
-
-  if (!customer) {
-    // Direct SQL lookup by card ID if the foreign key isn't mapped
+  if (!customer && cleanNoColon.length >= 4) {
     try {
-      const cardRes = await db.execute({
-        sql: `SELECT id FROM Customer 
-              WHERE UPPER(nfcCardId) = ? 
-                 OR UPPER(cardUid) = ? 
-                 OR UPPER(nfc_card_id) = ? 
-                 OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
-                 OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
-                 OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
-              LIMIT 1`,
-        args: [cleanUid, cleanUid, cleanUid, cleanNoColon, cleanNoColon, cleanNoColon]
+      const res = await db.execute({
+        sql: `
+          SELECT tag_id, card_type, customer_id, mess_id 
+          FROM NfcCard 
+          WHERE UPPER(tag_id) = ? 
+             OR REPLACE(UPPER(tag_id), ':', '') = ?
+          LIMIT 1
+        `,
+        args: [cleanUid, cleanNoColon]
       });
-      
-      if (cardRes.rows?.[0]?.id) {
-        customer = await getCustomerWithBalanceById(cardRes.rows[0].id);
+      if (res.rows && res.rows.length > 0) {
+        nfcCard = res.rows[0];
       }
-    } catch (e) {
-      console.warn('Direct NFC SQL lookup note:', e?.message);
+    } catch (err) {
+      console.warn('NfcCard check note:', err?.message);
+    }
+
+    if (nfcCard && nfcCard.customer_id) {
+      customer = await getCustomerWithBalanceById(nfcCard.customer_id);
+    }
+
+    if (!customer) {
+      // Direct SQL lookup by card ID if the foreign key isn't mapped
+      try {
+        const cardRes = await db.execute({
+          sql: `SELECT id FROM Customer 
+                WHERE UPPER(nfcCardId) = ? 
+                   OR UPPER(cardUid) = ? 
+                   OR UPPER(nfc_card_id) = ? 
+                   OR REPLACE(UPPER(COALESCE(nfcCardId, '')), ':', '') = ? 
+                   OR REPLACE(UPPER(COALESCE(cardUid, '')), ':', '') = ? 
+                   OR REPLACE(UPPER(COALESCE(nfc_card_id, '')), ':', '') = ?
+                LIMIT 1`,
+          args: [cleanUid, cleanUid, cleanUid, cleanNoColon, cleanNoColon, cleanNoColon]
+        });
+        
+        if (cardRes.rows?.[0]?.id) {
+          customer = await getCustomerWithBalanceById(cardRes.rows[0].id);
+        }
+      } catch (e) {
+        console.warn('Direct NFC SQL lookup note:', e?.message);
+      }
     }
   }
 
@@ -80,8 +100,13 @@ const resolveNfcTagDetails = async (uid) => {
               SELECT g.id, g.group_name
               FROM Customer c
               JOIN MessGroup g ON c.mess_id = g.id
-              WHERE c.id = ?`,
-        args: [customer.id, customer.id]
+              WHERE c.id = ?
+              UNION
+              SELECT DISTINCT g.id, g.group_name
+              FROM MessGroup g
+              JOIN KhataLedger kl ON kl.mess_id = g.id
+              WHERE kl.customerId = ?`,
+        args: [customer.id, customer.id, customer.id]
       });
       for (const row of mRes.rows || []) {
         const d = await fetchMessGroupDetails(row.id);
@@ -595,7 +620,9 @@ fastify.get('/api/nfc/cards', async (request, reply) => {
 
         const isDual = Boolean(messGroup);
         const cardType = isDual ? 'DUAL' : 'PERSONAL';
-        const personalBalance = cust?.balance || cust?.currentBalance || 0;
+        const personalBalance = (cust?.personalBalance !== undefined && cust?.personalBalance !== null)
+          ? Number(cust.personalBalance)
+          : Math.max(0, Number(((cust?.balance || cust?.currentBalance || 0) - (messGroup?.totalBalance || 0)).toFixed(3)));
         const messBalance = messGroup?.totalBalance || 0;
 
         enrichedCards.push({
@@ -855,17 +882,32 @@ fastify.get('/api/nfc/mess-groups', async (request, reply) => {
   }
 });
 
-// POST /api/nfc/mess-groups - Create a new Mess Group with initial members and optional NFC Card (Secured by Manager Authorization)
+// POST /api/nfc/mess-groups - Create a new Mess Group with initial members, optional opening debt balance, and optional NFC Card
 fastify.post('/api/nfc/mess-groups', async (request, reply) => {
   try {
-    const auth = await isManagerAuthorized(request);
+    let auth = await isManagerAuthorized(request);
     if (!auth.authorized) {
-      return reply.code(401).send({ success: false, error: 'Manager authorization required to create mess group.' });
+      auth = await isPosOrStaffAuthorized(request);
+    }
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager or POS terminal authorization required to create mess group.' });
     }
 
-    const { group_name, member_ids, tag_id } = request.body || {};
+    const { group_name, member_ids, tag_id, previousBalance, openingBalance, initialBalance, description } = request.body || {};
     if (!group_name || !group_name.trim()) {
       return reply.status(400).send({ success: false, error: 'group_name is required' });
+    }
+
+    const rawPrev = Number(previousBalance ?? openingBalance ?? initialBalance ?? 0);
+    const cleanPrevBalance = (!isNaN(rawPrev) && rawPrev > 0) ? Number(rawPrev.toFixed(3)) : 0;
+
+    if (cleanPrevBalance > 0) {
+      if (!Array.isArray(member_ids) || member_ids.length === 0) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Please select at least one room member to allocate the opening book balance.'
+        });
+      }
     }
 
     const messId = 'mess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -880,6 +922,7 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
         sql: `INSERT INTO MessGroup (id, tenantId, group_name, createdAt) VALUES (?, 'tenant_1', ?, datetime('now'))`,
         args: [messId, cleanName]
       });
+
       if (Array.isArray(member_ids)) {
         for (const mId of member_ids) {
           // 1. Insert into MessMember junction table
@@ -895,6 +938,73 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
           });
         }
       }
+
+      // 3. Post Previous Book Balance using Zero-Fils Drift Odd-Member Split Algorithm
+      if (cleanPrevBalance > 0 && Array.isArray(member_ids) && member_ids.length > 0) {
+        const totalFils = Math.round(cleanPrevBalance * 1000);
+        const baseFils = Math.floor(totalFils / member_ids.length);
+        const remainderFils = totalFils % member_ids.length;
+
+        const splits = Array(member_ids.length).fill(baseFils);
+        for (let i = 0; i < remainderFils; i++) {
+          splits[i] += 1;
+        }
+
+        const nowIso = new Date().toISOString();
+        const defaultRef = `Mess Opening Balance: ${cleanName} (${member_ids.length} members) - Physical Book Migration`;
+        const refText = (description && String(description).trim())
+          ? `Opening Balance: ${String(description).trim()}`
+          : defaultRef;
+
+        for (let i = 0; i < member_ids.length; i++) {
+          const mId = member_ids[i];
+          const shareAmount = Number((splits[i] / 1000).toFixed(3));
+          const ledgerId = `OB-MESS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}-${i}`;
+
+          // Insert into KhataLedger
+          await db.execute({
+            sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, tenantId, mess_id, subledger_type)
+                  VALUES (?, ?, ?, 'OPENING_BALANCE', ?, ?, 'PENDING', ?, ?, 'tenant_askar_01', ?, 'MESS_SHARE')`,
+            args: [ledgerId, mId, shareAmount, refText, shareAmount, nowIso, nowIso, messId]
+          });
+
+          // Update Customer.balance to match exact sum of ledger amounts
+          await db.execute({
+            sql: `UPDATE Customer 
+                  SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+                      updatedAt = CURRENT_TIMESTAMP
+                  WHERE id = ?`,
+            args: [mId, mId]
+          });
+
+          // Mirror ledger entry to cloud
+          mirrorLedgerEntryToCloud({
+            id: ledgerId,
+            customerId: mId,
+            amount: shareAmount,
+            type: 'OPENING_BALANCE',
+            reference: refText,
+            timestamp: nowIso,
+            created_at: nowIso,
+            tenantId: 'tenant_askar_01',
+            mess_id: messId,
+            subledger_type: 'MESS_SHARE',
+            syncStatus: 'PENDING'
+          }).catch(() => {});
+        }
+
+        try {
+          await recordOutboxEvent(db, 'MESS_OPENING_BALANCE', messId, {
+            messId,
+            groupName: cleanName,
+            totalBalance: cleanPrevBalance,
+            memberCount: member_ids.length,
+            splits,
+            reference: refText
+          });
+        } catch {}
+      }
+
       const rawTag = tag_id;
       const cleanTag = (rawTag !== undefined && rawTag !== null && String(rawTag).trim() !== '' && String(rawTag).trim().toLowerCase() !== 'null')
         ? String(rawTag).trim().toUpperCase()
@@ -921,7 +1031,9 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
       if (Array.isArray(member_ids)) {
         mirrorMessGroupRosterToCloud(messId, member_ids).catch(() => {});
       }
-    } catch { }
+    } catch (e) {
+      console.warn('Mess group creation DB error:', e);
+    }
 
     const details = await fetchMessGroupDetails(messId);
     return { success: true, messGroup: details };
@@ -934,9 +1046,12 @@ fastify.post('/api/nfc/mess-groups', async (request, reply) => {
 // PUT /api/nfc/mess-groups/:id - Update Mess Group Name and/or Member Roster (Secured by Manager Authorization)
 fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
   try {
-    const auth = await isManagerAuthorized(request);
+    let auth = await isManagerAuthorized(request);
     if (!auth.authorized) {
-      return reply.code(401).send({ success: false, error: 'Manager authorization required to update mess group.' });
+      auth = await isPosOrStaffAuthorized(request);
+    }
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager or POS terminal authorization required to update mess group.' });
     }
 
     const { id } = request.params;
@@ -1035,12 +1150,141 @@ fastify.put('/api/nfc/mess-groups/:id', async (request, reply) => {
   }
 });
 
+// POST /api/nfc/mess-groups/:id/balance - Add / Post Previous Book Balance to an existing Mess Group
+fastify.post('/api/nfc/mess-groups/:id/balance', async (request, reply) => {
+  try {
+    let auth = await isManagerAuthorized(request);
+    if (!auth.authorized) {
+      auth = await isPosOrStaffAuthorized(request);
+    }
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager or POS terminal authorization required to post mess opening balance.' });
+    }
+
+    const { id } = request.params;
+    const { previousBalance, openingBalance, amount, description, member_ids } = request.body || {};
+    const rawPrev = Number(previousBalance ?? openingBalance ?? amount ?? 0);
+    const cleanPrevBalance = (!isNaN(rawPrev) && rawPrev > 0) ? Number(rawPrev.toFixed(3)) : 0;
+
+    if (cleanPrevBalance <= 0) {
+      return reply.status(400).send({ success: false, error: 'Please enter a valid balance amount greater than BD 0.000.' });
+    }
+
+    const groupResult = await db.execute({
+      sql: `SELECT id, group_name FROM MessGroup WHERE id = ? LIMIT 1`,
+      args: [id]
+    });
+    if (!groupResult.rows || groupResult.rows.length === 0) {
+      return reply.status(404).send({ success: false, error: 'Mess Group not found.' });
+    }
+    const cleanName = groupResult.rows[0].group_name || 'Mess Group';
+
+    // Resolve target member IDs: either explicitly passed or from MessMember junction table
+    let targetMemberIds = Array.isArray(member_ids) && member_ids.length > 0 ? member_ids : [];
+    if (targetMemberIds.length === 0) {
+      const membersRes = await db.execute({
+        sql: `SELECT customer_id FROM MessMember WHERE mess_id = ? AND is_active = 1`,
+        args: [id]
+      });
+      targetMemberIds = (membersRes.rows || []).map(r => r.customer_id).filter(Boolean);
+      if (targetMemberIds.length === 0) {
+        // Fallback to Customer table
+        const legacyRes = await db.execute({
+          sql: `SELECT id FROM Customer WHERE mess_id = ?`,
+          args: [id]
+        });
+        targetMemberIds = (legacyRes.rows || []).map(r => r.id).filter(Boolean);
+      }
+    }
+
+    if (targetMemberIds.length === 0) {
+      return reply.status(400).send({ success: false, error: 'Cannot allocate balance: This mess group has 0 enrolled members.' });
+    }
+
+    // Zero-Fils Drift Odd-Member Split Algorithm
+    const totalFils = Math.round(cleanPrevBalance * 1000);
+    const baseFils = Math.floor(totalFils / targetMemberIds.length);
+    const remainderFils = totalFils % targetMemberIds.length;
+
+    const splits = Array(targetMemberIds.length).fill(baseFils);
+    for (let i = 0; i < remainderFils; i++) {
+      splits[i] += 1;
+    }
+
+    const nowIso = new Date().toISOString();
+    const defaultRef = `Mess Previous Balance: ${cleanName} (${targetMemberIds.length} members) - Physical Book Migration`;
+    const refText = (description && String(description).trim())
+      ? `Opening Balance: ${String(description).trim()}`
+      : defaultRef;
+
+    for (let i = 0; i < targetMemberIds.length; i++) {
+      const mId = targetMemberIds[i];
+      const shareAmount = Number((splits[i] / 1000).toFixed(3));
+      const ledgerId = `OB-MESS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}-${i}`;
+
+      await db.execute({
+        sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, running_balance, syncStatus, timestamp, created_at, tenantId, mess_id, subledger_type)
+              VALUES (?, ?, ?, 'OPENING_BALANCE', ?, ?, 'PENDING', ?, ?, 'tenant_askar_01', ?, 'MESS_SHARE')`,
+        args: [ledgerId, mId, shareAmount, refText, shareAmount, nowIso, nowIso, id]
+      });
+
+      await db.execute({
+        sql: `UPDATE Customer 
+              SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?),
+                  updatedAt = CURRENT_TIMESTAMP
+              WHERE id = ?`,
+        args: [mId, mId]
+      });
+
+      mirrorLedgerEntryToCloud({
+        id: ledgerId,
+        customerId: mId,
+        amount: shareAmount,
+        type: 'OPENING_BALANCE',
+        reference: refText,
+        timestamp: nowIso,
+        created_at: nowIso,
+        tenantId: 'tenant_askar_01',
+        mess_id: id,
+        subledger_type: 'MESS_SHARE',
+        syncStatus: 'PENDING'
+      }).catch(() => {});
+    }
+
+    try {
+      await recordOutboxEvent(db, 'MESS_OPENING_BALANCE', id, {
+        messId: id,
+        groupName: cleanName,
+        totalBalance: cleanPrevBalance,
+        memberCount: targetMemberIds.length,
+        splits,
+        reference: refText
+      });
+    } catch {}
+
+    const details = await fetchMessGroupDetails(id);
+    return {
+      success: true,
+      message: `Posted BD ${cleanPrevBalance.toFixed(3)} previous book balance across ${targetMemberIds.length} members with zero drift.`,
+      messGroup: details,
+      totalAdded: cleanPrevBalance,
+      memberCount: targetMemberIds.length
+    };
+  } catch (err) {
+    fastify.log.error(err);
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
 // DELETE /api/nfc/mess-groups/:id - Disband Mess Group and unlink its cards (Secured by Manager Authorization)
 fastify.delete('/api/nfc/mess-groups/:id', async (request, reply) => {
   try {
-    const auth = await isManagerAuthorized(request);
+    let auth = await isManagerAuthorized(request);
     if (!auth.authorized) {
-      return reply.code(401).send({ success: false, error: 'Manager authorization required to disband mess group.' });
+      auth = await isPosOrStaffAuthorized(request);
+    }
+    if (!auth.authorized) {
+      return reply.code(401).send({ success: false, error: 'Manager or POS terminal authorization required to disband mess group.' });
     }
 
     const { id } = request.params;
@@ -1103,6 +1347,78 @@ fastify.get('/api/customers/by-card/:uid', async (request, reply) => {
     return reply.status(404).send({ error: 'Card not registered to any customer or mess group', tag_id: uid });
   }
   return resolved;
+});
+
+// 1-Tap Customer Beacon: Notifies connected POS registers that customer is standing at the counter
+let latestLocalCounterBeacon = null;
+
+fastify.post('/api/khata/present-at-counter', async (request, reply) => {
+  const { customerId, terminalId } = request.body || {};
+  if (!customerId) {
+    return reply.status(400).send({ success: false, error: 'customerId is required' });
+  }
+  const cleanId = String(customerId).trim();
+  const resolved = await resolveNfcTagDetails(cleanId);
+  if (!resolved || (!resolved.customer && !resolved.id)) {
+    return reply.status(404).send({ success: false, error: 'Customer not found' });
+  }
+
+  const activeCust = resolved.customer || resolved;
+  const now = Date.now();
+
+  latestLocalCounterBeacon = {
+    customer: activeCust,
+    terminalId: terminalId || 'T1',
+    timestamp: now,
+    acknowledged: false
+  };
+
+  // Broadcast WebSocket notification to all active POS registers
+  if (fastify.websocketServer?.clients) {
+    const beaconPayload = JSON.stringify({
+      type: 'CUSTOMER_AT_COUNTER',
+      terminalId: terminalId || 'T1',
+      customer: activeCust,
+      timestamp: new Date().toISOString()
+    });
+    fastify.websocketServer.clients.forEach((c) => {
+      if (c.readyState === 1) {
+        c.send(beaconPayload);
+      }
+    });
+  }
+
+  return {
+    success: true,
+    message: `${activeCust.name} announced at counter`,
+    customer: activeCust,
+    terminalId: terminalId || 'T1',
+    timestamp: now
+  };
+});
+
+fastify.get('/api/khata/present-at-counter/latest', async (request, reply) => {
+  const now = Date.now();
+  if (latestLocalCounterBeacon && !latestLocalCounterBeacon.acknowledged) {
+    if (now - latestLocalCounterBeacon.timestamp <= 45000) {
+      return {
+        success: true,
+        beacon: {
+          customer: latestLocalCounterBeacon.customer,
+          terminalId: latestLocalCounterBeacon.terminalId,
+          timestamp: latestLocalCounterBeacon.timestamp
+        }
+      };
+    }
+  }
+  return { success: true, beacon: null };
+});
+
+fastify.post('/api/khata/present-at-counter/ack', async (request, reply) => {
+  if (latestLocalCounterBeacon) {
+    latestLocalCounterBeacon.acknowledged = true;
+  }
+  return { success: true, acknowledged: true };
 });
 
 // =========================================================================

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, useDeferredValue } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Search, Plus, PlusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell } from 'lucide-react';
+import { Search, Plus, PlusCircle, MinusCircle, Trash2, Wifi, HardDrive, RefreshCw, ScanLine, ShoppingCart, UserPlus, Lock, Unlock, Truck, Receipt, Banknote, FileText, Printer, X, Tag, RotateCcw, Coins, Settings, CreditCard, Radio, Users, Monitor, Smartphone, Laptop, ChevronDown, Maximize2, Menu, Bell } from 'lucide-react';
 import { printFullReceipt, printKhataStatement, printRefundReceipt } from '../utils/printer';
 import { openCashDrawer } from '../services/cashDrawerService';
 import { processSecureRefund } from '../services/salesService';
@@ -332,7 +332,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   useEffect(() => {
     showKhataHubRef.current = showKhataHub;
   }, [showKhataHub]);
-  const [showNfcManager, setShowNfcManager] = useState(false);
   const [showMessModal, setShowMessModal] = useState(false);
   const [showZReportModal, setShowZReportModal] = useState(false);
   const [showBlindCloseModal, setShowBlindCloseModal] = useState(false);
@@ -1079,6 +1078,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
   // Customer Statement Modal State & Handlers
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
   const [customerStatementList, setCustomerStatementList] = useState<any[]>([]);
+  const [statementCycleBreakdown, setStatementCycleBreakdown] = useState<any>(null);
   const [isLoadingStatement, setIsLoadingStatement] = useState(false);
   const [statementFilter, setStatementFilter] = useState<'ALL' | 'CHARGES' | 'PAYMENTS'>('ALL');
   const [statementStartDate, setStatementStartDate] = useState('');
@@ -1145,6 +1145,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
   const openCustomerStatement = async (cust: Customer) => {
     setStatementCustomer(cust);
+    setStatementCycleBreakdown(null);
     setIsLoadingStatement(true);
     setStatementFilter('ALL');
     setStatementStartDate('');
@@ -1164,6 +1165,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           const data = await res.json();
           if (data.success && Array.isArray(data.statement)) {
             setCustomerStatementList(data.statement);
+            setStatementCycleBreakdown(data.cycleBreakdown || null);
             loaded = true;
             break;
           }
@@ -1212,6 +1214,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       customerCpr: statementCustomer.cpr,
       statement: formattedStatement,
       currentBalance: Number(statementCustomer.currentBalance ?? statementCustomer.balance ?? 0),
+      cycleBreakdown: statementCycleBreakdown,
       dateRange: (statementStartDate || statementEndDate)
         ? `${statementStartDate || 'Start'} to ${statementEndDate || 'Today'}`
         : undefined
@@ -1837,6 +1840,21 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       if (localMatch) {
         try { playNfcChime(); } catch { }
         setCustomer(localMatch);
+
+        // Immediate background re-fetch from primary server so if the customer just settled/paid their debt,
+        // their personalBalance and balance are guaranteed fresh (eliminating stale previous debt on receipts)
+        const primaryBase = getApiBaseUrl() || apiBase || DEFAULT_EDGE_API_URL;
+        fetch(`${primaryBase}/api/customers/${encodeURIComponent(localMatch.id)}`, {
+          headers: { 'x-pos-client': 'store-pos' },
+          signal: AbortSignal.timeout(2000)
+        }).then(r => r.ok ? r.json() : null).then(fresh => {
+          if (fresh && (fresh.id || fresh.name)) {
+            const activeCust = fresh.customer || fresh.data || fresh;
+            setCustomer(activeCust);
+            setCustomersList(prev => prev.map(c => c.id === activeCust.id ? { ...c, ...activeCust } : c));
+          }
+        }).catch(() => {});
+
         const bal = Number(localMatch.personalBalance ?? localMatch.currentBalance ?? localMatch.balance ?? 0);
         const rawLim = Number(localMatch.creditLimit ?? localMatch.credit_limit);
         const lim = rawLim > 0 ? rawLim : 30.0;
@@ -2451,16 +2469,23 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     if (data.type === 'KHATA_BALANCE_UPDATED' && data.customerId) {
       const delta = Number(data.delta) || 0;
       const directBalance = data.balance !== undefined ? Number(data.balance) : null;
+      const directPersonal = data.personalBalance !== undefined ? Number(data.personalBalance) : null;
+      const directMessShare = data.messShare !== undefined ? Number(data.messShare) : null;
 
       // 1. Update actively linked checkout customer
       setCustomer((prev) => {
         if (prev && prev.id === data.customerId) {
           const oldBal = Number(prev.currentBalance ?? prev.balance ?? 0);
           const newBal = directBalance !== null ? directBalance : Number((oldBal + delta).toFixed(3));
+          const newPersonal = directPersonal !== null
+            ? directPersonal
+            : (prev.personalBalance !== undefined ? Math.max(0, Number((Number(prev.personalBalance) + delta).toFixed(3))) : newBal);
           return {
             ...prev,
             currentBalance: newBal,
-            balance: newBal
+            balance: newBal,
+            personalBalance: newPersonal,
+            messShare: directMessShare !== null ? directMessShare : (prev as any)?.messShare
           };
         }
         return prev;
@@ -2472,7 +2497,16 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           if (c.id === data.customerId) {
             const oldBal = Number(c.currentBalance ?? c.balance ?? 0);
             const newBal = directBalance !== null ? directBalance : Number((oldBal + delta).toFixed(3));
-            return { ...c, currentBalance: newBal, balance: newBal };
+            const newPersonal = directPersonal !== null
+              ? directPersonal
+              : (c.personalBalance !== undefined ? Math.max(0, Number((Number(c.personalBalance) + delta).toFixed(3))) : newBal);
+            return {
+              ...c,
+              currentBalance: newBal,
+              balance: newBal,
+              personalBalance: newPersonal,
+              messShare: directMessShare !== null ? directMessShare : (c as any)?.messShare
+            };
           }
           return c;
         })
@@ -2547,6 +2581,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
     let customerName = "";
     let previousBalance = 0;
     let newBalance = 0;
+    const isMessCheckout = paymentMethod === 'CREDIT_MESS' || (paymentMethod === 'CREDIT' && Boolean((customer as any)?.isMess || ((customer as any)?.hasMessGroup && !(customer as any)?.isDual && (!(customer as any)?.messes || (customer as any)?.messes?.length <= 1))));
 
     const isCreditPayment = paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL' || paymentMethod === 'CREDIT_MESS';
 
@@ -2578,8 +2613,25 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
 
       customerId = customer.id;
       customerName = customer.name;
-      previousBalance = customer.balance ?? customer.personalBalance ?? customer.currentBalance ?? 0;
-      newBalance = previousBalance + total;
+      
+      // Precision Wallet Separation:
+      // If customer has a mess group, personal credit purchases track purely personalBalance
+      const isPersonalCredit = paymentMethod === 'CREDIT_PERSONAL' || paymentMethod === 'CREDIT';
+      if (isPersonalCredit && !isMessCheckout) {
+        if (customer.personalBalance !== undefined && customer.personalBalance !== null) {
+          previousBalance = Number(customer.personalBalance);
+        } else if ((customer as any).hasMessGroup && Array.isArray((customer as any).messes) && (customer as any).messes.length > 0) {
+          const messDebt = (customer as any).messes.reduce((s: number, m: any) => s + Number(m.memberShare ?? m.myShare ?? 0), 0);
+          previousBalance = Math.max(0, Number((Number(customer.balance || 0) - messDebt).toFixed(3)));
+        } else {
+          previousBalance = Number(customer.personalBalance ?? customer.balance ?? customer.currentBalance ?? 0);
+        }
+      } else if (isMessCheckout) {
+        previousBalance = Number((customer as any).groupTotal ?? (customer as any).totalBalance ?? (customer as any).messGroup?.totalBalance ?? 0);
+      } else {
+        previousBalance = Number(customer.balance ?? customer.personalBalance ?? customer.currentBalance ?? 0);
+      }
+      newBalance = Number((previousBalance + total).toFixed(3));
 
       // Hard Credit Limit Enforcement (Idea 2: POS Blocking)
       const rawLimit = Number(customer.creditLimit ?? customer.credit_limit);
@@ -2671,8 +2723,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
       // Commit transaction to SQLite backend to guarantee strictly sequential, gapless NBR VAT invoice numbering
       let checkoutEndpoint = `${apiBase}/checkout`;
       let checkoutPayload: any = salePayload;
-
-      const isMessCheckout = paymentMethod === 'CREDIT_MESS' || (paymentMethod === 'CREDIT' && (customer?.isMess || (customer?.hasMessGroup && !customer?.isDual && (!customer?.messes || customer?.messes?.length <= 1))));
 
       if (isMessCheckout) {
         checkoutEndpoint = `${apiBase}/api/sales/mess-checkout`;
@@ -2828,10 +2878,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           customerUuid: customer?.id || (customer as any)?.customerId || undefined,
           customerName: isMessCheckout ? (customer?.group_name || customer?.messGroup?.group_name) : (customer?.name || customerName),
           customerCardUid: customer?.cardUid || customer?.tag_id || undefined,
-          previousBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? previousBalance : undefined,
-          newBalance: (!isMessCheckout && (paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL')) ? newBalance : undefined,
+          previousBalance: isMessCheckout 
+            ? Number((customer as any)?.groupTotal ?? (customer as any)?.totalBalance ?? (customer as any)?.messGroup?.totalBalance ?? 0)
+            : ((paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL') ? previousBalance : undefined),
+          newBalance: isMessCheckout
+            ? Number(((Number((customer as any)?.groupTotal ?? (customer as any)?.totalBalance ?? (customer as any)?.messGroup?.totalBalance ?? 0)) + total).toFixed(3))
+            : ((paymentMethod === 'CREDIT' || paymentMethod === 'CREDIT_PERSONAL') ? newBalance : undefined),
           personalBalance: customer?.personalBalance !== undefined ? Number(customer.personalBalance) : undefined,
-          messBalance: customer?.messBalance !== undefined ? Number(customer.messBalance) : undefined,
+          messBalance: (customer as any)?.messBalance !== undefined ? Number((customer as any).messBalance) : ((customer as any)?.messShare !== undefined ? Number((customer as any).messShare) : undefined),
+          hasMessGroup: Boolean((customer as any)?.hasMessGroup || (customer as any)?.isDual || ((customer as any)?.messBalance && Number((customer as any).messBalance) > 0) || ((customer as any)?.messShare && Number((customer as any).messShare) > 0)),
           cashierName: "Register 01"
         }).catch((printErr) => console.warn("Background receipt printing warning:", printErr));
       }
@@ -4008,17 +4063,17 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
             <span className="text-[10px] bg-amber-200 text-amber-900 font-black px-1 py-0.2 rounded font-sans">⚡</span>
           </button>
 
-          {/* NFC CARDS / MANAGER */}
+          {/* EXPENSE / CASH OUT */}
           <button
             type="button"
             onClick={() => {
-              setShowNfcManager(true);
+              setShowCashOutModal(true);
             }}
-            className="h-9 flex items-center gap-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 active:opacity-85 text-emerald-800 font-bold rounded-xl text-xs border border-emerald-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
-            title="NFC Card Manager & Mess Groups"
+            className="h-9 flex items-center gap-1.5 px-3 bg-rose-50 hover:bg-rose-100 active:opacity-85 text-rose-800 font-bold rounded-xl text-xs border border-rose-300 transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Record Expense / Drawer Cash-Out (Rent, Electricity, Supplies, Owner Draw)"
           >
-            <Radio size={14} className="text-emerald-600 animate-pulse" />
-            <span>NFC Cards</span>
+            <MinusCircle size={14} className="text-rose-600" />
+            <span>Expense</span>
           </button>
 
           {/* OFFLINE SALES QUEUE DRAIN BADGE */}
@@ -4600,6 +4655,15 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                     <FileText size={13} />
                     <span>Statement</span>
                   </button>
+
+                  {((customer as any).cycleBreakdown?.hasPriorCarryOver || (customer as any).cycleBreakdown?.priorCycleBalance > 0 || (customer as any).priorCycleBalance > 0) && (
+                    <span 
+                      className="px-2 py-0.5 bg-amber-100 border border-amber-300 text-amber-900 rounded-lg text-[10px] font-black flex items-center gap-1 shadow-2xs whitespace-nowrap"
+                      title={`Brought Forward Balance from Prior Month: BD ${Number((customer as any).cycleBreakdown?.priorCycleBalance ?? (customer as any).priorCycleBalance ?? 0).toFixed(3)}`}
+                    >
+                      <span>📌 Prior B/F: BD {Number((customer as any).cycleBreakdown?.priorCycleBalance ?? (customer as any).priorCycleBalance ?? 0).toFixed(3)}</span>
+                    </span>
+                  )}
                 </div>
               ) : (
                 <button
@@ -5424,47 +5488,6 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           </Suspense>
         )}
 
-        {/* NFC CARD MANAGER MODAL */}
-        {showNfcManager && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
-            <div className="relative w-full max-w-6xl max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-              <div className="flex items-center justify-between px-6 py-3.5 bg-slate-900 text-white">
-                <div className="flex items-center gap-2.5">
-                  <Radio className="text-emerald-400 animate-pulse" size={18} />
-                  <span className="font-bold text-sm tracking-wide">NFC Smart Card & Mess Group Manager</span>
-                </div>
-                <button
-                  onClick={() => setShowNfcManager(false)}
-                  className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-500 font-bold text-sm">Loading NFC Card Manager...</div>}>
-                  <NfcManager
-                    apiBase={apiBase}
-                    initialTab="CARDS"
-                    onSelectCustomerForCart={(selected) => {
-                      setCustomer(selected);
-                      setShowNfcManager(false);
-                      showToast(`💳 Linked ${selected.group_name || selected.name} to active cart`, 'success');
-                    }}
-                    onNavigateToKhata={() => {
-                      setShowNfcManager(false);
-                      setShowKhataHub(true);
-                    }}
-                    onOpenCustomerStatement={(cust) => {
-                      setShowNfcManager(false);
-                      openCustomerStatement(cust);
-                    }}
-                  />
-                </Suspense>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* MESS GROUPS MODAL (CAMP DINING SPLIT-BILLING) */}
         {showMessModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
@@ -5534,6 +5557,7 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
           <CashOutModal
             onClose={() => setShowCashOutModal(false)}
             apiBase={apiBase}
+            cashierName={localStorage.getItem('active_shift_cashier') || 'Register 01'}
             onExpenseRecorded={() => {
               showToast("💸 Expense recorded! Cash drawer updated.", 'success');
             }}
@@ -5756,6 +5780,36 @@ export default function CheckoutScreen({ isCashierTrapped: _isCashierTrapped = f
                   </button>
                 </div>
               </div>
+
+              {/* Monthly Cycle Transparency Breakdown (Eliminates Leftover Balance Confusion) */}
+              {statementCycleBreakdown && (statementCycleBreakdown.hasPriorCarryOver || (statementCycleBreakdown.priorCycleBalance && Math.abs(statementCycleBreakdown.priorCycleBalance) > 0.001)) && (
+                <div className="bg-amber-50 border-b border-amber-200 p-3 shrink-0">
+                  <div className="flex items-center justify-between text-xs font-bold text-amber-900 mb-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <span>📌 Monthly Cycle Breakdown</span>
+                      <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-medium">Brought Forward</span>
+                    </span>
+                    <span className="text-[10px] text-amber-700 font-mono">{statementCycleBreakdown.currentMonthLabel}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                    <div className="bg-white p-2 rounded-xl border border-amber-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-sans font-medium">Prior Month (B/F)</div>
+                      <div className="text-xs font-black text-amber-800 mt-0.5">BD {Number(statementCycleBreakdown.priorCycleBalance || 0).toFixed(3)}</div>
+                      <div className="text-[9px] text-slate-400 font-sans">{statementCycleBreakdown.priorMonthLabel}</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-amber-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-sans font-medium">This Month Spent</div>
+                      <div className="text-xs font-black text-rose-600 mt-0.5">+BD {Number(statementCycleBreakdown.currentMonthPurchases || 0).toFixed(3)}</div>
+                      <div className="text-[9px] text-slate-400 font-sans">Purchases</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-amber-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-sans font-medium">Total Balance Due</div>
+                      <div className="text-xs font-black text-emerald-700 mt-0.5">BD {Number(statementCycleBreakdown.currentBalance ?? (statementCustomer.currentBalance ?? statementCustomer.balance ?? 0)).toFixed(3)}</div>
+                      <div className="text-[9px] text-slate-400 font-sans">Consolidated</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Filter Tabs & Date to Date Filter Bar */}
               <div className="bg-slate-100 p-3 border-b border-slate-200 space-y-2 shrink-0">

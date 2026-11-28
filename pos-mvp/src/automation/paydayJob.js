@@ -120,6 +120,8 @@ export async function generatePaydayBatch(options = {}) {
   }
 }
 
+import { runPrePaydayBatch } from '../../services/whatsappService.js';
+
 /**
  * Registers the monthly automated cron job.
  * Runs on the 28th of every month at 9:00 AM AST.
@@ -138,5 +140,16 @@ export function startPaydayCron() {
     }
   });
 
+  // Daily 9:00 AM AST check for pre-payday WhatsApp statements (runs 1 day before each customer's payday)
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      console.log('⏰ [WhatsApp Pre-Payday Cron] Running daily check for customers due tomorrow...');
+      await runPrePaydayBatch(db);
+    } catch (err) {
+      console.error('❌ Error during scheduled WhatsApp Pre-Payday Cron execution:', err);
+    }
+  });
+
   console.log('✅ Automated Payday Fawri+ Debt Recovery Cron Registered (Runs 28th of each month at 9:00 AM)');
+  console.log('✅ Automated WhatsApp Pre-Payday Statements Cron Registered (Runs daily at 9:00 AM)');
 }

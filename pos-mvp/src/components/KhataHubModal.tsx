@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, User, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, ShieldCheck, MessageCircle, ArrowUpDown, Check, ShoppingCart, CreditCard, Users, Scale, Bell, BookOpen } from 'lucide-react';
+import { X, User, UserPlus, Banknote, Smartphone, CheckCircle2, ChevronRight, ArrowLeft, Save, IdCard, Phone, Wifi, Printer, FileClock, FileText, Settings, Trash2, ShieldAlert, ShieldCheck, MessageCircle, ArrowUpDown, Check, ShoppingCart, CreditCard, Users, Scale, Bell, BookOpen, Sparkles } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { printKhataStatement, printKhataPaymentReceipt, printCardDepositReceipt, printCardDepositRefundVoucher, printCashAdvanceReceipt } from '../utils/printer';
 import { kickCashDrawer } from '../services/cashDrawerService';
@@ -488,6 +488,7 @@ function SettleBalanceView({
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [alertSetupCustomer, setAlertSetupCustomer] = useState<Customer | null>(null);
   const [payAmount, setPayAmount] = useState('');
+  const [forgiveGoodwill, setForgiveGoodwill] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isNfcLoading, setIsNfcLoading] = useState(false);
   const [paymentTarget, setPaymentTarget] = useState<'TOTAL' | 'PERSONAL' | 'MESS' | 'MESS_GROUP' | 'DEPOSIT' | 'CASH_ADVANCE'>('TOTAL');
@@ -603,66 +604,6 @@ function SettleBalanceView({
     }
   };
 
-  const handleChargeDepositToCredit = async (customer: Customer) => {
-    const input = prompt(`Charge card deposit to credit tab for ${customer.name} (BHD):\n\n• Added to credit debt balance\n• Collected automatically when customer settles debt`, '3.000');
-    if (!input) return;
-    const amount = parseFloat(input);
-    if (isNaN(amount) || amount <= 0) {
-      alert('Invalid deposit amount.');
-      return;
-    }
-
-    try {
-      const candidates = getResilientApiCandidates();
-      let success = false;
-      let lastErrMsg = '';
-
-      for (const base of candidates) {
-        try {
-          const res = await fetch(`${base}/api/customers/${customer.id}/update`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-pos-client': 'store-pos'
-            },
-            body: JSON.stringify({
-              depositAction: 'CHARGE_CREDIT',
-              depositAmount: amount
-            }),
-            signal: AbortSignal.timeout(4000)
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && (data.success || data.customer)) {
-            success = true;
-            showToast ? showToast(`✅ BD ${amount.toFixed(3)} deposit charged to credit tab!`, 'success') : alert(`✅ Deposit charged to credit!`);
-            const newBal = Number(customer.currentBalance ?? customer.balance ?? 0) + amount;
-            const updated = {
-              ...customer,
-              balance: newBal,
-              currentBalance: newBal,
-              card_deposit_amount: amount,
-              card_deposit_status: 'IN_CREDIT',
-              card_deposit_receipt_no: data.customer?.card_deposit_receipt_no || `DEP-${Date.now().toString().slice(-6)}`
-            };
-            setSelectedCustomer(updated);
-            setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-            onCustomerUpdated?.();
-            break;
-          } else if (data.error) {
-            lastErrMsg = data.error;
-          }
-        } catch { }
-      }
-
-      if (!success) {
-        showToast ? showToast(`❌ ${lastErrMsg || 'Failed to charge deposit to credit'}`, 'error') : alert('Failed to charge deposit');
-      }
-    } catch (err) {
-      console.error(err);
-      showToast ? showToast('❌ Error charging deposit', 'error') : alert('Error charging deposit');
-    }
-  };
-
   const handleOpenCashAdvance = async (customer: Customer) => {
     const input = prompt(
       `💵 PAYDAY CASH ADVANCE (SALFAH)\n\nEnter cash amount in BHD to dispense to ${customer.name} from till:\n(Repayable on next payday: ${customer.payday_day_of_month || 28}th)`,
@@ -760,54 +701,45 @@ function SettleBalanceView({
   };
   const getDepositInfo = (c: any) => {
     const amt = Number(c?.card_deposit_amount ?? c?.depositAmount ?? 0);
-    const status = c?.card_deposit_status ?? c?.depositStatus ?? 'NONE';
-    const isInCredit = status === 'IN_CREDIT' || status === 'DEFERRED_CREDIT' || status === 'DEFERRED_PAYDAY';
+    const status = String(c?.card_deposit_status || c?.depositStatus || 'NONE').toUpperCase();
     const isHeld = status === 'HELD' || status === 'PAID' || status === 'CUSTODIAL';
+    const isInCredit = status === 'IN_CREDIT' || status === 'DEFERRED_CREDIT' || status === 'DEFERRED_PAYDAY' || Boolean(c?.depositInCredit) || (amt > 0 && !isHeld && status !== 'REFUNDED');
     return {
       amount: amt,
       status,
       isInCredit,
       isHeld,
       badgeText: isInCredit
-        ? `IN CREDIT (DUE): BD ${amt.toFixed(3)}`
+        ? `Credit Deposit (BD ${amt.toFixed(3)})`
         : isHeld
-          ? `HELD IN TRUST: BD ${amt.toFixed(3)}`
-          : 'NO DEPOSIT',
+          ? `Deposited (BD ${amt.toFixed(3)})`
+          : 'No Deposit',
       shortStatusText: isInCredit
-        ? 'IN CREDIT (DUE)'
+        ? 'Credit Deposit'
         : isHeld
-          ? 'HELD IN TRUST'
-          : 'NO DEPOSIT',
+          ? 'Deposited'
+          : 'No Deposit',
       textColorClass: isInCredit
-        ? 'text-rose-700'
+        ? 'text-amber-800'
         : isHeld
-          ? 'text-emerald-700'
+          ? 'text-emerald-800'
           : 'text-slate-500',
       badgeClass: isInCredit
-        ? 'bg-rose-50 border-rose-200 text-rose-700'
+        ? 'bg-amber-100 border-amber-300 text-amber-800'
         : isHeld
-          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
           : 'bg-slate-100 border-slate-200 text-slate-500'
     };
   };
 
   const getPersonalBal = (c: any) => {
     if (!c) return 0;
-    const depInCredit = (c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY' || c.depositStatus === 'IN_CREDIT')
-      ? Number(c.card_deposit_amount || c.depositAmount || 0)
-      : 0;
     if (c.personalBalance !== undefined && c.personalBalance !== null) {
-      const p = Number(c.personalBalance);
-      const cur = Number(c.currentBalance ?? c.balance ?? 0);
-      const mess = getMessBal(c);
-      if (Math.abs(p - cur) < 0.001 && depInCredit > 0) {
-        return Math.max(0, Number((cur - mess - depInCredit).toFixed(3)));
-      }
-      return Math.max(0, p);
+      return Math.max(0, Number(Number(c.personalBalance).toFixed(3)));
     }
     const total = Number(c.currentBalance ?? c.balance ?? 0);
     const mess = getMessBal(c);
-    return Math.max(0, Number((total - mess - depInCredit).toFixed(3)));
+    return Math.max(0, Number((total - mess).toFixed(3)));
   };
   const getTotalBal = (c: any) => {
     if (!c) return 0;
@@ -816,10 +748,7 @@ function SettleBalanceView({
     }
     const pBal = getPersonalBal(c);
     const mBal = getMessBal(c);
-    const depInCredit = (c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY' || c.depositStatus === 'IN_CREDIT')
-      ? Number(c.card_deposit_amount || c.depositAmount || 0)
-      : 0;
-    return Number((pBal + mBal + depInCredit).toFixed(3));
+    return Number((pBal + mBal).toFixed(3));
   };
 
   // New State for Edit/Archive Modal
@@ -1602,6 +1531,7 @@ function SettleBalanceView({
 
   // Synchronize active payment mess id when selected customer changes
   useEffect(() => {
+    setForgiveGoodwill(false);
     if (selectedCustomer) {
       setSelectedPaymentMessId(selectedCustomer.messes?.[0]?.id || selectedCustomer.mess_id || null);
     } else {
@@ -1664,8 +1594,8 @@ function SettleBalanceView({
       const paidMess = selectedCustomer.messes?.find((m: any) => m.id === targetMessId);
       const paidShare = paidMess ? Number(paidMess.memberShare ?? paidMess.myShare ?? 0) : oldMess;
       newMess = Math.max(0, Number((oldMess - paidShare).toFixed(3)));
-      // 3. The customer's new account balance is strictly their untouched personal balance + remaining other mess shares + deposit!
-      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
+      // 3. The customer's new account balance is strictly their untouched personal balance + remaining other mess shares
+      newTotal = Number((newPersonal + newMess).toFixed(3));
       if (Array.isArray(selectedCustomer.messes)) {
         updatedMesses = selectedCustomer.messes.map((m: any) => {
           if (m.id === targetMessId) {
@@ -1677,11 +1607,11 @@ function SettleBalanceView({
     } else if (paymentTarget === 'PERSONAL') {
       newPersonal = Math.max(0, Number((oldPersonal - amountNum).toFixed(3)));
       newMess = oldMess; // 100% untouched
-      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
+      newTotal = Number((newPersonal + newMess).toFixed(3));
     } else if (paymentTarget === 'MESS') {
       newPersonal = oldPersonal; // 100% untouched
       newMess = Math.max(0, Number((oldMess - amountNum).toFixed(3)));
-      newTotal = Number((newPersonal + newMess + depInCredit).toFixed(3));
+      newTotal = Number((newPersonal + newMess).toFixed(3));
       if (Array.isArray(selectedCustomer.messes)) {
         if (targetMessId && targetMessId !== 'ALL_MESSES') {
           updatedMesses = selectedCustomer.messes.map((m: any) => {
@@ -1725,8 +1655,18 @@ function SettleBalanceView({
       if (rem >= depInCredit && depInCredit > 0) {
         newDepositStatus = 'HELD';
       }
-      const remainingDep = newDepositStatus === 'HELD' ? 0 : depInCredit;
-      newTotal = Number((newPersonal + newMess + remainingDep).toFixed(3));
+      newTotal = Number((newPersonal + newMess).toFixed(3));
+    }
+
+    const targetPreDebt = paymentTarget === 'PERSONAL'
+      ? oldPersonal
+      : (paymentTarget === 'MESS' ? oldMess : oldTotal);
+    const microLeftover = Number((targetPreDebt - amountNum).toFixed(3));
+    const willForgiveGoodwill = forgiveGoodwill && microLeftover > 0 && microLeftover <= 0.500;
+    if (willForgiveGoodwill) {
+      newTotal = Math.max(0, Number((newTotal - microLeftover).toFixed(3)));
+      if (paymentTarget === 'PERSONAL') newPersonal = 0;
+      if (paymentTarget === 'MESS') newMess = 0;
     }
 
     const tempReceiptNo = `KH-${Date.now().toString().slice(-6)}`;
@@ -1749,6 +1689,7 @@ function SettleBalanceView({
     setSelectedCustomer(updated);
     setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
     setPayAmount('');
+    setForgiveGoodwill(false);
     setIsSubmitting(false);
 
     const activeMessName = selectedCustomer.messes?.find((m: any) => m.id === targetMessId)?.group_name || selectedCustomer.messName || 'Mess Room';
@@ -1762,7 +1703,8 @@ function SettleBalanceView({
             ? 'Card Security Deposit'
             : (paymentTarget === 'CASH_ADVANCE' ? 'Payday Cash Advance' : 'Total Account'))));
 
-    const msg = `✅ Received BD ${amountNum.toFixed(3)} for ${targetDesc} via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}! New Total: BD ${newTotal.toFixed(3)}`;
+    const goodwillText = willForgiveGoodwill ? ` (✨ BD ${microLeftover.toFixed(3)} Goodwill Waived)` : '';
+    const msg = `✅ Received BD ${amountNum.toFixed(3)} for ${targetDesc} via ${method === 'BENEFIT_PAY' ? 'Benefit Pay' : 'Cash'}!${goodwillText} New Total: BD ${newTotal.toFixed(3)}`;
     showToast ? showToast(msg, 'success') : alert(msg);
     onCustomerUpdated?.();
 
@@ -1812,6 +1754,9 @@ function SettleBalanceView({
             target: paymentTarget,
             messId: sanitizedMessId,
             mess_id: sanitizedMessId,
+            forgiveMicroBalance: willForgiveGoodwill,
+            forgiveGoodwill: willForgiveGoodwill,
+            goodwillDiscount: willForgiveGoodwill ? microLeftover : 0,
             reference: `${targetDesc} Payment (${tempReceiptNo})`
           }),
           signal: AbortSignal.timeout(3000)
@@ -2043,64 +1988,49 @@ function SettleBalanceView({
                 <div className="flex items-center gap-2 flex-wrap mt-2">
                   {selectedCustomer.card_type === 'DIGITAL_PASS' ? (
                     <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5">
-                      <span>📱</span>
-                      <span>Free Digital Pass (0 BD Deposit)</span>
+                      <span>Digital Pass (0 BD Deposit)</span>
                     </span>
-                  ) : (selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit) ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs bg-rose-50 text-rose-700 border border-rose-300 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider flex items-center gap-1.5" title="Deposit charged to credit tab - collected when customer settles debt">
-                        <CreditCard size={14} className="text-rose-600" />
-                        <span>IN CREDIT (DUE): BD {Number(selectedCustomer.card_deposit_amount || 3).toFixed(3)}</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleCollectDeposit(selectedCustomer)}
-                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                        title="Collect Deposit in Cash Now at Counter"
-                      >
-                        <span>💵 Collect Cash</span>
-                      </button>
-                    </div>
-                  ) : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD') ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider flex items-center gap-1.5" title="Deposit held in custodial trust">
-                        <ShieldCheck size={14} className="text-emerald-600" />
-                        <span>HELD IN TRUST: BD {Number(selectedCustomer.card_deposit_amount ?? 3).toFixed(3)}</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_REFUND') : handleRefundDeposit(selectedCustomer)}
-                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                        title="Refund Card Deposit in Cash upon card return (Customer must have 0 debt)"
-                      >
-                        <span>💸 Refund Deposit</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">
-                        NO DEPOSIT
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleChargeDepositToCredit(selectedCustomer)}
-                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                        title="Charge Card Deposit to Credit Tab (Due when customer settles debt)"
-                      >
-                        <CreditCard size={13} />
-                        <span>+ Charge to Credit</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_COLLECT') : handleCollectDeposit(selectedCustomer)}
-                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                        title="Collect Card Deposit in Cash"
-                      >
-                        <ShieldCheck size={13} />
-                        <span>💵 Collect Cash</span>
-                      </button>
-                    </div>
-                  )}
+                  ) : (() => {
+                    const dep = getDepositInfo(selectedCustomer);
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-xs border px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider flex items-center gap-1.5 ${dep.badgeClass}`} title={dep.shortStatusText}>
+                          <ShieldCheck size={14} className={dep.isInCredit ? 'text-amber-700' : dep.isHeld ? 'text-emerald-700' : 'text-slate-400'} />
+                          <span>{dep.badgeText}</span>
+                        </span>
+                        {dep.isInCredit && (
+                          <button
+                            type="button"
+                            onClick={() => handleCollectDeposit(selectedCustomer)}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            title="Collect Deposit in Cash Now at Counter"
+                          >
+                            <span>Collect Cash</span>
+                          </button>
+                        )}
+                        {dep.isHeld && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_REFUND') : handleRefundDeposit(selectedCustomer)}
+                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            title="Refund Card Deposit in Cash upon card return (Customer must have 0 debt)"
+                          >
+                            <span>Refund Deposit</span>
+                          </button>
+                        )}
+                        {!dep.isInCredit && !dep.isHeld && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenWizard ? onOpenWizard(selectedCustomer, 'DEPOSIT_COLLECT') : handleCollectDeposit(selectedCustomer)}
+                            className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded border border-slate-300 transition cursor-pointer"
+                            title="Add Card Deposit"
+                          >
+                            + Add Deposit
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Cash Advance (Salfah) */}
                   <button
@@ -2205,19 +2135,19 @@ function SettleBalanceView({
                   >
                     <div className="text-xs text-slate-500 font-bold uppercase tracking-wider flex items-center justify-between">
                       <span>Card Deposit (تأمين)</span>
-                      <ShieldCheck size={14} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
+                      <ShieldCheck size={14} className={depInfo.isInCredit ? 'text-rose-600' : depInfo.isHeld ? 'text-emerald-600' : 'text-slate-400'} />
                     </div>
-                    <div className={`text-2xl font-black mt-1 ${depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                    <div className={`text-2xl font-black mt-1 ${depInfo.isInCredit ? 'text-amber-800' : depInfo.isHeld ? 'text-emerald-800' : 'text-slate-400'
                       }`}>
                       BD {depInfo.amount.toFixed(3)}
                     </div>
                     <div className="text-[11px] font-black uppercase tracking-wider mt-0.5">
-                      {depInfo.status === 'IN_CREDIT' ? (
-                        <span className="text-rose-700">IN CREDIT (DUE)</span>
-                      ) : depInfo.status === 'HELD' ? (
-                        <span className="text-emerald-700">HELD IN TRUST</span>
+                      {depInfo.isInCredit ? (
+                        <span className="text-amber-800">Credit Deposit</span>
+                      ) : depInfo.isHeld ? (
+                        <span className="text-emerald-800">Deposited</span>
                       ) : (
-                        <span className="text-slate-400">NO DEPOSIT</span>
+                        <span className="text-slate-400">No Deposit</span>
                       )}
                     </div>
                   </div>
@@ -2681,6 +2611,42 @@ function SettleBalanceView({
                         </div>
                       </div>
                     );
+                  })()}
+                  {(() => {
+                    const enteredAmt = parseFloat(payAmount || '0');
+                    const targetBal = paymentTarget === 'PERSONAL'
+                      ? getPersonalBal(selectedCustomer)
+                      : (paymentTarget === 'MESS' ? getMessBal(selectedCustomer) : getTotalBal(selectedCustomer));
+                    const remainingAfterPay = Number((targetBal - enteredAmt).toFixed(3));
+                    if (enteredAmt > 0 && remainingAfterPay > 0 && remainingAfterPay <= 0.500) {
+                      return (
+                        <div className="mt-2.5 p-3 bg-amber-50 border-2 border-amber-300 rounded-xl flex items-center justify-between shadow-xs">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="text-amber-600 shrink-0" size={18} />
+                            <div>
+                              <div className="text-xs font-black text-amber-950">
+                                Leftover Micro-Balance: <span className="font-mono text-rose-600">BD {remainingAfterPay.toFixed(3)}</span> ({Math.round(remainingAfterPay * 1000)} fils)
+                              </div>
+                              <div className="text-[11px] text-amber-800 font-medium">
+                                Waive as Baqala Goodwill Discount so customer account clears cleanly?
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setForgiveGoodwill(!forgiveGoodwill)}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                              forgiveGoodwill
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-white border border-amber-400 text-amber-900 hover:bg-amber-100'
+                            }`}
+                          >
+                            {forgiveGoodwill ? '✓ Goodwill Waived (0.000 BD)' : '✨ Forgive & Clear'}
+                          </button>
+                        </div>
+                      );
+                    }
+                    return null;
                   })()}
                 </div>
                 <div className="flex gap-3 items-end">
@@ -3412,21 +3378,16 @@ function SettleBalanceView({
                     )}
                     {customer.card_type === 'DIGITAL_PASS' ? (
                       <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-bold">
-                        📱 Digital Pass
+                        Digital Pass
                       </span>
-                    ) : (customer.card_deposit_status === 'IN_CREDIT' || customer.card_deposit_status === 'DEFERRED_CREDIT' || customer.card_deposit_status === 'DEFERRED_PAYDAY' || customer.depositInCredit) ? (
-                      <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider" title="Deposit charged to credit tab - due when customer settles debt">
-                        IN CREDIT (DUE): BD {Number(customer.card_deposit_amount || 3).toFixed(3)}
-                      </span>
-                    ) : (Number(customer.card_deposit_amount || 0) > 0 || customer.card_deposit_status === 'HELD') ? (
-                      <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider" title="Deposit paid and held in custodial trust">
-                        HELD IN TRUST: BD {Number(customer.card_deposit_amount ?? 3).toFixed(3)}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider">
-                        NO DEPOSIT
-                      </span>
-                    )}
+                    ) : (() => {
+                      const dep = getDepositInfo(customer);
+                      return (
+                        <span className={`text-[10px] border px-2 py-0.5 rounded-md font-bold uppercase tracking-wider ${dep.badgeClass}`} title={dep.shortStatusText}>
+                          {dep.badgeText}
+                        </span>
+                      );
+                    })()}
                     {Number(customer.cash_advance_balance || 0) > 0 && (
                       <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-md font-black">
                         💵 Salfah: BD {Number(customer.cash_advance_balance).toFixed(3)}
@@ -3451,9 +3412,9 @@ function SettleBalanceView({
                           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                           `👤 *Customer / العميل:* ${customer.name}\n` +
                           `• *Personal Tab / الحساب الشخصي:* BD ${personalBal.toFixed(3)}\n` +
-                          ((customer.card_deposit_status === 'IN_CREDIT' || customer.card_deposit_status === 'DEFERRED_CREDIT' || customer.card_deposit_status === 'DEFERRED_PAYDAY' || customer.depositInCredit) ? `• *Card Deposit (Due) / تأمين البطاقة:* BD ${Number(customer.card_deposit_amount || 3).toFixed(3)}\n` : '') +
+                          ((customer.card_deposit_status === 'IN_CREDIT' || customer.card_deposit_status === 'DEFERRED_CREDIT' || customer.card_deposit_status === 'DEFERRED_PAYDAY' || customer.depositInCredit) ? `• *Card Deposit: Credit Deposit / تأمين البطاقة:* BD ${Number(customer.card_deposit_amount || 3).toFixed(3)}\n` : '') +
                           (hasMess ? `• *Mess Room (${messName}) / نصيب الميس:* BD ${messBal.toFixed(3)}\n` : '') +
-                          `💰 *Total Due / المبلغ الإجمالي المستحق:* *BHD ${totalBal.toFixed(3)}*\n\n` +
+                          `💰 *Grocery Balance Due / إجمالي حساب المشتريات:* *BHD ${totalBal.toFixed(3)}*\n\n` +
                           `📄 *View Live Digital Statement / كشف الحساب الإلكتروني:*\n` +
                           `https://askar-khata-pwa.vercel.app/customer?id=${encodeURIComponent(customer.id)}\n\n` +
                           `📲 *Pay Instantly via BenefitPay (Fawri+):*\n` +
@@ -3517,20 +3478,20 @@ function SettleBalanceView({
                     return (
                       <div className="bg-white p-2 rounded-lg border border-slate-200">
                         <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider flex items-center gap-1">
-                          <ShieldCheck size={12} className={depInfo.status === 'IN_CREDIT' ? 'text-rose-600' : 'text-emerald-600'} />
+                          <ShieldCheck size={12} className={depInfo.isInCredit ? 'text-amber-600' : 'text-emerald-600'} />
                           <span>Card Deposit (تأمين)</span>
                         </div>
-                        <div className={`text-base font-black mt-0.5 ${depInfo.status === 'IN_CREDIT' ? 'text-rose-700' : depInfo.status === 'HELD' ? 'text-emerald-700' : 'text-slate-400'
+                        <div className={`text-base font-black mt-0.5 ${depInfo.isInCredit ? 'text-amber-800' : depInfo.isHeld ? 'text-emerald-800' : 'text-slate-400'
                           }`}>
                           BD {depInfo.amount.toFixed(3)}
                         </div>
                         <div className="text-[9px] font-black uppercase tracking-wider">
-                          {depInfo.status === 'IN_CREDIT' ? (
-                            <span className="text-rose-700">IN CREDIT (DUE)</span>
-                          ) : depInfo.status === 'HELD' ? (
-                            <span className="text-emerald-700">HELD IN TRUST</span>
+                          {depInfo.isInCredit ? (
+                            <span className="text-amber-800">Credit Deposit</span>
+                          ) : depInfo.isHeld ? (
+                            <span className="text-emerald-800">Deposited</span>
                           ) : (
-                            <span className="text-slate-400">NO DEPOSIT</span>
+                            <span className="text-slate-400">No Deposit</span>
                           )}
                         </div>
                       </div>
@@ -4600,9 +4561,23 @@ function KhataEditModal({
       // Optimistic local SQLite update so customer record updates instantly
       try {
         await db.execute({
-          sql: `UPDATE Customer SET name = ?, phone = ?, cpr = ?, batchNo = ?, credit_limit = ? WHERE id = ?`,
-          args: [name.trim(), phone.trim() || null, cpr.trim() || null, batchNo.trim() || null, parseFloat(creditLimit) || 30.0, customer.id]
+          sql: `UPDATE Customer SET name = ?, phone = ?, cpr = ?, batchNo = ?, credit_limit = ?, mess_id = ? WHERE id = ?`,
+          args: [name.trim(), phone.trim() || null, cpr.trim() || null, batchNo.trim() || null, parseFloat(creditLimit) || 30.0, selectedMessGroupIds[0] || null, customer.id]
         });
+        if (selectedMessGroupIds.length > 0) {
+          await db.execute({
+            sql: `DELETE FROM MessMember WHERE customer_id = ?`,
+            args: [customer.id]
+          });
+          for (const mId of selectedMessGroupIds) {
+            await db.execute({
+              sql: `INSERT INTO MessMember (id, tenantId, mess_id, customer_id, role, is_active)
+                    VALUES (?, 'tenant_askar_01', ?, ?, 'MEMBER', 1)
+                    ON CONFLICT(mess_id, customer_id) DO UPDATE SET is_active = 1`,
+              args: [`mm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, mId, customer.id]
+            });
+          }
+        }
       } catch (sqlErr) {
         console.warn('Local SQLite update non-blocking:', sqlErr);
       }
@@ -4645,9 +4620,13 @@ function KhataEditModal({
                 saved = true;
                 break;
               }
-            } else if (res.status === 401 || res.status === 403) {
+            } else {
               const err = await res.json().catch(() => ({}));
-              lastError = err.error || 'Manager authentication required';
+              if (err.error || err.details || err.message) {
+                lastError = err.error || err.details || err.message;
+              } else if (res.status === 401 || res.status === 403) {
+                lastError = 'Manager authentication required';
+              }
             }
           } catch { }
         }
@@ -5004,7 +4983,7 @@ function KhataEditModal({
                     <ShieldCheck size={16} className="text-emerald-600" />
                     <span>Security Deposit Management</span>
                   </label>
-                  {depositStatus === 'IN_CREDIT' || depositStatus === 'DEFERRED_CREDIT' || depositStatus === 'DEFERRED_PAYDAY' ? (
+                  {depositStatus === 'IN_CREDIT' || depositStatus === 'DEFERRED_CREDIT' || depositStatus === 'DEFERRED_PAYDAY' || (parseFloat(depositAmount) > 0 && depositStatus !== 'HELD' && depositStatus !== 'REFUNDED' && depositStatus !== 'NONE') ? (
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-300">
                       IN CREDIT (DUE)
                     </span>

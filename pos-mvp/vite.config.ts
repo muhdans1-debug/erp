@@ -31,11 +31,13 @@ export default defineConfig({
           // Recharts + D3 are heavy — isolate so they never block POS startup
           if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
           // React runtime — shared base
-          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) return 'vendor-react';
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/scheduler/')) return 'vendor-react';
           // Lucide icons
           if (id.includes('lucide-react')) return 'vendor-icons';
-          // Barcode / QR libs — only needed in BarcodeGenerator page
-          if (id.includes('react-barcode') || id.includes('qrcode')) return 'vendor-barcode';
+          // Barcode / QR libs — isolate from checkout critical path
+          if (id.includes('react-barcode') || id.includes('qrcode') || id.includes('jsbarcode')) return 'vendor-barcode';
+          // Capacitor native hardware plugins
+          if (id.includes('@capacitor') || id.includes('capacitor')) return 'vendor-capacitor';
           // LibSQL / Turso client
           if (id.includes('@libsql') || id.includes('libsql')) return 'vendor-libsql';
         },

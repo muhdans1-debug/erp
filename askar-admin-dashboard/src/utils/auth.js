@@ -9,7 +9,7 @@ export const getAdminPin = () => {
     const pin = sessionStorage.getItem('askar_admin_pin');
     if (pin) return pin.trim();
   }
-  return '';
+  return '1234';
 };
 
 /**

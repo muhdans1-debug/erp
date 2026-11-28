@@ -477,7 +477,13 @@ export const CustomerEnrollmentModal: React.FC<CustomerEnrollmentModalProps> = (
                     )}
                   </div>
                   <div style={{ fontSize: '12px', color: '#047857', marginTop: '2px' }}>
-                    Deposit: <strong>{Number(c.card_deposit_amount || 0) > 0 || c.card_deposit_status === 'HELD' ? `BD ${Number(c.card_deposit_amount ?? 3).toFixed(3)} Held` : (c.card_type === 'DIGITAL_PASS' ? '0 BD (Free Pass)' : 'None')}</strong>
+                    Deposit: <strong>{
+                      (c.card_deposit_status === 'IN_CREDIT' || c.card_deposit_status === 'DEFERRED_CREDIT' || c.card_deposit_status === 'DEFERRED_PAYDAY' || Boolean(c.depositInCredit))
+                        ? `BD ${Number(c.card_deposit_amount || 3).toFixed(3)} Credit Deposit`
+                        : (Number(c.card_deposit_amount || 0) > 0 || c.card_deposit_status === 'HELD')
+                          ? `BD ${Number(c.card_deposit_amount ?? 3).toFixed(3)} Deposited`
+                          : (c.card_type === 'DIGITAL_PASS' ? '0 BD (Free Pass)' : 'No Deposit')
+                    }</strong>
                   </div>
                   <div style={{ fontSize: '13px', color: '#dc2626', fontWeight: 'bold' }}>
                     Khata Balance: BD {Number(c.currentBalance ?? c.balance ?? 0).toFixed(3)}

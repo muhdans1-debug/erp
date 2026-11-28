@@ -51,6 +51,7 @@ export interface ReceiptTemplateProps {
   newBalance?: number;
   personalBalance?: number;
   messBalance?: number;
+  hasMessGroup?: boolean;
   isMess?: boolean;
   groupName?: string;
   shopperName?: string;
@@ -171,13 +172,14 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
       : (prevDebt + total);
 
     const hasDualBalance = props.personalBalance !== undefined && props.messBalance !== undefined && props.messBalance > 0.001;
+    const isPersonalWallet = paymentMode === 'CREDIT_PERSONAL' || Boolean(props.hasMessGroup || (props.messBalance && Number(props.messBalance) > 0));
 
     if (isCompact && !cfg.showCreditBalanceBox) {
       paymentSectionHtml = `
       <div class="khata-compact-box">
         <div class="row">
-          <span>Khata: <strong>${escapeHtml(props.customerName || 'Customer')}</strong></span>
-          <span>Prev: BD ${prevDebt.toFixed(3)}</span>
+          <span>Customer: <strong>${escapeHtml(props.customerName || 'Customer')}</strong></span>
+          <span>${prevDebt <= 0.0001 ? 'Prev: BD 0.000 (PAID)' : `Prev: BD ${prevDebt.toFixed(3)}`}</span>
         </div>
         ${hasDualBalance ? `
         <div class="row text-muted" style="font-size: 8px;">
@@ -185,14 +187,14 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
           <span>Mess: BD ${Number(props.messBalance).toFixed(3)}</span>
         </div>` : ''}
         <div class="row bold" style="font-size: 10px; margin-top: 1px;">
-          <span>BALANCE DUE / المستحق:</span>
+          <span>${isPersonalWallet ? 'PERSONAL DUE / المستحق:' : 'BALANCE DUE / المستحق:'}</span>
           <span>BD ${finalBalance.toFixed(3)}</span>
         </div>
       </div>`;
     } else {
       paymentSectionHtml = `
       <div class="khata-balance-banner">
-        <div class="center bold khata-title">*** KHATA CREDIT ACCOUNT / حساب الآجل ***</div>
+        <div class="center bold khata-title">${isPersonalWallet ? '*** PERSONAL KHATA TAB / حساب الآجل الشخصي ***' : '*** KHATA CREDIT ACCOUNT / حساب الآجل ***'}</div>
         ${props.customerName ? `
         <div class="row" style="margin-top: 2px;">
           <span>Customer:</span>
@@ -200,8 +202,8 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
         </div>` : ''}
         ${props.previousBalance !== undefined ? `
         <div class="row">
-          <span>Previous Debt:</span>
-          <span>BD ${prevDebt.toFixed(3)}</span>
+          <span>${isPersonalWallet ? 'Personal Prev Debt:' : 'Previous Debt:'}</span>
+          <span>${prevDebt <= 0.0001 ? 'BD 0.000 (PAID / لا يوجد سابق)' : `BD ${prevDebt.toFixed(3)}`}</span>
         </div>` : ''}
         <div class="row">
           <span>This Bill:</span>
@@ -216,9 +218,13 @@ export function generateNBRReceiptHtml(props: ReceiptTemplateProps): string {
         <div class="row text-muted" style="font-size: 8px;">
           <span>Mess Share / السكن:</span>
           <span>BD ${Number(props.messBalance).toFixed(3)}</span>
+        </div>
+        <div class="row text-muted" style="font-size: 8px;">
+          <span>Combined Total Owed:</span>
+          <span>BD ${(finalBalance + Number(props.messBalance)).toFixed(3)}</span>
         </div>` : ''}
         <div class="row bold" style="margin-top: 2px; font-size: 11px; border-top: 1px dashed #000; padding-top: 2px;">
-          <span>TOTAL DUE / المستحق:</span>
+          <span>${isPersonalWallet ? 'PERSONAL BALANCE DUE / المستحق:' : 'TOTAL DUE / المستحق:'}</span>
           <span>BD ${finalBalance.toFixed(3)}</span>
         </div>
       </div>`;

@@ -1,467 +1,68 @@
 {
   "overrides": {
-    "110": {
-      "isQuickProduct": false,
-      "category": "BAKERY"
-    },
-    "prod_onions_1kg": {
-      "isQuickProduct": true,
-      "category": "PRODUCE"
-    },
-    "test_barcode_123": {
-      "isQuickProduct": true,
-      "category": "ESSENTIALS"
-    },
-    "6281058000943": {
-      "isQuickProduct": true,
-      "category": "ESSENTIALS"
-    },
-    "f100_1793665188455_mtrwp": {
-      "isQuickProduct": true,
-      "category": "SNACKS"
-    },
-    "f100_1793665925874_tumit": {
-      "isQuickProduct": true,
-      "category": "SNACKS"
-    },
-    "f100_1793713103684_xrdjm": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793713247688_loo2s": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793713341369_lewq8": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793713451028_mysfg": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793713711375_q4b76": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793714524788_0qtnf": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793714690313_d7rb7": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793714792473_o8fig": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793714851269_z132r": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793714994682_qizqx": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793715322275_2s1ca": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793715530227_zft4c": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793715582570_y6occ": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793715687972_ww1hq": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716226022_g6vi3": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716364587_z11ik": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716423039_lxn1n": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716652997_7w9c6": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716757008_qtg6n": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793716818091_9ln4d": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717002750_lnjky": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717199874_7e4y7": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717303367_ssdhk": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717354962_9q3qp": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717402113_bejsa": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793717508425_08530": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793722200644_w9xay": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793722390078_au5im": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793722530351_81v3m": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793722599483_zsm9i": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793722792934_0r70w": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793722885630_q5bjl": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793723145658_4f2f1": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793723535420_4w140": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793723694217_j52hd": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793723837586_zmrsb": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793723914501_7ore0": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793724043228_a9vuk": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793724119116_u0luv": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793724219366_4ucoe": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793724457854_mz2lm": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793724694063_qqi5k": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793724854412_85vns": {
-      "isQuickProduct": true,
-      "category": "GROCERY",
-      "quickColor": null
-    },
-    "f100_1793724987740_08a00": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793725173389_r4hxr": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793725292613_0o5gu": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793725699039_qe872": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793725819617_0hrwx": {
-      "isQuickProduct": false,
-      "category": "GROCERY"
-    },
-    "f100_1793727529251_yz0o6": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793727684586_kp9kg": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793727804588_wsm0g": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793727888838_ox9tl": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793728135963_tvpha": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793728209647_6saq5": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793728262642_qss44": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793728380237_2o6gp": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793728623631_qshu8": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793730171593_ebjwr": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793750878479_zr14p": {
-      "isQuickProduct": false,
-      "category": "SNACKS"
-    },
-    "f100_1793752014603_l2vsq": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "f100_1793806096497_e1627": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793806232872_6qcqm": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793806341728_abtgi": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793806413251_yxjk3": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793806605507_wcdqv": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793806759549_m6150": {
-      "isQuickProduct": true,
-      "category": "HOUSEHOLD"
-    },
-    "f100_1793894850223_x48dq": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793895005918_fl3d4": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793895141655_n2mxs": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793895319613_suxg1": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793895467250_uzscb": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793896687919_lb9gu": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793896724846_zxlb0": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793896788381_3x38i": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793896848286_c7d8d": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793896907615_8ddht": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793897473264_2y02f": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793897531136_c49fs": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793897585116_7atzo": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793897665462_7gto0": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "f100_1793897711208_gk8em": {
-      "isQuickProduct": true,
-      "category": "PERSONAL CARE"
-    },
-    "C8376910254065664864": {
-      "isQuickProduct": true,
-      "category": "ESSENTIALS"
-    },
     "f32218ef-8317-48a3-99a4-f2f6ce1ede3f": {
       "isQuickProduct": true,
-      "category": "PRODUCE",
-      "quickColor": null
-    },
-    "e2f6de50-4e70-433a-9730-c0cbf9619da0": {
-      "isQuickProduct": true,
-      "category": "GROCERY"
-    },
-    "4d0f2026-3b51-436c-a0cb-e9773d9ebaba": {
-      "isQuickProduct": true,
-      "category": "PRODUCE"
-    },
-    "112233445566": {
-      "isQuickProduct": true,
-      "category": "PRODUCE"
-    },
-    "5f5967c5-7b1f-479c-b8aa-c76a005c58b2": {
-      "isQuickProduct": true,
       "category": "ESSENTIALS"
-    },
-    "f68b9858-d7eb-48ac-b072-66ad89a0f063": {
-      "isQuickProduct": false,
-      "category": "ESSENTIALS"
-    },
-    "62a65057-4a08-4de7-b86a-5d770eb3d3b6": {
-      "isQuickProduct": true,
-      "category": "PRODUCE"
-    },
-    "a3b5a28b-ea29-4b52-b508-66899c9b487e": {
-      "isQuickProduct": true,
-      "category": "ESSENTIALS"
-    },
-    "fb85a8d5-30a4-432f-9abb-2e5c4dfb5e12": {
-      "isQuickProduct": true,
-      "category": "GROCERY",
-      "quickColor": null
     },
     "1b43fcb3-cfa8-4a31-8448-9943c8ab3b8a": {
       "isQuickProduct": true,
-      "category": "GROCERY",
-      "quickColor": null
+      "category": "BAKERY"
     },
-    "697233a2-b6ec-4c1d-b87e-5cc9ae7e4bc9": {
-      "isQuickProduct": false,
-      "category": "GROCERY",
-      "quickColor": null
+    "18a655d3-487e-4c9f-a6f8-46141a650059": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "fb85a8d5-30a4-432f-9abb-2e5c4dfb5e12": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "f481ac12-8820-471d-b50d-6cfabf1cf1e7": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
     },
     "9d676120-fea8-4dd1-9346-b669551e9432": {
       "isQuickProduct": true,
-      "category": "GROCERY",
-      "quickColor": null
+      "category": "BAKERY"
     },
-    "test_prod": {
+    "697233a2-b6ec-4c1d-b87e-5cc9ae7e4bc9": {
       "isQuickProduct": true,
-      "category": "ESSENTIALS"
+      "category": "BAKERY"
+    },
+    "unmi G": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
     },
     "test_p1": {
       "isQuickProduct": true,
       "category": "ESSENTIALS"
+    },
+    "6281058000943": {
+      "isQuickProduct": false,
+      "category": "ESSENTIALS"
+    },
+    "nb_loose_cig": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "f100_1793724854412_85vns": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "8941199109261": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "5f5967c5-7b1f-479c-b8aa-c76a005c58b2": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
+    },
+    "prod_1795099601578_ofe8": {
+      "isQuickProduct": true,
+      "category": "BAKERY"
     }
   },
   "removedIds": [
-    "Authorized Manager Product",
-    "f100_1793725819617_0hrwx",
-    "f100_1793714524788_0qtnf",
-    "f100_1793714792473_o8fig",
-    "f100_1793714851269_z132r",
-    "f100_1793715582570_y6occ",
-    "f100_1793714690313_d7rb7",
-    "f100_1793716226022_g6vi3",
-    "f100_1793716364587_z11ik",
-    "f100_1793716423039_lxn1n",
-    "110",
-    "f100_1793747451296_vrob2",
-    "INV-OFF-407869",
-    "f100_1793714994682_qizqx",
-    "f100_1793715530227_zft4c",
-    "f100_1793723914501_7ore0",
-    "f100_1793750878479_zr14p",
-    "f100_1793722200644_w9xay",
-    "f68b9858-d7eb-48ac-b072-66ad89a0f063",
-    "f100_1793713103684_xrdjm",
-    "f100_1793713247688_loo2s",
-    "f100_1793713341369_lewq8",
-    "f100_1793713711375_q4b76",
-    "f100_1793715322275_2s1ca",
-    "f100_1793715687972_ww1hq",
-    "1",
-    "6789",
-    "test_local_del_1794744319377",
-    "bar_1794744319377",
-    "b_test_bulk_1_1794744319562",
-    "test_bulk_1_1794744319562",
-    "b_test_bulk_2_1794744319562",
-    "test_bulk_2_1794744319562",
-    "b_test_bulk_3_1794744319562",
-    "test_bulk_3_1794744319562",
-    "f100_1793716652997_7w9c6",
-    "f100_1793716757008_qtg6n",
-    "f100_1793716818091_9ln4d",
-    "f100_1793717002750_lnjky",
-    "f100_1793717199874_7e4y7",
-    "f100_1793717303367_ssdhk",
-    "f100_1793717354962_9q3qp",
-    "697233a2-b6ec-4c1d-b87e-5cc9ae7e4bc9",
-    "f100_1793717402113_bejsa",
-    "f100_1793724043228_a9vuk",
-    "f100_1793724119116_u0luv"
+    "6281058000943"
   ],
   "categories": [
     {
@@ -470,14 +71,14 @@
       "color": "slate"
     },
     {
-      "id": "PRODUCE",
-      "label": "veg",
-      "color": "emerald"
-    },
-    {
       "id": "BAKERY",
       "label": "Bakery 🥖",
       "color": "amber"
+    },
+    {
+      "id": "PRODUCE",
+      "label": "veg",
+      "color": "emerald"
     },
     {
       "id": "DAIRY",

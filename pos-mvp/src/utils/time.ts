@@ -19,7 +19,7 @@ let inMemoryClockOffsetMs: number = (() => {
         const parsed = parseInt(stored, 10);
         if (!isNaN(parsed)) return parsed;
       }
-    } catch {}
+    } catch { }
   }
   return 0;
 })();
@@ -39,7 +39,7 @@ export function setClockOffsetMs(offset: number): void {
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(CLOCK_OFFSET_STORAGE_KEY, String(inMemoryClockOffsetMs));
-    } catch {}
+    } catch { }
   }
 }
 
@@ -78,7 +78,8 @@ export async function syncClockWithMasterServer(candidateUrls?: string[]): Promi
     typeof window !== 'undefined' ? localStorage.getItem('master_server_url') : null,
     'http://localhost:3000',
     'http://192.168.8.7:3000',
-    'https://askar-edge-api.askar.workers.dev'
+    'https://askar-edge-api.askar.workers.dev',
+    'https://askar-edge-api.layali-askar-pos.workers.dev'
   ].filter(Boolean) as string[];
 
   for (const base of candidates) {
@@ -102,7 +103,7 @@ export async function syncClockWithMasterServer(candidateUrls?: string[]): Promi
         console.log(`⏱️ [Virtual Clock] Synchronized with ${base} (RTT: ${rtt}ms, Clock Offset: ${finalOffset}ms)`);
         return finalOffset;
       }
-    } catch {}
+    } catch { }
   }
   return getClockOffsetMs();
 }

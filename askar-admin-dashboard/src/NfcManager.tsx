@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { getApiBaseUrl } from './utils/apiConfig';
 import { getAdminPin } from './utils/auth';
+import { AddCustomerBookBalanceModal } from './components/AddCustomerBookBalanceModal';
 
 interface NfcCardItem {
   tag_id: string;
@@ -142,6 +143,7 @@ export default function NfcManager({
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustCpr, setNewCustCpr] = useState('');
   const [newCustBatch, setNewCustBatch] = useState('');
+  const [selectedBookBalanceCustomer, setSelectedBookBalanceCustomer] = useState<any | null>(null);
 
   // Action status
   const [actionLoading, setActionLoading] = useState(false);
@@ -1018,6 +1020,26 @@ export default function NfcManager({
                     </button>
                   )}
 
+                  {activeScannedCard.card_type !== 'MESS' && !activeScannedCard.isMess && (
+                    <button
+                      onClick={() => {
+                        setSelectedBookBalanceCustomer({
+                          id: activeScannedCard.customer_id || activeScannedCard.id,
+                          name: activeScannedCard.name,
+                          balance: activeScannedCard.balance,
+                          phone: activeScannedCard.phone,
+                          cardUid: activeScannedCard.tag_id,
+                          cpr: activeScannedCard.cpr
+                        });
+                      }}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-2 cursor-pointer"
+                      title="Add previous physical paper book balance"
+                    >
+                      <BookOpen size={15} />
+                      <span>+ Book Balance</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={() => {
                       setAssignTagId(activeScannedCard.tag_id);
@@ -1339,14 +1361,30 @@ export default function NfcManager({
                           <p className="text-xs text-amber-600 italic">No workers assigned to this group yet.</p>
                         ) : (
                           <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                            {memberList.slice(0, 5).map((m: any) => (
-                              <div key={m.id} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50">
-                                <span className="font-medium text-slate-800 line-clamp-1">{m.name}</span>
-                                <span className={`text-[11px] font-bold ${Number(m.balance || 0) > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                                  {Number(m.balance || 0).toFixed(3)} BHD
-                                </span>
-                              </div>
-                            ))}
+                            {memberList.slice(0, 5).map((m: any) => {
+                              const memberEqShare = Number(m.equalSplitShare || (totalDebt / Math.max(1, memberList.length)));
+                              const messDebt = Number(m.messShare ?? m.balance ?? 0);
+                              return (
+                                <div key={m.id} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <div className="flex flex-col min-w-0 pr-2">
+                                    <span className="font-bold text-slate-800 line-clamp-1">{m.name}</span>
+                                    {Number(m.personalBalance || 0) > 0 && (
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        Private: {Number(m.personalBalance).toFixed(3)} BHD
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col items-end shrink-0">
+                                    <span className={`text-[11px] font-black ${messDebt > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                                      {messDebt.toFixed(3)} BHD
+                                    </span>
+                                    <span className="text-[9px] font-bold text-indigo-600">
+                                      Equal: {memberEqShare.toFixed(3)} BHD
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
                             {memberList.length > 5 && (
                               <p className="text-[10px] text-center text-slate-400 font-bold">
                                 + {memberList.length - 5} more workers
@@ -1557,6 +1595,25 @@ export default function NfcManager({
                                 title="Open Statement"
                               >
                                 <ExternalLink size={16} />
+                              </button>
+                            )}
+
+                            {card.card_type !== 'MESS' && (card.customer_id || card.id) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedBookBalanceCustomer({
+                                    id: card.customer_id || card.id,
+                                    name: card.name,
+                                    balance: card.balance,
+                                    phone: card.phone,
+                                    cardUid: card.tag_id,
+                                    cpr: card.cpr
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-amber-50 text-amber-700 rounded-lg transition"
+                                title="Add Previous Book Balance (Paper Ledger)"
+                              >
+                                <BookOpen size={16} />
                               </button>
                             )}
 
@@ -2177,6 +2234,20 @@ export default function NfcManager({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Customer Book Balance Modal */}
+      {selectedBookBalanceCustomer && (
+        <AddCustomerBookBalanceModal
+          customer={selectedBookBalanceCustomer}
+          apiBase={apiBase}
+          onClose={() => setSelectedBookBalanceCustomer(null)}
+          onSuccess={(updatedCustomer) => {
+            setSelectedBookBalanceCustomer(null);
+            fetchRegisteredCards();
+            showNotification('success', `Added book balance to ${updatedCustomer.name || selectedBookBalanceCustomer.name}`);
+          }}
+        />
       )}
     </div>
   );

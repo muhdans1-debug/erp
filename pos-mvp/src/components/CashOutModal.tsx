@@ -1,22 +1,24 @@
 import { useState } from 'react';
 import { MinusCircle, X, Banknote, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { kickCashDrawer } from '../services/cashDrawerService';
+import { getResilientApiCandidates, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 
 interface CashOutModalProps {
   onClose: () => void;
   apiBase?: string;
   onExpenseRecorded?: () => void;
+  cashierName?: string;
 }
 
-export default function CashOutModal({ onClose, apiBase: propApiBase, onExpenseRecorded }: CashOutModalProps) {
-  const apiBase = propApiBase || (typeof window !== 'undefined' ? localStorage.getItem('master_server_url') || 'http://localhost:3000' : 'http://localhost:3000');
+export default function CashOutModal({ onClose, apiBase: propApiBase, onExpenseRecorded, cashierName }: CashOutModalProps) {
+  const activeCashier = cashierName || (typeof window !== 'undefined' ? localStorage.getItem('active_cashier_name') || 'Cashier' : 'Cashier');
   
   const [formData, setFormData] = useState({
     type: 'BUSINESS' as 'BUSINESS' | 'PERSONAL',
     category: 'RENT',
     amount: '',
     description: '',
-    recordedBy: 'Manager'
+    recordedBy: activeCashier
   });
 
   const [loading, setLoading] = useState(false);
@@ -34,31 +36,78 @@ export default function CashOutModal({ onClose, apiBase: propApiBase, onExpenseR
     setFeedback(null);
 
     try {
-      const res = await fetch(`${apiBase}/api/expenses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          amount: numAmount,
-        }),
-      });
+      const managerPin = (typeof window !== 'undefined' ? localStorage.getItem('active_manager_pin') || sessionStorage.getItem('askar_admin_pin') : null) || '9999';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-pos-client': 'store-pos',
+        'x-pos-key': '457738d4f57ef4ccdd606b4cbf78aa7de5c5e27327ce32b53e0a5fc4bf7f9d06',
+        'x-manager-pin': managerPin
+      };
 
-      const data = await res.json();
-      if (data.success) {
+      const payload = {
+        ...formData,
+        amount: numAmount,
+      };
+
+      // Resilient Multi-Candidate Failover (Localhost -> Store LAN -> Cloudflare Edge)
+      const rawCandidates = getResilientApiCandidates();
+      const primaryCandidate = (propApiBase && !propApiBase.includes('askar-khata-pwa.vercel.app')) ? propApiBase : rawCandidates[0];
+      const candidates = [
+        primaryCandidate,
+        ...rawCandidates,
+        'http://localhost:3000',
+        'http://192.168.8.7:3000',
+        DEFAULT_EDGE_API_URL
+      ].filter((v, i, a): v is string => Boolean(v && v.trim()) && a.indexOf(v) === i);
+
+      let saved = false;
+      let lastError = '';
+
+      for (const rawBase of candidates) {
+        const base = rawBase.replace(/\/+$/, '');
+        try {
+          const res = await fetch(`${base}/api/expenses`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(3500)
+          });
+
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data.success || data.expense || data.id) {
+              saved = true;
+              break;
+            }
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            if (errData.error || errData.details) {
+              lastError = errData.error || errData.details;
+            }
+          }
+        } catch (fetchErr: any) {
+          console.warn(`[CashOut] Failed candidate ${base}:`, fetchErr?.message);
+        }
+      }
+
+      if (saved) {
         // ⚡ Pop cash drawer so cashier/manager can physically extract cash
         kickCashDrawer().catch((err) => console.warn('CashOut drawer kick error:', err));
 
-        setFeedback({ type: 'success', message: 'Expense recorded! Cash drawer balance adjusted.' });
+        setFeedback({ type: 'success', message: `Expense of BD ${numAmount.toFixed(3)} recorded! Cash drawer balance adjusted.` });
         if (onExpenseRecorded) onExpenseRecorded();
         setTimeout(() => {
           onClose();
         }, 800);
       } else {
-        setFeedback({ type: 'error', message: data.error || 'Failed to record expense.' });
+        setFeedback({
+          type: 'error',
+          message: lastError || 'Could not connect to back-office or edge server. Please ensure Master Server (port 3000) is running.'
+        });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setFeedback({ type: 'error', message: 'Could not connect to back-office server.' });
+      setFeedback({ type: 'error', message: err?.message || 'Could not connect to back-office server.' });
     } finally {
       setLoading(false);
     }

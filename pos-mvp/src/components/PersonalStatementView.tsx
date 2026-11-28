@@ -16,7 +16,8 @@ import {
   TrendingDown,
   TrendingUp,
   Receipt,
-  BookOpen
+  BookOpen,
+  Sparkles
 } from 'lucide-react';
 import { getApiBaseUrl, DEFAULT_EDGE_API_URL } from '../utils/apiConfig';
 import { getManagerPin } from '../utils/authUtils';
@@ -85,6 +86,8 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
   const [showPayModal, setShowPayModal] = useState<boolean>(false);
   const [payAmount, setPayAmount] = useState<string>('');
   const [payMethod, setPayMethod] = useState<'CASH' | 'BENEFIT_PAY'>('CASH');
+  const [payForgiveGoodwill, setPayForgiveGoodwill] = useState<boolean>(false);
+  const [cycleBreakdown, setCycleBreakdown] = useState<any>(null);
   const [isSubmittingPay, setIsSubmittingPay] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
 
@@ -221,6 +224,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
         const data = await res.json();
         const entries = data.statement || data.entries || data.sales || [];
         setStatementEntries(Array.isArray(entries) ? entries : []);
+        setCycleBreakdown(data.cycleBreakdown || null);
       }
     } catch (err: any) {
       console.warn('Error loading statement entries:', err?.message);
@@ -391,6 +395,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
         customerCpr: selectedCustomer.cpr,
         statement: filteredStatement,
         currentBalance: Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0),
+        cycleBreakdown: cycleBreakdown,
         dateRange: dateLabel,
         isMessStatement: false
       });
@@ -423,8 +428,20 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
     msg += `*Recent Personal Purchases:*\n`;
 
     filteredStatement.slice(0, 8).forEach((item, idx) => {
-      const sign = item.type === 'PAYMENT' ? '[-] Payment' : '[+] Charge';
-      msg += `${idx + 1}. ${item.formattedDate || ''}: ${sign} BD ${Number(item.amount).toFixed(3)} (Bal: BD ${Number(item.running_balance).toFixed(3)})\n`;
+      const isMessShare = Boolean(
+        item.is_mess_split ||
+        (item.group_total && item.group_total > item.amount) ||
+        (item.reference && item.reference.toLowerCase().includes('mess split'))
+      );
+      const fullBasket = Number(item.bill_total || item.group_total || item.amount || 0);
+      const splitShare = Number(item.split_share !== null && item.split_share !== undefined ? item.split_share : item.amount);
+
+      if (isMessShare && fullBasket > splitShare) {
+        msg += `${idx + 1}. ${item.formattedDate || ''}: [+] Mess Basket BD ${fullBasket.toFixed(3)} (Your Share: BD ${splitShare.toFixed(3)} | Bal: BD ${Number(item.running_balance).toFixed(3)})\n`;
+      } else {
+        const sign = item.type === 'PAYMENT' ? '[-] Payment' : '[+] Charge';
+        msg += `${idx + 1}. ${item.formattedDate || ''}: ${sign} BD ${Number(item.amount).toFixed(3)} (Bal: BD ${Number(item.running_balance).toFixed(3)})\n`;
+      }
     });
 
     msg += `--------------------------------\n`;
@@ -445,6 +462,10 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
 
     setIsSubmittingPay(true);
     try {
+      const prevBal = Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0);
+      const leftover = Number((prevBal - amountNum).toFixed(3));
+      const willForgiveGoodwill = payForgiveGoodwill && leftover > 0 && leftover <= 0.500;
+
       const res = await fetchFromCandidates('/api/khata/settle', {
         method: 'POST',
         headers: {
@@ -457,6 +478,9 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
           amount: amountNum,
           amountPaid: amountNum,
           paymentMethod: payMethod,
+          forgiveMicroBalance: willForgiveGoodwill,
+          forgiveGoodwill: willForgiveGoodwill,
+          goodwillDiscount: willForgiveGoodwill ? leftover : 0,
           reference: `Personal Khata Payment - ${selectedCustomer.name}`
         })
       });
@@ -465,8 +489,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
         if (payMethod === 'CASH') kickCashDrawer().catch(() => { });
         playThankYouVoice('KHATA_PAYMENT');
 
-        const prevBal = Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0);
-        const newBal = Math.max(0, prevBal - amountNum);
+        const newBal = willForgiveGoodwill ? 0 : Math.max(0, prevBal - amountNum);
 
         printKhataPaymentReceipt({
           shopName: "LAYALI SUPERMARKET",
@@ -592,16 +615,16 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                           </span>
                         )}
                         {cust.card_deposit_status === 'IN_CREDIT' || cust.card_deposit_status === 'DEFERRED_CREDIT' || cust.card_deposit_status === 'DEFERRED_PAYDAY' || cust.depositInCredit ? (
-                          <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-300 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
-                            IN CREDIT (DUE): BD {Number(cust.card_deposit_amount || 3).toFixed(3)}
+                          <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
+                            Credit Deposit: BD {Number(cust.card_deposit_amount || 3).toFixed(3)}
                           </span>
                         ) : (Number(cust.card_deposit_amount || 0) > 0 || cust.card_deposit_status === 'HELD') ? (
                           <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
-                            HELD IN TRUST: BD {Number(cust.card_deposit_amount ?? 3).toFixed(3)}
+                            Deposited: BD {Number(cust.card_deposit_amount ?? 3).toFixed(3)}
                           </span>
                         ) : (
                           <span className="text-[10px] bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
-                            NO DEPOSIT
+                            No Deposit
                           </span>
                         )}
                       </div>
@@ -658,16 +681,16 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                     </span>
                   )}
                   {selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit ? (
-                    <span className="text-xs bg-rose-50 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">
-                      IN CREDIT (DUE): BD {Number(selectedCustomer.card_deposit_amount || 3).toFixed(3)}
+                    <span className="text-xs bg-amber-50 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">
+                      Credit Deposit: BD {Number(selectedCustomer.card_deposit_amount || 3).toFixed(3)}
                     </span>
                   ) : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD') ? (
                     <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md font-black uppercase tracking-wider">
-                      HELD IN TRUST: BD {Number(selectedCustomer.card_deposit_amount ?? 3).toFixed(3)}
+                      Deposited: BD {Number(selectedCustomer.card_deposit_amount ?? 3).toFixed(3)}
                     </span>
                   ) : (
                     <span className="text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">
-                      NO DEPOSIT
+                      No Deposit
                     </span>
                   )}
                 </div>
@@ -772,7 +795,7 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                 }>Card Deposit</span>
               </div>
               <p className={`text-2xl font-black mt-0.5 ${selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
-                  ? 'text-rose-700'
+                  ? 'text-amber-700'
                   : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
                     ? 'text-emerald-700'
                     : 'text-slate-400'
@@ -780,16 +803,16 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                 BD {Number(selectedCustomer.card_deposit_amount || (selectedCustomer.depositInCredit ? 3 : 0)).toFixed(3)}
               </p>
               <span className={`text-[10px] font-black uppercase tracking-wider ${selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
-                  ? 'text-rose-700'
+                  ? 'text-amber-700'
                   : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
                     ? 'text-emerald-700'
                     : 'text-slate-400'
                 }`}>
                 {selectedCustomer.card_deposit_status === 'IN_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_CREDIT' || selectedCustomer.card_deposit_status === 'DEFERRED_PAYDAY' || selectedCustomer.depositInCredit
-                  ? 'IN CREDIT (DUE)'
+                  ? 'Credit Deposit'
                   : (Number(selectedCustomer.card_deposit_amount || 0) > 0 || selectedCustomer.card_deposit_status === 'HELD')
-                    ? 'HELD IN TRUST'
-                    : 'NO DEPOSIT'}
+                    ? 'Deposited'
+                    : 'No Deposit'}
               </span>
             </div>
 
@@ -826,6 +849,37 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
               <span className="text-[10px] font-semibold text-slate-500">Authorized store limit</span>
             </div>
           </div>
+
+          {/* Monthly Cycle Transparency Breakdown (Eliminates Leftover Balance Confusion) */}
+          {cycleBreakdown && (cycleBreakdown.hasPriorCarryOver || (cycleBreakdown.priorCycleBalance && Math.abs(cycleBreakdown.priorCycleBalance) > 0.001)) && (
+            <div className="p-3.5 bg-amber-50/90 border-2 border-amber-300 rounded-2xl space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-xs font-bold text-amber-950">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm">📌</span>
+                  <span>Monthly Cycle Breakdown</span>
+                  <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-medium">Brought Forward</span>
+                </span>
+                <span className="text-[10px] text-amber-800 font-mono">{cycleBreakdown.currentMonthLabel}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                <div className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-2xs">
+                  <div className="text-[10px] text-slate-500 font-sans font-medium">Prior Month (B/F)</div>
+                  <div className="text-xs font-black text-amber-900 mt-1">BD {Number(cycleBreakdown.priorCycleBalance || 0).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-400 font-sans">{cycleBreakdown.priorMonthLabel}</div>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-2xs">
+                  <div className="text-[10px] text-slate-500 font-sans font-medium">This Month Spent</div>
+                  <div className="text-xs font-black text-rose-600 mt-1">+BD {Number(cycleBreakdown.currentMonthPurchases || 0).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-400 font-sans">Purchases</div>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-2xs">
+                  <div className="text-[10px] text-slate-500 font-sans font-medium">Total Balance Due</div>
+                  <div className="text-xs font-black text-emerald-700 mt-1">BD {Number(cycleBreakdown.currentBalance ?? (selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0)).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-400 font-sans">Consolidated</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Statement Filters & Date Range Controls */}
           <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
@@ -967,28 +1021,46 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
               <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
                 {filteredStatement.map((tx: any) => {
                   const isPayment = tx.type === 'PAYMENT' || tx.type === 'WRITE_OFF' || tx.raw_amount < 0;
+                  const isMessSplit = Boolean(
+                    tx.is_mess_split ||
+                    tx.subledger_type === 'MESS_SHARE' ||
+                    tx.group_total ||
+                    tx.mess_id ||
+                    (tx.reference && tx.reference.toLowerCase().includes('mess split'))
+                  );
+                  const billTotal = Number(tx.bill_total || tx.group_total || tx.amount || 0);
+                  const memberShare = Number(tx.split_share !== null && tx.split_share !== undefined ? tx.split_share : tx.amount);
+                  const memberCount = tx.member_count || 1;
+
                   return (
                     <div
                       key={tx.id}
                       className="p-3.5 hover:bg-slate-50/80 transition-colors flex items-center justify-between text-xs"
                     >
                       <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-black text-slate-800 text-sm">
                             {tx.reference?.match(/(INV-[A-Za-z0-9_-]+)/i)?.[1] || tx.reference || (isPayment ? 'Payment Settle' : 'Grocery Purchase')}
                           </span>
                           <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tx.type === 'DEPOSIT_DEFERRED' ? 'bg-rose-100 text-rose-800' :
-                                tx.type === 'DEPOSIT_COLLECTED' ? 'bg-emerald-100 text-emerald-800' :
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tx.type === 'DEPOSIT_DEFERRED' ? 'bg-amber-100 text-amber-800' :
+                                (tx.type === 'DEPOSIT_COLLECTED' || tx.type === 'CARD_DEPOSIT') ? 'bg-emerald-100 text-emerald-800' :
                                   tx.type === 'DEPOSIT_REFUND' ? 'bg-amber-100 text-amber-800' :
-                                    isPayment ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
+                                    isPayment ? 'bg-emerald-100 text-emerald-800' :
+                                      isMessSplit ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' : 'bg-slate-100 text-slate-800'
                               }`}
                           >
-                            {tx.type === 'DEPOSIT_DEFERRED' ? 'CARD DEPOSIT (IN CREDIT)' :
-                              tx.type === 'DEPOSIT_COLLECTED' ? 'DEPOSIT COLLECTED' :
+                            {tx.type === 'DEPOSIT_DEFERRED' ? 'Credit Deposit' :
+                              (tx.type === 'DEPOSIT_COLLECTED' || tx.type === 'CARD_DEPOSIT') ? 'Deposited' :
                                 tx.type === 'DEPOSIT_REFUND' ? 'DEPOSIT REFUNDED' :
-                                  isPayment ? 'PAYMENT RECEIVED' : 'PERSONAL CHARGE'}
+                                  isPayment ? 'PAYMENT RECEIVED' :
+                                    isMessSplit ? `MESS SPLIT (${memberCount > 1 ? `1/${memberCount}` : 'ROOM'})` : 'PERSONAL CHARGE'}
                           </span>
+                          {tx.messName && (
+                            <span className="text-[10px] text-indigo-600 font-bold">
+                              • {tx.messName}
+                            </span>
+                          )}
                           <span className="text-slate-400">•</span>
                           <span className="text-slate-500 font-medium">
                             {tx.formattedDate} {tx.formattedTime}
@@ -1001,12 +1073,23 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                       </div>
 
                       <div className="text-right shrink-0">
-                        <span
-                          className={`text-base font-black ${isPayment ? 'text-emerald-600' : 'text-slate-900'
-                            }`}
-                        >
-                          {isPayment ? '-' : '+'}BD {Number(tx.amount || 0).toFixed(3)}
-                        </span>
+                        {isMessSplit && billTotal > memberShare ? (
+                          <>
+                            <span className="text-sm font-black text-amber-600 block">
+                              +BD {memberShare.toFixed(3)}
+                            </span>
+                            <span className="text-[10px] font-medium text-slate-500 block">
+                              ({memberCount > 1 ? `1/${memberCount} of ` : ''}BD {billTotal.toFixed(3)})
+                            </span>
+                          </>
+                        ) : (
+                          <span
+                            className={`text-base font-black ${isPayment ? 'text-emerald-600' : 'text-slate-900'
+                              }`}
+                          >
+                            {isPayment ? '-' : '+'}BD {Number(tx.amount || 0).toFixed(3)}
+                          </span>
+                        )}
                         {tx.running_balance !== undefined && (
                           <span className="text-[10px] text-slate-400 block font-medium">
                             Bal: BD {Number(tx.running_balance).toFixed(3)}
@@ -1112,6 +1195,42 @@ export const PersonalStatementView: React.FC<PersonalStatementViewProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Goodwill Round-Off Card for Micro-Balances */}
+              {(() => {
+                const amt = parseFloat(payAmount || '0');
+                const curBal = Number(selectedCustomer.personalBalance ?? selectedCustomer.currentBalance ?? 0);
+                const leftover = Number((curBal - amt).toFixed(3));
+                if (amt > 0 && leftover > 0 && leftover <= 0.500) {
+                  return (
+                    <div className="p-3 bg-amber-50 border-2 border-amber-300 rounded-xl flex items-center justify-between shadow-xs">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="text-amber-600 shrink-0" size={18} />
+                        <div>
+                          <div className="text-xs font-black text-amber-950">
+                            Leftover Micro-Balance: <span className="font-mono text-rose-600">BD {leftover.toFixed(3)}</span> ({Math.round(leftover * 1000)} fils)
+                          </div>
+                          <div className="text-[11px] text-amber-800 font-medium">
+                            Waive as Baqala Goodwill Discount so account clears cleanly?
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPayForgiveGoodwill(!payForgiveGoodwill)}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                          payForgiveGoodwill
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white border border-amber-400 text-amber-900 hover:bg-amber-100'
+                        }`}
+                      >
+                        {payForgiveGoodwill ? '✓ Waived (0.000 BD)' : '✨ Forgive & Clear'}
+                      </button>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {/* Action Buttons */}
               <div className="pt-2 flex gap-2">

@@ -6,6 +6,7 @@
 import { db } from '../db.js';
 import { getNextInvoiceSequence, formatInvoiceNumber, normalizeTerminalId } from '../services/invoiceSequence.js';
 import { ensureRegionalIso, getRegionalIsoString } from '../utils/time.js';
+import { KhataService } from '../modules/khata/index.js';
 
 const CURRENT_TENANT = 'tenant_askar_01';
 
@@ -99,9 +100,9 @@ export const SaleRepository = {
       const terminalId = normalizeTerminalId(saleData.terminalId || saleData.terminal_id || 'T1');
       const storeId = saleData.storeId || saleData.store_id || 'store_askar_01';
 
-      // Strictly sequential, gapless invoice numbering for Bahrain NBR VAT compliance
-      const seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence(terminalId, tx);
-      const invoiceNo =
+      // Strictly sequential, gapless invoice numbering with duplicate auto-collision resolution
+      let seq = Number(saleData.invoiceSeq) > 0 ? Number(saleData.invoiceSeq) : await getNextInvoiceSequence(terminalId, tx);
+      let invoiceNo =
         saleData.invoiceNo &&
           !saleData.invoiceNo.includes('NaN') &&
           !saleData.invoiceNo.startsWith('INV-17') &&
@@ -109,6 +110,19 @@ export const SaleRepository = {
           saleData.invoiceNo !== 'INV-0'
           ? saleData.invoiceNo
           : formatInvoiceNumber(seq, terminalId);
+
+      // Verify invoice uniqueness; if already claimed, dynamically generate next available sequence
+      let collisionAttempts = 0;
+      while (collisionAttempts < 10) {
+        const checkRes = await tx.execute({
+          sql: `SELECT id FROM Sale WHERE invoiceNo = ? LIMIT 1`,
+          args: [invoiceNo]
+        });
+        if (!checkRes.rows || checkRes.rows.length === 0) break;
+        collisionAttempts++;
+        seq = await getNextInvoiceSequence(terminalId, tx);
+        invoiceNo = formatInvoiceNumber(seq, terminalId);
+      }
 
       // Validate customerId to prevent foreign key errors
       let validCustomerId = null;
@@ -208,43 +222,25 @@ export const SaleRepository = {
         }
       }
 
-      // Record Khata ledger if credit transaction
+      // Record Khata ledger if credit transaction via KhataService
       if (
         validCustomerId &&
         (saleData.paymentType === 'CREDIT' ||
           saleData.paymentType === 'NFC_CREDIT' ||
           saleData.paymentType === 'MESS_KHATA')
       ) {
-        const balRes = await tx.execute({
-          sql: `SELECT COALESCE(SUM(amount), 0) as balance FROM KhataLedger WHERE customerId = ?`,
-          args: [validCustomerId],
+        await KhataService.chargeCustomer({
+          customerId: validCustomerId,
+          amount: totalVal,
+          invoiceNo,
+          saleId,
+          subledgerType: saleData.subledgerType || 'PERSONAL',
+          messId: saleData.messId || null,
+          tenantId: saleData.tenantId || CURRENT_TENANT,
+          storeId,
+          timestamp: createdAt,
+          tx
         });
-        const currentBal = Number(balRes.rows[0]?.balance || 0);
-        const newBal = Number((currentBal + totalVal).toFixed(3));
-
-        const ledgerId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        await tx.execute({
-          sql: `INSERT INTO KhataLedger (
-            id, tenantId, customerId, amount, type, reference, running_balance,
-            syncStatus, timestamp, created_at
-          ) VALUES (?, ?, ?, ?, 'CHARGE', ?, ?, 'PENDING', ?, ?)`,
-          args: [
-            ledgerId,
-            CURRENT_TENANT,
-            validCustomerId,
-            totalVal,
-            invoiceNo,
-            newBal,
-            createdAt,
-            createdAt,
-          ],
-        });
-
-        // Update running balance in unified Customer table
-        await tx.execute({
-          sql: `UPDATE Customer SET balance = COALESCE(balance, 0) + ? WHERE id = ?`,
-          args: [totalVal, validCustomerId],
-        }).catch(() => { });
       }
 
       return {

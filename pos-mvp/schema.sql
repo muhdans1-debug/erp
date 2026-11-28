@@ -354,3 +354,31 @@ BEGIN
   WHERE invoiceNo = NEW.invoice_number OR id = NEW.id;
 END;
 
+-- ====================================================================
+-- 10. WHATSAPP NOTIFICATIONS & DELIVERY ANALYTICS TELEMETRY
+-- Tracks delivery lifecycle: SENT -> DELIVERED (gray checks) -> READ (blue checks)
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS "WhatsAppMessageLog" (
+  "id" TEXT PRIMARY KEY,
+  "tenantId" TEXT NOT NULL DEFAULT 'tenant_askar_01',
+  "customerId" TEXT NOT NULL,
+  "customerName" TEXT NOT NULL,
+  "phone" TEXT NOT NULL,
+  "messageType" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'SENT',
+  "sentAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "deliveredAt" DATETIME,
+  "readAt" DATETIME,
+  "failedAt" DATETIME,
+  "errorMessage" TEXT,
+  "pwaLink" TEXT,
+  "balanceSnapshot" REAL DEFAULT 0.0,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS "idx_wa_log_customer" ON "WhatsAppMessageLog"("customerId");
+CREATE INDEX IF NOT EXISTS "idx_wa_log_status" ON "WhatsAppMessageLog"("status");
+CREATE INDEX IF NOT EXISTS "idx_wa_log_created" ON "WhatsAppMessageLog"("createdAt" DESC);
+
+

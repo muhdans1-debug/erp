@@ -881,6 +881,21 @@ productsRouter.post('/', requirePosOrManagerAuth, async (c) => {
       args: [`si_${storeId}_${id}`, tenantId, storeId, id, stockQuantity, sellingPrice, unitCost]
     });
 
+    // 3. Auto-register into QuickProduct so it immediately appears in the POS grid
+    try {
+      const qpCategory = (category || 'ESSENTIALS').toUpperCase();
+      await db.execute({
+        sql: `INSERT INTO QuickProduct (id, productId, category, quickColor, sortOrder, updatedAt)
+              VALUES (?, ?, ?, '#3b82f6', 1, CURRENT_TIMESTAMP)
+              ON CONFLICT(productId) DO UPDATE SET
+                category = excluded.category,
+                updatedAt = CURRENT_TIMESTAMP`,
+        args: [`qp_${id}`, id, qpCategory]
+      });
+    } catch (qpErr: any) {
+      console.warn('QuickProduct auto-register notice:', qpErr?.message);
+    }
+
     return c.json({ success: true, product: { id, barcode, name, sellingPrice, stockQuantity, storeId } }, 201);
   } catch (err: any) {
     return c.json({ error: 'Failed to create product', details: err?.message }, 500);

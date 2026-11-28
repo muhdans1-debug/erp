@@ -19,6 +19,12 @@ import hardwareRoutes from './routes/hardware.js';
 import shiftRoutes from './routes/shifts.js';
 import reportRoutes from './routes/reports.js';
 import procurementRoutes from './routes/procurement.js';
+import resilienceRoutes from './routes/resilience.js';
+import whatsappRoutes from './routes/whatsapp.js';
+import { flightRecorder } from './services/flightRecorder.js';
+import { chaosEngine } from './services/chaosEngine.js';
+import { ShadowLedger } from './services/shadowLedger.js';
+import { congestionGovernor } from './services/congestionGovernor.js';
 import { verifyManagerPin, managerAuth } from './middleware/auth.js';
 import { pipeline } from 'stream/promises';
 import { db, tursoCloudClient, initDatabase, localDbPath } from './db.js';
@@ -33,6 +39,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getCurrentInvoiceSequence, setStartingInvoiceSequence, formatInvoiceNumber } from './services/invoiceSequence.js';
 import { getMasterServerTimeInfo, getRegionalIsoString, REGIONAL_TIMEZONE } from './utils/time.js';
+import { initPushNotificationService, registerPushSubscription, unregisterPushSubscription, getActiveSubscriptionsCount, broadcastTransactionEvent, getVapidPublicKey } from './services/pushNotificationService.js';
+import { initAlertService, dispatchAlert } from './services/alertService.js';
+import { startReconcilerCron, runReconciliationPass, getLastAuditReport, forceWalCheckpoint } from './services/auditReconciler.js';
+import { l1ProductCache } from './services/l1ProductCache.js';
+import { IdempotencyService } from './services/idempotency.js';
+import { percentileTracker } from './services/percentileTracker.js';
+import { HotBackupService } from './services/hotBackup.js';
+import { healthAnalyticsService } from './services/healthAnalyticsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,10 +94,28 @@ import {
   getFleetMatrix
 } from './services/tursoPlatform.js';
 
-const fastify = Fastify({
+// Dynamic TLS / HTTPS Configuration for Local POS Master Server
+const certDir = path.resolve(__dirname, 'certs');
+const certPath = path.join(certDir, 'server.cert');
+const keyPath = path.join(certDir, 'server.key');
+const fastifyOptions = {
   logger: true,
   bodyLimit: 52428800 // 50MB limit to handle bulk image syncs and 100+ item intake batches
-});
+};
+
+if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+  try {
+    fastifyOptions.https = {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath)
+    };
+    console.log('🔒 TLS 1.3 / HTTPS Encryption active on POS master server');
+  } catch (sslErr) {
+    console.warn('⚠️ Could not load SSL certificates:', sslErr.message);
+  }
+}
+
+const fastify = Fastify(fastifyOptions);
 
 // Attach Singleton LibSQL Database to Fastify Instance
 if (!fastify.hasDecorator('db')) {
@@ -149,9 +181,25 @@ if (!fs.existsSync(path.join(__dirname, 'dist', 'pos.apk'))) {
 // Process Resilience: Prevent unexpected background network disconnects from crashing the server
 process.on('uncaughtException', (err) => {
   console.error('⚠️ [Server Uncaught Exception Safeguard]:', err?.message || err);
+  try {
+    flightRecorder.recordEvent({
+      type: 'FATAL_UNCAUGHT_EXCEPTION',
+      category: 'ERROR',
+      level: 'FATAL',
+      details: { message: err?.message, stack: err?.stack ? err.stack.slice(0, 400) : null }
+    });
+  } catch (_) {}
 });
 process.on('unhandledRejection', (reason) => {
   console.warn('⚠️ [Server Unhandled Rejection Safeguard]:', reason?.message || reason);
+  try {
+    flightRecorder.recordEvent({
+      type: 'UNHANDLED_REJECTION',
+      category: 'ERROR',
+      level: 'WARN',
+      details: { message: reason?.message || String(reason) }
+    });
+  } catch (_) {}
 });
 
 // Singleton LibSQL Client used for all database queries & background Turso sync
@@ -220,6 +268,68 @@ await fastify.register(fastifyWebsocket, {
   }
 });
 
+// Initialize PWA Push Notification & Real-Time Event Hub
+initPushNotificationService(fastify);
+initAlertService(fastify);
+
+// Push Notification Subscription & VAPID Endpoints
+fastify.get('/api/notifications/vapid-public-key', async (request, reply) => {
+  return reply.send({ publicKey: getVapidPublicKey() });
+});
+
+fastify.post('/api/notifications/subscribe', async (request, reply) => {
+  const sub = request.body;
+  if (!sub || !sub.endpoint) {
+    return reply.status(400).send({ error: 'Valid subscription object required' });
+  }
+  registerPushSubscription(sub);
+  return reply.send({ success: true, count: getActiveSubscriptionsCount() });
+});
+
+fastify.post('/api/notifications/unsubscribe', async (request, reply) => {
+  const { endpoint } = request.body || {};
+  if (endpoint) {
+    unregisterPushSubscription(endpoint);
+  }
+  return reply.send({ success: true });
+});
+
+fastify.get('/api/notifications/status', async (request, reply) => {
+  return reply.send({
+    activeSubscriptions: getActiveSubscriptionsCount(),
+    wsClients: fastify.websocketServer?.clients?.size || 0,
+    timestamp: new Date().toISOString()
+  });
+});
+
+fastify.all('/api/notifications/test', async (request, reply) => {
+  const query = request.query || {};
+  const body = request.body || {};
+  const data = { ...query, ...body };
+
+  const testEvent = {
+    txType: data.txType || 'SALE',
+    title: data.title || '🔔 Transaction Alert (Live Test)',
+    message: data.message || 'Payment received successfully at Askar Supermarket',
+    amount: Number(data.amount) || 2.500,
+    formattedAmount: `${(Number(data.amount) || 2.5).toFixed(3)} BHD`,
+    reference: data.reference || 'TEST-' + Math.floor(1000 + Math.random() * 9000),
+    invoiceNo: data.invoiceNo || 'INV-' + Math.floor(10000 + Math.random() * 90000),
+    paymentMethod: data.paymentMethod || 'BenefitPay',
+    customerName: data.customerName || 'Test Customer (Phone Alert)',
+    customerId: data.customerId || 'CUST-001',
+    timestamp: new Date().toISOString()
+  };
+
+  const res = broadcastTransactionEvent(testEvent);
+  fastify.log.info(`🔔 [Push Test] Broadcasted test notification to ${res.broadcastCount} clients.`);
+  return reply.send({
+    success: true,
+    broadcastCount: res.broadcastCount,
+    payload: res.payload
+  });
+});
+
 // 🟢 Register Modular Domain Route Plugins (With fastify.websocketServer fully available)
 fastify.register(salesRoutes);
 fastify.register(productRoutes);
@@ -228,6 +338,86 @@ fastify.register(hardwareRoutes);
 fastify.register(shiftRoutes);
 fastify.register(reportRoutes);
 fastify.register(procurementRoutes);
+fastify.register(resilienceRoutes);
+fastify.register(whatsappRoutes);
+
+// --- FLIGHT RECORDER & CORRELATION ID TRACING HOOKS ---
+fastify.addHook('onRequest', async (request, reply) => {
+  congestionGovernor.recordRequest();
+  if (request.method === 'POST' && (request.url.startsWith('/api/sales') || request.url.startsWith('/checkout') || request.url.startsWith('/api/checkout'))) {
+    congestionGovernor.recordCounterActivity();
+  }
+
+  const correlationId = request.headers['x-correlation-id'] || `corr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  request.correlationId = correlationId;
+  request.startEpoch = Date.now();
+  reply.header('x-correlation-id', correlationId);
+
+  const url = request.url;
+  if (!url.startsWith('/assets/') && !url.startsWith('/favicon') && !url.endsWith('.js') && !url.endsWith('.css') && !url.endsWith('.png') && !url.endsWith('.ico')) {
+    flightRecorder.recordEvent({
+      type: 'HTTP_START',
+      category: 'HTTP',
+      level: 'INFO',
+      correlationId,
+      details: {
+        method: request.method,
+        url: request.url,
+        ip: request.ip
+      }
+    });
+  }
+});
+
+fastify.addHook('onResponse', async (request, reply) => {
+  const url = request.url;
+  if (!url.startsWith('/assets/') && !url.startsWith('/favicon') && !url.endsWith('.js') && !url.endsWith('.css') && !url.endsWith('.png') && !url.endsWith('.ico')) {
+    const durationMs = request.startEpoch ? (Date.now() - request.startEpoch) : 0;
+    const isError = reply.statusCode >= 400;
+
+    // Real-Time Health Analytics Hooks
+    if (reply.statusCode >= 500) {
+      healthAnalyticsService.recordError();
+    }
+    if (request.method === 'POST' && (url.startsWith('/api/sales') || url.startsWith('/api/checkout')) && reply.statusCode < 400) {
+      const body = request.body || {};
+      const count = (body.items || body.cart || []).length || 1;
+      const total = Number(body.total || body.totalAmount) || 0;
+      healthAnalyticsService.recordSale({ itemCount: count, totalAmount: total, latencyMs: durationMs });
+    } else if (url.startsWith('/api/products/search') || url.startsWith('/api/products/barcode/')) {
+      healthAnalyticsService.recordScan();
+    }
+
+    flightRecorder.recordEvent({
+      type: isError ? 'HTTP_WARN' : 'HTTP_DONE',
+      category: isError ? 'ERROR' : 'HTTP',
+      level: isError ? (reply.statusCode >= 500 ? 'ERROR' : 'WARN') : 'INFO',
+      correlationId: request.correlationId,
+      durationMs,
+      details: {
+        method: request.method,
+        url: request.url,
+        statusCode: reply.statusCode
+      }
+    });
+  }
+});
+
+fastify.addHook('onError', async (request, reply, error) => {
+  healthAnalyticsService.recordError();
+  flightRecorder.recordEvent({
+    type: 'HTTP_ERROR',
+    category: 'ERROR',
+    level: 'ERROR',
+    correlationId: request?.correlationId,
+    details: {
+      method: request?.method,
+      url: request?.url,
+      message: error?.message,
+      stack: error?.stack ? error.stack.slice(0, 300) : null
+    }
+  });
+});
 
 // WebSocket Keepalive Monitor: Graceful keep-alive without aggressively killing local POS hardware
 const heartbeatInterval = setInterval(() => {
@@ -260,6 +450,60 @@ fastify.addHook('onClose', (_instance, done) => {
 let activeLock = null;
 let lastRelayedNfc = null;
 let lastCartState = null;
+
+// Terminal Fleet Registry for Real-Time Fleet & Peripheral Telemetry
+const terminalRegistry = new Map();
+
+// Seed primary Sunmi counter register so it is immediately monitored
+terminalRegistry.set('REG-01-COUNTER', {
+  terminalId: 'REG-01-COUNTER',
+  ip: '192.168.8.12',
+  name: 'Sunmi V2 Pro Counter',
+  appVersion: '1.4.2',
+  lastSeen: Date.now(),
+  pingRttMs: 2,
+  pendingOfflineSales: 0,
+  status: 'ONLINE',
+  peripherals: {
+    printer: 'READY',
+    scanner: 'READY',
+    drawer: 'CLOSED',
+    customerScreen: 'SYNCHRONIZED'
+  }
+});
+
+function broadcastWs(data) {
+  if (fastify.websocketServer?.clients) {
+    const payload = typeof data === 'string' ? data : JSON.stringify(data);
+    fastify.websocketServer.clients.forEach(client => {
+      if (client.readyState === 1) { // 1 = WebSocket.OPEN
+        try { client.send(payload); } catch (_) {}
+      }
+    });
+  }
+}
+
+// ⚡ Real-Time Health Analytics Streaming Bus (Dual-Transport: WebSocket /ws + SSE /stream)
+const sseAnalyticsClients = new Set();
+
+function broadcastAnalyticsEvent(payload) {
+  // 1. Unified WebSocket Broadcast (/ws)
+  broadcastWs(payload);
+
+  // 2. Server-Sent Events (SSE) Broadcast (/api/system/analytics/stream)
+  if (sseAnalyticsClients.size > 0) {
+    const sseMsg = `event: ${payload.type || 'message'}\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const client of sseAnalyticsClients) {
+      try {
+        client.reply.raw.write(sseMsg);
+      } catch (_) {
+        sseAnalyticsClients.delete(client);
+      }
+    }
+  }
+}
+
+healthAnalyticsService.setBroadcaster(broadcastAnalyticsEvent);
 
 fastify.register(async function (fastifyWsInstance) {
   fastifyWsInstance.get('/ws', { websocket: true }, (connection, req) => {
@@ -313,6 +557,79 @@ fastify.register(async function (fastifyWsInstance) {
 
       if (event?.type === 'PONG') {
         return; // Heartbeat handled
+      }
+
+      // Handle Terminal Hardware Heartbeat & Fleet Telemetry
+      if (event?.type === 'TERMINAL_HEARTBEAT') {
+        const cleanIp = String(remoteIp || '').replace(/^.*:/, '');
+        const termId = event.terminalId || `REG-${cleanIp.split('.').pop() || '01'}`;
+        const now = Date.now();
+        const pingRtt = event.timestamp ? Math.max(0, now - Number(event.timestamp)) : 0;
+        
+        terminalRegistry.set(termId, {
+          terminalId: termId,
+          ip: cleanIp || '192.168.8.12',
+          name: event.name || (termId.includes('SUNMI') ? 'Sunmi V2 Pro Counter' : 'Register Terminal'),
+          appVersion: event.appVersion || '1.4.2',
+          lastSeen: now,
+          pingRttMs: pingRtt,
+          pendingOfflineSales: Number(event.pendingOfflineSales || 0),
+          status: 'ONLINE',
+          peripherals: {
+            printer: event.peripherals?.printer || 'READY',
+            scanner: event.peripherals?.scanner || 'READY',
+            drawer: event.peripherals?.drawer || 'CLOSED',
+            customerScreen: event.peripherals?.customerScreen || 'SYNCHRONIZED'
+          }
+        });
+
+        // Phase 1 Peripheral Telemetry: Thermal Printer Watchdog
+        const printerStatus = String(event.peripherals?.printer || 'READY').toUpperCase();
+        if (printerStatus === 'PAPER_OUT' || printerStatus === 'ERROR' || printerStatus === 'TIMEOUT') {
+          healthAnalyticsService.startIncident({
+            component: 'THERMAL_PRINTER',
+            severity: 'WARNING',
+            triggerSource: 'TERMINAL_HEARTBEAT',
+            rootCauseReason: `Thermal printer on ${termId} reported ${printerStatus}`,
+            technicalDetails: `Terminal IP: ${cleanIp}`,
+            salesImpactSummary: 'Local edge buffering print jobs; zero cashier freeze'
+          }).catch(() => {});
+        } else if (printerStatus === 'READY' && healthAnalyticsService.activeIncidents.has('THERMAL_PRINTER')) {
+          healthAnalyticsService.resolveIncident('THERMAL_PRINTER', {
+            recoveryAction: `Printer on ${termId} restored to READY state`,
+            salesImpactSummary: 'All thermal printing operating normally',
+            autoHealed: 1
+          }).catch(() => {});
+        }
+
+        // Phase 1 Terminal Outbox Queue Watchdog (> 20 unsynced sales)
+        const pendingCount = Number(event.pendingOfflineSales || 0);
+        if (pendingCount >= 20) {
+          healthAnalyticsService.startIncident({
+            component: 'TURSO_OUTBOX_LAG',
+            severity: 'WARNING',
+            triggerSource: 'TERMINAL_OUTBOX_LAG',
+            rootCauseReason: `Terminal ${termId} has ${pendingCount} offline sales pending`,
+            technicalDetails: `Terminal IP: ${cleanIp}, Outbox backlog: ${pendingCount}`,
+            salesImpactSummary: 'Zero financial loss; sales preserved in terminal storage'
+          }).catch(() => {});
+        } else if (pendingCount < 5 && healthAnalyticsService.activeIncidents.has('TURSO_OUTBOX_LAG')) {
+          healthAnalyticsService.resolveIncident('TURSO_OUTBOX_LAG', {
+            recoveryAction: `Terminal ${termId} offline queue drained to edge master`,
+            salesImpactSummary: '100% sales parity confirmed',
+            autoHealed: 1
+          }).catch(() => {});
+        }
+
+        try {
+          ws.send(JSON.stringify({
+            type: 'TERMINAL_HEARTBEAT_ACK',
+            terminalId: termId,
+            timestamp: event.timestamp,
+            serverTime: now
+          }));
+        } catch (_) {}
+        return;
       }
 
       // Intercept and block unauthorized hardware actuation or spoofed payment events
@@ -370,6 +687,14 @@ fastify.register(async function (fastifyWsInstance) {
         }
 
         fastify.log.info(`⚡ [Unified WS Bus] Relaying authorized command "${event.type}" from ${remoteIp} to Sunmi (${event.terminalId || 'T1'})`);
+        if (event.type === 'REMOTE_DRAWER_KICK' || event.type === 'DRAWER_KICK') {
+          const popId = `drawer_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+          db.execute({
+            sql: `INSERT INTO DrawerActuationLog (id, shiftId, cashierId, cashierName, terminalId, reason, authorizedBy, createdAt)
+                  VALUES (?, NULL, ?, ?, ?, 'NO_SALE_POP', ?, datetime('now'))`,
+            args: [popId, event.cashierId || 'CASHIER_01', event.cashierName || 'Cashier', event.terminalId || 'REG-01', event.authorizedBy || 'MANAGER']
+          }).catch(() => {});
+        }
       } else if (systemReservedEvents.includes(event.type)) {
         const managerSecret = process.env.MANAGER_SECRET || process.env.DEV_SECRET;
         if (!managerSecret || !event.token || typeof event.token !== 'string') {
@@ -421,6 +746,12 @@ fastify.register(async function (fastifyWsInstance) {
 
     ws.on('close', () => {
       fastify.log.info(`❌ [Unified WS Bus] Client disconnected: ${remoteIp}`);
+      const cleanIp = String(remoteIp || '').replace(/^.*:/, '');
+      for (const [id, meta] of terminalRegistry.entries()) {
+        if (meta.ip === cleanIp) {
+          terminalRegistry.set(id, { ...meta, status: 'OFFLINE' });
+        }
+      }
     });
 
     ws.on('error', (err) => {
@@ -541,9 +872,28 @@ if (fs.existsSync(distPath)) {
     prefix: '/',
     wildcard: false,
     index: false,
-    maxAge: 86400000,
-    immutable: true
+    maxAge: 0,
+    setHeaders: (res, pathName) => {
+      if (typeof res?.header === 'function') {
+        if (pathName.endsWith('.html') || pathName.endsWith('sw.js') || pathName.endsWith('manifest.json')) {
+          res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+      } else if (typeof res?.setHeader === 'function') {
+        if (pathName.endsWith('.html') || pathName.endsWith('sw.js') || pathName.endsWith('manifest.json')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+      }
+    }
   });
+
+  const assetsPath = path.join(distPath, 'assets');
+  if (fs.existsSync(assetsPath)) {
+    await fastify.register(fastifyStatic, {
+      root: assetsPath,
+      prefix: '/assets/',
+      decorateReply: false
+    });
+  }
 
   await fastify.register(fastifyStatic, {
     root: distPath,
@@ -771,6 +1121,389 @@ fastify.get('/api/health', async () => {
     timestamp: Date.now(),
     masterTime: getMasterServerTimeInfo()
   };
+});
+
+// Alias for system health
+fastify.get('/api/system/health', async (request, reply) => {
+  return reply.redirect('/api/health/deep');
+});
+
+// Deep Diagnostic Health Check (WAL database lock, memory, disk, WebSocket terminals, and Turso cloud lag)
+fastify.get('/api/health/deep', async (request, reply) => {
+  const startTime = Date.now();
+  let dbStatus = 'ok';
+  let dbLatencyMs = 0;
+  let writeLockLatencyMs = 0;
+  let walSizeBytes = 0;
+  let walPages = { busy: 0, log: 0, checkpointed: 0 };
+  let tursoStatus = 'disconnected';
+  let tursoLatencyMs = 0;
+  const degradedReasons = [];
+
+  // 1. Probe Local SQLite read & write-lock accessibility
+  try {
+    const t0 = Date.now();
+    await db.execute('SELECT 1');
+    dbLatencyMs = Date.now() - t0;
+
+    // Measure micro-transaction write lock acquisition latency
+    const tLock0 = Date.now();
+    await db.batch(['SELECT 1'], 'write');
+    writeLockLatencyMs = Date.now() - tLock0;
+  } catch (err) {
+    dbStatus = `error: ${err.message}`;
+    degradedReasons.push(`SQLite database error: ${err.message}`);
+  }
+
+  // 2. Measure SQLite WAL size & passive checkpoint pages
+  try {
+    const walFile = path.resolve(__dirname, 'local.db-wal');
+    if (fs.existsSync(walFile)) {
+      walSizeBytes = fs.statSync(walFile).size;
+    }
+    const chkRes = await db.execute('PRAGMA wal_checkpoint(PASSIVE)');
+    if (chkRes.rows?.[0]) {
+      const row = chkRes.rows[0];
+      walPages = {
+        busy: Number(row.busy ?? row[0] ?? 0),
+        log: Number(row.log ?? row[1] ?? 0),
+        checkpointed: Number(row.checkpointed ?? row[2] ?? 0)
+      };
+    }
+  } catch (err) {
+    // Non-fatal WAL inspection
+  }
+
+  if (writeLockLatencyMs > 100) {
+    degradedReasons.push(`High SQLite write-lock wait time: ${writeLockLatencyMs}ms`);
+  }
+  if (walSizeBytes > 25 * 1024 * 1024) {
+    degradedReasons.push(`SQLite WAL file bloat: ${(walSizeBytes / 1024 / 1024).toFixed(1)}MB (> 25MB threshold)`);
+  }
+
+  // 3. Probe Turso Cloud Connection Latency (if initialized)
+  if (chaosEngine.isScenarioActive('CHAOS_TURSO_BLACKOUT')) {
+    tursoStatus = 'disconnected (chaos simulated)';
+    tursoLatencyMs = 15000;
+    degradedReasons.push('CHAOS_TURSO_BLACKOUT active: Simulated cloud blackout');
+  } else if (tursoCloudClient) {
+    try {
+      const t0 = Date.now();
+      await tursoCloudClient.execute('SELECT 1');
+      tursoLatencyMs = Date.now() - t0;
+      tursoStatus = 'connected';
+      if (tursoLatencyMs > 2500) {
+        degradedReasons.push(`Turso Cloud latency elevated: ${tursoLatencyMs}ms (> 2500ms threshold)`);
+      }
+    } catch (err) {
+      tursoStatus = `unreachable: ${err.message}`;
+      degradedReasons.push(`Turso Cloud unreachable: ${err.message} (Local POS operating offline in Zero-SPOF mode)`);
+    }
+  } else {
+    degradedReasons.push('Turso Cloud client not initialized (Local-only mode)');
+  }
+
+  if (chaosEngine.isScenarioActive('CHAOS_SQLITE_BUSY')) {
+    writeLockLatencyMs = 2150;
+    degradedReasons.push('CHAOS_SQLITE_BUSY active: Simulated write-lock contention');
+  }
+
+  // 4. Collect active terminals and fleet telemetry
+  const activeTerminalsCount = fastify.websocketServer?.clients ? Array.from(fastify.websocketServer.clients).filter(c => c.readyState === 1).length : 0;
+  const now = Date.now();
+  const terminals = Array.from(terminalRegistry.values()).map(t => ({
+    ...t,
+    heartbeatAgeSec: Math.floor((now - t.lastSeen) / 1000)
+  }));
+
+  // 5. System memory
+  const mem = process.memoryUsage();
+  const rssMb = Math.round(mem.rss / 1024 / 1024);
+  const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
+  const heapTotalMb = Math.round(mem.heapTotal / 1024 / 1024);
+  if (rssMb > 500) {
+    degradedReasons.push(`Elevated RAM consumption: ${rssMb}MB RSS`);
+  }
+
+  // 6. Reconciliation Scope
+  const auditReport = getLastAuditReport();
+
+  // Record latencies to percentile reservoir
+  percentileTracker.record('sqlite_write_lock', writeLockLatencyMs);
+  if (tursoLatencyMs > 0) percentileTracker.record('cloud_sync', tursoLatencyMs);
+
+  const degradedItems = [];
+  if (writeLockLatencyMs > 60) {
+    degradedItems.push({
+      code: 'SQLITE_WRITE_LOCK_ELEVATED',
+      severity: writeLockLatencyMs > 120 ? 'CRITICAL' : 'WARNING',
+      metric: 'Write Lock Latency',
+      current: `${writeLockLatencyMs}ms`,
+      threshold: '60ms',
+      message: `SQLite write-lock wait time reached ${writeLockLatencyMs}ms under concurrency.`,
+      remediation: 'TRIGGER_WAL_CHECKPOINT'
+    });
+  }
+  if (walSizeBytes > 10 * 1024 * 1024) {
+    degradedItems.push({
+      code: 'SQLITE_WAL_BLOAT',
+      severity: walSizeBytes > 25 * 1024 * 1024 ? 'CRITICAL' : 'WARNING',
+      metric: 'WAL File Size',
+      current: `${(walSizeBytes / 1024 / 1024).toFixed(1)}MB`,
+      threshold: '10MB',
+      message: `SQLite WAL log file exceeds threshold.`,
+      remediation: 'TRIGGER_WAL_CHECKPOINT'
+    });
+  }
+  if (tursoStatus !== 'connected') {
+    degradedItems.push({
+      code: 'TURSO_CLOUD_OFFLINE',
+      severity: 'INFO',
+      metric: 'Cloud Sync WAN',
+      current: tursoStatus,
+      threshold: 'Connected (< 1500ms)',
+      message: `Turso Cloud mirror is currently unreachable or disconnected. Local POS engine is operating in 100% offline Zero-SPOF mode with zero cashier disruption.`,
+      remediation: 'RECONNECT_CLOUD_GATEWAY'
+    });
+  }
+
+  const isCritical = dbStatus !== 'ok';
+  const isHealthy = !isCritical && degradedReasons.length === 0;
+
+  return reply.status(isCritical ? 503 : 200).send({
+    status: isCritical ? 'critical' : (isHealthy ? 'healthy' : 'degraded'),
+    service: 'Askar-POS-Master',
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    totalLatencyMs: Date.now() - startTime,
+    degradedReasons,
+    degradedItems,
+    percentiles: percentileTracker.getAllMetrics(),
+    components: {
+      masterEngine: {
+        status: 'ok',
+        port: 3000,
+        watchdogManaged: process.env.WATCHDOG_MANAGED === 'true'
+      },
+      localSqlite: {
+        status: dbStatus,
+        readLatencyMs: dbLatencyMs,
+        writeLockLatencyMs,
+        mode: 'WAL',
+        walSizeBytes,
+        walPages,
+        busyRetries: 0
+      },
+      tursoCloud: {
+        status: tursoStatus,
+        latencyMs: tursoLatencyMs
+      },
+      webSocket: {
+        connectedClients: activeTerminalsCount,
+        terminals
+      },
+      reconciliation: auditReport,
+      system: {
+        rssMb,
+        heapUsedMb,
+        heapTotalMb
+      },
+      chaos: chaosEngine.getStatus(),
+      flightRecorder: {
+        totalEventsRecorded: flightRecorder.count,
+        capacity: flightRecorder.capacity
+      }
+    }
+  });
+});
+
+// Automated Self-Healing Reconcile Trigger (Manual or Scheduled)
+fastify.post('/api/system/reconcile', async (request, reply) => {
+  try {
+    const report = await runReconciliationPass();
+    return reply.send(report);
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Force WAL Checkpoint & Vacuum
+fastify.post('/api/system/wal-checkpoint', async (request, reply) => {
+  try {
+    const mode = request.body?.mode || 'TRUNCATE';
+    const res = await forceWalCheckpoint(mode);
+    return reply.send(res);
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Broadcast offline queue re-sync to all terminals
+fastify.post('/api/system/resync-terminals', async (request, reply) => {
+  try {
+    broadcastWs({ type: 'TERMINAL_RESYNC_REQUEST', timestamp: Date.now() });
+    return reply.send({ success: true, message: 'Broadcasted re-sync command to all POS terminals.' });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Broadcast Hot-Reload to fleet
+fastify.post('/api/system/broadcast-reload', async (request, reply) => {
+  try {
+    broadcastWs({ type: 'FLEET_RELOAD_COMMAND', timestamp: Date.now() });
+    return reply.send({ success: true, message: 'Broadcasted hot-reload command to all POS terminals.' });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Get Standing Audit Reconciliation Status
+fastify.get('/api/system/reconcile-status', async (request, reply) => {
+  return reply.send({ success: true, report: getLastAuditReport() });
+});
+
+// ============================================================================
+// STORE HEALTH & DOWNTIME ANALYTICS REST API
+// ============================================================================
+
+// 1. Hourly Performance & Throughput Buckets (for 24H / 7D Recharts visual graph)
+fastify.get('/api/system/analytics/hourly', async (request, reply) => {
+  try {
+    const range = String(request.query?.range || '24h').toLowerCase();
+    const data = await healthAnalyticsService.getHourlyAnalytics(range);
+    return reply.send(data);
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// 2. Incident Forensics Log ("Where Did It Go & Why?")
+fastify.get('/api/system/analytics/incidents', async (request, reply) => {
+  try {
+    const limit = Math.min(100, Math.max(1, Number(request.query?.limit) || 50));
+    const severity = String(request.query?.severity || 'ALL').toUpperCase();
+    const data = await healthAnalyticsService.getIncidents(limit, severity);
+    return reply.send(data);
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// 3. Store Reliability KPIs (24H Uptime SLA, MTTR, Peak Rush Hour, Total Downtime)
+fastify.get('/api/system/analytics/kpis', async (_request, reply) => {
+  try {
+    const data = await healthAnalyticsService.getHealthKPIs();
+    return reply.send(data);
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// 4. Manual / Webhook Log Incident
+fastify.post('/api/system/analytics/log-incident', async (request, reply) => {
+  try {
+    const { component, severity, triggerSource, rootCauseReason, technicalDetails, salesImpactSummary } = request.body || {};
+    const incidentId = await healthAnalyticsService.startIncident({
+      component, severity, triggerSource, rootCauseReason, technicalDetails, salesImpactSummary
+    });
+    return reply.send({ success: true, incidentId });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// 5. Manual / Webhook Resolve Incident
+fastify.post('/api/system/analytics/resolve-incident', async (request, reply) => {
+  try {
+    const { component, recoveryAction, salesImpactSummary, autoHealed } = request.body || {};
+    await healthAnalyticsService.resolveIncident(component, { recoveryAction, salesImpactSummary, autoHealed });
+    return reply.send({ success: true, message: `Resolved incident for ${component}` });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// 6. Real-Time Server-Sent Events (SSE) Stream Endpoint
+fastify.get('/api/system/analytics/stream', async (request, reply) => {
+  reply.raw.setHeader('Content-Type', 'text/event-stream');
+  reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+  reply.raw.setHeader('Connection', 'keep-alive');
+  reply.raw.setHeader('Access-Control-Allow-Origin', '*');
+  reply.raw.setHeader('X-Accel-Buffering', 'no');
+  reply.raw.flushHeaders();
+
+  const client = { reply };
+  sseAnalyticsClients.add(client);
+
+  // Send immediate initial sync snapshot
+  try {
+    const [hourly, incs, kpis] = await Promise.all([
+      healthAnalyticsService.getHourlyAnalytics('24h'),
+      healthAnalyticsService.getIncidents(50, 'ALL'),
+      healthAnalyticsService.getHealthKPIs()
+    ]);
+    reply.raw.write(`event: INIT\ndata: ${JSON.stringify({ ...hourly, ...incs, kpis })}\n\n`);
+  } catch (_) {}
+
+  // Periodic keepalive ping every 10 seconds
+  const keepAlive = setInterval(() => {
+    try {
+      reply.raw.write(': ping\n\n');
+    } catch {
+      clearInterval(keepAlive);
+      sseAnalyticsClients.delete(client);
+    }
+  }, 10000);
+
+  request.raw.on('close', () => {
+    clearInterval(keepAlive);
+    sseAnalyticsClients.delete(client);
+  });
+});
+
+// 7. Developer & Operator Simulation Endpoint for Verification
+fastify.post('/api/system/analytics/simulate-tick', async (request, reply) => {
+  try {
+    healthAnalyticsService.recordScan();
+    healthAnalyticsService.recordSale({ itemCount: 2, totalAmount: 1.500, latencyMs: 0.9 });
+    return reply.send({ success: true, message: 'Simulated real-time tick emitted' });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Phase 1 WAL Checkpoint Endpoint
+fastify.post('/api/system/analytics/wal-checkpoint', async (request, reply) => {
+  try {
+    await healthAnalyticsService.checkWalAndLockHealth();
+    let rows = [];
+    if (db) {
+      const res = await db.execute(`PRAGMA wal_checkpoint(TRUNCATE)`);
+      rows = res.rows || [];
+    }
+    return reply.send({ success: true, message: 'PRAGMA wal_checkpoint(TRUNCATE) executed', rows });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
+});
+
+// Phase 2 Emergency Alerting Verification Endpoint
+fastify.post('/api/system/analytics/test-alert', async (request, reply) => {
+  try {
+    const { component = 'TEST_OUTAGE', severity = 'CRITICAL' } = request.body || {};
+    const incidentId = await healthAnalyticsService.startIncident({
+      component,
+      severity,
+      triggerSource: 'OPERATOR_TEST',
+      rootCauseReason: 'Operator initiated 15s outage escalation test',
+      technicalDetails: 'Manual verification of emergency WhatsApp / SMS alerting bus',
+      salesImpactSummary: 'Zero financial loss; test mode only'
+    });
+    return reply.send({ success: true, incidentId, message: 'Test incident started; will escalate in 15s if not resolved' });
+  } catch (err) {
+    return reply.status(500).send({ success: false, error: err.message });
+  }
 });
 
 // Fastify Global Omni-Search API (for Ctrl+K Command Palette)
@@ -1162,18 +1895,19 @@ fastify.post('/api/webhook/tap', async (request, reply) => {
         const actualCustomer = custCheck.rows[0];
         const actualCustId = actualCustomer.id;
 
-        await db.execute({
-          sql: 'UPDATE Customer SET balance = MAX(0, balance - ?) WHERE id = ?',
-          args: [amount, actualCustId]
-        });
-
         const ledgerId = `tx_tap_${chargeId}`;
         await db.execute({
-          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, tenantId, syncStatus, timestamp, created_at)
-                VALUES (?, ?, ?, 'PAYMENT', ?, 'tenant_1', 'SYNCED', datetime('now'), datetime('now'))`,
-          args: [ledgerId, actualCustId, -amount, `BenefitPay Online Settlement via Tap Payments [${chargeId}]`]
+          sql: `INSERT INTO KhataLedger (id, customerId, amount, type, reference, tenantId, syncStatus, timestamp, created_at, running_balance, subledger_type)
+                VALUES (?, ?, ?, 'PAYMENT', ?, 'tenant_1', 'SYNCED', datetime('now'), datetime('now'),
+                (SELECT ROUND(COALESCE(SUM(amount), 0) - ?, 3) FROM KhataLedger WHERE customerId = ?), 'PERSONAL')`,
+          args: [ledgerId, actualCustId, -amount, `BenefitPay Online Settlement via Tap Payments [${chargeId}]`, amount, actualCustId]
         }).catch((e) => {
           console.warn('Tap ledger mirror warning:', e?.message);
+        });
+
+        await db.execute({
+          sql: `UPDATE Customer SET balance = (SELECT ROUND(COALESCE(SUM(amount), 0), 3) FROM KhataLedger WHERE customerId = ?), updatedAt = datetime('now') WHERE id = ?`,
+          args: [actualCustId, actualCustId]
         });
 
         console.log(`✅ Cleared BHD ${amount.toFixed(3)} for Customer ID: ${actualCustId} (Charge: ${chargeId})`);
@@ -1605,6 +2339,12 @@ const start = async () => {
     // Run seeding and background cron in background non-blocking
     setImmediate(async () => {
       try {
+        await l1ProductCache.warmUp();
+        await IdempotencyService.initTable();
+      } catch (cacheErr) {
+        console.warn('⚠️ L1/Idempotency init notice:', cacheErr?.message || cacheErr);
+      }
+      try {
         await seedDistributors();
         await seedProducts();
         await seedNfcCustomers();
@@ -1613,10 +2353,16 @@ const start = async () => {
       }
       try {
         startSyncEngine();
-        startCloudSyncDaemon();
+        startCloudSyncDaemon(fastify.websocketServer);
         startReorderCron();
         startBackupCron();
         startPaydayCron();
+        startReconcilerCron();
+        healthAnalyticsService.init();
+        // Schedule non-blocking hot snapshot every 6 hours
+        setInterval(() => {
+          HotBackupService.createHotSnapshot('SCHEDULED_6H').catch(() => {});
+        }, 6 * 60 * 60 * 1000);
       } catch (cronErr) {
         console.warn('⚠️ Background jobs notice (non-fatal):', cronErr?.message || cronErr);
       }

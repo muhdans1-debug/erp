@@ -390,6 +390,7 @@ export interface FullReceiptProps {
   newBalance?: number;
   personalBalance?: number;
   messBalance?: number;
+  hasMessGroup?: boolean;
   cashierName?: string;
   transactionRef?: string;
   isMess?: boolean;
@@ -843,8 +844,26 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
       ? Number(props.newBalance)
       : (prevDebt + total);
 
-    out += formatTwoCols(`Mess: ${group}`, `Workers: ${props.members?.length || 0}`, width);
-    out += formatTwoCols("MESS TOTAL DUE / المستحق:", `BD ${finalBalance.toFixed(3)}`, width);
+    out += centerText("*** ROOM MESS KHATA / حساب ميس العمال ***", width);
+    out += formatTwoCols(`Mess Group: ${group}`, `Room #${group.slice(0, 10)}`, width);
+    if (props.shopperName) {
+      out += formatTwoCols("Shopper:", props.shopperName, width);
+    }
+    const memCount = Number(props.members?.length || 1);
+    out += formatTwoCols("Active Roommates:", `${memCount} workers`, width);
+    out += lineDash;
+    if (prevDebt > 0) {
+      out += formatTwoCols("Mess Prev Balance:", `BD ${prevDebt.toFixed(3)}`, width);
+    }
+    out += formatTwoCols("Total Basket Bill:", `+BD ${total.toFixed(3)}`, width);
+    out += lineEqual;
+    out += "<<JUMBO_DEBT>>\n";
+    out += centerText(">>> MESS TOTAL DUE / رصيد الميس <<<", width);
+    out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
+    out += "<</JUMBO_DEBT>>\n";
+    out += lineDash;
+    const splitPerWorker = (total / memCount).toFixed(3);
+    out += formatTwoCols("Each Member Split Share:", `BD ${splitPerWorker}`, width);
     out += lineEqual;
   } else if (paymentMode === 'CREDIT' || paymentMode === 'KHATA' || paymentMode === 'CREDIT_PERSONAL') {
     const prevDebt = Number(props.previousBalance || 0);
@@ -852,22 +871,35 @@ export const formatSaleReceiptText = (props: FullReceiptProps): string => {
       ? Number(props.newBalance)
       : (prevDebt + total);
 
+    const isPersonalWallet = paymentMode === 'CREDIT_PERSONAL' || Boolean(props.hasMessGroup || (props.messBalance && Number(props.messBalance) > 0));
+
     if (isCompact && !cfg.showCreditBalanceBox) {
-      out += formatTwoCols(`Customer: ${props.customerName || 'Khata'}`, `Prev: BD ${prevDebt.toFixed(3)}`, width);
-      out += formatTwoCols("BALANCE DUE / المستحق:", `BD ${finalBalance.toFixed(3)}`, width);
+      out += formatTwoCols(`Customer: ${props.customerName || 'Khata'}`, prevDebt <= 0.0001 ? "Prev: BD 0.000 (PAID)" : `Prev: BD ${prevDebt.toFixed(3)}`, width);
+      out += formatTwoCols(isPersonalWallet ? "PERSONAL DUE / المستحق:" : "BALANCE DUE / المستحق:", `BD ${finalBalance.toFixed(3)}`, width);
       out += lineEqual;
     } else {
-      out += centerText("*** KHATA CREDIT TAB / حساب الآجل ***", width);
+      out += centerText(isPersonalWallet ? "*** PERSONAL KHATA TAB / حساب الآجل الشخصي ***" : "*** KHATA CREDIT TAB / حساب الآجل ***", width);
       if (props.customerName) out += formatTwoCols("Customer:", props.customerName, width);
       if (props.previousBalance !== undefined) {
-        out += formatTwoCols("Previous Debt:", `BD ${prevDebt.toFixed(3)}`, width);
+        if (prevDebt <= 0.0001) {
+          out += formatTwoCols(isPersonalWallet ? "Personal Prev Debt:" : "Previous Debt:", "BD 0.000 (PAID)", width);
+        } else {
+          out += formatTwoCols(isPersonalWallet ? "Personal Prev Debt:" : "Previous Debt:", `BD ${prevDebt.toFixed(3)}`, width);
+        }
       }
       out += formatTwoCols("Added:", `+BD ${total.toFixed(3)}`, width);
       out += lineEqual;
       out += "<<JUMBO_DEBT>>\n";
-      out += centerText(">>> TOTAL BALANCE DUE <<<", width);
+      out += centerText(isPersonalWallet ? ">>> PERSONAL BALANCE DUE <<<" : ">>> TOTAL BALANCE DUE <<<", width);
       out += centerText(`BD ${finalBalance.toFixed(3)}`, width);
       out += "<</JUMBO_DEBT>>\n";
+
+      // If customer has a communal mess group, clarify their mess share without confusing their personal tab
+      if (isPersonalWallet && props.messBalance && Number(props.messBalance) > 0) {
+        out += lineDash;
+        out += formatTwoCols("Room Mess Share:", `BD ${Number(props.messBalance).toFixed(3)}`, width);
+        out += formatTwoCols("Combined Total Owed:", `BD ${(finalBalance + Number(props.messBalance)).toFixed(3)}`, width);
+      }
       out += lineEqual;
     }
   }
@@ -1490,6 +1522,11 @@ export interface KhataStatementItem {
   messName?: string;
   reference?: string;
   invoiceNo?: string;
+  group_total?: number | null;
+  bill_total?: number | null;
+  split_share?: number | null;
+  member_count?: number | null;
+  shopper_name?: string | null;
 }
 
 export interface MessGroupMemberPrintInfo {
@@ -1533,7 +1570,8 @@ export const printKhataStatement = async ({
   dateRange,
   messGroup = null,
   isMessStatement = false,
-  wallets = null
+  wallets = null,
+  cycleBreakdown = null
 }: {
   shopName?: string;
   customerName: string;
@@ -1545,6 +1583,15 @@ export const printKhataStatement = async ({
   messGroup?: MessGroupPrintInfo | null;
   isMessStatement?: boolean;
   wallets?: MultiWalletPrintInfo | null;
+  cycleBreakdown?: {
+    hasPriorCarryOver?: boolean;
+    priorCycleBalance?: number;
+    currentMonthPurchases?: number;
+    currentMonthPayments?: number;
+    currentBalance?: number;
+    currentMonthLabel?: string;
+    priorMonthLabel?: string;
+  } | null;
 }) => {
   let fullText = "";
   try {
@@ -1606,6 +1653,17 @@ export const printKhataStatement = async ({
         fullText += "================================\n";
       }
 
+      if (cycleBreakdown && (cycleBreakdown.hasPriorCarryOver || (cycleBreakdown.priorCycleBalance && Math.abs(cycleBreakdown.priorCycleBalance) > 0.001))) {
+        fullText += "MONTHLY CYCLE BREAKDOWN:\n";
+        fullText += "--------------------------------\n";
+        fullText += formatTwoCols(`📌 B/F (${cycleBreakdown.priorMonthLabel || 'Prior'}):`, `BD ${Number(cycleBreakdown.priorCycleBalance || 0).toFixed(3)}`) + "\n";
+        fullText += formatTwoCols(`🛒 Spent (${cycleBreakdown.currentMonthLabel || 'Current'}):`, `BD ${Number(cycleBreakdown.currentMonthPurchases || 0).toFixed(3)}`) + "\n";
+        if (cycleBreakdown.currentMonthPayments && cycleBreakdown.currentMonthPayments > 0) {
+          fullText += formatTwoCols(`💳 Paid (${cycleBreakdown.currentMonthLabel || 'Current'}):`, `-BD ${Number(cycleBreakdown.currentMonthPayments || 0).toFixed(3)}`) + "\n";
+        }
+        fullText += "--------------------------------\n";
+      }
+
       fullText += formatTwoCols("DATE / DESC", "BAL (BD)") + "\n";
       fullText += "--------------------------------\n";
     }
@@ -1617,11 +1675,24 @@ export const printKhataStatement = async ({
       const amtStr = item.amount > 0 ? `+${item.amount.toFixed(3)}` : `${item.amount.toFixed(3)}`;
       const tag = item.messName || item.walletName ? ` [${item.messName || item.walletName}]` : '';
       fullText += `${item.formattedDate} ${item.formattedTime}${tag}\n`;
-      fullText += formatTwoCols(`${typeStr} (${amtStr})`, `BD ${item.runningBalance.toFixed(3)}`) + "\n";
+
+      const fullBill = Number(item.bill_total || item.group_total || 0);
+      const isMessShare = fullBill > item.amount && item.amount > 0;
+      if (isMessShare) {
+        const shareCount = item.member_count ? `1/${item.member_count}` : 'Share';
+        fullText += formatTwoCols(`BILL: BD ${fullBill.toFixed(3)}`, `BAL: BD ${item.runningBalance.toFixed(3)}`) + "\n";
+        fullText += `  > Your ${shareCount} Split: +BD ${item.amount.toFixed(3)}\n`;
+      } else {
+        fullText += formatTwoCols(`${typeStr} (${amtStr})`, `BD ${item.runningBalance.toFixed(3)}`) + "\n";
+      }
     }
 
     fullText += "================================\n";
-    fullText += formatTwoCols(isMessStatement ? "TOTAL OUTSTANDING:" : "OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
+    if (cycleBreakdown && (cycleBreakdown.hasPriorCarryOver || (cycleBreakdown.priorCycleBalance && Math.abs(cycleBreakdown.priorCycleBalance) > 0.001))) {
+      fullText += formatTwoCols("PRIOR MONTH (B/F):", `BD ${Number(cycleBreakdown.priorCycleBalance || 0).toFixed(3)}`) + "\n";
+      fullText += formatTwoCols("CURRENT PURCHASES:", `BD ${Number(cycleBreakdown.currentMonthPurchases || 0).toFixed(3)}`) + "\n";
+    }
+    fullText += formatTwoCols(isMessStatement ? "TOTAL OUTSTANDING:" : "TOTAL OUTSTANDING DUE:", `BD ${currentBalance.toFixed(3)}`) + "\n";
     fullText += `Printed: ${new Date().toLocaleString()}\n`;
     fullText += isMessStatement ? "Camp Room Shared Khata Statement\n" : (wallets && wallets.messes?.length ? "Unified Multi-Mess Khata Statement\n" : "Official Store Account Ledger\n");
     fullText += "\n\n\n";

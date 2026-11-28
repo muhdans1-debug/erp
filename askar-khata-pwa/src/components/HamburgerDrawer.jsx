@@ -20,7 +20,11 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Bell,
+  BellRing,
+  BellOff,
+  Zap
 } from 'lucide-react';
 
 const DRAWER_TEXTS = {
@@ -51,6 +55,12 @@ const DRAWER_TEXTS = {
     address: 'Block 951, Askar, Bahrain',
     nbrCompliant: 'NBR 10% VAT Compliant',
     refreshApp: 'Refresh & Check Updates',
+    notifTitle: 'Live Transaction Alerts',
+    notifSubtitleActive: '● Active • Instant alert on buy',
+    notifSubtitleOff: '○ Off • Tap to enable alerts',
+    notifTurnOn: 'Turn On Alerts 🔔',
+    notifTurnOff: 'Turn Off Alerts',
+    notifTest: 'Test Alert',
     close: 'Close Menu'
   },
   ar: {
@@ -80,6 +90,12 @@ const DRAWER_TEXTS = {
     address: 'مجمع 951، عسكر، البحرين',
     nbrCompliant: 'معتمد لدى الجهاز الوطني للإيرادات',
     refreshApp: 'تحديث التطبيق والبيانات',
+    notifTitle: 'إشعارات الشراء المباشرة',
+    notifSubtitleActive: '● مفعلة • تنبيه فوري عند الشراء',
+    notifSubtitleOff: '○ متوقفة • اضغط للتفعيل',
+    notifTurnOn: 'تفعيل الإشعارات 🔔',
+    notifTurnOff: 'إيقاف الإشعارات',
+    notifTest: 'تجربة',
     close: 'إغلاق القائمة'
   },
   ml: {
@@ -109,6 +125,12 @@ const DRAWER_TEXTS = {
     address: 'ബ്ലോക്ക് 951, അസ്കർ, ബഹ്‌റൈൻ',
     nbrCompliant: 'NBR 10% വാറ്റ് അംഗീകൃതം',
     refreshApp: 'റീഫ്രഷ് & അപ്‌ഡേറ്റ്',
+    notifTitle: 'ലൈവ് ട്രാൻസാക്ഷൻ അലേർട്ട്',
+    notifSubtitleActive: '● ആക്റ്റീവ് • വാങ്ങുമ്പോൾ അലേർട്ട്',
+    notifSubtitleOff: '○ ഓഫ് • ഓൺ ചെയ്യാൻ ടാപ്പ് ചെയ്യുക',
+    notifTurnOn: 'അലേർട്ട് ഓൺ ചെയ്യുക 🔔',
+    notifTurnOff: 'അലേർട്ട് ഓഫ് ചെയ്യുക',
+    notifTest: 'ടെസ്റ്റ്',
     close: 'മെനു അടയ്ക്കുക'
   },
   bn: {
@@ -138,6 +160,12 @@ const DRAWER_TEXTS = {
     address: 'ব্লক ৯৫১, আসকার, বাহরাইন',
     nbrCompliant: 'NBR ১০% ভ্যাট অনুমোদিত',
     refreshApp: 'রিফ্রেশ ও আপডেট চেক',
+    notifTitle: 'লাইভ লেনদেন নোটিফিকেশন',
+    notifSubtitleActive: '● চালু আছে • কেনাকাটায় সরাসরি অ্যালার্ট',
+    notifSubtitleOff: '○ বন্ধ আছে • চালু করতে ট্যাপ করুন',
+    notifTurnOn: 'অ্যালার্ট চালু করুন 🔔',
+    notifTurnOff: 'অ্যালার্ট বন্ধ করুন',
+    notifTest: 'টেস্ট',
     close: 'মেনু বন্ধ করুন'
   },
   hi: {
@@ -167,6 +195,12 @@ const DRAWER_TEXTS = {
     address: 'ब्लॉक 951, अस्कर, बहरीन',
     nbrCompliant: 'NBR 10% वैट अनुपालन',
     refreshApp: 'रिफ्रेश और अपडेट चेक',
+    notifTitle: 'लाइव लेनदेन सूचनाएं',
+    notifSubtitleActive: '● सक्रिय • खरीदारी पर तुरंत अलर्ट',
+    notifSubtitleOff: '○ बंद • चालू करने के लिए टैप करें',
+    notifTurnOn: 'अलर्ट चालू करें 🔔',
+    notifTurnOff: 'अलर्ट बंद करें',
+    notifTest: 'टेस्ट',
     close: 'मेनू बंद करें'
   }
 };
@@ -206,6 +240,75 @@ export default function HamburgerDrawer({
   const isDebt = balanceNum > 0.0005;
   const isCredit = balanceNum < -0.0005;
 
+  const [isNotifEnabled, setIsNotifEnabled] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem('khata_live_notifications');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleNotifications = async () => {
+    const nextState = !isNotifEnabled;
+    setIsNotifEnabled(nextState);
+    try {
+      localStorage.setItem('khata_live_notifications', String(nextState));
+    } catch {}
+
+    if (nextState) {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        try {
+          await Notification.requestPermission();
+        } catch {}
+      }
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(60);
+        }
+      } catch {}
+    } else {
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(30);
+        }
+      } catch {}
+    }
+  };
+
+  const handleTestAlert = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const playTone = (freq, start, duration) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+          gain.gain.setValueAtTime(0.001, ctx.currentTime + start);
+          gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + start + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + start);
+          osc.stop(ctx.currentTime + start + duration);
+        };
+        playTone(587.33, 0.0, 0.12);
+        playTone(880.00, 0.1, 0.25);
+      }
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate([120, 60, 120]);
+      }
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('Layali Khata: Test Alert', {
+          body: 'Live transaction notifications are working properly.',
+          icon: '/icons/icon-192x192.png'
+        });
+      }
+    } catch {}
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-hidden text-left" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* Backdrop */}
@@ -217,7 +320,10 @@ export default function HamburgerDrawer({
       {/* Drawer Panel */}
       <aside className={`absolute inset-y-0 ${isRtl ? 'right-0' : 'left-0'} w-full max-w-xs sm:max-w-sm bg-slate-900 border-${isRtl ? 'l' : 'r'} border-slate-800 shadow-2xl flex flex-col z-10 transition-transform duration-300 transform translate-x-0 overflow-y-auto`}>
         {/* Drawer Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 sticky top-0 z-20">
+        <div 
+          style={{ paddingTop: 'max(16px, calc(env(safe-area-inset-top, 0px) + 12px))' }}
+          className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 sticky top-0 z-20"
+        >
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-md shadow-emerald-950/60">
               <Store className="w-5 h-5 text-slate-950 stroke-[2.5]" />
@@ -300,6 +406,62 @@ export default function HamburgerDrawer({
               )}
             </div>
           )}
+
+          {/* 🔔 Live Transaction Notification Controls */}
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            isNotifEnabled
+              ? 'bg-gradient-to-r from-emerald-950/40 via-emerald-900/20 to-emerald-950/40 border-emerald-500/50 shadow-md shadow-emerald-950/30'
+              : 'bg-slate-950/60 border-slate-800'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                  isNotifEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {isNotifEnabled ? <BellRing className="w-4 h-4 animate-pulse" /> : <BellOff className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white block">
+                      {t.notifTitle}
+                    </span>
+                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-full uppercase ${
+                      isNotifEnabled ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {isNotifEnabled ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium block">
+                    {isNotifEnabled ? t.notifSubtitleActive : t.notifSubtitleOff}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-5 gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={handleToggleNotifications}
+                className={`col-span-3 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 border ${
+                  isNotifEnabled
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-sm'
+                    : 'bg-slate-800 hover:bg-slate-750 text-slate-200 border-slate-700'
+                }`}
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>{isNotifEnabled ? t.notifTurnOff : t.notifTurnOn}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleTestAlert}
+                className="col-span-2 py-2 px-2.5 rounded-xl font-bold text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center gap-1 transition cursor-pointer active:scale-95"
+                title="Test live purchase alert sound, vibration & toast"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>{t.notifTest}</span>
+              </button>
+            </div>
+          </div>
 
           {/* Navigation Links */}
           <div className="space-y-1">

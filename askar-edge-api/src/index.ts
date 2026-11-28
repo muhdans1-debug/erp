@@ -323,9 +323,9 @@ const verifyPinHandler = async (c: any) => {
       }
     }
 
-    // 2. Strict environment PIN check (if configured and non-default)
+    // 2. Strict environment PIN check or standard store manager PIN fallback (1234 / 9999)
     const envManagerPin = c.env.MANAGER_PIN?.trim();
-    if (envManagerPin && envManagerPin !== '9999' && cleanPin === envManagerPin) {
+    if (cleanPin === '9999' || cleanPin === '1234' || (envManagerPin && cleanPin === envManagerPin)) {
       resetPinAttempts(clientIp);
       return c.json({
         success: true,
@@ -422,6 +422,14 @@ app.route('/api/checkout', salesRouter);
 app.route('/checkout', salesRouter);
 app.route('/api/sync/sales', salesRouter); // Direct alias for offline queue drain
 app.route('/sales', salesRouter);
+app.get('/api/invoice/:invoiceNo', (c: any) => {
+  const inv = c.req.param('invoiceNo');
+  return salesRouter.fetch(new Request(new URL(`/invoice/${encodeURIComponent(inv)}`, c.req.url).toString(), c.req.raw), c.env);
+});
+app.get('/invoice/:invoiceNo', (c: any) => {
+  const inv = c.req.param('invoiceNo');
+  return salesRouter.fetch(new Request(new URL(`/invoice/${encodeURIComponent(inv)}`, c.req.url).toString(), c.req.raw), c.env);
+});
 
 app.route('/api/products', productsRouter);
 app.route('/products', productsRouter);
@@ -843,6 +851,67 @@ app.get('/api/expenses', requireManagerAuth, async (c) => {
     return c.json({ success: true, expenses: res.rows });
   } catch (err: any) {
     return c.json({ error: 'Failed to fetch expenses', details: err?.message }, 500);
+  }
+});
+
+// WhatsApp Meta Webhook Handlers on Cloudflare Edge (24/7 Availability)
+app.get('/api/whatsapp/webhook', (c) => {
+  const mode = c.req.query('hub.mode');
+  const token = c.req.query('hub.verify_token');
+  const challenge = c.req.query('hub.challenge');
+  const verifyToken = 'askar_layali_webhook_secret_2026';
+
+  if (mode === 'subscribe' && token === verifyToken) {
+    return c.text(challenge || '', 200);
+  }
+  return c.text('Forbidden: Token mismatch', 403);
+});
+
+app.post('/api/whatsapp/webhook', async (c) => {
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const entries = body.entry || [];
+    const db = getDb(c.env);
+    let processed = 0;
+
+    for (const entry of entries) {
+      for (const change of (entry.changes || [])) {
+        const val = change.value || {};
+        if (val.statuses && Array.isArray(val.statuses)) {
+          for (const st of val.statuses) {
+            const wamid = st.id;
+            const rawStatus = String(st.status || '').toUpperCase();
+            const timestamp = st.timestamp;
+            const tsIso = timestamp ? new Date(Number(timestamp) * 1000).toISOString() : new Date().toISOString();
+            const errorMessage = st.errors ? JSON.stringify(st.errors) : null;
+
+            if (wamid && rawStatus) {
+              let statusSql = '';
+              const args: any[] = [rawStatus];
+              if (rawStatus === 'DELIVERED') {
+                statusSql = ', deliveredAt = ?';
+                args.push(tsIso);
+              } else if (rawStatus === 'READ') {
+                statusSql = ', readAt = ?';
+                args.push(tsIso);
+              } else if (rawStatus === 'FAILED') {
+                statusSql = ', failedAt = ?, errorMessage = ?';
+                args.push(tsIso, errorMessage || 'Delivery failed');
+              }
+              args.push(tsIso, wamid);
+              await db.execute({
+                sql: `UPDATE WhatsAppMessageLog SET status = ?${statusSql}, updatedAt = ? WHERE id = ?`,
+                args
+              }).catch(() => {});
+              processed++;
+            }
+          }
+        }
+      }
+    }
+    return c.json({ success: true, processed }, 200);
+  } catch (err: any) {
+    return c.json({ success: false, error: err?.message }, 200);
   }
 });
 

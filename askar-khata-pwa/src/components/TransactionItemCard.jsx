@@ -31,16 +31,23 @@ export default function TransactionItemCard({
   const [invoiceDetails, setInvoiceDetails] = useState(null);
 
   const amt = Number(tx.amount || 0);
-  const isCreditTx = (tx.type || '').toUpperCase().includes('SETTLE') || 
+  const isDepositDeferred = tx.type === 'DEPOSIT_DEFERRED' || tx.subledger_type === 'DEPOSIT_DEFERRED';
+  const isDepositHeld = tx.type === 'CARD_DEPOSIT' || tx.type === 'DEPOSIT_COLLECTED' || tx.subledger_type === 'DEPOSIT';
+  const isDepositTx = isDepositDeferred || isDepositHeld;
+  const isCreditTx = !isDepositTx && ((tx.type || '').toUpperCase().includes('SETTLE') || 
                      (tx.type || '').toUpperCase().includes('PAY') || 
-                     amt < 0;
-  const isOpeningBalance = (tx.type || '').toUpperCase().includes('OPENING');
-  const isMessSplit = Boolean(
+                     amt < 0);
+  const isOpeningBalance = !isDepositTx && (tx.type || '').toUpperCase().includes('OPENING');
+  const isMessSplit = !isDepositTx && Boolean(
     tx.subledger_type === 'MESS_SHARE' ||
     tx.mess_id || 
+    tx.is_mess_split ||
+    tx.group_total ||
     tx.category === 'MESS_SPLIT' || 
     (tx.reference && tx.reference.toLowerCase().includes('mess split'))
   );
+  const fullBasketBill = Number(tx.bill_total || tx.group_total || invoiceDetails?.total || Math.abs(amt));
+  const memberShareBill = Number(tx.split_share !== null && tx.split_share !== undefined ? tx.split_share : Math.abs(amt));
 
   let messRoomName = tx.messName || null;
   let shopperName = null;
@@ -51,7 +58,8 @@ export default function TransactionItemCard({
     if (shopperMatch) shopperName = shopperMatch[1].trim();
   }
 
-  const formattedAmt = Math.abs(amt).toFixed(3);
+  const depositFaceAmount = Number(tx.displayAmount ?? tx.depositAmount ?? tx.deposit_amount ?? (Number(tx.amount) > 0 ? tx.amount : null) ?? tx.card_deposit_amount ?? 3.0).toFixed(3);
+  const formattedAmt = isDepositTx ? depositFaceAmount : Math.abs(amt).toFixed(3);
 
   // Format Date and Time
   let dateText = '';
@@ -84,7 +92,7 @@ export default function TransactionItemCard({
     setExpanded(nextState);
 
     // If opening a purchase transaction and we don't have items yet
-    if (nextState && !isCreditTx && !isOpeningBalance && !invoiceDetails) {
+    if (nextState && !isCreditTx && !isOpeningBalance && !isDepositTx && !invoiceDetails) {
       if (Array.isArray(tx.items) && tx.items.length > 0) {
         setInvoiceDetails({
           invoiceNo,
@@ -138,6 +146,7 @@ export default function TransactionItemCard({
 
   // Determine Primary Title
   const getDisplayTitle = () => {
+    if (isDepositTx) return lang === 'ar' ? 'تأمين البطاقة الذكية' : 'Card Security Deposit';
     if (isMessSplit) return `Mess Split • ${messRoomName || 'Room Share'}`;
     if (isCreditTx) {
       if (tx.reference?.includes('BenefitPay') || tx.reference?.includes('Fawri')) return 'BenefitPay Fawri+';
@@ -162,7 +171,11 @@ export default function TransactionItemCard({
         {/* Left: Icon, Title & Date */}
         <div className="flex items-start gap-2.5 min-w-0 flex-1">
           <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-            isCreditTx 
+            isDepositTx
+              ? isDepositDeferred
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              : isCreditTx 
               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
               : isOpeningBalance
               ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
@@ -170,7 +183,9 @@ export default function TransactionItemCard({
               ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
               : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
           }`}>
-            {isCreditTx ? (
+            {isDepositTx ? (
+              <ShieldCheck className={`w-4 h-4 ${isDepositDeferred ? 'text-amber-400' : 'text-emerald-400'}`} />
+            ) : isCreditTx ? (
               <ArrowDownLeft className="w-4 h-4 text-emerald-400" />
             ) : isOpeningBalance ? (
               <BookOpen className="w-4 h-4 text-amber-400" />
@@ -190,7 +205,17 @@ export default function TransactionItemCard({
                   <ShieldCheck className="w-2.5 h-2.5" /> Receipt Verified
                 </span>
               )}
-              {isMessSplit ? (
+              {isDepositTx ? (
+                isDepositDeferred ? (
+                  <span className="font-black text-xs uppercase tracking-wider text-amber-400">
+                    Credit Deposit
+                  </span>
+                ) : (
+                  <span className="font-black text-xs uppercase tracking-wider text-emerald-400">
+                    Deposited
+                  </span>
+                )
+              ) : isMessSplit ? (
                 <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
                   <Users className="w-2.5 h-2.5" /> {messRoomName || 'Room Mess'}
                 </span>
@@ -207,7 +232,7 @@ export default function TransactionItemCard({
                   Personal Tab
                 </span>
               )}
-              {!isCreditTx && !isOpeningBalance && (
+              {!isCreditTx && !isOpeningBalance && !isDepositTx && (
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/60">
                   {itemCount} {itemCount === 1 ? 'item' : 'items'}
                 </span>
@@ -242,9 +267,20 @@ export default function TransactionItemCard({
         {/* Right: Amount, Running Balance & Expand Indicator */}
         <div className="text-right shrink-0 flex items-center gap-2">
           <div>
-            <span className={`font-black text-xs block ${isCreditTx ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {isCreditTx ? `-${currency} ${formattedAmt}` : `+${currency} ${formattedAmt}`}
-            </span>
+            {isMessSplit && fullBasketBill > memberShareBill ? (
+              <>
+                <span className="font-black text-xs block text-amber-400 font-mono">
+                  +{currency} {memberShareBill.toFixed(3)}
+                </span>
+                <span className="text-[9px] text-slate-400 font-mono block">
+                  ({(tx.member_count || Math.round(fullBasketBill / Math.max(0.001, memberShareBill))) > 1 ? `1/${tx.member_count || Math.round(fullBasketBill / Math.max(0.001, memberShareBill))} of ` : ''}{currency} {fullBasketBill.toFixed(3)})
+                </span>
+              </>
+            ) : (
+              <span className={`font-black text-xs block ${isDepositTx ? (isDepositDeferred ? 'text-amber-400' : 'text-emerald-400') : (isCreditTx ? 'text-emerald-400' : 'text-rose-400')}`}>
+                {isDepositTx ? `${currency} ${formattedAmt}` : isCreditTx ? `-${currency} ${formattedAmt}` : `+${currency} ${formattedAmt}`}
+              </span>
+            )}
             {runningBal !== null && (
               <div className="text-[10px] text-slate-400 font-mono mt-0.5">
                 Bal: {currency} {runningBal}
@@ -260,22 +296,46 @@ export default function TransactionItemCard({
       {/* Expanded Accordion Body: "Transaction of Each and Everything" */}
       {expanded && (
         <div className="px-3.5 pb-3.5 pt-1 border-t border-slate-800/80 bg-slate-950/70 text-left animate-in fade-in duration-200 space-y-3">
+          {/* Card Deposit Detailed Breakdown */}
+          {isDepositTx && (
+            <div className="space-y-2 pt-2">
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-sans">Deposit Status:</span>
+                  <span className={`font-black text-xs uppercase tracking-wider ${isDepositDeferred ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {isDepositDeferred ? 'Credit Deposit' : 'Deposited'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-sans">Security Deposit Amount:</span>
+                  <span className="font-bold text-white font-mono">{currency} {formattedAmt}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-sans leading-relaxed pt-1 border-t border-slate-800/80">
+                  {isDepositDeferred 
+                    ? 'Card deposit deferred to customer payday. Excluded from grocery running credit balance.'
+                    : 'Physical card security deposit collected and held in custodial trust. Excluded from grocery running credit balance.'}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Purchase Detailed Breakdown */}
-          {!isCreditTx && !isOpeningBalance && (
+          {!isCreditTx && !isOpeningBalance && !isDepositTx && (
             <div className="space-y-2.5 pt-2">
               {/* Mess Room Split Notice */}
               {isMessSplit && (
-                <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/40 flex items-center justify-between text-xs font-mono">
+                <div className="p-3 rounded-2xl bg-indigo-950/60 border border-indigo-800/60 flex items-center justify-between text-xs font-mono shadow-xs">
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-indigo-400 shrink-0" />
                     <div>
                       <p className="text-indigo-200 font-sans font-bold text-xs">Shared Room Mess: {messRoomName || 'Group'}</p>
-                      {shopperName && <p className="text-[10px] text-indigo-300/70 font-sans">Purchased by: {shopperName}</p>}
+                      {shopperName && <p className="text-[10px] text-indigo-300 font-sans">Purchased by: <strong className="text-white">{shopperName}</strong></p>}
+                      {tx.member_count && <p className="text-[10px] text-indigo-400 font-sans">{tx.member_count} Room Members</p>}
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="text-slate-400 text-[10px] block">Your Share</span>
-                    <span className="text-indigo-300 font-bold font-mono text-xs">{currency} {formattedAmt}</span>
+                    <span className="text-slate-400 text-[10px] block">Basket: {currency} {fullBasketBill.toFixed(3)}</span>
+                    <span className="text-amber-400 font-bold font-mono text-xs">Your Share: +{currency} {memberShareBill.toFixed(3)}</span>
                   </div>
                 </div>
               )}
@@ -333,7 +393,7 @@ export default function TransactionItemCard({
                     ) : (
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-xs flex items-center justify-between">
                         <span>General Store Purchase</span>
-                        <span className="font-bold text-emerald-400">{currency} {formattedAmt}</span>
+                        <span className="font-bold text-emerald-400">{currency} {fullBasketBill.toFixed(3)}</span>
                       </div>
                     )}
                   </div>
@@ -342,15 +402,15 @@ export default function TransactionItemCard({
                   <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1 text-[11px] font-mono">
                     <div className="flex items-center justify-between text-slate-400">
                       <span>Subtotal (Excl. VAT)</span>
-                      <span>{currency} {(Math.abs(amt) / 1.10).toFixed(3)}</span>
+                      <span>{currency} {(fullBasketBill / 1.10).toFixed(3)}</span>
                     </div>
                     <div className="flex items-center justify-between text-slate-400">
                       <span>VAT (10%)</span>
-                      <span>{currency} {(Math.abs(amt) - (Math.abs(amt) / 1.10)).toFixed(3)}</span>
+                      <span>{currency} {(fullBasketBill - (fullBasketBill / 1.10)).toFixed(3)}</span>
                     </div>
                     <div className="flex items-center justify-between font-bold text-white pt-1 border-t border-slate-800">
-                      <span>Total Bill Amount</span>
-                      <span className="text-emerald-400">{currency} {formattedAmt}</span>
+                      <span>{isMessSplit ? 'Total Grocery Basket Bill' : 'Total Bill Amount'}</span>
+                      <span className="text-emerald-400">{currency} {fullBasketBill.toFixed(3)}</span>
                     </div>
                   </div>
 

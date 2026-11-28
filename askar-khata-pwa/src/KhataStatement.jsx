@@ -548,8 +548,9 @@ export function KhataStatement() {
         return false;
       }
 
-      setAccount(data);
-      const ledgerList = Array.isArray(data.ledger) ? data.ledger : [];
+      const custData = data.customer ? { ...data.customer, ...data, deposit: data.deposit || data.customer.deposit } : data;
+      setAccount(custData);
+      const ledgerList = Array.isArray(data.ledger || data.statement) ? (data.ledger || data.statement) : [];
       setLedgerData(ledgerList);
       setHasMore(ledgerList.length >= 50);
       setIsOffline(false);
@@ -758,9 +759,13 @@ export function KhataStatement() {
     }
   };
 
-  const balanceNum = Number(account?.balance || 0);
+  const balanceNum = Number(account?.balance ?? account?.currentBalance ?? 0);
   const personalBal = Number(account?.personalBalance ?? balanceNum);
-  const messShareBal = Number(account?.messShare ?? 0);
+  const messShareBal = Number(account?.messShare ?? account?.mess_share ?? 0);
+  const rawDeposit = account?.deposit || account?.wallets?.deposit;
+  const depAmt = Number(account?.card_deposit_amount ?? account?.depositAmount ?? rawDeposit?.amount ?? 0);
+  const depStatus = String(account?.card_deposit_status || account?.depositStatus || rawDeposit?.status || 'NONE').toUpperCase();
+  const isDepInCredit = depStatus === 'IN_CREDIT' || depStatus === 'DEFERRED_CREDIT' || depStatus === 'DEFERRED_PAYDAY' || Boolean(rawDeposit?.inCredit) || Boolean(account?.depositInCredit);
   const activeMess = (account?.messes && account.messes.find(m => m.id === selectedPaymentMessId)) || (account?.messes && account.messes[0]);
 
   let targetDebt = balanceNum;
@@ -771,6 +776,9 @@ export function KhataStatement() {
   } else if (paymentTarget === 'MESS') {
     targetDebt = Math.max(0, messShareBal);
     targetName = t.myMessShare || 'My Mess Share';
+  } else if (paymentTarget === 'DEPOSIT') {
+    targetDebt = Math.max(0, depAmt);
+    targetName = t.cardDeposit || 'Card Security Deposit';
   } else if (paymentTarget === 'MESS_GROUP' && activeMess) {
     targetDebt = Math.max(0, Number(activeMess.groupTotal ?? activeMess.totalBalance ?? 0));
     const rawMessName = activeMess.group_name || activeMess.name || 'Room';
@@ -1265,9 +1273,24 @@ export function KhataStatement() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-xs text-slate-400 font-medium">{t.welcome},</p>
-              <h2 className="text-xl font-black text-white tracking-tight">{account.name}</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-xl font-black text-white tracking-tight">{account.name}</h2>
+                {isDepInCredit ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-full">
+                    IN CREDIT (DUE): BD {depAmt.toFixed(3)}
+                  </span>
+                ) : (depStatus === 'HELD' || depStatus === 'HELD_IN_TRUST') ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                    HELD IN TRUST: BD {depAmt.toFixed(3)}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-white/5 border border-white/10 px-2 py-0.5 rounded-full">
+                    NO DEPOSIT
+                  </span>
+                )}
+              </div>
               {account.cpr && (
-                <p className="text-[11px] text-slate-400 font-mono">CPR: {account.cpr}</p>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">CPR: {account.cpr}</p>
               )}
             </div>
             <div className="text-right">
@@ -1381,6 +1404,67 @@ export function KhataStatement() {
                     </div>
                   </div>
                 )}
+
+                {/* Card Security Deposit (Independent Entity) */}
+                <div
+                  onClick={() => {
+                    if (isDepInCredit && depAmt > 0) {
+                      setPaymentTarget('DEPOSIT');
+                      setSelectedPaymentMessId(null);
+                      setPayAmount(depAmt.toFixed(3));
+                    }
+                  }}
+                  className={`p-3.5 rounded-2xl border-2 transition-all relative overflow-hidden ${
+                    paymentTarget === 'DEPOSIT'
+                      ? 'bg-rose-950/70 border-rose-500 ring-2 ring-rose-500/30 shadow-lg shadow-rose-950/50 cursor-pointer'
+                      : isDepInCredit && depAmt > 0
+                        ? 'bg-slate-950/80 border-slate-800 hover:border-slate-700 cursor-pointer'
+                        : 'bg-slate-950/80 border-slate-800 cursor-default'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-slate-300 uppercase tracking-wider">{t.cardDeposit || 'Card Security Deposit'}</span>
+                    <div className="flex items-center gap-1.5">
+                      {paymentTarget === 'DEPOSIT' && (
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                          {t.selectedBadge || 'Selected'}
+                        </span>
+                      )}
+                      <ShieldCheck className={`w-4 h-4 ${
+                        depStatus === 'HELD' || depStatus === 'HELD_IN_TRUST'
+                          ? 'text-emerald-400'
+                          : isDepInCredit
+                            ? 'text-rose-400'
+                            : 'text-slate-400'
+                      }`} />
+                    </div>
+                  </div>
+                  <div className="flex items-baseline justify-between mt-1.5">
+                    <div className="text-2xl font-black text-white tracking-tight font-mono">
+                      {t.currency} {depAmt.toFixed(3)}
+                    </div>
+                    <span className={`text-xs font-black uppercase tracking-wider ${
+                      depStatus === 'HELD' || depStatus === 'HELD_IN_TRUST'
+                        ? 'text-emerald-400'
+                        : isDepInCredit
+                          ? 'text-amber-400'
+                          : 'text-slate-400'
+                    }`}>
+                      {depStatus === 'HELD' || depStatus === 'HELD_IN_TRUST'
+                        ? 'DEPOSITED'
+                        : isDepInCredit
+                          ? 'CREDIT DEPOSIT'
+                          : 'NO DEPOSIT'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    {depStatus === 'HELD' || depStatus === 'HELD_IN_TRUST'
+                      ? (t.depositHeldDesc || 'Paid (Held safely in custodial trust)')
+                      : isDepInCredit
+                        ? (t.depositDueDesc || 'Isolated card liability (Due on payday)')
+                        : (t.noDepositDesc || 'No card security deposit recorded')}
+                  </div>
+                </div>
 
                 {/* 3. Separate Full Mess Room Balances for EACH enrolled mess */}
                 {account.messes && account.messes.length > 0 && account.messes.map((m) => {

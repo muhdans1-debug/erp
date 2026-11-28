@@ -403,7 +403,6 @@ const handleGetTransitOrders = async () => {
   return { success: true, orders: transitOrders };
 };
 fastify.get('/api/purchase-orders/transit', handleGetTransitOrders);
-fastify.get('/po/transit', handleGetTransitOrders);
 
 // Mark a Purchase Order as Received and restock the shelves with barcode auditing - Protected by Manager Auth
 const handleReceivePO = async (request, reply) => {
@@ -459,7 +458,6 @@ const handleReceivePO = async (request, reply) => {
   }
 };
 fastify.post('/api/purchase-orders/:id/receive', { preHandler: managerAuth }, handleReceivePO);
-fastify.post('/po/:id/receive', { preHandler: managerAuth }, handleReceivePO);
 
 // Seed helper for instant front-counter receiving testing
 fastify.post('/api/purchase-orders/seed-transit', async (request, reply) => {

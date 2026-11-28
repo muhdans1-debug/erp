@@ -39,13 +39,15 @@ export function getApiBaseUrl(): string {
   }
 
   // Web Browser / Back-Office Auto-Detection:
-  // If app is loaded directly from local backend port :3000 or localhost, bind directly to origin
+  // If app is loaded directly from local backend port :3000, bind directly to origin.
+  // If running on Vite dev server (5173/5174/5175) on localhost, target local backend on 3000.
   if (typeof window !== 'undefined' && window.location.origin) {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
-    if (window.location.port === '3000' || isLocalhost) {
-      if (window.location.origin !== 'null' && !window.location.origin.startsWith('file:')) {
-        return window.location.origin.replace(/\/$/, '');
-      }
+    if (window.location.port === '3000') {
+      return window.location.origin.replace(/\/$/, '');
+    }
+    if (isLocalhost) {
+      return 'http://localhost:3000';
     }
   }
 

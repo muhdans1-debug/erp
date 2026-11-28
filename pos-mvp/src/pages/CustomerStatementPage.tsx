@@ -335,7 +335,9 @@ export default function CustomerStatementPage({
   // BenefitPay Payment Modal State
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [customPayAmount, setCustomPayAmount] = useState<string>('');
+  const [payForgiveGoodwill, setPayForgiveGoodwill] = useState(false);
   const [isSubmittingPay, setIsSubmittingPay] = useState(false);
+  const [cycleBreakdown, setCycleBreakdown] = useState<any>(null);
   const [showBookBalanceModal, setShowBookBalanceModal] = useState<boolean>(false);
   const [paymentSuccessToast, setPaymentSuccessToast] = useState<{
     show: boolean;
@@ -369,13 +371,20 @@ export default function CustomerStatementPage({
     }
     setExpandedEntryId(entry.id);
 
-    const invoiceRef = entry.reference || entry.invoiceNo || entry.id;
+    const invoiceRef = (entry as any).sale_id || entry.reference || entry.invoiceNo || entry.id;
     if (invoiceRef && !entryItemsMap[entry.id]) {
       try {
         setLoadingItemsId(entry.id);
         const resolvedApiBase = resolveApiBase();
-        const res = await fetch(`${resolvedApiBase}/api/invoice/${encodeURIComponent(invoiceRef)}`);
-        if (res.ok) {
+        const cleanInvMatch = String(invoiceRef).match(/(INV-[A-Za-z0-9_-]+)/i);
+        const candidateKey = cleanInvMatch ? cleanInvMatch[1] : invoiceRef;
+
+        // Try resilient endpoints
+        let res = await fetch(`${resolvedApiBase}/api/sales/invoice/${encodeURIComponent(candidateKey)}`).catch(() => null);
+        if (!res || !res.ok) {
+          res = await fetch(`${resolvedApiBase}/api/invoice/${encodeURIComponent(candidateKey)}`).catch(() => null);
+        }
+        if (res && res.ok) {
           const data = await res.json();
           if (data.success && (data.sale?.items || data.invoice?.items)) {
             setEntryItemsMap(prev => ({ ...prev, [entry.id]: data.sale?.items || data.invoice?.items }));
@@ -425,6 +434,7 @@ export default function CustomerStatementPage({
       setMessGroup(data.messGroup || null);
       setMesses(data.messes || (data.messGroup ? [data.messGroup] : []));
       setWallets(data.wallets || null);
+      setCycleBreakdown(data.cycleBreakdown || null);
 
       const rawDeposit = data.deposit || data.wallets?.deposit || data.customer;
       const depStatus = String(rawDeposit?.status || data.customer?.card_deposit_status || 'NONE').toUpperCase();
@@ -529,6 +539,9 @@ export default function CustomerStatementPage({
     setIsSubmittingPay(true);
     try {
       const resolvedApiBase = resolveApiBase();
+      const currentRelevantDebt = isMessView ? messTotalBalance : personalOutstanding;
+      const leftover = Number((currentRelevantDebt - amount).toFixed(3));
+      const willForgiveGoodwill = payForgiveGoodwill && leftover > 0 && leftover <= 0.500;
 
       const res = await fetch(`${resolvedApiBase}/api/customers/${customer.id}/settle`, {
         method: 'POST',
@@ -536,6 +549,9 @@ export default function CustomerStatementPage({
         body: JSON.stringify({
           amountPaid: amount,
           paymentMethod: 'BENEFIT_PAY',
+          forgiveMicroBalance: willForgiveGoodwill,
+          forgiveGoodwill: willForgiveGoodwill,
+          goodwillDiscount: willForgiveGoodwill ? leftover : 0,
           reference: activeTab === 'MESS' && messGroup ? `BenefitPay Mess Settlement (${messGroup.group_name})` : `BenefitPay Fawri+ Online Settlement`,
           mess_id: activeTab === 'MESS' && messGroup ? messGroup.id : null
         })
@@ -545,6 +561,8 @@ export default function CustomerStatementPage({
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'BenefitPay settlement failed');
       }
+
+      setPayForgiveGoodwill(false);
 
       // Live update balance and add negative transaction entry
       const updatedBalance = data.newBalance !== undefined ? data.newBalance : Math.max(0, currentBalance - amount);
@@ -703,6 +721,11 @@ export default function CustomerStatementPage({
       reference: item.reference || item.invoiceNo || 'Store Purchase',
       walletName: (item as any).walletName || (item as any).messName,
       messName: (item as any).messName,
+      group_total: (item as any).group_total,
+      bill_total: (item as any).bill_total,
+      split_share: (item as any).split_share,
+      member_count: (item as any).member_count,
+      shopper_name: (item as any).shopper_name || (item as any).shopperName,
       formattedDate: item.formattedDate || new Date(item.created_at || item.timestamp || Date.now()).toLocaleDateString(),
       formattedTime: item.formattedTime || new Date(item.created_at || item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       runningBalance: Number(item.running_balance ?? item.runningBalance ?? 0)
@@ -719,6 +742,7 @@ export default function CustomerStatementPage({
         isMessStatement: isMess,
         messGroup: isMess ? (messGroup as any) : undefined,
         wallets: !isMess ? (wallets as any) : undefined,
+        cycleBreakdown: !isMess ? cycleBreakdown : undefined,
         dateRange: (startDate || endDate)
           ? `${startDate || 'Start'} to ${endDate || 'Today'}`
           : undefined
@@ -1200,6 +1224,37 @@ export default function CustomerStatementPage({
               </span>
             </p>
           </div>
+
+          {/* Monthly Cycle Transparency Breakdown (Eliminates Leftover Balance Confusion) */}
+          {!isMessView && cycleBreakdown && (cycleBreakdown.hasPriorCarryOver || (cycleBreakdown.priorCycleBalance && Math.abs(cycleBreakdown.priorCycleBalance) > 0.001)) && (
+            <div className="mt-4 p-3.5 bg-slate-950/80 border border-amber-500/30 rounded-2xl space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-bold text-amber-300">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm">📌</span>
+                  <span>Monthly Cycle Breakdown</span>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-medium">Brought Forward</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">{cycleBreakdown.currentMonthLabel}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono">
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[10px] text-slate-400 font-sans font-medium">Prior Month (B/F)</div>
+                  <div className="text-xs font-black text-amber-400 mt-1">BD {Number(cycleBreakdown.priorCycleBalance || 0).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-500 font-sans mt-0.5">{cycleBreakdown.priorMonthLabel}</div>
+                </div>
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[10px] text-slate-400 font-sans font-medium">This Month Spent</div>
+                  <div className="text-xs font-black text-rose-400 mt-1">+BD {Number(cycleBreakdown.currentMonthPurchases || 0).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-500 font-sans mt-0.5">Purchases</div>
+                </div>
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[10px] text-slate-400 font-sans font-medium">Total Balance Due</div>
+                  <div className="text-xs font-black text-emerald-400 mt-1">BD {Number(cycleBreakdown.currentBalance ?? displayOutstanding).toFixed(3)}</div>
+                  <div className="text-[9px] text-slate-500 font-sans mt-0.5">Consolidated</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* ──────────────────────────────────────────────────────────────────────────
               ONE-CLICK BENEFITPAY SETTLEMENT BUTTON
@@ -1810,67 +1865,101 @@ export default function CustomerStatementPage({
                           )}
                         </div>
 
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="text-sm font-bold text-white truncate leading-tight">
-                              {entry.reference || entry.invoiceNo || 'Store Purchase'}
-                            </p>
-                            {((entry as any).messName || (entry as any).walletName) && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                🥘 {(entry as any).messName || (entry as any).walletName}
-                                {(entry as any).member_count ? ` (1/${(entry as any).member_count})` : ''}
-                              </span>
-                            )}
-                            {(entry as any).group_total && (
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                                Total: BD {Number((entry as any).group_total).toFixed(3)}
-                              </span>
-                            )}
-                            {entry.memberName && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                👤 Shopper: {entry.memberName}
-                              </span>
-                            )}
-                            {entry.type === 'DEPOSIT_DEFERRED' && (
-                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                                CARD DEPOSIT (DUE)
-                              </span>
-                            )}
-                            {entry.type === 'DEPOSIT_COLLECTED' && (
-                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                DEPOSIT COLLECTED (HELD)
-                              </span>
-                            )}
-                            {entry.type === 'DEPOSIT_REFUND' && (
-                              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                DEPOSIT REFUNDED
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {entry.formattedDate} • {entry.formattedTime}
-                          </p>
-                        </div>
+                        {(() => {
+                          const isMessTx = Boolean(
+                            (entry as any).is_mess_split ||
+                            (entry as any).group_total ||
+                            (entry as any).mess_id ||
+                            entry.reference?.toLowerCase().includes('mess split')
+                          );
+                          const memberCount = Number((entry as any).member_count || 1);
+                          const shopper = (entry as any).shopper_name || (entry as any).shopperName || (entry as any).memberName || null;
+
+                          return (
+                            <>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className="text-sm font-bold text-white truncate leading-tight">
+                                    {entry.reference || entry.invoiceNo || 'Store Purchase'}
+                                  </p>
+                                  {isMessTx && (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                                      <span>🥘 {((entry as any).messName || (entry as any).walletName || 'Mess Group')}</span>
+                                      <span className="text-indigo-400 font-mono">({memberCount > 1 ? `1/${memberCount} split` : 'Split'})</span>
+                                    </span>
+                                  )}
+                                  {shopper && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                      👤 Shopper: {shopper}
+                                    </span>
+                                  )}
+                                  {entry.type === 'DEPOSIT_DEFERRED' && (
+                                    <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                      CARD DEPOSIT (DUE)
+                                    </span>
+                                  )}
+                                  {entry.type === 'DEPOSIT_COLLECTED' && (
+                                    <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                      DEPOSIT COLLECTED (HELD)
+                                    </span>
+                                  )}
+                                  {entry.type === 'DEPOSIT_REFUND' && (
+                                    <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                      DEPOSIT REFUNDED
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                  {entry.formattedDate} • {entry.formattedTime}
+                                </p>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
 
                       <div className="text-right shrink-0 flex items-center gap-2">
-                        <div>
-                          <p
-                            className={`text-sm font-black font-mono ${isPayment
-                              ? 'text-emerald-400'
-                              : isWriteOff
-                                ? 'text-purple-400'
-                                : 'text-rose-400'
-                              }`}
-                          >
-                            {isPayment ? '-' : '+'}BD {entry.amount.toFixed(3)}
-                          </p>
-                          {entry.runningBalance !== undefined && (
-                            <p className="text-[10px] text-slate-400 font-mono">
-                              Bal: BD {entry.runningBalance.toFixed(3)}
-                            </p>
-                          )}
-                        </div>
+                        {(() => {
+                          const isMessTx = Boolean(
+                            (entry as any).is_mess_split ||
+                            (entry as any).group_total ||
+                            (entry as any).mess_id ||
+                            entry.reference?.toLowerCase().includes('mess split')
+                          );
+                          const fullBasketTotal = Number((entry as any).bill_total || (entry as any).group_total || entry.amount || 0);
+                          const memberShareAmt = Number((entry as any).split_share !== null && (entry as any).split_share !== undefined ? (entry as any).split_share : entry.amount);
+
+                          return (
+                            <div>
+                              {isMessTx && fullBasketTotal > memberShareAmt ? (
+                                <>
+                                  <p className="text-sm font-black font-mono text-white">
+                                    BD {fullBasketTotal.toFixed(3)}
+                                  </p>
+                                  <p className="text-[10px] font-bold font-mono text-amber-400">
+                                    Your Share: +BD {memberShareAmt.toFixed(3)}
+                                  </p>
+                                </>
+                              ) : (
+                                <p
+                                  className={`text-sm font-black font-mono ${isPayment
+                                    ? 'text-emerald-400'
+                                    : isWriteOff
+                                      ? 'text-purple-400'
+                                      : 'text-rose-400'
+                                    }`}
+                                >
+                                  {isPayment ? '-' : '+'}BD {entry.amount.toFixed(3)}
+                                </p>
+                              )}
+                              {entry.runningBalance !== undefined && (
+                                <p className="text-[10px] text-slate-400 font-mono">
+                                  Bal: BD {entry.runningBalance.toFixed(3)}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className={`w-6 h-6 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180 bg-slate-700 text-white' : ''}`}>
                           <ChevronDown className="w-3.5 h-3.5" />
                         </div>
@@ -1882,56 +1971,100 @@ export default function CustomerStatementPage({
                       <div className="px-4 pb-4 pt-1 bg-slate-950/70 border-t border-slate-800 text-xs font-mono space-y-2.5 animate-in fade-in duration-200">
                         {!isPayment && !isWriteOff && (
                           <>
-                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider pt-2 pb-1 border-b border-slate-800">
-                              <span className="flex items-center gap-1 text-emerald-400">
-                                <Receipt className="w-3.5 h-3.5" />
-                                <span>Purchased Items & Quantities</span>
-                              </span>
-                              <span className="text-[10px] text-slate-500">NBR 10% VAT</span>
-                            </div>
+                            {(() => {
+                              const isMessTx = Boolean(
+                                (entry as any).is_mess_split ||
+                                (entry as any).group_total ||
+                                (entry as any).mess_id ||
+                                entry.reference?.toLowerCase().includes('mess split')
+                              );
+                              const fullBasketTotal = Number((entry as any).bill_total || (entry as any).group_total || entry.amount || 0);
+                              const memberShareAmt = Number((entry as any).split_share !== null && (entry as any).split_share !== undefined ? (entry as any).split_share : entry.amount);
+                              const memberCount = Number((entry as any).member_count || 1);
+                              const shopper = (entry as any).shopper_name || (entry as any).shopperName || (entry as any).memberName || null;
 
-                            {isLoadingItems ? (
-                              <div className="py-3 text-center text-slate-400 flex items-center justify-center gap-2 text-xs">
-                                <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                                <span>Loading bill details...</span>
-                              </div>
-                            ) : items.length > 0 ? (
-                              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                                {items.map((it, idx) => (
-                                  <div key={it.id || idx} className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-start justify-between gap-2">
-                                    <div className="min-w-0 pr-2">
-                                      <p className="font-bold text-white text-xs">{it.name || it.productName || 'Store Item'}</p>
-                                      {it.nameAr && <p className="text-[10px] text-slate-400">{it.nameAr}</p>}
-                                      <p className="text-[10px] text-slate-500 font-mono">
-                                        {Number(it.quantity || it.qty || 1)}x @ BD {Number(it.price || it.priceAtSale || 0).toFixed(3)}
-                                      </p>
+                              return (
+                                <>
+                                  {isMessTx && (
+                                    <div className="p-3 rounded-2xl bg-indigo-950/60 border border-indigo-500/40 text-xs font-mono space-y-1.5 shadow-sm">
+                                      <div className="flex items-center justify-between text-indigo-200 font-bold">
+                                        <span className="flex items-center gap-1.5">
+                                          <Users className="w-4 h-4 text-indigo-400" />
+                                          <span>Room Mess: {((entry as any).messName || 'Shared Mess Group')}</span>
+                                        </span>
+                                        <span className="text-[10px] bg-indigo-500/30 px-2 py-0.5 rounded text-indigo-200 font-bold">
+                                          {memberCount} Room Members
+                                        </span>
+                                      </div>
+                                      {shopper && (
+                                        <p className="text-[11px] text-indigo-300 font-sans">
+                                          Counter Shopper: <strong className="text-white">{shopper}</strong>
+                                        </p>
+                                      )}
+                                      <div className="pt-2 border-t border-indigo-500/30 flex items-center justify-between text-xs">
+                                        <span className="text-slate-300">Total Kitchen Grocery Basket:</span>
+                                        <span className="text-white font-black text-sm">BD {fullBasketTotal.toFixed(3)}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-xs font-bold text-amber-300 bg-indigo-900/40 p-2 rounded-xl">
+                                        <span>Added to Your Personal Card Debt:</span>
+                                        <span className="text-emerald-400 font-mono text-sm">+BD {memberShareAmt.toFixed(3)}</span>
+                                      </div>
                                     </div>
-                                    <span className="font-bold text-emerald-400 text-xs">
-                                      BD {Number(it.total || it.total_price || (Number(it.quantity || 1) * Number(it.price || 0))).toFixed(3)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-xs">
-                                General Store Purchase • BD {entry.amount.toFixed(3)}
-                              </div>
-                            )}
+                                  )}
 
-                            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] space-y-1">
-                              <div className="flex justify-between text-slate-400">
-                                <span>Subtotal (Excl. VAT)</span>
-                                <span>BD {(entry.amount / 1.10).toFixed(3)}</span>
-                              </div>
-                              <div className="flex justify-between text-slate-400">
-                                <span>VAT (10%)</span>
-                                <span>BD {(entry.amount - (entry.amount / 1.10)).toFixed(3)}</span>
-                              </div>
-                              <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-800">
-                                <span>Total Bill</span>
-                                <span className="text-emerald-400">BD {entry.amount.toFixed(3)}</span>
-                              </div>
-                            </div>
+                                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider pt-2 pb-1 border-b border-slate-800">
+                                    <span className="flex items-center gap-1 text-emerald-400">
+                                      <Receipt className="w-3.5 h-3.5" />
+                                      <span>Purchased Items & Quantities</span>
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">NBR 10% VAT</span>
+                                  </div>
+
+                                  {isLoadingItems ? (
+                                    <div className="py-3 text-center text-slate-400 flex items-center justify-center gap-2 text-xs">
+                                      <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                                      <span>Loading bill details...</span>
+                                    </div>
+                                  ) : items.length > 0 ? (
+                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                      {items.map((it, idx) => (
+                                        <div key={it.id || idx} className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-start justify-between gap-2">
+                                          <div className="min-w-0 pr-2">
+                                            <p className="font-bold text-white text-xs">{it.name || it.productName || 'Store Item'}</p>
+                                            {it.nameAr && <p className="text-[10px] text-slate-400">{it.nameAr}</p>}
+                                            <p className="text-[10px] text-slate-500 font-mono">
+                                              {Number(it.quantity || it.qty || 1)}x @ BD {Number(it.price || it.priceAtSale || 0).toFixed(3)}
+                                            </p>
+                                          </div>
+                                          <span className="font-bold text-emerald-400 text-xs">
+                                            BD {Number(it.total || it.total_price || (Number(it.quantity || 1) * Number(it.price || 0))).toFixed(3)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-xs">
+                                      General Store Purchase • BD {fullBasketTotal.toFixed(3)}
+                                    </div>
+                                  )}
+
+                                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] space-y-1">
+                                    <div className="flex justify-between text-slate-400">
+                                      <span>Subtotal (Excl. VAT)</span>
+                                      <span>BD {(fullBasketTotal / 1.10).toFixed(3)}</span>
+                                    </div>
+                                    <div className="flex justify-between text-slate-400">
+                                      <span>VAT (10%)</span>
+                                      <span>BD {(fullBasketTotal - (fullBasketTotal / 1.10)).toFixed(3)}</span>
+                                    </div>
+                                    <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-800">
+                                      <span>{isMessTx ? 'Total Grocery Basket Bill' : 'Total Bill'}</span>
+                                      <span className="text-emerald-400 font-mono text-xs">BD {fullBasketTotal.toFixed(3)}</span>
+                                    </div>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </>
                         )}
 
@@ -2136,6 +2269,38 @@ export default function CustomerStatementPage({
                 افتح تطبيق بنفت بي ووجّه الكاميرا لدفع المبلغ المحدد
               </p>
             </div>
+
+            {/* Goodwill Round-Off Card for Micro-Balances */}
+            {(() => {
+              const entered = parseFloat(customPayAmount || '0');
+              const leftover = Number((displayOutstanding - entered).toFixed(3));
+              if (entered > 0 && leftover > 0 && leftover <= 0.500) {
+                return (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/40 rounded-xl flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-bold text-amber-300">
+                        Leftover: <span className="font-mono text-white">BD {leftover.toFixed(3)}</span> ({Math.round(leftover * 1000)} fils)
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Waive leftover as Baqala Goodwill Discount?
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPayForgiveGoodwill(!payForgiveGoodwill)}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                        payForgiveGoodwill
+                          ? 'bg-emerald-500 text-slate-950 font-black'
+                          : 'bg-slate-800 text-amber-300 border border-amber-500/30'
+                      }`}
+                    >
+                      {payForgiveGoodwill ? '✓ Waived (0.000 BD)' : '✨ Forgive & Clear'}
+                    </button>
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Action Buttons */}
             <div className="space-y-2 pt-1">

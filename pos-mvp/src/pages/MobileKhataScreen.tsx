@@ -40,6 +40,13 @@ interface Customer {
   cpr?: string | null;
   balance?: number;
   currentBalance?: number;
+  personalBalance?: number;
+  messBalance?: number;
+  messShare?: number;
+  groupTotal?: number;
+  mess_id?: string;
+  hasMessGroup?: boolean;
+  isDual?: boolean;
   creditLimit?: number;
   credit_limit?: number;
   cardUid?: string | null;
@@ -617,7 +624,23 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
     if (matched) {
       setSelectedCustomer(matched);
       setIsMessCheckout(Boolean(matched.isMess || matched.messGroup));
-      showBanner(`💳 Khata Card: ${matched.name} (BD ${Number(matched.currentBalance ?? matched.balance ?? 0).toFixed(3)})`, 'success');
+
+      // Immediate background re-fetch from primary server so if the customer just settled/paid their debt,
+      // their personalBalance and balance are guaranteed fresh (eliminating stale previous debt on receipts)
+      const primaryBase = getApiBaseUrl() || apiBase;
+      fetch(`${primaryBase}/api/customers/${encodeURIComponent(matched.id)}`, {
+        headers: { 'x-pos-client': 'store-pos' },
+        signal: AbortSignal.timeout(2000)
+      }).then(r => r.ok ? r.json() : null).then(fresh => {
+        if (fresh && (fresh.id || fresh.name)) {
+          const activeCust = fresh.customer || fresh.data || fresh;
+          setSelectedCustomer(activeCust);
+          setCustomers(prev => prev.map(c => c.id === activeCust.id ? { ...c, ...activeCust } : c));
+        }
+      }).catch(() => {});
+
+      const displayBal = Number((matched.personalBalance !== undefined ? matched.personalBalance : (matched.currentBalance ?? matched.balance ?? 0))).toFixed(3);
+      showBanner(`💳 Khata Card: ${matched.name} (BD ${displayBal})`, 'success');
     } else {
       showBanner(`Card UID [${cleanUid}] not linked to any Khata account`, 'error');
     }
@@ -892,11 +915,22 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
       return;
     }
 
-    const curBal = selectedCustomer ? Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0) : 0;
+    const isMess = isMessCheckout || paymentType === 'MESS_KHATA';
+    const isCredit = paymentType === 'CREDIT' || paymentType === 'MESS_KHATA';
+
+    // Financial isolation:
+    // If mess checkout, room debt is tracked.
+    // If personal credit checkout, ONLY personalBalance is used!
+    const rawTotalBal = selectedCustomer ? Number(selectedCustomer.currentBalance ?? selectedCustomer.balance ?? 0) : 0;
+    const rawMessDebt = selectedCustomer ? Number(selectedCustomer.messBalance ?? selectedCustomer.messShare ?? 0) : 0;
+    const personalBal = selectedCustomer ? Number(selectedCustomer.personalBalance ?? Math.max(0, rawTotalBal - rawMessDebt)) : 0;
+    const roomDebt = selectedCustomer ? Number(selectedCustomer.groupTotal ?? (selectedCustomer as any).messGroupTotal ?? selectedCustomer.messBalance ?? rawMessDebt) : 0;
+
+    const curBal = isMess ? roomDebt : personalBal;
     const creditLim = selectedCustomer ? Number(selectedCustomer.creditLimit ?? selectedCustomer.credit_limit ?? 30.0) : 30.0;
     const isOverLimit = (curBal + finalTotal) > creditLim;
 
-    if ((paymentType === 'CREDIT' || paymentType === 'MESS_KHATA') && isOverLimit && !bypassLimitCheck) {
+    if (isCredit && isOverLimit && !bypassLimitCheck) {
       setIsOverLimitModalOpen(true);
       return;
     }
@@ -907,7 +941,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
       const { invoiceNo, invoiceSeq } = await generateNextInvoiceNumber(activeTerminalId);
 
       const oldBalance = curBal;
-      const newBalance = (paymentType === 'CREDIT' || paymentType === 'MESS_KHATA')
+      const newBalance = isCredit
         ? Number((oldBalance + finalTotal).toFixed(3))
         : oldBalance;
 
@@ -922,7 +956,7 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
         subtotal,
         totalVat,
         vatTotal: totalVat,
-        paymentType: isMessCheckout ? 'MESS_KHATA' : paymentType,
+        paymentType: isMess ? 'MESS_KHATA' : paymentType,
         status: 'COMPLETED',
         customerId: selectedCustomer?.id || null,
         cardUid: selectedCustomer?.cardUid || null,
@@ -950,11 +984,13 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
       // Trigger immediate background drain to Edge API & Turso
       setTimeout(() => drainOfflineSales(), 60);
 
-      if (selectedCustomer && (paymentType === 'CREDIT' || paymentType === 'MESS_KHATA')) {
+      if (selectedCustomer && isCredit) {
         const updatedCust = {
           ...selectedCustomer,
-          currentBalance: newBalance,
-          balance: newBalance
+          personalBalance: isMess ? personalBal : newBalance,
+          groupTotal: isMess ? newBalance : roomDebt,
+          currentBalance: isMess ? Number((personalBal + (newBalance / Math.max(1, selectedCustomer.members?.length || 1))).toFixed(3)) : Number((newBalance + rawMessDebt).toFixed(3)),
+          balance: isMess ? Number((personalBal + (newBalance / Math.max(1, selectedCustomer.members?.length || 1))).toFixed(3)) : Number((newBalance + rawMessDebt).toFixed(3))
         };
         setSelectedCustomer(updatedCust);
         setCustomers((prev) =>
@@ -972,17 +1008,20 @@ export default function MobileKhataScreen({ onSwitchToPim }: MobileKhataScreenPr
           subtotal,
           vat: totalVat,
           total: finalTotal,
-          paymentMode: isMessCheckout ? 'MESS_KHATA' : paymentType,
+          paymentMode: isMess ? 'MESS_KHATA' : paymentType,
           customerName: selectedCustomer?.name,
           customerCardUid: selectedCustomer?.cardUid || undefined,
-          previousBalance: (paymentType === 'CREDIT' || paymentType === 'MESS_KHATA') ? oldBalance : undefined,
-          newBalance: (paymentType === 'CREDIT' || paymentType === 'MESS_KHATA') ? newBalance : undefined,
+          previousBalance: isCredit ? oldBalance : undefined,
+          newBalance: isCredit ? newBalance : undefined,
           cashierName: cashierTitle,
           cashTendered: tenderAmount,
           changeDue: tenderAmount ? Number((tenderAmount - finalTotal).toFixed(3)) : undefined,
-          isMess: isMessCheckout,
+          isMess: isMess,
           groupName: selectedCustomer?.group_name || selectedCustomer?.messGroup?.group_name,
-          members: selectedCustomer?.members
+          members: selectedCustomer?.members,
+          hasMessGroup: Boolean(selectedCustomer?.mess_id || selectedCustomer?.messGroup || selectedCustomer?.group_name),
+          personalBalance: personalBal,
+          messBalance: roomDebt
         }).catch((pErr) => console.warn('[F100] Printer dispatch warning:', pErr));
       }
 

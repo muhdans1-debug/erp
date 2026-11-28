@@ -462,12 +462,14 @@ export const MessGroupsHubView: React.FC<MessGroupsHubViewProps> = ({
         playThankYouVoice('KHATA_PAYMENT');
 
         // 3. Print thermal receipt slip (fire-and-forget)
+        const memberPrevShare = Number(settlingMember.equalSplitShare || (selectedGroup.totalBalance / Math.max(1, selectedGroup.members.length)) || 0);
+        const memberNewShare = Math.max(0, Number((memberPrevShare - amountNum).toFixed(3)));
         printKhataPaymentReceipt({
           shopName: "LAYALI SUPERMARKET",
           customerName: `${settlingMember.name} (${selectedGroup.group_name} Mess)`,
           amountPaid: amountNum,
-          previousBalance: Number(selectedGroup.totalBalance),
-          newBalance: Math.max(0, Number(selectedGroup.totalBalance) - amountNum),
+          previousBalance: memberPrevShare,
+          newBalance: memberNewShare,
           paymentMethod: settleMethod,
           receiptNo: `MS-${Date.now().toString().slice(-6)}`,
           timestamp: new Date().toISOString()

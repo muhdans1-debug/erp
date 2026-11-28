@@ -3,9 +3,21 @@
 // Asynchronous, Non-Blocking Zero-SPOF Synchronization between Local SQLite & Turso Cloud
 // ====================================================================
 
+import crypto from 'crypto';
 import { db, tursoCloudClient } from '../db.js';
+import { chaosEngine } from './chaosEngine.js';
+import { congestionGovernor } from './congestionGovernor.js';
+import { healthAnalyticsService } from './healthAnalyticsService.js';
 
 let isReconciling = false;
+let wsBroadcastServer = null;
+
+/**
+ * Set the WebSocket server for real-time fleet broadcasting
+ */
+export function setWsBroadcastServer(server) {
+  wsBroadcastServer = server;
+}
 
 // --- EXPONENTIAL BACKOFF & CIRCUIT BREAKER STATE ---
 let consecutiveCloudErrors = 0;
@@ -44,6 +56,17 @@ export function tripCloudSyncCircuitBreaker(error) {
   const jitter = Math.floor(Math.random() * 500);
   cloudBackoffUntil = Date.now() + backoffDelay + jitter;
   console.warn(`⏳ [CloudSync Circuit Breaker] Tripped (attempt #${consecutiveCloudErrors}). Pausing cloud writes for ${(backoffDelay + jitter)}ms. Reason: ${error?.message || error}`);
+
+  if (consecutiveCloudErrors === 3) {
+    healthAnalyticsService.startIncident({
+      component: 'TURSO_CLOUD',
+      severity: 'WARNING',
+      triggerSource: 'SYNC_EXCEPTION',
+      rootCauseReason: 'Turso Cloud mirror unreachable or high latency; circuit breaker tripped',
+      technicalDetails: `Failed 3 consecutive sync cycles. Error: ${error?.message || error}`,
+      salesImpactSummary: 'Local edge outbox queue buffering transactions; zero sales impact'
+    }).catch(() => {});
+  }
 }
 
 /**
@@ -52,6 +75,13 @@ export function tripCloudSyncCircuitBreaker(error) {
 export function recordCloudSyncSuccess() {
   if (consecutiveCloudErrors > 0) {
     console.log(`✅ [CloudSync Circuit Breaker] Recovered. Resetting error counter after successful cloud write.`);
+    if (consecutiveCloudErrors >= 3) {
+      healthAnalyticsService.resolveIncident('TURSO_CLOUD', {
+        recoveryAction: 'Cloud sync connection restored; pending outbox operations drained',
+        salesImpactSummary: 'Local and cloud databases in 100% mathematical parity',
+        autoHealed: 1
+      }).catch(() => {});
+    }
   }
   consecutiveCloudErrors = 0;
   cloudBackoffUntil = 0;
@@ -72,9 +102,18 @@ function toSqlArg(val) {
  * Fire-and-forget: Never blocks local checkout or crashes cashier operations.
  */
 export async function mirrorSaleToCloud(saleId) {
+  if (chaosEngine.isScenarioActive('CHAOS_TURSO_BLACKOUT')) {
+    tripCloudSyncCircuitBreaker(new Error('[CHAOS_TURSO_BLACKOUT] Injected simulated cloud blackout'));
+    return false;
+  }
   if (!tursoCloudClient || !saleId) return false;
   if (Date.now() < cloudBackoffUntil) {
     return false; // Circuit breaker active: throttle request
+  }
+  if (congestionGovernor.shouldThrottleBackgroundSync()) {
+    // Congestion Governor: Defer background sync during active cashier rush hour
+    recordOutboxEvent(db, 'SALE_CREATED', saleId, { saleId }).catch(() => {});
+    return false;
   }
 
   try {
@@ -103,6 +142,8 @@ export async function mirrorSaleToCloud(saleId) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           syncStatus = 'SYNCED',
+          invoiceNo = excluded.invoiceNo,
+          invoiceSeq = excluded.invoiceSeq,
           status = excluded.status,
           total = excluded.total,
           totalAmount = excluded.totalAmount,
@@ -169,15 +210,16 @@ export async function mirrorSaleToCloud(saleId) {
         sql: `INSERT INTO KhataLedger (
           id, tenantId, customerId, amount, type, reference,
           running_balance, syncStatus, timestamp, created_at,
-          storeId, mess_id, sale_id, group_total, member_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?)
+          storeId, mess_id, sale_id, group_total, member_count, subledger_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           syncStatus = 'SYNCED',
           running_balance = excluded.running_balance,
           mess_id = excluded.mess_id,
           sale_id = excluded.sale_id,
           group_total = excluded.group_total,
-          member_count = excluded.member_count`,
+          member_count = excluded.member_count,
+          subledger_type = excluded.subledger_type`,
         args: [
           kl.id,
           kl.tenantId || 'tenant_askar_01',
@@ -192,7 +234,8 @@ export async function mirrorSaleToCloud(saleId) {
           kl.mess_id || null,
           kl.sale_id || saleId,
           kl.group_total || null,
-          kl.member_count || null
+          kl.member_count || null,
+          kl.subledger_type || (kl.mess_id ? 'MESS_SHARE' : 'PERSONAL')
         ]
       });
       if (kl.customerId) {
@@ -211,7 +254,9 @@ export async function mirrorSaleToCloud(saleId) {
       });
     }
 
+    const tSync0 = Date.now();
     await tursoCloudClient.batch(statements, 'write');
+    congestionGovernor.updateWanRtt(Date.now() - tSync0);
 
     // 4. Mark local sale and its ledger entries as SYNCED
     await db.execute({
@@ -245,13 +290,17 @@ export async function mirrorProductToCloud(prod) {
 
   try {
     const updatedAt = prod.updatedAt ? new Date(prod.updatedAt).toISOString() : new Date().toISOString();
+    const pluCode = prod.plu_code !== undefined ? (prod.plu_code ? String(prod.plu_code).trim() : null) : null;
+    const imageUrl = prod.image_url ? String(prod.image_url).trim() : null;
+    const nameAr = prod.name_ar ? String(prod.name_ar).trim() : null;
+
     await tursoCloudClient.execute({
       sql: `INSERT INTO Product (
         id, tenantId, name, purchasePrice, unitCost, sellingPrice,
         stockQuantity, minThreshold, maxThreshold, supplierName,
         distributorId, taxRate, vatRate, barcode, category,
-        is_weighed_item, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_weighed_item, plu_code, image_url, name_ar, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         purchasePrice = excluded.purchasePrice,
@@ -265,6 +314,9 @@ export async function mirrorProductToCloud(prod) {
         barcode = excluded.barcode,
         category = excluded.category,
         is_weighed_item = excluded.is_weighed_item,
+        plu_code = excluded.plu_code,
+        image_url = excluded.image_url,
+        name_ar = excluded.name_ar,
         updatedAt = excluded.updatedAt`,
       args: [
         prod.id,
@@ -283,9 +335,27 @@ export async function mirrorProductToCloud(prod) {
         prod.barcode || null,
         prod.category || 'GROCERY',
         prod.is_weighed_item ? 1 : 0,
+        pluCode,
+        imageUrl,
+        nameAr,
         updatedAt
       ]
     });
+
+    // Also auto-register into Turso Cloud QuickProduct table
+    try {
+      const qpCategory = (prod.category || 'ESSENTIALS').toUpperCase();
+      await tursoCloudClient.execute({
+        sql: `INSERT INTO QuickProduct (id, productId, category, quickColor, sortOrder, updatedAt)
+              VALUES (?, ?, ?, '#3b82f6', 1, CURRENT_TIMESTAMP)
+              ON CONFLICT(productId) DO UPDATE SET
+                category = excluded.category,
+                updatedAt = CURRENT_TIMESTAMP`,
+        args: [`qp_${prod.id}`, prod.id, qpCategory]
+      });
+    } catch (qpErr) {
+      console.warn(`⚠️ [CloudSync] Could not mirror quick product for ${prod.id}:`, qpErr?.message);
+    }
 
     console.log(`☁️ [CloudSync] Product '${prod.name}' (${prod.barcode || prod.id}) mirrored to Turso Cloud.`);
     return true;
@@ -516,7 +586,7 @@ export async function mirrorMessGroupTombstoneToCloud(id, groupName) {
     await fetch(edgeUrl, {
       method: 'DELETE',
       headers: {
-        'x-manager-pin': '9999',
+        'x-manager-token': process.env.DEV_SECRET || process.env.MANAGER_SECRET || 'machine-sync-token',
         'x-pos-client': 'store-pos'
       },
       signal: AbortSignal.timeout(3000)
@@ -592,15 +662,16 @@ export async function mirrorLedgerEntryToCloud(entry) {
         sql: `INSERT INTO KhataLedger (
           id, tenantId, customerId, amount, type, reference,
           running_balance, syncStatus, timestamp, created_at,
-          storeId, mess_id, sale_id, group_total, member_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?)
+          storeId, mess_id, sale_id, group_total, member_count, subledger_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           syncStatus = 'SYNCED',
           running_balance = excluded.running_balance,
           mess_id = excluded.mess_id,
           sale_id = excluded.sale_id,
           group_total = excluded.group_total,
-          member_count = excluded.member_count`,
+          member_count = excluded.member_count,
+          subledger_type = excluded.subledger_type`,
         args: [
           entry.id,
           entry.tenantId || 'tenant_askar_01',
@@ -615,7 +686,8 @@ export async function mirrorLedgerEntryToCloud(entry) {
           entry.mess_id || null,
           entry.sale_id || null,
           entry.group_total || null,
-          entry.member_count || null
+          entry.member_count || null,
+          entry.subledger_type || (entry.mess_id ? 'MESS_SHARE' : 'PERSONAL')
         ]
       }
     ];
@@ -630,7 +702,9 @@ export async function mirrorLedgerEntryToCloud(entry) {
       });
     }
 
+    const tSync0 = Date.now();
     await tursoCloudClient.batch(statements, 'write');
+    congestionGovernor.updateWanRtt(Date.now() - tSync0);
 
     // Mark local ledger as SYNCED
     await db.execute({
@@ -672,11 +746,35 @@ export async function syncAllPendingToCloud() {
     });
 
     const pendingSaleIds = (pendingSalesRes.rows || []).map(r => r.id);
+
+    // Phase 1 Guard: Check outbox backlog lag (> 20 offline sales)
+    if (pendingSaleIds.length >= 20) {
+      healthAnalyticsService.startIncident({
+        component: 'TURSO_OUTBOX_LAG',
+        severity: 'WARNING',
+        triggerSource: 'OUTBOX_BACKLOG_GUARD',
+        rootCauseReason: `Offline outbox accumulation (${pendingSaleIds.length} sales pending)`,
+        technicalDetails: `Local transactions buffering in SQLite; cloud sync backlog exceeds 20 operations`,
+        salesImpactSummary: 'Zero financial loss. All sales safely committed in local SQLite.'
+      }).catch(() => {});
+    }
+
     for (const sid of pendingSaleIds) {
       if (Date.now() < cloudBackoffUntil) break; // Break out immediately if circuit tripped
       const ok = await mirrorSaleToCloud(sid);
       if (ok) pushedSales++;
       else if (Date.now() < cloudBackoffUntil) break;
+    }
+
+    // Auto-resolve outbox lag incident if backlog dropped below 5
+    if (pendingSaleIds.length > 0 && (pendingSaleIds.length - pushedSales) < 5) {
+      if (healthAnalyticsService.activeIncidents.has('TURSO_OUTBOX_LAG')) {
+        healthAnalyticsService.resolveIncident('TURSO_OUTBOX_LAG', {
+          recoveryAction: 'Cloud outbox backlog completely drained to Turso Cloud mirror',
+          salesImpactSummary: 'Local edge and Turso Cloud in 100% mathematical parity',
+          autoHealed: 1
+        }).catch(() => {});
+      }
     }
 
     // B. Pending Khata Ledger (only if circuit breaker remains healthy)
@@ -726,8 +824,14 @@ export async function syncAllPendingToCloud() {
       }
     }
 
-    if (pushedSales > 0 || pushedLedger > 0) {
-      console.log(`☁️ [CloudSync] Outbox drain completed: ${pushedSales} sales, ${pushedLedger} ledger entries synced to cloud.`);
+    // D. Drain Dedicated Transactional OutboxEvents (Precaution 4)
+    let pushedOutbox = 0;
+    if (Date.now() >= cloudBackoffUntil) {
+      pushedOutbox = await drainOutboxEvents();
+    }
+
+    if (pushedSales > 0 || pushedLedger > 0 || pushedOutbox > 0) {
+      console.log(`☁️ [CloudSync] Outbox drain completed: ${pushedSales} sales, ${pushedLedger} ledger entries, ${pushedOutbox} transactional outbox events synced to cloud.`);
     }
   } catch (err) {
     tripCloudSyncCircuitBreaker(err);
@@ -845,14 +949,15 @@ async function upsertLocalCustomer(c) {
  * 8. Reconcile Cloud Deltas Down to Local SQLite (e.g. Sales, Customers, or Payments processed on Edge API while laptop was asleep)
  */
 export async function pullCloudDeltas() {
-  if (!tursoCloudClient) return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0 };
+  if (!tursoCloudClient) return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0, pulledProducts: 0 };
   if (Date.now() < cloudBackoffUntil) {
-    return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0, backedOff: true };
+    return { pulledCustomers: 0, pulledSales: 0, pulledLedger: 0, pulledProducts: 0, backedOff: true };
   }
 
   let pulledCustomers = 0;
   let pulledSales = 0;
   let pulledLedger = 0;
+  let pulledProducts = 0;
 
   try {
     // A. Reconcile Customers FIRST to satisfy foreign key constraints
@@ -1093,8 +1198,126 @@ export async function pullCloudDeltas() {
       }
     } catch { }
 
-    if (pulledCustomers > 0 || pulledSales > 0 || pulledLedger > 0) {
-      console.log(`☁️ [CloudSync] Pulled from Turso Cloud: ${pulledCustomers} customers, ${pulledSales} sales, ${pulledLedger} ledger events.`);
+    // E. Reconcile Products from Cloud (Produce prices, PLU short codes, catalog updates)
+    pulledProducts = 0;
+    const updatedProduceList = [];
+    try {
+      const cloudProdRes = await tursoCloudClient.execute({
+        sql: `SELECT id, barcode, name, name_ar, plu_code, image_url, 
+                     sellingPrice, purchasePrice, unitCost, stockQuantity, 
+                     minThreshold, maxThreshold, distributorId, vatRate, taxRate, 
+                     is_weighed_item, category, updatedAt 
+              FROM Product 
+              ORDER BY datetime(COALESCE(updatedAt, '1970-01-01')) DESC LIMIT 250`,
+        args: []
+      });
+
+      for (const cp of (cloudProdRes.rows || [])) {
+        const localCheck = await db.execute({
+          sql: `SELECT id, sellingPrice, purchasePrice, plu_code, name, name_ar, image_url, is_weighed_item, updatedAt FROM Product WHERE id = ? LIMIT 1`,
+          args: [cp.id]
+        });
+
+        const lp = localCheck.rows?.[0];
+        const isDifferent = !lp || 
+          String(lp.plu_code || '') !== String(cp.plu_code || '') || 
+          Number(lp.sellingPrice) !== Number(cp.sellingPrice) || 
+          Number(lp.purchasePrice) !== Number(cp.purchasePrice) || 
+          String(lp.image_url || '') !== String(cp.image_url || '') ||
+          String(lp.name || '') !== String(cp.name || '') ||
+          String(lp.name_ar || '') !== String(cp.name_ar || '') ||
+          Boolean(lp.is_weighed_item) !== Boolean(cp.is_weighed_item) ||
+          (cp.updatedAt && (!lp.updatedAt || new Date(cp.updatedAt) > new Date(lp.updatedAt)));
+
+        if (isDifferent) {
+          await db.execute({
+            sql: `INSERT INTO Product (
+              id, barcode, name, name_ar, plu_code, image_url,
+              sellingPrice, purchasePrice, unitCost, stockQuantity,
+              minThreshold, maxThreshold, distributorId, vatRate, taxRate,
+              is_weighed_item, category, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              name_ar = excluded.name_ar,
+              barcode = excluded.barcode,
+              plu_code = excluded.plu_code,
+              image_url = excluded.image_url,
+              sellingPrice = excluded.sellingPrice,
+              purchasePrice = excluded.purchasePrice,
+              unitCost = excluded.unitCost,
+              stockQuantity = excluded.stockQuantity,
+              minThreshold = excluded.minThreshold,
+              maxThreshold = excluded.maxThreshold,
+              distributorId = excluded.distributorId,
+              vatRate = excluded.vatRate,
+              taxRate = excluded.taxRate,
+              is_weighed_item = excluded.is_weighed_item,
+              category = excluded.category,
+              updatedAt = excluded.updatedAt`,
+            args: [
+              cp.id,
+              cp.barcode || cp.id,
+              cp.name,
+              cp.name_ar || null,
+              cp.plu_code ? String(cp.plu_code).trim() : null,
+              cp.image_url || null,
+              Number(cp.sellingPrice || 0),
+              Number(cp.purchasePrice || 0),
+              Number(cp.unitCost || cp.purchasePrice || 0),
+              Number(cp.stockQuantity || 0),
+              Number(cp.minThreshold || 10),
+              Number(cp.maxThreshold || 100),
+              cp.distributorId || null,
+              Number(cp.vatRate || 0),
+              Number(cp.taxRate || 0),
+              cp.is_weighed_item ? 1 : 0,
+              cp.category || 'GROCERY',
+              cp.updatedAt || new Date().toISOString()
+            ]
+          });
+          pulledProducts++;
+          if (cp.is_weighed_item || cp.plu_code || cp.category === 'PRODUCE') {
+            updatedProduceList.push({
+              id: cp.id,
+              plu_code: cp.plu_code ? String(cp.plu_code).trim() : null,
+              image_url: cp.image_url || null,
+              name_ar: cp.name_ar || null,
+              name: cp.name,
+              sellingPrice: Number(cp.sellingPrice || 0),
+              is_weighed_item: Boolean(cp.is_weighed_item)
+            });
+          }
+        }
+      }
+
+      if (pulledProducts > 0 && wsBroadcastServer?.clients) {
+        if (updatedProduceList.length > 0) {
+          const producePayload = JSON.stringify({
+            type: 'PRODUCE_PRICES_UPDATED',
+            updates: updatedProduceList,
+            timestamp: Date.now()
+          });
+          wsBroadcastServer.clients.forEach((c) => {
+            if (c.readyState === 1) c.send(producePayload);
+          });
+        }
+        const catalogPayload = JSON.stringify({
+          type: 'CATALOG_UPDATED',
+          pulledProducts,
+          timestamp: Date.now()
+        });
+        wsBroadcastServer.clients.forEach((c) => {
+          if (c.readyState === 1) c.send(catalogPayload);
+        });
+        console.log(`📡 [CloudSync] Broadcasted ${pulledProducts} product delta(s) to connected POS terminals over WebSocket.`);
+      }
+    } catch (prodErr) {
+      console.warn(`⚠️ [CloudSync] Product deltas pull notice:`, prodErr?.message);
+    }
+
+    if (pulledCustomers > 0 || pulledSales > 0 || pulledLedger > 0 || pulledProducts > 0) {
+      console.log(`☁️ [CloudSync] Pulled from Turso Cloud: ${pulledCustomers} customers, ${pulledSales} sales, ${pulledLedger} ledger events, ${pulledProducts} products.`);
     }
     recordCloudSyncSuccess();
   } catch (err) {
@@ -1102,12 +1325,82 @@ export async function pullCloudDeltas() {
     console.warn(`⚠️ [CloudSync] Cloud deltas pull notice:`, err.message);
   }
 
-  return { pulledCustomers, pulledSales, pulledLedger };
+  return { pulledCustomers, pulledSales, pulledLedger, pulledProducts };
 }
 
 /**
- * 8b. Zero-Drift Anti-Entropy Sentinel: Periodically validates that all local KhataLedger
- * entries exist in Turso Cloud and all Customer balances in Turso match the ledger sum.
+ * 8a. Systemic Precaution 1: Canonical SHA-256 Rolling Cryptographic Checksum
+ * Computes deterministic audit hash based on normalized UTC timestamps and amounts.
+ */
+export async function computeCustomerLedgerHash(dbClient, customerId) {
+  if (!dbClient || !customerId) return null;
+  const res = await dbClient.execute({
+    sql: `SELECT COUNT(id) as cnt, ROUND(COALESCE(SUM(amount), 0), 3) as total, COALESCE(MAX(datetime(created_at)), '') as max_ts FROM KhataLedger WHERE customerId = ?`,
+    args: [customerId]
+  });
+  const row = res.rows?.[0] || { cnt: 0, total: 0, max_ts: '' };
+  const raw = `${customerId}:${row.cnt}:${Number(row.total || 0).toFixed(3)}:${row.max_ts}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+/**
+ * 8b. Systemic Precaution 4: Transactional Outbox Event Logger
+ * Records an immutable event in the same atomic transaction as sales/ledger writes.
+ */
+export async function recordOutboxEvent(dbOrTx, topic, entityId, payload) {
+  const eventId = `evt_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  await dbOrTx.execute({
+    sql: `INSERT INTO OutboxEvent (id, topic, entityId, payload, status, createdAt)
+          VALUES (?, ?, ?, ?, 'PENDING', datetime('now'))
+          ON CONFLICT(id) DO NOTHING`,
+    args: [eventId, topic, entityId, JSON.stringify(payload)]
+  });
+  return eventId;
+}
+
+/**
+ * Drain pending transactional outbox events to Turso Cloud
+ */
+export async function drainOutboxEvents() {
+  if (!tursoCloudClient || Date.now() < cloudBackoffUntil) return 0;
+  let drained = 0;
+  try {
+    const eventsRes = await db.execute({
+      sql: `SELECT * FROM OutboxEvent WHERE status = 'PENDING' ORDER BY createdAt ASC LIMIT 50`,
+      args: []
+    });
+    const events = eventsRes.rows || [];
+    for (const evt of events) {
+      if (Date.now() < cloudBackoffUntil) break;
+      try {
+        await tursoCloudClient.execute({
+          sql: `INSERT INTO OutboxEvent (id, topic, entityId, payload, status, createdAt, processedAt)
+                VALUES (?, ?, ?, ?, 'PROCESSED', ?, datetime('now'))
+                ON CONFLICT(id) DO UPDATE SET processedAt = excluded.processedAt, status = 'PROCESSED'`,
+          args: [evt.id, evt.topic, evt.entityId, evt.payload, evt.createdAt || new Date().toISOString()]
+        });
+
+        await db.execute({
+          sql: `UPDATE OutboxEvent SET status = 'PROCESSED', processedAt = datetime('now') WHERE id = ?`,
+          args: [evt.id]
+        });
+        drained++;
+      } catch (evtErr) {
+        await db.execute({
+          sql: `UPDATE OutboxEvent SET attempts = attempts + 1, lastError = ? WHERE id = ?`,
+          args: [evtErr.message, evt.id]
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️ [OutboxWorker] Notice:`, err.message);
+  }
+  return drained;
+}
+
+/**
+ * 8c. Zero-Drift Anti-Entropy Sentinel: Periodically validates that all local KhataLedger
+ * entries exist in Turso Cloud, all Customer balances match, and hashes match bit-for-bit.
  */
 export async function reconcileCloudKhataIntegrity() {
   if (!tursoCloudClient || Date.now() < cloudBackoffUntil) return { checked: 0, reconciled: 0 };
@@ -1153,7 +1446,34 @@ export async function reconcileCloudKhataIntegrity() {
       }
     }
 
-    return { checked: localIds.length, missingSynced: missingIds.length, balancesAdjusted: driftingRes.rows?.length || 0 };
+    // 3. Systemic Precaution 1: Cryptographic Hash Sentinel (Zero-Knowledge Invariant)
+    const activeCusts = await db.execute(`
+      SELECT DISTINCT customerId FROM KhataLedger WHERE customerId IS NOT NULL ORDER BY created_at DESC LIMIT 20
+    `);
+    let hashDivergences = 0;
+    for (const row of activeCusts.rows || []) {
+      if (Date.now() < cloudBackoffUntil) break;
+      const localH = await computeCustomerLedgerHash(db, row.customerId);
+      const cloudH = await computeCustomerLedgerHash(tursoCloudClient, row.customerId);
+      if (localH && cloudH && localH !== cloudH) {
+        hashDivergences++;
+        console.warn(`🔒 [Cryptographic Sentinel] Hash divergence on customer ${row.customerId}. Auto-healing ledger...`);
+        const fullLedger = await db.execute({
+          sql: `SELECT * FROM KhataLedger WHERE customerId = ?`,
+          args: [row.customerId]
+        });
+        for (const entry of fullLedger.rows || []) {
+          await mirrorLedgerEntryToCloud(entry);
+        }
+      }
+    }
+
+    return { 
+      checked: localIds.length, 
+      missingSynced: missingIds.length, 
+      balancesAdjusted: driftingRes.rows?.length || 0,
+      hashDivergences
+    };
   } catch (err) {
     console.warn(`⚠️ [CloudSync Sentinel] Auto-reconciliation check deferred: ${err.message}`);
     return { error: err.message };
@@ -1187,7 +1507,10 @@ export async function syncAllWithCloud() {
 /**
  * 10. Start the Background Cloud Sync Daemon
  */
-export function startCloudSyncDaemon() {
+export function startCloudSyncDaemon(wsServer = null) {
+  if (wsServer) {
+    wsBroadcastServer = wsServer;
+  }
   if (!tursoCloudClient) {
     console.log('ℹ️ [CloudSync] Turso Cloud credentials not active; cloud sync daemon idle.');
     return;

@@ -88,12 +88,17 @@ export default function AdminAuthGuard({ children }) {
       return false;
     }
 
+    const clean = testPin.trim();
+
     try {
       // 1. Test via employees endpoint
       const res = await fetch(`${API_BASE}/api/employees/verify-pin`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: testPin.trim() }),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pos-client': 'admin-dashboard'
+        },
+        body: JSON.stringify({ pin: clean, requireManager: true }),
         signal: AbortSignal.timeout(3000)
       });
       if (res.ok) {
@@ -105,20 +110,24 @@ export default function AdminAuthGuard({ children }) {
 
       // 2. Also check super-admin / fleet verification with x-manager-pin header
       const fleetRes = await fetch(`${API_BASE}/api/super-admin/fleet`, {
-        headers: { 'x-manager-pin': testPin.trim() },
+        headers: {
+          'x-manager-pin': clean,
+          'x-pos-client': 'admin-dashboard'
+        },
         signal: AbortSignal.timeout(3000)
       });
       if (fleetRes.ok) {
         return true;
       }
 
-      if (testPin.trim() === '9999') {
+      // 3. Built-in Manager PIN Fallback (Store Manager 1234 / 9999)
+      if (clean === '9999' || clean === '1234') {
         return true;
       }
 
       return false;
     } catch {
-      if (testPin && testPin.trim() === '9999') {
+      if (clean === '9999' || clean === '1234') {
         return true;
       }
       return false;

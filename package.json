@@ -20,5 +20,12 @@
     "deploy:edge": "npm --prefix askar-edge-api run deploy",
     "deploy:dashboard": "npm --prefix askar-admin-dashboard run deploy",
     "test:audit": "npm --prefix pos-mvp run test:audit"
+  },
+  "devDependencies": {
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0"
+  },
+  "dependencies": {
+    "playwright": "^1.65.1"
   }
 }
